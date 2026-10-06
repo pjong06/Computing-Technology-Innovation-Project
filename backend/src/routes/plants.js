@@ -1,5 +1,6 @@
 const express = require("express");
 const upload = require("../services/storageService");
+const { generatePlantQR } = require("../services/qrService");
 
 const router = express.Router();
 
@@ -157,6 +158,65 @@ router.post("/:id/photo", upload.single("photo"), (req, res) => {
         plant_id: plantId,
         photo: req.file.filename
     });
+});
+
+// GENERATE QR code for a plant
+router.get("/:id/qr", async (req, res) => {
+    const plantId = parseInt(req.params.id);
+
+    const plant = plants.find(p => p.plant_id === plantId);
+
+    if (!plant) {
+        return res.status(404).json({
+            message: "Plant not found"
+        });
+    }
+
+    try {
+        const qr = await generatePlantQR(plantId);
+
+        res.json({
+            message: "QR code generated successfully",
+            plant_id: plantId,
+            qr_value: qr.qrValue,
+            qr_code: qr.qrCode
+        });
+    } catch (error) {
+        res.status(500).json({
+            message: "Failed to generate QR code"
+        });
+    }
+});
+
+// DISPLAY QR code as an image
+router.get("/:id/qr/image", async (req, res) => {
+    const plantId = parseInt(req.params.id);
+
+    const plant = plants.find(p => p.plant_id === plantId);
+
+    if (!plant) {
+        return res.status(404).json({
+            message: "Plant not found"
+        });
+    }
+
+    try {
+        const qr = await generatePlantQR(plantId);
+
+        const base64Data = qr.qrCode.replace(
+            /^data:image\/png;base64,/,
+            ""
+        );
+
+        const imageBuffer = Buffer.from(base64Data, "base64");
+
+        res.setHeader("Content-Type", "image/png");
+        res.send(imageBuffer);
+    } catch (error) {
+        res.status(500).json({
+            message: "Failed to generate QR code"
+        });
+    }
 });
 
 module.exports = router;
