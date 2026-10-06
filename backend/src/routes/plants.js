@@ -1,4 +1,5 @@
 const express = require("express");
+const upload = require("../services/storageService");
 
 const router = express.Router();
 
@@ -90,7 +91,7 @@ router.put("/:id", (req, res) => {
             message: "Invalid GPS coordinates"
         });
     }
-    
+
     const plant = plants.find(p => p.plant_id === plantId);
 
     if (!plant) {
@@ -128,6 +129,33 @@ router.delete("/:id", (req, res) => {
     res.json({
         message: "Plant deleted successfully",
         plant: deletedPlant[0]
+    });
+});
+
+// UPLOAD a photo for a plant
+router.post("/:id/photo", upload.single("photo"), (req, res) => {
+    const plantId = parseInt(req.params.id);
+
+    const plant = plants.find(p => p.plant_id === plantId);
+
+    if (!plant) {
+        return res.status(404).json({
+            message: "Plant not found"
+        });
+    }
+
+    if (!req.file) {
+        return res.status(400).json({
+            message: "No photo uploaded"
+        });
+    }
+
+    plant.photo = req.file.filename;
+
+    res.status(200).json({
+        message: "Photo uploaded successfully",
+        plant_id: plantId,
+        photo: req.file.filename
     });
 });
 
