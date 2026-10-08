@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, Alert, Platform, StatusBar } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useRecordStore } from '../src/store/useRecordStore';
 
@@ -27,7 +27,7 @@ export default function ManualQREntryScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F6F8F6' },
+  safeArea: { flex: 1, backgroundColor: '#F6F8F6', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
   backBtn: { padding: 20 },
   container: { flex: 1, paddingHorizontal: 24, justifyContent: 'center', marginTop: -60 },
   title: { fontSize: 24, fontWeight: '700', color: '#1E2B22', textAlign: 'center', marginBottom: 20 },

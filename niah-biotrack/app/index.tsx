@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, Alert, StatusBar } from 'react-native';
 import { useRouter } from 'expo-router';
 
 export default function LoginScreen() {
@@ -38,7 +38,7 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F6F8F6' },
+  safeArea: { flex: 1, backgroundColor: '#F6F8F6',paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
   container: { flexGrow: 1, paddingHorizontal: 24, justifyContent: 'center', paddingVertical: 40 },
   brandTitle: { fontSize: 28, fontWeight: '800', color: '#213B2A', textAlign: 'center' },
   subtitle: { fontSize: 14, color: '#68776D', textAlign: 'center', marginBottom: 40, marginTop: 4 },

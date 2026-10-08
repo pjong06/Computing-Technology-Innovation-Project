@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Alert, StatusBar, Platform } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 
 export default function PlantQRScreen() {
@@ -20,7 +20,7 @@ export default function PlantQRScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F6F8F6' },
+  safeArea: { flex: 1, backgroundColor: '#F6F8F6', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
   container: { flex: 1, paddingHorizontal: 24, justifyContent: 'center' },
   title: { fontSize: 22, fontWeight: '700', color: '#1E2B22', textAlign: 'center' },
   qrBox: { alignSelf: 'center', width: 200, height: 200, backgroundColor: '#E6ECE8', justifyContent: 'center', alignItems: 'center', borderRadius: 20, marginBottom: 30 },

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, FlatList, TouchableOpacity, StyleSheet, SafeAreaView } from 'react-native';
+import { View, Text, TextInput, FlatList, TouchableOpacity, StyleSheet, SafeAreaView, Platform, StatusBar} from 'react-native';
 import { useRouter } from 'expo-router';
 
 const CAT = [{ id: '1', name: 'Shorea platyclados', loc: '2.3km trail' }, { id: '2', name: 'Nepenthes ampullaria', loc: 'Cave entrance' }];
@@ -29,7 +29,7 @@ export default function SpeciesScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F6F8F6' },
+  safeArea: { flex: 1, backgroundColor: '#F6F8F6',paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
   container: { flex: 1, paddingHorizontal: 20, paddingTop: 16 },
   headerTitle: { fontSize: 24, fontWeight: '700', color: '#1E2B22', marginBottom: 14 },
   searchBar: { backgroundColor: '#FFFFFF', height: 50, borderRadius: 25, paddingHorizontal: 18, borderWidth: 1.2, borderColor: '#E6ECE8', marginBottom: 14 },

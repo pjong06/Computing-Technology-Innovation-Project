@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, FlatList, SafeAreaView, StatusBar } from 'react-native';
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, FlatList, SafeAreaView, StatusBar, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useRecordStore } from '../../src/store/useRecordStore';
+import { useRecordStore, RecordStatus } from '../../src/store/useRecordStore';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -12,12 +12,16 @@ export default function HomeScreen() {
     (item) => item.scientificName.toLowerCase().includes(searchQuery.toLowerCase()) || item.locationName.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const getStatusStyle = (status: string) => {
+ const getStatusStyle = (status: string) => {
     switch (status) {
-      case 'Synced': return { bg: '#AECBB7', text: '#20402C' };
-      case 'Pending': return { bg: '#F8DB96', text: '#7C4A03' };
-      case 'Failed': return { bg: '#F8B4B4', text: '#771D1D' };
-      default: return { bg: '#DDE5E0', text: '#3E5044' };
+      case RecordStatus.SYNCED:
+        return { bg: '#AECBB7', text: '#20402C' };
+      case RecordStatus.PENDING:
+        return { bg: '#F8DB96', text: '#7C4A03' };
+      case RecordStatus.FAILED:
+        return { bg: '#F8B4B4', text: '#771D1D' };
+      default:
+        return { bg: '#DDE5E0', text: '#3E5044' };
     }
   };
 
@@ -86,7 +90,7 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F6F8F6' },
+  safeArea: { flex: 1, backgroundColor: '#F6F8F6',paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
   container: { flex: 1, paddingHorizontal: 22, paddingTop: 16 },
   topHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 20, marginTop: 6 },
   brandTitle: { fontSize: 24, fontWeight: '800', color: '#213B2A', letterSpacing: -0.4 },

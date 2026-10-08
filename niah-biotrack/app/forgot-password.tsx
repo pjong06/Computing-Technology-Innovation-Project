@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, Alert, StatusBar, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 
 export default function ForgotPasswordScreen() {
@@ -30,7 +30,7 @@ export default function ForgotPasswordScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F6F8F6' },
+  safeArea: { flex: 1, backgroundColor: '#F6F8F6',paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
   backBtn: { paddingHorizontal: 20, paddingTop: 12 },
   backChevron: { fontSize: 32, color: '#213B2A' },
   container: { flex: 1, paddingHorizontal: 24, justifyContent: 'center', marginTop: -40 },

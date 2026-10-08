@@ -1,6 +1,7 @@
 import React from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'react-native';
+import Toast from 'react-native-toast-message';
 
 export default function RootLayout() {
   return (
@@ -18,6 +19,7 @@ export default function RootLayout() {
         <Stack.Screen name="plant-qr" />
         <Stack.Screen name="plant-detail" />
       </Stack>
+      <Toast />
     </>
   );
 }

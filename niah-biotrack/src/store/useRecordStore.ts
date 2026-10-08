@@ -2,6 +2,12 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+export enum RecordStatus {
+  PENDING = 'Pending',
+  SYNCED = 'Synced',
+  FAILED = 'Failed',
+}
+
 export interface PlantRecord {
   id: string;
   recordId: string;
@@ -14,7 +20,7 @@ export interface PlantRecord {
   locationName: string;
   gpsCoordination: string;
   photoUri?: string;
-  status: 'Pending' | 'Synced' | 'Failed';
+  status: RecordStatus;
   createdAt: string;
 }
 
@@ -40,7 +46,9 @@ export const useRecordStore = create<RecordState>()(
         }),
       syncPending: () =>
         set((state) => ({
-          records: state.records.map((r) => (r.status === 'Pending' ? { ...r, status: 'Synced' } : r)),
+          records: state.records.map((r) =>
+            r.status === RecordStatus.PENDING ? { ...r, status: RecordStatus.SYNCED } : r
+          ),
         })),
       clearRecords: () => set({ records: [] }),
     }),
