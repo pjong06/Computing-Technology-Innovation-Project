@@ -1,12 +1,14 @@
 const express = require("express");
 
 const plantRoutes = require("./routes/plants");
+const iotRoutes = require('./routes/iot');
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json());
 app.use("/api/plants", plantRoutes);
+app.use('/api/iot', iotRoutes);
 
 app.get("/", (req, res) => {
     res.json({
