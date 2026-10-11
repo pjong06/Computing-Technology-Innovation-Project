@@ -53,7 +53,8 @@
         {
           "photosPermission": "Allow Niah BioTrack to attach existing specimen photos."
         }
-      ]
+      ],
+      "expo-status-bar"
     ],
     "experiments": {
       "typedRoutes": false

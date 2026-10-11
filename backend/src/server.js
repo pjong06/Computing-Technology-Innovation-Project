@@ -1,19 +1,28 @@
-const express = require("express");
+const path = require('path');
 
-const plantRoutes = require("./routes/plants");
-
-const app = express();
-const PORT = 3000;
-
-app.use(express.json());
-app.use("/api/plants", plantRoutes);
-
-app.get("/", (req, res) => {
-    res.json({
-        message: "Niah Biodiversity Backend API is running"
-    });
+require('dotenv').config({
+  path: path.join(__dirname, '..', '.env'),
 });
 
-app.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
+const express = require('express');
+const plantRoutes = require('./routes/plants');
+const identifyRoutes = require('./routes/identify');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(express.json());
+
+app.use('/api/plants', plantRoutes);
+app.use('/api/identify', identifyRoutes);
+
+app.get('/', (_req, res) => {
+  res.json({
+    success: true,
+    message: 'Niah Biodiversity Backend API is running',
+  });
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Backend server running on port ${PORT}`);
 });
