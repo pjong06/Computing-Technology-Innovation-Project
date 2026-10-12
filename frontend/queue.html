@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Observation approval queue - Niah Ground-Truth</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app">
+
+<!-- LEFT MENU (filled in by drawMenu in js/shared.js) -->
+<nav id="menu"></nav>
+
+<main>
+<section class="page on">
+  <h1>Observation <span>approval queue</span></h1>
+  <p class="lead" id="queue-count"></p>
+  <div class="bar">
+    <button class="btn ghost" onclick="resetQueue()">Reset queue</button>
+  </div>
+  <div class="split" id="queue-area">
+    <div id="queue-list"></div>
+    <div id="queue-detail"></div>
+  </div>
+  <div class="card" id="queue-empty" hidden>All caught up. New observations from the mobile app will appear here after they sync.</div>
+</section>
+</main>
+</div>
+
+<div id="toast" role="status"></div>
+
+<script src="js/shared.js"></script>
+<script src="js/queue.js"></script>
+</body>
+</html>
