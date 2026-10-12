@@ -14,10 +14,13 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="new-record" />
         <Stack.Screen name="save-confirm" />
-        <Stack.Screen name="scan-qr" />
-        <Stack.Screen name="manual-qr" />
-        <Stack.Screen name="plant-qr" />
         <Stack.Screen name="plant-detail" />
+        <Stack.Screen name="plant-tag" />
+        <Stack.Screen name="add-observation" />
+        <Stack.Screen name="record-route" />
+        <Stack.Screen name="link-route" />
+        <Stack.Screen name="offline-map" />
+        <Stack.Screen name="manual-qr" />
       </Stack>
       <Toast />
     </>

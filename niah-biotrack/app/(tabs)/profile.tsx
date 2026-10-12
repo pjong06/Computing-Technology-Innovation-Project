@@ -1,24 +1,27 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Platform, StatusBar } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Platform, StatusBar, Switch, Modal } from 'react-native';
 import { useRouter } from 'expo-router';
 import Toast from 'react-native-toast-message';
-import { useRecordStore } from '../../src/store/useRecordStore';
+import { useRecordStore, RecordStatus } from '../../src/store/useRecordStore';
 
 export default function ProfileScreen() {
   const router = useRouter();
   const records = useRecordStore((state) => state.records);
   const syncPending = useRecordStore((state) => state.syncPending);
-  const [lastSync, setLastSync] = useState('Never');
+
+  const [mobileDataPhotos, setMobileDataPhotos] = useState(true);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
+
+  const pendingCount = records.filter((r) => r.status === RecordStatus.PENDING).length;
+  const failedCount = records.filter((r) => r.status === RecordStatus.FAILED).length;
 
   const handleSync = () => {
     syncPending();
-    setLastSync('Just now');
     Toast.show({
       type: 'success',
-      text1: 'Sync Complete',
-      text2: 'Records successfully uploaded to the cloud.',
+      text1: 'Sync complete',
+      text2: '41 of 42 records on server.',
       position: 'bottom',
-      bottomOffset: 100,
     });
   };
 
@@ -28,23 +31,67 @@ export default function ProfileScreen() {
         <Text style={styles.title}>Profile</Text>
 
         <View style={styles.userCard}>
-          <Text style={styles.userName}>Brendan Noel</Text>
-          <Text style={styles.userRole}>Botanist</Text>
+          <View style={styles.avatarCircle}><Text style={styles.avatarInitials}>BN</Text></View>
+          <View style={{ marginLeft: 16 }}>
+            <Text style={styles.userName}>Brendan Noel</Text>
+            <Text style={styles.userRole}>Botanist · Sarawak Forestry Corporation</Text>
+          </View>
         </View>
 
-        <View style={styles.syncCard}>
-          <Text style={styles.syncCardTitle}>Database Sync</Text>
-          <Text style={{ marginVertical: 10, color: '#68776D' }}>Last Sync: {lastSync}</Text>
-          <Text style={styles.counterNumber}>{records.length} records</Text>
-          <TouchableOpacity style={styles.syncBtn} onPress={handleSync}>
-            <Text style={styles.syncBtnText}>Sync to Cloud</Text>
-          </TouchableOpacity>
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Sync</Text>
+          <View style={styles.infoRow}><Text style={styles.infoLabel}>Last sync</Text><Text style={styles.infoVal}>2 h ago</Text></View>
+          <View style={styles.infoRow}><Text style={styles.infoLabel}>Records on device</Text><Text style={styles.infoVal}>{records.length}</Text></View>
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Waiting to sync</Text>
+            <Text style={[styles.infoVal, { color: '#8C5E03' }]}>{pendingCount} pending {failedCount > 0 ? `· ${failedCount} failed` : ''}</Text>
+          </View>
+          <TouchableOpacity style={styles.syncBtn} onPress={handleSync}><Text style={styles.syncBtnText}>Sync now</Text></TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.logoutBtn} onPress={() => router.replace('/' as any)}>
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Field settings</Text>
+          <View style={[styles.infoRow, { alignItems: 'center' }]}>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={styles.infoLabel}>Use mobile data for photos</Text>
+              <Text style={styles.infoSub}>On by default · no Wi-Fi in the field</Text>
+            </View>
+            <Switch value={mobileDataPhotos} onValueChange={setMobileDataPhotos} trackColor={{ false: '#D0DCD3', true: '#213B2A' }} />
+          </View>
+        </View>
+
+        <TouchableOpacity style={styles.logoutBtn} onPress={() => setShowLogoutModal(true)}>
           <Text style={styles.logoutBtnText}>Log out</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Unsynced Safeguard Modal */}
+      <Modal visible={showLogoutModal} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Log out with unsynced records?</Text>
+            <Text style={styles.modalBody}>
+              {pendingCount + failedCount} records haven't synced yet. If you log out now they'll be deleted from this device.
+            </Text>
+            <TouchableOpacity
+              style={styles.modalPrimary}
+              onPress={() => {
+                syncPending();
+                setShowLogoutModal(false);
+                router.replace('/' as any);
+              }}
+            >
+              <Text style={styles.modalPrimaryText}>Sync first</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.modalSecondary} onPress={() => { setShowLogoutModal(false); router.replace('/' as any); }}>
+              <Text style={styles.modalSecondaryText}>Log out anyway</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.modalCancel} onPress={() => setShowLogoutModal(false)}>
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -52,15 +99,30 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F6F8F6', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
   container: { flex: 1, paddingHorizontal: 20, paddingTop: 16 },
-  title: { fontSize: 24, fontWeight: '700', color: '#1E2B22', marginBottom: 18 },
-  userCard: { alignItems: 'center', backgroundColor: '#FFFFFF', paddingVertical: 24, borderRadius: 24, borderWidth: 1.2, borderColor: '#E6ECE8', marginBottom: 18 },
-  userName: { fontSize: 19, fontWeight: '700', color: '#1E2B22' },
-  userRole: { fontSize: 13.5, color: '#68776D', marginTop: 3 },
-  syncCard: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 20, borderWidth: 1.2, borderColor: '#E6ECE8', marginBottom: 18 },
-  syncCardTitle: { fontSize: 18, fontWeight: '700', color: '#1E2B22' },
-  counterNumber: { fontSize: 22, fontWeight: '700', color: '#213B2A', marginBottom: 18 },
-  syncBtn: { backgroundColor: '#213B2A', height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center' },
-  syncBtnText: { color: '#FFFFFF', fontSize: 14.5, fontWeight: '700' },
+  title: { fontSize: 24, fontWeight: '800', color: '#1E2B22', marginBottom: 16 },
+  userCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', padding: 18, borderRadius: 24, borderWidth: 1.2, borderColor: '#E6ECE8', marginBottom: 14 },
+  avatarCircle: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#DDEAE2', justifyContent: 'center', alignItems: 'center' },
+  avatarInitials: { fontSize: 16, fontWeight: '800', color: '#213B2A' },
+  userName: { fontSize: 16, fontWeight: '700', color: '#1E2B22' },
+  userRole: { fontSize: 12, color: '#68776D', marginTop: 2 },
+  card: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 18, borderWidth: 1.2, borderColor: '#E6ECE8', marginBottom: 14 },
+  cardTitle: { fontSize: 15, fontWeight: '700', color: '#1E2B22', marginBottom: 12 },
+  infoRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
+  infoLabel: { fontSize: 13, color: '#68776D' },
+  infoSub: { fontSize: 11, color: '#88988D', marginTop: 2 },
+  infoVal: { fontSize: 13, fontWeight: '700', color: '#1E2B22' },
+  syncBtn: { backgroundColor: '#213B2A', height: 46, borderRadius: 23, justifyContent: 'center', alignItems: 'center', marginTop: 8 },
+  syncBtnText: { color: '#FFF', fontWeight: '700', fontSize: 13.5 },
   logoutBtn: { paddingVertical: 14, alignItems: 'center' },
-  logoutBtnText: { color: '#E02424', fontSize: 15, fontWeight: '700' },
+  logoutBtnText: { color: '#9B1C1C', fontWeight: '700', fontSize: 14 },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  modalCard: { backgroundColor: '#FFF', borderRadius: 26, padding: 24, width: '100%' },
+  modalTitle: { fontSize: 17, fontWeight: '800', color: '#1E2B22', marginBottom: 8 },
+  modalBody: { fontSize: 13, color: '#68776D', lineHeight: 18, marginBottom: 20 },
+  modalPrimary: { backgroundColor: '#213B2A', height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
+  modalPrimaryText: { color: '#FFF', fontWeight: '700' },
+  modalSecondary: { height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center', marginBottom: 4 },
+  modalSecondaryText: { color: '#9B1C1C', fontWeight: '700' },
+  modalCancel: { paddingVertical: 10, alignItems: 'center' },
+  modalCancelText: { color: '#68776D', fontWeight: '600' },
 });

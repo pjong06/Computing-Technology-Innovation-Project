@@ -3,9 +3,20 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export enum RecordStatus {
-  PENDING = 'Pending',
   SYNCED = 'Synced',
+  PENDING = 'Pending',
   FAILED = 'Failed',
+}
+
+export interface ObservationVisit {
+  id: string;
+  date: string;
+  recordedBy: string;
+  health: 'Healthy' | 'Stressed' | 'Damaged' | 'Dead';
+  stage: 'Bud' | 'Flowering' | 'Vegetative' | 'Fruiting';
+  measurement: string;
+  notes: string;
+  status: RecordStatus;
 }
 
 export interface PlantRecord {
@@ -16,44 +27,102 @@ export interface PlantRecord {
   family: string;
   height?: string;
   morphology?: string;
-  notes?: string;
+  description?: string;
   locationName: string;
   gpsCoordination: string;
-  photoUri?: string;
+  photoUris: string[];
   status: RecordStatus;
+  createdAt: string;
+  conservationStatus?: 'EN' | 'VU' | 'LC' | 'CR';
+  routeLength?: string;
+  walkingTime?: string;
+  observations: ObservationVisit[];
+}
+
+export interface RecordedRoute {
+  id: string;
+  distanceMeters: number;
+  durationSeconds: number;
+  endGps: string;
+  linkedPlantId?: string;
   createdAt: string;
 }
 
 interface RecordState {
   records: PlantRecord[];
-  addRecord: (record: Omit<PlantRecord, 'id' | 'createdAt'>) => void;
+  routes: RecordedRoute[];
+  activeDraftRoute: RecordedRoute | null;
+  addRecord: (record: Omit<PlantRecord, 'id' | 'createdAt' | 'observations'>) => PlantRecord;
+  addObservation: (plantRecordId: string, observation: Omit<ObservationVisit, 'id' | 'status'>) => void;
   syncPending: () => void;
-  clearRecords: () => void;
+  retryRecord: (id: string) => void;
+  saveRoute: (route: Omit<RecordedRoute, 'id' | 'createdAt'>) => RecordedRoute;
+  clearActiveDraftRoute: () => void;
+  clearAllData: () => void;
 }
 
 export const useRecordStore = create<RecordState>()(
   persist(
     (set) => ({
       records: [],
-      addRecord: (record) =>
-        set((state) => {
-          const newEntry: PlantRecord = {
-            ...record,
-            id: Date.now().toString(),
-            createdAt: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
-          };
-          return { records: [newEntry, ...state.records] };
-        }),
-      syncPending: () =>
+      routes: [],
+      activeDraftRoute: null,
+      addRecord: (recordData) => {
+        const newRecord: PlantRecord = {
+          ...recordData,
+          id: `rec-${Date.now()}`,
+          createdAt: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
+          observations: [],
+        };
+        set((state) => ({ records: [newRecord, ...state.records] }));
+        return newRecord;
+      },
+      addObservation: (plantRecordId, observationData) => {
         set((state) => ({
-          records: state.records.map((r) =>
-            r.status === RecordStatus.PENDING ? { ...r, status: RecordStatus.SYNCED } : r
-          ),
-        })),
-      clearRecords: () => set({ records: [] }),
+          records: state.records.map((r) => {
+            if (r.recordId === plantRecordId || r.id === plantRecordId) {
+              const newObs: ObservationVisit = {
+                ...observationData,
+                id: `obs-${Date.now()}`,
+                status: RecordStatus.PENDING,
+              };
+              return { ...r, observations: [newObs, ...r.observations] };
+            }
+            return r;
+          }),
+        }));
+      },
+      syncPending: () => {
+        set((state) => ({
+          records: state.records.map((r) => ({
+            ...r,
+            status: RecordStatus.SYNCED,
+            observations: r.observations.map((o) => ({ ...o, status: RecordStatus.SYNCED })),
+          })),
+        }));
+      },
+      retryRecord: (id) => {
+        set((state) => ({
+          records: state.records.map((r) => (r.id === id ? { ...r, status: RecordStatus.PENDING } : r)),
+        }));
+      },
+      saveRoute: (routeData) => {
+        const route: RecordedRoute = {
+          ...routeData,
+          id: `route-${Date.now()}`,
+          createdAt: new Date().toISOString(),
+        };
+        set((state) => ({
+          routes: [route, ...state.routes],
+          activeDraftRoute: route,
+        }));
+        return route;
+      },
+      clearActiveDraftRoute: () => set({ activeDraftRoute: null }),
+      clearAllData: () => set({ records: [], routes: [], activeDraftRoute: null }),
     }),
     {
-      name: 'niah-biotrack-storage',
+      name: 'niah-ground-truth-store',
       storage: createJSONStorage(() => AsyncStorage),
     }
   )
