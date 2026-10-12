@@ -133,9 +133,10 @@ export default function NewRecordScreen() {
   // Drop the AI fields a suggestion filled in, unless the user has since edited them.
   const clearSuggestionFields = () => {
     if (!selectedSpecies) return;
-    setScientificName((value) => (value === selectedSpecies.scientificName ? '' : value));
-    setCommonName((value) => (value === (selectedSpecies.commonName ?? '') ? '' : value));
-    setFamily((value) => (value === (selectedSpecies.family ?? '') ? '' : value));
+    const { scientificName: name, commonName: common, family: fam } = selectedSpecies;
+    setScientificName((value) => (value === name ? '' : value));
+    if (common) setCommonName((value) => (value === common ? '' : value));
+    if (fam) setFamily((value) => (value === fam ? '' : value));
   };
 
   const applyPhoto = (slot: PhotoSlot, asset: ImagePicker.ImagePickerAsset) => {
@@ -230,10 +231,12 @@ export default function NewRecordScreen() {
   };
 
   const selectSuggestion = (suggestion: SpeciesSuggestion) => {
+    clearSuggestionFields(); // undo the previously selected suggestion first
     setSelectedSpecies(suggestion);
     setScientificName(suggestion.scientificName);
-    setCommonName(suggestion.commonName ?? '');
-    setFamily(suggestion.family ?? '');
+    // Only overwrite what the suggestion actually knows; keep anything the user typed otherwise.
+    if (suggestion.commonName) setCommonName(suggestion.commonName);
+    if (suggestion.family) setFamily(suggestion.family);
     clearError('scientificName');
   };
 
