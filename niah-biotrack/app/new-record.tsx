@@ -9,12 +9,12 @@ import {
   Platform,
   StatusBar,
   Image,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Location from 'expo-location';
-import * as ImagePicker from 'expo-image-picker';
+import type * as ImagePicker from 'expo-image-picker';
+import { pickImageFromLibrary, takePhotoWithCamera, type PickImageResult } from '../src/utils/imagePicker';
 import Toast from 'react-native-toast-message';
 import { useRecordStore, RecordStatus } from '../src/store/useRecordStore';
 import { identifyPlant, IdentifyNetworkError, type SpeciesSuggestion } from '../src/services/identifyPlant';
@@ -36,13 +36,6 @@ interface GpsFix {
 type GpsStatus = 'acquiring' | 'ready' | 'unavailable';
 
 type FieldErrors = Partial<Record<'photos' | 'scientificName' | 'locationName' | 'gps', string>>;
-
-const PICKER_OPTIONS: ImagePicker.ImagePickerOptions = {
-  mediaTypes: ['images'],
-  allowsEditing: true,
-  aspect: [4, 3],
-  quality: 0.8,
-};
 
 export default function NewRecordScreen() {
   const router = useRouter();
@@ -147,57 +140,45 @@ export default function NewRecordScreen() {
     if (fam) setFamily((value) => (value === fam ? '' : value));
   };
 
-  const applyPhoto = (slot: PhotoSlot, asset: ImagePicker.ImagePickerAsset) => {
-    // Suggestions belong to the old photo, so cancel any request and reset them.
+  // Setting or removing any photo invalidates the AI suggestions for the old one.
+  const setSlotPhoto = (slot: PhotoSlot, asset: ImagePicker.ImagePickerAsset | null) => {
     identifyRequest.current?.abort();
     identifyRequest.current = null;
     clearSuggestionFields();
 
     setPhotos((prev) => ({ ...prev, [slot]: asset }));
-    clearError('photos');
+    if (asset) clearError('photos');
     setSuggestions([]);
     setSelectedSpecies(null);
     setIdentifyMessage('');
     setIdentifying(false);
   };
 
-  const takePhoto = async (slot: PhotoSlot) => {
-    try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        Toast.show({
-          type: 'error',
-          text1: 'Camera permission needed',
-          text2: 'Allow camera access to take a plant photo.',
-        });
-        return;
-      }
-      const res = await ImagePicker.launchCameraAsync(PICKER_OPTIONS);
-      if (!res.canceled && res.assets?.[0]) {
-        applyPhoto(slot, res.assets[0]);
-      }
-    } catch {
-      Toast.show({ type: 'error', text1: 'Camera unavailable', text2: 'The camera could not be opened.' });
+  // Photo source choice is shown inline under the grid (not in an Alert),
+  // so the picker is never presented while a native alert is closing.
+  const [activeSlot, setActiveSlot] = useState<PhotoSlot | null>(null);
+
+  const handlePickResult = (slot: PhotoSlot, result: PickImageResult) => {
+    if (result.status === 'picked') {
+      setSlotPhoto(slot, result.asset);
+      setActiveSlot(null);
+    } else if (result.status === 'permission-denied') {
+      Toast.show({
+        type: 'error',
+        text1: 'Camera permission needed',
+        text2: 'Allow camera access for Expo Go in Settings.',
+      });
+    } else if (result.status === 'error') {
+      Toast.show({ type: 'error', text1: 'Could not open', text2: 'The camera or photo library could not be opened.' });
     }
   };
 
-  const choosePhoto = async (slot: PhotoSlot) => {
-    try {
-      const res = await ImagePicker.launchImageLibraryAsync(PICKER_OPTIONS);
-      if (!res.canceled && res.assets?.[0]) {
-        applyPhoto(slot, res.assets[0]);
-      }
-    } catch {
-      Toast.show({ type: 'error', text1: 'Photos unavailable', text2: 'The photo library could not be opened.' });
-    }
-  };
+  const takePhoto = async (slot: PhotoSlot) => handlePickResult(slot, await takePhotoWithCamera());
+  const choosePhoto = async (slot: PhotoSlot) => handlePickResult(slot, await pickImageFromLibrary());
 
-  const pickPhotoForSlot = (slot: PhotoSlot) => {
-    Alert.alert('Attach Photo', `Select image source for ${slot}`, [
-      { text: 'Camera', onPress: () => takePhoto(slot) },
-      { text: 'Gallery', onPress: () => choosePhoto(slot) },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+  const removePhoto = (slot: PhotoSlot) => {
+    setSlotPhoto(slot, null);
+    setActiveSlot(null);
   };
 
   const handleIdentify = async () => {
@@ -312,7 +293,11 @@ export default function NewRecordScreen() {
           {PHOTO_SLOTS.map((slot) => {
             const asset = photos[slot];
             return (
-              <TouchableOpacity key={slot} style={styles.photoBox} onPress={() => pickPhotoForSlot(slot)}>
+              <TouchableOpacity
+                key={slot}
+                style={[styles.photoBox, activeSlot === slot && styles.photoBoxActive]}
+                onPress={() => setActiveSlot((current) => (current === slot ? null : slot))}
+              >
                 {asset ? (
                   <Image source={{ uri: asset.uri }} style={styles.photoThumb} />
                 ) : (
@@ -325,6 +310,30 @@ export default function NewRecordScreen() {
             );
           })}
         </View>
+
+        {activeSlot && (
+          <View style={styles.sourcePanel}>
+            <Text style={styles.sourceTitle}>{activeSlot} photo</Text>
+            <View style={styles.sourceRow}>
+              <TouchableOpacity style={styles.sourceBtn} activeOpacity={0.85} onPress={() => takePhoto(activeSlot)}>
+                <Text style={styles.sourceBtnText}>Take photo</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.sourceBtn} activeOpacity={0.85} onPress={() => choosePhoto(activeSlot)}>
+                <Text style={styles.sourceBtnText}>Choose from gallery</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.sourceRow}>
+              {photos[activeSlot] && (
+                <TouchableOpacity onPress={() => removePhoto(activeSlot)} hitSlop={8}>
+                  <Text style={styles.sourceRemove}>Remove photo</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={() => setActiveSlot(null)} hitSlop={8} style={styles.sourceCancel}>
+                <Text style={styles.sourceCancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
         {errors.photos && <Text style={styles.errorText}>{errors.photos}</Text>}
 
         {identifyPhoto && (
@@ -548,7 +557,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     overflow: 'hidden',
   },
+  photoBoxActive: { borderColor: '#213B2A', borderWidth: 2 },
   photoThumb: { width: '100%', height: '100%' },
+  sourcePanel: { backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1.2, borderColor: '#E6ECE8', padding: 14, marginBottom: 14 },
+  sourceTitle: { fontSize: 13, fontWeight: '700', color: '#213B2A', marginBottom: 10 },
+  sourceRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  sourceBtn: { flex: 1, height: 44, borderRadius: 22, backgroundColor: '#213B2A', justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
+  sourceBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 13 },
+  sourceRemove: { color: '#9B1C1C', fontWeight: '700', fontSize: 13 },
+  sourceCancel: { marginLeft: 'auto' },
+  sourceCancelText: { color: '#4E6254', fontWeight: '700', fontSize: 13 },
   photoSlotText: { fontSize: 10, fontWeight: '600', color: '#3A5243', marginTop: 4 },
   aiSection: { marginBottom: 16 },
   identifyBtn: {
