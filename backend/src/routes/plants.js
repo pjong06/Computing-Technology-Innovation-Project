@@ -221,12 +221,17 @@ router.put("/:id", denyUnspecifiedMutation, (req, res) => {
 
         const { latitude, longitude } = req.body;
 
-    if (
-        latitude < -90 ||
-        latitude > 90 ||
-        longitude < -180 ||
-        longitude > 180
-    ) {
+if (
+    typeof latitude !== "number" ||
+    typeof longitude !== "number" ||
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    longitude < -180 ||
+    longitude > 180
+) {
+    
         return res.status(400).json({
             message: "Invalid GPS coordinates"
         });
@@ -272,32 +277,6 @@ router.delete("/:id", denyUnspecifiedMutation, (req, res) => {
     });
 });
 
-// UPLOAD a photo for a plant
-router.post("/:id/photo", requireRole("botanist"), requireOwnPlant, upload.single("photo"), (req, res) => {
-    const plantId = parseInt(req.params.id);
-
-    const plant = plants.find(p => p.plant_id === plantId);
-
-    if (!plant) {
-        return res.status(404).json({
-            message: "Plant not found"
-        });
-    }
-
-    if (!req.file) {
-        return res.status(400).json({
-            message: "No photo uploaded"
-        });
-    }
-
-    plant.photo = req.file.filename;
-
-    res.status(200).json({
-        message: "Photo uploaded successfully",
-        plant_id: plantId,
-        photo: req.file.filename
-    });
-});
 
 // GENERATE QR code for a plant
 router.get("/:id/qr", requireRole("botanist"), async (req, res) => {

@@ -12,6 +12,7 @@ const { publicClient } = require("./config/supabase");
 const knowledgeRoutes = require("./routes/knowledge");
 const { requireAuth, requireRole } = require("./middleware/auth");
 const qrBatchRoutes = require('./routes/qrBatch');
+const observationRoutes = require('./routes/observations');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -23,6 +24,7 @@ app.use('/api/identify', identifyRoutes);
 app.use('/api/iot', requireAuth, requireRole('officer'), iotRoutes);
 app.use('/api/knowledge', knowledgeRoutes);
 app.use('/api/qr-batch', qrBatchRoutes);
+app.use('/api/observations', observationRoutes);
 
 app.get('/', (_req, res) => {
   res.json({
@@ -54,6 +56,27 @@ function currentUser(req, res) {
 
 app.get('/api/me', requireAuth, currentUser);
 app.get('/api/auth/me', requireAuth, currentUser);
+
+// Handle upload validation errors
+app.use((err, req, res, next) => {
+    if (err.code === "LIMIT_FILE_SIZE") {
+        return res.status(413).json({
+            message: "Photo must be 5 MB or smaller"
+        });
+    }
+
+    if (err.message === "Only JPEG, PNG and WebP images are allowed") {
+        return res.status(400).json({
+            message: err.message
+        });
+    }
+
+    console.error("Backend error:", err);
+
+    return res.status(500).json({
+        message: "Internal server error"
+    });
+});
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Backend server running on port ${PORT}`);
