@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Platform, StatusBar, Switch, Modal } from 'react-native';
 import { useRouter } from 'expo-router';
-import Toast from 'react-native-toast-message';
 import { useRecordStore, RecordStatus } from '../../src/store/useRecordStore';
 
 export default function ProfileScreen() {
@@ -15,38 +14,31 @@ export default function ProfileScreen() {
   const pendingCount = records.filter((r) => r.status === RecordStatus.PENDING).length;
   const failedCount = records.filter((r) => r.status === RecordStatus.FAILED).length;
 
-  const handleSync = () => {
-    syncPending();
-    Toast.show({
-      type: 'success',
-      text1: 'Sync complete',
-      text2: '41 of 42 records on server.',
-      position: 'bottom',
-    });
-  };
-
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
         <Text style={styles.title}>Profile</Text>
 
+        {/* No sign-in backend yet, so there is no real account to show. */}
         <View style={styles.userCard}>
-          <View style={styles.avatarCircle}><Text style={styles.avatarInitials}>BN</Text></View>
-          <View style={{ marginLeft: 16 }}>
-            <Text style={styles.userName}>Brendan Noel</Text>
-            <Text style={styles.userRole}>Botanist · Sarawak Forestry Corporation</Text>
+          <View style={styles.avatarCircle}><Text style={styles.avatarInitials}>?</Text></View>
+          <View style={{ marginLeft: 16, flex: 1 }}>
+            <Text style={styles.userName}>Account details not available yet</Text>
+            <Text style={styles.userRole}>Sign-in is not connected to the server yet.</Text>
           </View>
         </View>
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Sync</Text>
-          <View style={styles.infoRow}><Text style={styles.infoLabel}>Last sync</Text><Text style={styles.infoVal}>2 h ago</Text></View>
+          <View style={styles.infoRow}><Text style={styles.infoLabel}>Last sync</Text><Text style={styles.infoVal}>Not available yet</Text></View>
           <View style={styles.infoRow}><Text style={styles.infoLabel}>Records on device</Text><Text style={styles.infoVal}>{records.length}</Text></View>
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Waiting to sync</Text>
             <Text style={[styles.infoVal, { color: '#8C5E03' }]}>{pendingCount} pending {failedCount > 0 ? `· ${failedCount} failed` : ''}</Text>
           </View>
-          <TouchableOpacity style={styles.syncBtn} onPress={handleSync}><Text style={styles.syncBtnText}>Sync now</Text></TouchableOpacity>
+          <View style={[styles.syncBtn, styles.syncBtnDisabled]}>
+            <Text style={styles.syncBtnText}>Upload to server not available yet</Text>
+          </View>
         </View>
 
         <View style={styles.card}>
@@ -112,6 +104,7 @@ const styles = StyleSheet.create({
   infoSub: { fontSize: 11, color: '#88988D', marginTop: 2 },
   infoVal: { fontSize: 13, fontWeight: '700', color: '#1E2B22' },
   syncBtn: { backgroundColor: '#213B2A', height: 46, borderRadius: 23, justifyContent: 'center', alignItems: 'center', marginTop: 8 },
+  syncBtnDisabled: { backgroundColor: '#9AAA9F' },
   syncBtnText: { color: '#FFF', fontWeight: '700', fontSize: 13.5 },
   logoutBtn: { paddingVertical: 14, alignItems: 'center' },
   logoutBtnText: { color: '#9B1C1C', fontWeight: '700', fontSize: 14 },
