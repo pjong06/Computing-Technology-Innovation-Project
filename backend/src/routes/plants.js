@@ -36,25 +36,51 @@ function canReadPlant(plant, profile) {
 }
 
 function visiblePlant(plant, profile) {
-    if (profile.role === "officer" ||
-        (profile.role === "botanist" && plant.registered_by === profile.id)) return plant;
-
-    const { registered_by, ...approvedData } = plant;
-    if (profile.role === "botanist" || profile.role === "researcher") return approvedData;
-
-    // Admins receive public fields only. Unknown species sensitivity hides GPS.
-    const publicData = {
-        plant_id: plant.plant_id,
-        scientific_name: plant.scientific_name,
-        common_name: plant.common_name
+    const result = {
+        id: plant.id,
+        client_record_id: plant.client_record_id,
+        species_id: plant.species_id,
+        scientific_name: plant.species?.scientific_name,
+        common_name: plant.species?.common_name,
+        qr_code_value: plant.qr_code_value,
+        plant_status: plant.plant_status,
+        registered_at: plant.registered_at
     };
-    if (plant.photo) publicData.photo = plant.photo;
-    if (plant.species_endangered === false) {
-        publicData.latitude = plant.latitude;
-        publicData.longitude = plant.longitude;
-        publicData.gps_accuracy_m = plant.gps_accuracy_m;
+
+    // Officers and record owners can see the full record
+    if (
+        profile.role === "officer" ||
+        (profile.role === "botanist" &&
+         plant.registered_by === profile.id)
+    ) {
+        return {
+            ...plant,
+            ...result
+        };
     }
-    return publicData;
+
+    // Other authorized staff can see approved records
+    if (
+        profile.role === "botanist" ||
+        profile.role === "researcher"
+    ) {
+        return {
+            ...result,
+            location: plant.location,
+            gps_accuracy_m: plant.gps_accuracy_m,
+            location_description: plant.location_description
+        };
+    }
+
+    // Admins receive approved public fields only.
+    // Exact GPS is withheld until a trusted classification
+    // explicitly confirms the species is non-endangered.
+    return {
+        id: result.id,
+        scientific_name: result.scientific_name,
+        common_name: result.common_name,
+        plant_status: result.plant_status
+    };
 }
 
 function denyUnspecifiedMutation(req, res) {
@@ -71,28 +97,88 @@ function requireOwnPlant(req, res, next) {
     next();
 }
 
-// GET all plants
-router.get("/", (req, res) => {
-    res.json(plants.filter(p => canReadPlant(p, req.profile)).map(p => visiblePlant(p, req.profile)));
+// GET all plants from Supabase
+router.get("/", async (req, res) => {
+    try {
+        const { data, error } = await req.supabase
+            .from("plants")
+            .select(`
+                *,
+                species:species_id (
+                    scientific_name,    
+                    common_name,
+                    conservation_status
+        )
+
+    `);
+        if (error) {
+            console.error("Supabase plants error:", error);
+            return res.status(500).json({
+                message: "Failed to fetch plants"
+            });
+        }
+
+        const visiblePlants = data
+            .filter(plant => canReadPlant(plant, req.profile))
+            .map(plant => visiblePlant(plant, req.profile));
+
+        res.json(visiblePlants);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({
+            message: "Server error"
+        });
+    }
 });
 
-// GET one plant by ID
-router.get("/:id", (req, res) => {
-    const plantId = parseInt(req.params.id);
+// GET one plant by ID from Supabase
+router.get("/:id", async (req, res) => {
+    const { id } = req.params;
 
-    const plant = plants.find(p => p.plant_id === plantId);
+    // Supabase plant IDs are UUIDs
+    const uuidPattern =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-    if (!plant) {
-        return res.status(404).json({
-            message: "Plant not found"
+    if (!uuidPattern.test(id)) {
+        return res.status(400).json({
+            message: "Invalid plant ID"
         });
     }
 
-    if (!canReadPlant(plant, req.profile)) {
-        return res.status(404).json({ message: "Plant not found" });
-    }
+    try {
+        const { data: plant, error } = await req.supabase
+            .from("plants")
+            .select(`
+                *,
+                species:species_id (
+                    scientific_name,
+                    common_name,
+                    conservation_status
+                )
+            `)
+            .eq("id", id)
+            .maybeSingle();
 
-    res.json(visiblePlant(plant, req.profile));
+        if (error) {
+            console.error("Failed to fetch plant:", error);
+            return res.status(500).json({
+                message: "Failed to fetch plant"
+            });
+        }
+
+        if (!plant || !canReadPlant(plant, req.profile)) {
+            return res.status(404).json({
+                message: "Plant not found"
+            });
+        }
+
+        return res.json(visiblePlant(plant, req.profile));
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({
+            message: "Server error"
+        });
+    }
 });
 
 // CREATE a new plant
@@ -215,46 +301,83 @@ router.post("/:id/photo", requireRole("botanist"), requireOwnPlant, upload.singl
 
 // GENERATE QR code for a plant
 router.get("/:id/qr", requireRole("botanist"), async (req, res) => {
-    const plantId = parseInt(req.params.id);
-
-    const plant = plants.find(p => p.plant_id === plantId);
-
-    if (!plant) {
-        return res.status(404).json({
-            message: "Plant not found"
-        });
-    }
+    const { id } = req.params;
 
     try {
-        const qr = await generatePlantQR(plantId);
+        const { data: plant, error } = await req.supabase
+            .from("plants")
+            .select("id, qr_code_value, registered_by")
+            .eq("id", id)
+            .maybeSingle();
 
-        res.json({
+        if (error) {
+            console.error("Failed to fetch plant:", error);
+            return res.status(500).json({
+                message: "Failed to fetch plant"
+            });
+        }
+
+        if (!plant) {
+            return res.status(404).json({
+                message: "Plant not found"
+            });
+        }
+
+        // Only the botanist who registered the plant can generate its QR
+        if (plant.registered_by !== req.user.id) {
+            return res.status(403).json({
+                message: "Only the plant owner can generate its QR code"
+            });
+        }
+
+        const qr = await generatePlantQR(plant.qr_code_value);
+
+        return res.json({
             message: "QR code generated successfully",
-            plant_id: plantId,
+            plant_id: plant.id,
             qr_value: qr.qrValue,
             qr_code: qr.qrCode
         });
     } catch (error) {
-        res.status(500).json({
+        console.error("QR generation error:", error);
+        return res.status(500).json({
             message: "Failed to generate QR code"
         });
     }
 });
 
-// DISPLAY QR code as an image
+// DISPLAY QR code as a PNG image
 router.get("/:id/qr/image", requireRole("botanist"), async (req, res) => {
-    const plantId = parseInt(req.params.id);
-
-    const plant = plants.find(p => p.plant_id === plantId);
-
-    if (!plant) {
-        return res.status(404).json({
-            message: "Plant not found"
-        });
-    }
+    const { id } = req.params;
 
     try {
-        const qr = await generatePlantQR(plantId);
+        const { data: plant, error } = await req.supabase
+            .from("plants")
+            .select("id, qr_code_value, registered_by")
+            .eq("id", id)
+            .maybeSingle();
+
+        if (error) {
+            console.error("Failed to fetch plant:", error);
+            return res.status(500).json({
+                message: "Failed to fetch plant"
+            });
+        }
+
+        if (!plant) {
+            return res.status(404).json({
+                message: "Plant not found"
+            });
+        }
+
+        // Only the botanist who registered the plant can access its QR image
+        if (plant.registered_by !== req.user.id) {
+            return res.status(403).json({
+                message: "Only the plant owner can access its QR code"
+            });
+        }
+
+        const qr = await generatePlantQR(plant.qr_code_value);
 
         const base64Data = qr.qrCode.replace(
             /^data:image\/png;base64,/,
@@ -264,10 +387,12 @@ router.get("/:id/qr/image", requireRole("botanist"), async (req, res) => {
         const imageBuffer = Buffer.from(base64Data, "base64");
 
         res.setHeader("Content-Type", "image/png");
-        res.send(imageBuffer);
+        return res.send(imageBuffer);
+
     } catch (error) {
-        res.status(500).json({
-            message: "Failed to generate QR code"
+        console.error("QR image error:", error);
+        return res.status(500).json({
+            message: "Failed to generate QR image"
         });
     }
 });

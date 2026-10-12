@@ -11,6 +11,7 @@ const iotRoutes = require('./routes/iot');
 const { publicClient } = require("./config/supabase");
 const knowledgeRoutes = require("./routes/knowledge");
 const { requireAuth, requireRole } = require("./middleware/auth");
+const qrBatchRoutes = require('./routes/qrBatch');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -21,6 +22,7 @@ app.use('/api/plants', plantRoutes);
 app.use('/api/identify', identifyRoutes);
 app.use('/api/iot', requireAuth, requireRole('officer'), iotRoutes);
 app.use('/api/knowledge', knowledgeRoutes);
+app.use('/api/qr-batch', qrBatchRoutes);
 
 app.get('/', (_req, res) => {
   res.json({
