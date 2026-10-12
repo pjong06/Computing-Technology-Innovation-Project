@@ -19,10 +19,18 @@ import * as ImagePicker from 'expo-image-picker';
 import Toast from 'react-native-toast-message';
 import { useRecordStore, RecordStatus } from '../src/store/useRecordStore';
 import { identifyPlant, IdentifyNetworkError, type SpeciesSuggestion } from '../src/services/identifyPlant';
+import { formatCoordinates, describeAccuracy } from '../src/utils/formatCoordinates';
 
 const PHOTO_SLOTS = ['Whole plant', 'Leaf', 'Flower', 'Bark'] as const;
 type PhotoSlot = (typeof PHOTO_SLOTS)[number];
 type SlotPhotos = Record<PhotoSlot, ImagePicker.ImagePickerAsset | null>;
+
+interface GpsFix {
+  latitude: number;
+  longitude: number;
+  accuracyM: number | null;
+}
+type GpsStatus = 'acquiring' | 'ready' | 'unavailable';
 
 const PICKER_OPTIONS: ImagePicker.ImagePickerOptions = {
   mediaTypes: ['images'],
@@ -48,8 +56,11 @@ export default function NewRecordScreen() {
   const [height, setHeight] = useState('');
   const [morphology, setMorphology] = useState('');
   const [locationName, setLocationName] = useState('');
-  const [gpsCoordination, setGpsCoordination] = useState('Fetching GPS...');
-  const [isGpsGood, setIsGpsGood] = useState(false);
+  const [gpsFix, setGpsFix] = useState<GpsFix | null>(null);
+  const [gpsStatus, setGpsStatus] = useState<GpsStatus>('acquiring');
+  const [gpsError, setGpsError] = useState('');
+  const screenActive = useRef(true);
+  const gpsRequestId = useRef(0);
 
   const identifyRequest = useRef<AbortController | null>(null);
   const [suggestions, setSuggestions] = useState<SpeciesSuggestion[]>([]);
@@ -62,32 +73,53 @@ export default function NewRecordScreen() {
   const identifyPhoto = identifySlot ? photos[identifySlot] : null;
 
   useEffect(() => {
+    screenActive.current = true;
     fetchLocation();
 
     return () => {
+      screenActive.current = false;
       identifyRequest.current?.abort();
       identifyRequest.current = null;
     };
   }, []);
 
   const fetchLocation = async () => {
+    // Only the latest request may update state, so a slow earlier fix can't overwrite a newer one.
+    const requestId = ++gpsRequestId.current;
+    const isCurrent = () => screenActive.current && requestId === gpsRequestId.current;
+
+    const markUnavailable = (reason: string) => {
+      if (!isCurrent()) return;
+      setGpsFix(null);
+      setGpsError(reason);
+      setGpsStatus('unavailable');
+    };
+
+    setGpsStatus('acquiring');
+    setGpsError('');
+
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        setGpsCoordination('3.2247° N, 113.7631° E (±8 m)');
-        setIsGpsGood(true);
+        markUnavailable('Location permission is off for this app.');
         return;
       }
-      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      setGpsCoordination(
-        `${loc.coords.latitude.toFixed(4)}° N, ${loc.coords.longitude.toFixed(4)}° E (±${Math.round(
-          loc.coords.accuracy || 6
-        )} m)`
-      );
-      setIsGpsGood(true);
+      if (!(await Location.hasServicesEnabledAsync())) {
+        markUnavailable('Location services are turned off on this device.');
+        return;
+      }
+
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      if (!isCurrent()) return;
+
+      setGpsFix({
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+        accuracyM: loc.coords.accuracy ?? null,
+      });
+      setGpsStatus('ready');
     } catch {
-      setGpsCoordination('3.2247° N, 113.7631° E (±8 m)');
-      setIsGpsGood(true);
+      markUnavailable('Could not get a GPS fix.');
     }
   };
 
@@ -211,6 +243,15 @@ export default function NewRecordScreen() {
       return;
     }
 
+    if (!gpsFix) {
+      Toast.show({
+        type: 'error',
+        text1: 'GPS required',
+        text2: 'Wait for a GPS fix, or tap the GPS card to retry.',
+      });
+      return;
+    }
+
     const photoList = PHOTO_SLOTS.map((slot) => photos[slot]?.uri).filter(Boolean) as string[];
     const recordId = `NP-2026-${Math.floor(1000 + Math.random() * 9000)}`;
 
@@ -222,7 +263,10 @@ export default function NewRecordScreen() {
       height: height.trim() || '0.5 m',
       morphology: morphology.trim() || 'Field specimen observation.',
       locationName: locationName.trim() || 'Niah Trail Point',
-      gpsCoordination,
+      latitude: gpsFix.latitude,
+      longitude: gpsFix.longitude,
+      gpsAccuracyM: gpsFix.accuracyM,
+      gpsCoordination: formatCoordinates(gpsFix.latitude, gpsFix.longitude, gpsFix.accuracyM),
       photoUris: photoList,
       status: RecordStatus.PENDING,
     });
@@ -392,14 +436,37 @@ export default function NewRecordScreen() {
         />
 
         <Text style={styles.fieldLabel}>GPS coordinates *</Text>
-        <View style={styles.gpsCard}>
-          <Text style={styles.gpsStatusBadge}>{isGpsGood ? '✓ Good fix' : 'Acquiring...'}</Text>
-          <Text style={styles.gpsCoords}>{gpsCoordination}</Text>
-          <Text style={styles.gpsDetails}>Works without signal · Captured current coordinates</Text>
-          <TouchableOpacity style={styles.refreshGpsBtn} onPress={fetchLocation}>
-            <Text style={styles.refreshGpsBtnText}>Update to current location</Text>
+        {gpsStatus === 'acquiring' && (
+          <View style={styles.gpsCard}>
+            <View style={styles.loadingRow}>
+              <ActivityIndicator color="#213B2A" />
+              <Text style={styles.gpsStatusPending}>Acquiring GPS fix...</Text>
+            </View>
+            <Text style={styles.gpsDetails}>This can take longer under dense canopy.</Text>
+          </View>
+        )}
+
+        {gpsStatus === 'unavailable' && (
+          <TouchableOpacity style={[styles.gpsCard, styles.gpsCardError]} activeOpacity={0.8} onPress={fetchLocation}>
+            <Text style={styles.gpsStatusError}>GPS unavailable – tap to retry</Text>
+            {gpsError !== '' && <Text style={styles.gpsDetails}>{gpsError}</Text>}
           </TouchableOpacity>
-        </View>
+        )}
+
+        {gpsStatus === 'ready' && gpsFix && (
+          <View style={styles.gpsCard}>
+            <Text style={styles.gpsStatusBadge}>{describeAccuracy(gpsFix.accuracyM)}</Text>
+            <Text style={styles.gpsCoords}>{formatCoordinates(gpsFix.latitude, gpsFix.longitude, null)}</Text>
+            <Text style={styles.gpsDetails}>
+              {gpsFix.accuracyM === null
+                ? 'The device did not report accuracy for this fix.'
+                : `Accuracy ±${Math.round(gpsFix.accuracyM)} m`}
+            </Text>
+            <TouchableOpacity style={styles.refreshGpsBtn} onPress={fetchLocation}>
+              <Text style={styles.refreshGpsBtnText}>Update to current location</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         <TouchableOpacity style={styles.saveBtn} activeOpacity={0.85} onPress={handleSave}>
           <Text style={styles.saveBtnText}>Save record</Text>
@@ -502,7 +569,10 @@ const styles = StyleSheet.create({
     borderColor: '#E6ECE8',
     marginBottom: 24,
   },
+  gpsCardError: { borderColor: '#F0C2C2', backgroundColor: '#FFF8F8' },
   gpsStatusBadge: { color: '#215A36', fontWeight: '700', fontSize: 12, marginBottom: 4 },
+  gpsStatusPending: { color: '#213B2A', fontWeight: '700', fontSize: 13 },
+  gpsStatusError: { color: '#9B1C1C', fontWeight: '700', fontSize: 14, marginBottom: 4 },
   gpsCoords: { fontSize: 14, fontWeight: '800', color: '#1E2B22', marginBottom: 4 },
   gpsDetails: { fontSize: 11.5, color: '#7E8F83', marginBottom: 12 },
   refreshGpsBtn: {
