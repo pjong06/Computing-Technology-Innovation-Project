@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, Platform, StatusBar } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useRecordStore } from '../src/store/useRecordStore';
+import FormScrollView from '../src/components/FormScrollView';
 
 export default function ManualQREntryScreen() {
   const router = useRouter();
@@ -25,7 +26,7 @@ export default function ManualQREntryScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.container}>
+      <FormScrollView contentContainerStyle={styles.container}>
         <TouchableOpacity onPress={() => router.back()} style={{ marginBottom: 20 }}>
           <Text style={styles.backChevron}>‹ Back</Text>
         </TouchableOpacity>
@@ -44,6 +45,9 @@ export default function ManualQREntryScreen() {
             if (hasError) setHasError(false);
           }}
           autoCapitalize="characters"
+          autoCorrect={false}
+          returnKeyType="done"
+          onSubmitEditing={handleLookup}
         />
 
         <Text style={styles.caption}>ℹ Printed below the QR code on the physical plant tag.</Text>
@@ -68,14 +72,14 @@ export default function ManualQREntryScreen() {
         <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.replace('/(tabs)/scan' as any)}>
           <Text style={styles.secondaryBtnText}>Scan QR code instead</Text>
         </TouchableOpacity>
-      </View>
+      </FormScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F6F8F6', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
-  container: { flex: 1, padding: 24, justifyContent: 'center' },
+  container: { flexGrow: 1, padding: 24, justifyContent: 'center' },
   backChevron: { fontSize: 18, color: '#213B2A', fontWeight: '700' },
   title: { fontSize: 24, fontWeight: '800', color: '#1E2B22' },
   subtitle: { fontSize: 13, color: '#68776D', marginTop: 4, marginBottom: 24, lineHeight: 18 },

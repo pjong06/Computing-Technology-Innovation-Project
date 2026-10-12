@@ -4,7 +4,6 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  ScrollView,
   StyleSheet,
   SafeAreaView,
   Platform,
@@ -20,6 +19,10 @@ import Toast from 'react-native-toast-message';
 import { useRecordStore, RecordStatus } from '../src/store/useRecordStore';
 import { identifyPlant, IdentifyNetworkError, type SpeciesSuggestion } from '../src/services/identifyPlant';
 import { formatCoordinates, describeAccuracy } from '../src/utils/formatCoordinates';
+import FormScrollView from '../src/components/FormScrollView';
+import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
+
+const DONE_BAR_ID = 'new-record-done';
 
 const PHOTO_SLOTS = ['Whole plant', 'Leaf', 'Flower', 'Bark'] as const;
 type PhotoSlot = (typeof PHOTO_SLOTS)[number];
@@ -63,6 +66,11 @@ export default function NewRecordScreen() {
   const [gpsError, setGpsError] = useState('');
   const screenActive = useRef(true);
   const gpsRequestId = useRef(0);
+
+  // Lets the keyboard's "next" key move through the form in order.
+  const commonNameRef = useRef<TextInput>(null);
+  const familyRef = useRef<TextInput>(null);
+  const heightRef = useRef<TextInput>(null);
 
   const [errors, setErrors] = useState<FieldErrors>({});
   const clearError = (field: keyof FieldErrors) =>
@@ -294,11 +302,7 @@ export default function NewRecordScreen() {
         <View style={styles.navSide} />
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
+      <FormScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionLabel}>PHOTOS *</Text>
           <Text style={styles.sectionSubLabel}>min. 1 required</Text>
@@ -390,35 +394,50 @@ export default function NewRecordScreen() {
           placeholderTextColor="#8C9A91"
           value={scientificName}
           onChangeText={handleScientificNameChange}
+          autoCorrect={false}
+          returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => commonNameRef.current?.focus()}
         />
         {errors.scientificName && <Text style={styles.errorText}>{errors.scientificName}</Text>}
 
         <Text style={styles.fieldLabel}>Common name</Text>
         <TextInput
+          ref={commonNameRef}
           style={styles.input}
           placeholder="e.g. Pitcher plant"
           placeholderTextColor="#8C9A91"
           value={commonName}
           onChangeText={setCommonName}
+          returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => familyRef.current?.focus()}
         />
 
         <Text style={styles.fieldLabel}>Family</Text>
         <TextInput
+          ref={familyRef}
           style={styles.input}
           placeholder="e.g. Nepenthaceae"
           placeholderTextColor="#8C9A91"
           value={family}
           onChangeText={setFamily}
+          autoCorrect={false}
+          returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => heightRef.current?.focus()}
         />
 
         <Text style={styles.fieldLabel}>Height / diameter (m)</Text>
         <TextInput
+          ref={heightRef}
           style={styles.input}
           placeholder="e.g. 0.4"
           placeholderTextColor="#8C9A91"
-          keyboardType="numeric"
+          keyboardType="decimal-pad"
           value={height}
           onChangeText={setHeight}
+          inputAccessoryViewID={DONE_BAR_ID}
         />
 
         <Text style={styles.fieldLabel}>Morphological characteristics</Text>
@@ -429,6 +448,7 @@ export default function NewRecordScreen() {
           multiline
           value={morphology}
           onChangeText={setMorphology}
+          inputAccessoryViewID={DONE_BAR_ID}
         />
 
         <Text style={styles.sectionLabel}>LOCATION</Text>
@@ -439,6 +459,7 @@ export default function NewRecordScreen() {
           placeholderTextColor="#8C9A91"
           value={locationName}
           onChangeText={handleLocationNameChange}
+          returnKeyType="done"
         />
         {errors.locationName && <Text style={styles.errorText}>{errors.locationName}</Text>}
 
@@ -483,7 +504,8 @@ export default function NewRecordScreen() {
         <TouchableOpacity style={styles.saveBtn} activeOpacity={0.85} onPress={handleSave}>
           <Text style={styles.saveBtnText}>Save record</Text>
         </TouchableOpacity>
-      </ScrollView>
+      </FormScrollView>
+      <KeyboardDoneBar nativeID={DONE_BAR_ID} />
     </SafeAreaView>
   );
 }

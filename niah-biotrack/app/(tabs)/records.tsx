@@ -39,6 +39,9 @@ export default function RecordsScreen() {
           placeholderTextColor="#8C9A91"
           value={searchQuery}
           onChangeText={setSearchQuery}
+          autoCorrect={false}
+          returnKeyType="search"
+          clearButtonMode="while-editing"
         />
 
         <View style={styles.tabBar}>
@@ -75,6 +78,9 @@ export default function RecordsScreen() {
             data={filtered}
             keyExtractor={(item) => item.id}
             showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            automaticallyAdjustKeyboardInsets
             renderItem={({ item }) => {
               const badge = getStatusBadge(item.status);
               return (

@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, Platform, StatusBar } from 'react-native';
 import { useRouter } from 'expo-router';
 import LeafLogo from '../src/components/LeafLogo';
+import FormScrollView from '../src/components/FormScrollView';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -9,6 +10,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState(false);
+  const passwordRef = useRef<TextInput>(null);
 
   const handleLogin = () => {
     if (!email.trim() || !password.trim()) {
@@ -21,7 +23,7 @@ export default function LoginScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.container}>
+      <FormScrollView contentContainerStyle={styles.container}>
         {/* Design Emblem */}
         <LeafLogo width={120} height={75} marginBottom={14} />
 
@@ -37,17 +39,25 @@ export default function LoginScreen() {
             value={email}
             onChangeText={setEmail}
             autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="email-address"
+            returnKeyType="next"
+            submitBehavior="submit"
+            onSubmitEditing={() => passwordRef.current?.focus()}
           />
 
           <Text style={styles.inputLabel}>Password</Text>
           <View style={styles.passwordWrapper}>
             <TextInput
+              ref={passwordRef}
               style={styles.passwordInput}
               placeholder="••••••••"
               placeholderTextColor="#8C9A91"
               secureTextEntry={!showPassword}
               value={password}
               onChangeText={setPassword}
+              returnKeyType="done"
+              onSubmitEditing={handleLogin}
             />
             <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
               <Text style={styles.eyeIcon}>{showPassword ? '👁️' : '👁️‍🗨️'}</Text>
@@ -75,14 +85,14 @@ export default function LoginScreen() {
             No account? Contact your Conservation Officer to be registered on the system.
           </Text>
         </View>
-      </View>
+      </FormScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F6F8F6', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
-  container: { flex: 1, paddingHorizontal: 24, justifyContent: 'center' },
+  container: { flexGrow: 1, paddingHorizontal: 24, paddingVertical: 32, justifyContent: 'center' },
   brandTitle: { fontSize: 26, fontWeight: '800', color: '#213B2A', textAlign: 'center' },
   brandSubtitle: { fontSize: 13.5, color: '#68776D', textAlign: 'center', marginBottom: 26 },
   form: { width: '100%' },

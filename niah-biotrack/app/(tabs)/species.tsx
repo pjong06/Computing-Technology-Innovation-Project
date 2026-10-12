@@ -37,6 +37,9 @@ export default function SpeciesScreen() {
           placeholderTextColor="#8C9A91"
           value={search}
           onChangeText={setSearch}
+          autoCorrect={false}
+          returnKeyType="search"
+          clearButtonMode="while-editing"
         />
 
         <View style={styles.filterRow}>
@@ -51,6 +54,9 @@ export default function SpeciesScreen() {
           data={filtered}
           keyExtractor={(item) => item.id}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          automaticallyAdjustKeyboardInsets
           renderItem={({ item }) => {
             const badge = getStatusColor(item.status);
             const matchedRecord = records.find((r) => r.scientificName === item.name);

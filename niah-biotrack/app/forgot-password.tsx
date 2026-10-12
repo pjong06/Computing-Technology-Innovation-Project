@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, Platform, StatusBar } from 'react-native';
 import { useRouter } from 'expo-router';
 import LeafLogo from '../src/components/LeafLogo';
+import FormScrollView from '../src/components/FormScrollView';
 
 export default function ForgotPasswordScreen() {
   const router = useRouter();
@@ -10,7 +11,7 @@ export default function ForgotPasswordScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.container}>
+      <FormScrollView contentContainerStyle={styles.container}>
         <LeafLogo width={100} height={64} marginBottom={14} />
 
         <Text style={styles.title}>Reset Password</Text>
@@ -29,6 +30,9 @@ export default function ForgotPasswordScreen() {
               value={email}
               onChangeText={setEmail}
               autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              returnKeyType="done"
             />
 
             <TouchableOpacity style={styles.primaryBtn} onPress={() => setSent(true)}>
@@ -61,14 +65,14 @@ export default function ForgotPasswordScreen() {
             </TouchableOpacity>
           </View>
         )}
-      </View>
+      </FormScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F6F8F6', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
-  container: { flex: 1, paddingHorizontal: 24, justifyContent: 'center' },
+  container: { flexGrow: 1, paddingHorizontal: 24, paddingVertical: 32, justifyContent: 'center' },
   title: { fontSize: 24, fontWeight: '800', color: '#213B2A', textAlign: 'center', marginBottom: 8 },
   subtitle: { fontSize: 13.5, color: '#68776D', textAlign: 'center', marginBottom: 24, lineHeight: 18 },
   label: { fontSize: 13, fontWeight: '700', color: '#213B2A', marginBottom: 6 },
