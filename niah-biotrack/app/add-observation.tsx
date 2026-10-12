@@ -3,19 +3,25 @@ import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, SafeAr
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import Toast from 'react-native-toast-message';
 import { useRecordStore } from '../src/store/useRecordStore';
+import PlantNotFound from '../src/components/PlantNotFound';
 
 export default function AddObservationScreen() {
   const router = useRouter();
-  const { id } = useLocalSearchParams();
+  const { id } = useLocalSearchParams<{ id?: string }>();
   const records = useRecordStore((state) => state.records);
   const addObservation = useRecordStore((state) => state.addObservation);
 
-  const matched = records.find((r) => r.recordId === id || r.id === id) || records[0];
+  const matched = records.find((r) => r.recordId === id || r.id === id);
 
   const [health, setHealth] = useState<'Healthy' | 'Stressed' | 'Damaged' | 'Dead'>('Healthy');
   const [stage, setStage] = useState<'Bud' | 'Flowering' | 'Vegetative' | 'Fruiting'>('Flowering');
   const [measurement, setMeasurement] = useState('0.62');
   const [notes, setNotes] = useState('');
+
+  // Hooks above must run on every render, so the not-found check comes after them.
+  if (!matched) {
+    return <PlantNotFound code={id} />;
+  }
 
   const handleSave = () => {
     addObservation(matched.recordId, {
