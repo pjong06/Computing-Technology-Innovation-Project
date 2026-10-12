@@ -34,7 +34,29 @@ interface GpsFix {
   longitude: number;
   accuracyM: number | null;
 }
-type GpsStatus = 'acquiring' | 'ready' | 'unavailable';
+type GpsStatus = 'acquiring' | 'ready' | 'unavailable' | 'timeout';
+
+const GPS_TIMEOUT_MS = 20_000;
+
+class GpsTimeoutError extends Error {}
+
+// Rejects if the device hasn't produced a fix in time. The underlying request
+// keeps running, but its late result is ignored (see isCurrent in fetchLocation).
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new GpsTimeoutError()), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
 
 type FieldErrors = Partial<Record<'photos' | 'scientificName' | 'locationName' | 'gps', string>>;
 
@@ -126,7 +148,10 @@ export default function NewRecordScreen() {
         return;
       }
 
-      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      const loc = await withTimeout(
+        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }),
+        GPS_TIMEOUT_MS
+      );
       if (!isCurrent()) return;
 
       setGpsFix({
@@ -136,7 +161,14 @@ export default function NewRecordScreen() {
       });
       setGpsStatus('ready');
       clearError('gps');
-    } catch {
+    } catch (error) {
+      if (error instanceof GpsTimeoutError) {
+        if (!isCurrent()) return;
+        setGpsFix(null);
+        setGpsError('');
+        setGpsStatus('timeout');
+        return;
+      }
       markUnavailable('Could not get a GPS fix.');
     }
   };
@@ -506,7 +538,20 @@ export default function NewRecordScreen() {
               <ActivityIndicator color="#213B2A" />
               <Text style={styles.gpsStatusPending}>Acquiring GPS fix...</Text>
             </View>
-            <Text style={styles.gpsDetails}>This can take longer under dense canopy.</Text>
+            <Text style={styles.gpsDetails}>This can take longer under dense canopy. Gives up after 20 seconds.</Text>
+            <TouchableOpacity style={styles.refreshGpsBtn} onPress={fetchLocation}>
+              <Text style={styles.refreshGpsBtnText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {gpsStatus === 'timeout' && (
+          <View style={[styles.gpsCard, styles.gpsCardError]}>
+            <Text style={styles.gpsStatusError}>Couldn't get a GPS fix – move to an open spot</Text>
+            <Text style={styles.gpsDetails}>No fix after 20 seconds. Step away from dense canopy or rock walls, then retry.</Text>
+            <TouchableOpacity style={styles.refreshGpsBtn} onPress={fetchLocation}>
+              <Text style={styles.refreshGpsBtnText}>Retry</Text>
+            </TouchableOpacity>
           </View>
         )}
 
