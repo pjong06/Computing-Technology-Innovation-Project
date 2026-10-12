@@ -137,9 +137,18 @@ export default function PlantDetailScreen() {
             <TouchableOpacity style={styles.actionBtn} onPress={() => router.push('/offline-map' as any)}>
               <Text style={styles.actionBtnText}>🧭 Navigate</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.actionBtn} onPress={() => router.push({ pathname: '/plant-tag', params: { id: matched.id } } as any)}>
-              <Text style={styles.actionBtnText}>🏷️ QR tag</Text>
-            </TouchableOpacity>
+            {matched.tagCode ? (
+              <View style={styles.actionBtn}>
+                <Text style={styles.actionBtnText}>🏷️ {matched.tagCode}</Text>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.actionBtn}
+                onPress={() => router.push({ pathname: '/attach-tag', params: { recordId: matched.id } } as any)}
+              >
+                <Text style={styles.actionBtnText}>🏷️ Attach tag</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Observation Visits Timeline */}
