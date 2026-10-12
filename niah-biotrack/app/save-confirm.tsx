@@ -8,7 +8,7 @@ export default function SaveConfirmScreen() {
   const { id } = useLocalSearchParams();
   const records = useRecordStore((state) => state.records);
 
-  const matched = records.find((r) => r.recordId === id || r.id === id) || records[0];
+  const matched = records.find((r) => r.id === id) || records[0];
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -26,13 +26,13 @@ export default function SaveConfirmScreen() {
             <Text style={styles.plantLoc}>📍 {matched?.locationName}</Text>
             <Text style={styles.plantGps}>{matched?.gpsCoordination}</Text>
             <Text style={styles.metaRow}>🕒 {matched?.createdAt} · {matched?.photoUris?.length || 0} photos</Text>
-            <Text style={styles.recordIdTag}># Record ID: {matched?.recordId} (reserved offline)</Text>
+            <Text style={styles.recordIdTag}>Tag: {matched?.tagCode ?? 'No tag attached'}</Text>
           </View>
 
-          <Text style={styles.helperNotice}>You can print the QR tag now - it stays valid after syncing.</Text>
+          <Text style={styles.helperNotice}>A pre-printed plant tag can be attached to this record later.</Text>
         </View>
 
-        <TouchableOpacity style={styles.primaryBtn} onPress={() => router.push({ pathname: '/plant-tag', params: { id: matched?.recordId } } as any)}>
+        <TouchableOpacity style={styles.primaryBtn} onPress={() => router.push({ pathname: '/plant-tag', params: { id: matched?.id } } as any)}>
           <Text style={styles.primaryBtnText}>Generate QR tag</Text>
         </TouchableOpacity>
 

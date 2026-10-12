@@ -146,7 +146,7 @@ export default function SpeciesScreen() {
             return (
               <TouchableOpacity
                 style={styles.speciesCard}
-                onPress={() => router.push({ pathname: '/plant-detail', params: { id: matchedRecord?.recordId || item.id, name: item.name } } as any)}
+                onPress={() => router.push({ pathname: '/plant-detail', params: { id: matchedRecord?.id || item.id, name: item.name } } as any)}
               >
                 <View style={{ flex: 1 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>

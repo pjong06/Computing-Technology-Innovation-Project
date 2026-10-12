@@ -87,7 +87,7 @@ export default function RecordsScreen() {
                 <TouchableOpacity
                   style={styles.recordCard}
                   activeOpacity={0.7}
-                  onPress={() => router.push({ pathname: '/plant-detail', params: { id: item.recordId } } as any)}
+                  onPress={() => router.push({ pathname: '/plant-detail', params: { id: item.id } } as any)}
                 >
                   <View style={{ flex: 1 }}>
                     <Text style={styles.recordSpecies}>{item.scientificName}</Text>

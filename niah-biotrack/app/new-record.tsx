@@ -310,10 +310,7 @@ export default function NewRecordScreen() {
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0 || !gpsFix) return;
 
-    const recordId = `NP-2026-${Math.floor(1000 + Math.random() * 9000)}`;
-
     const saved = addRecord({
-      recordId,
       scientificName: scientificName.trim(),
       commonName: commonName.trim(),
       family: family.trim(),
@@ -329,7 +326,7 @@ export default function NewRecordScreen() {
     });
 
     recordSaved.current = true; // the record now owns the stored photos
-    router.replace({ pathname: '/save-confirm', params: { id: saved.recordId } } as any);
+    router.replace({ pathname: '/save-confirm', params: { id: saved.id } } as any);
   };
 
   return (

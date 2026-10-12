@@ -52,14 +52,14 @@ export default function ScanScreen() {
     const code = rawCode.trim();
     const matched = records.find(
       (r) =>
-        r.recordId.toUpperCase() === code.toUpperCase() ||
+        (r.tagCode !== null && r.tagCode.toUpperCase() === code.toUpperCase()) ||
         r.scientificName.toLowerCase() === code.toLowerCase()
     );
 
     if (matched) {
       router.push({
         pathname: '/plant-detail',
-        params: { id: matched.recordId },
+        params: { id: matched.id },
       } as any);
     } else {
       router.push({

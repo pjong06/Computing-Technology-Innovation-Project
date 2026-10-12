@@ -15,7 +15,7 @@ export default function AddObservationScreen() {
   const records = useRecordStore((state) => state.records);
   const addObservation = useRecordStore((state) => state.addObservation);
 
-  const matched = records.find((r) => r.recordId === id || r.id === id);
+  const matched = records.find((r) => r.id === id);
 
   const [health, setHealth] = useState<'Healthy' | 'Stressed' | 'Damaged' | 'Dead'>('Healthy');
   const [stage, setStage] = useState<'Bud' | 'Flowering' | 'Vegetative' | 'Fruiting'>('Flowering');
@@ -28,7 +28,7 @@ export default function AddObservationScreen() {
   }
 
   const handleSave = () => {
-    addObservation(matched.recordId, {
+    addObservation(matched.id, {
       date: `${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} · 8:10 AM`,
       recordedBy: 'Brendan Noel',
       health,
@@ -57,7 +57,7 @@ export default function AddObservationScreen() {
 
       <FormScrollView contentContainerStyle={styles.container}>
         <Text style={styles.plantTitle}>{matched.scientificName}</Text>
-        <Text style={styles.metaSubtitle}>{matched.recordId} · {matched.locationName} visit #{matched.observations.length + 1}</Text>
+        <Text style={styles.metaSubtitle}>{matched.tagCode ?? 'No tag attached'} · {matched.locationName} visit #{matched.observations.length + 1}</Text>
 
         <Text style={styles.label}>Health status *</Text>
         <View style={styles.pillRow}>

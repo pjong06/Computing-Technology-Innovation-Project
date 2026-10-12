@@ -45,7 +45,7 @@ export default function PlantDetailScreen() {
   const [photoIndex, setPhotoIndex] = useState(0);
   const [brokenPhotos, setBrokenPhotos] = useState<Record<string, boolean>>({});
 
-  const matched = records.find((r) => r.recordId === id || r.id === id);
+  const matched = records.find((r) => r.id === id);
 
   if (!matched) {
     return <PlantNotFound code={id} />;
@@ -114,6 +114,7 @@ export default function PlantDetailScreen() {
             <DetailRow label="Common name" value={matched.commonName} />
             <DetailRow label="Family" value={matched.family} />
             <DetailRow label="Height / diameter" value={formatHeight(matched.height)} />
+            <DetailRow label="Plant tag" value={matched.tagCode ?? 'No tag attached'} />
           </View>
 
           <Text style={styles.heading}>MORPHOLOGICAL CHARACTERISTICS</Text>
@@ -136,7 +137,7 @@ export default function PlantDetailScreen() {
             <TouchableOpacity style={styles.actionBtn} onPress={() => router.push('/offline-map' as any)}>
               <Text style={styles.actionBtnText}>🧭 Navigate</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.actionBtn} onPress={() => router.push({ pathname: '/plant-tag', params: { id: matched.recordId } } as any)}>
+            <TouchableOpacity style={styles.actionBtn} onPress={() => router.push({ pathname: '/plant-tag', params: { id: matched.id } } as any)}>
               <Text style={styles.actionBtnText}>🏷️ QR tag</Text>
             </TouchableOpacity>
           </View>
@@ -171,7 +172,7 @@ export default function PlantDetailScreen() {
 
           <TouchableOpacity
             style={styles.addObsBtn}
-            onPress={() => router.push({ pathname: '/add-observation', params: { id: matched.recordId } } as any)}
+            onPress={() => router.push({ pathname: '/add-observation', params: { id: matched.id } } as any)}
           >
             <Text style={styles.addObsBtnText}>+ Add observation</Text>
           </TouchableOpacity>

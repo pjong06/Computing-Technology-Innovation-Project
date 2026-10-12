@@ -128,7 +128,7 @@ export default function HomeScreen() {
                     onPress={() =>
                       router.push({
                         pathname: '/plant-detail',
-                        params: { id: item.recordId },
+                        params: { id: item.id },
                       } as any)
                     }
                   >

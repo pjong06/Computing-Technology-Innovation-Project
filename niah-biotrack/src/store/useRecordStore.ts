@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { randomUUID } from 'expo-crypto';
 
 export enum RecordStatus {
   SYNCED = 'Synced',
@@ -20,8 +21,8 @@ export interface ObservationVisit {
 }
 
 export interface PlantRecord {
-  id: string;
-  recordId: string;
+  id: string; // UUID generated on the phone; stays the same after sync
+  tagCode: string | null; // code of the pre-printed tag on the plant; null until one is attached
   scientificName: string;
   commonName: string;
   family: string;
@@ -56,7 +57,7 @@ interface RecordState {
   records: PlantRecord[];
   routes: RecordedRoute[];
   activeDraftRoute: RecordedRoute | null;
-  addRecord: (record: Omit<PlantRecord, 'id' | 'createdAt' | 'observations'>) => PlantRecord;
+  addRecord: (record: Omit<PlantRecord, 'id' | 'tagCode' | 'createdAt' | 'observations'>) => PlantRecord;
   addObservation: (plantRecordId: string, observation: Omit<ObservationVisit, 'id' | 'status'>) => void;
   syncPending: () => void;
   retryRecord: (id: string) => void;
@@ -74,7 +75,9 @@ export const useRecordStore = create<RecordState>()(
       addRecord: (recordData) => {
         const newRecord: PlantRecord = {
           ...recordData,
-          id: `rec-${Date.now()}`,
+          id: randomUUID(),
+          tagCode: null, // set later from a pre-printed tag
+
           createdAt: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
           observations: [],
         };
@@ -84,7 +87,7 @@ export const useRecordStore = create<RecordState>()(
       addObservation: (plantRecordId, observationData) => {
         set((state) => ({
           records: state.records.map((r) => {
-            if (r.recordId === plantRecordId || r.id === plantRecordId) {
+            if (r.id === plantRecordId) {
               const newObs: ObservationVisit = {
                 ...observationData,
                 id: `obs-${Date.now()}`,
@@ -128,6 +131,16 @@ export const useRecordStore = create<RecordState>()(
     {
       name: 'niah-ground-truth-store',
       storage: createJSONStorage(() => AsyncStorage),
+      version: 1,
+      migrate: (persistedState, version) => {
+        const state = persistedState as { records?: Record<string, unknown>[] };
+        if (version < 1 && Array.isArray(state.records)) {
+          // v0 records carried a random "NP-2026-xxxx" recordId that was never on a
+          // physical tag. Drop it; those records simply have no tag attached.
+          state.records = state.records.map(({ recordId: _discarded, ...record }) => ({ ...record, tagCode: null }));
+        }
+        return state as unknown as RecordState;
+      },
     }
   )
 );
