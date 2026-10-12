@@ -1,13 +1,49 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, SafeAreaView, Platform, StatusBar } from 'react-native';
+import React, { useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  SafeAreaView,
+  FlatList,
+  Image,
+  useWindowDimensions,
+  type NativeSyntheticEvent,
+  type NativeScrollEvent,
+} from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useRecordStore, RecordStatus } from '../src/store/useRecordStore';
 import PlantNotFound from '../src/components/PlantNotFound';
+import { resolveStoredPhotoUri } from '../src/utils/photoStorage';
+import { formatCoordinates } from '../src/utils/formatCoordinates';
+
+const NOT_RECORDED = 'Not recorded';
+
+// Height is typed as a plain number in metres; older records already include "m".
+function formatHeight(height?: string) {
+  const value = height?.trim();
+  if (!value) return NOT_RECORDED;
+  return /^\d+(\.\d+)?$/.test(value) ? `${value} m` : value;
+}
+
+function DetailRow({ label, value }: { label: string; value?: string | null }) {
+  const text = value?.trim();
+  return (
+    <View style={styles.detailRow}>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text style={[styles.detailValue, !text && styles.detailEmpty]}>{text || NOT_RECORDED}</Text>
+    </View>
+  );
+}
 
 export default function PlantDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id?: string }>();
   const records = useRecordStore((state) => state.records);
+  const { width } = useWindowDimensions();
+  const [photoIndex, setPhotoIndex] = useState(0);
+  const [brokenPhotos, setBrokenPhotos] = useState<Record<string, boolean>>({});
 
   const matched = records.find((r) => r.recordId === id || r.id === id);
 
@@ -15,36 +51,86 @@ export default function PlantDetailScreen() {
     return <PlantNotFound code={id} />;
   }
 
+  const photos = (matched.photoUris ?? []).map(resolveStoredPhotoUri);
+
+  const coordinates =
+    matched.latitude !== undefined && matched.longitude !== undefined
+      ? formatCoordinates(matched.latitude, matched.longitude, matched.gpsAccuracyM ?? null)
+      : matched.gpsCoordination;
+
+  const handlePhotoScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    setPhotoIndex(Math.round(event.nativeEvent.contentOffset.x / width));
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
         <View style={styles.heroBox}>
+          {photos.length > 0 ? (
+            <FlatList
+              data={photos}
+              keyExtractor={(uri, index) => `${index}-${uri}`}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              onMomentumScrollEnd={handlePhotoScroll}
+              renderItem={({ item }) =>
+                brokenPhotos[item] ? (
+                  <View style={[styles.heroPhoto, styles.heroEmpty, { width }]}>
+                    <Text style={styles.heroEmptyText}>Photo file is no longer on this device</Text>
+                  </View>
+                ) : (
+                  <Image
+                    source={{ uri: item }}
+                    style={[styles.heroPhoto, { width }]}
+                    resizeMode="cover"
+                    onError={() => setBrokenPhotos((prev) => ({ ...prev, [item]: true }))}
+                  />
+                )
+              }
+            />
+          ) : (
+            <View style={[styles.heroPhoto, styles.heroEmpty, { width }]}>
+              <Text style={styles.heroEmptyText}>No photos recorded</Text>
+            </View>
+          )}
           <TouchableOpacity onPress={() => router.back()} style={styles.backCircle}>
             <Text style={{ color: '#FFF', fontSize: 24 }}>‹</Text>
           </TouchableOpacity>
-          <Text style={{ fontSize: 72 }}>🌺</Text>
-          <View style={styles.photoCountBadge}><Text style={styles.photoCountText}>1 / 4 photos</Text></View>
+          {photos.length > 0 && (
+            <View style={styles.photoCountBadge}>
+              <Text style={styles.photoCountText}>
+                {Math.min(photoIndex + 1, photos.length)} / {photos.length}
+              </Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.sheet}>
           <Text style={styles.title}>{matched.scientificName}</Text>
-          <Text style={styles.sub}>
-            {[matched.commonName, matched.family].filter(Boolean).join(' · ') || 'Common name and family not recorded'}
-          </Text>
 
-          <View style={styles.statusRow}>
-            <View style={styles.endangeredPill}><Text style={styles.endangeredText}>• Endangered</Text></View>
+          <Text style={styles.heading}>SPECIES DETAILS</Text>
+          <View style={styles.detailCard}>
+            <DetailRow label="Common name" value={matched.commonName} />
+            <DetailRow label="Family" value={matched.family} />
+            <DetailRow label="Height / diameter" value={formatHeight(matched.height)} />
           </View>
 
-          <Text style={styles.heading}>DESCRIPTION</Text>
-          <Text style={styles.body}>{matched.description || 'A parasitic flowering plant known for producing one of the largest individual flowers in the world.'}</Text>
-
           <Text style={styles.heading}>MORPHOLOGICAL CHARACTERISTICS</Text>
-          <Text style={styles.body}>{matched.morphology || 'Large five-lobed flower, reddish-brown with white speckles.'}</Text>
+          <Text style={[styles.body, !matched.morphology?.trim() && styles.detailEmpty]}>
+            {matched.morphology?.trim() || NOT_RECORDED}
+          </Text>
+
+          <Text style={styles.heading}>NOTES</Text>
+          <Text style={[styles.body, !matched.description?.trim() && styles.detailEmpty]}>
+            {matched.description?.trim() || NOT_RECORDED}
+          </Text>
 
           <Text style={styles.heading}>LOCATION</Text>
-          <Text style={styles.locText}>📍 {matched.locationName}</Text>
-          <Text style={styles.gpsSub}>{matched.gpsCoordination}</Text>
+          <View style={styles.detailCard}>
+            <DetailRow label="Location name" value={matched.locationName} />
+            <DetailRow label="Coordinates" value={coordinates} />
+          </View>
 
           <View style={styles.actionRow}>
             <TouchableOpacity style={styles.actionBtn} onPress={() => router.push('/offline-map' as any)}>
@@ -97,20 +183,22 @@ export default function PlantDetailScreen() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F6F8F6' },
-  heroBox: { height: 260, backgroundColor: '#3A261D', justifyContent: 'center', alignItems: 'center', position: 'relative' },
+  heroBox: { height: 260, backgroundColor: '#2B3A30', position: 'relative' },
+  heroPhoto: { height: 260 },
+  heroEmpty: { justifyContent: 'center', alignItems: 'center' },
+  heroEmptyText: { color: '#DCE4DF', fontSize: 13.5, fontWeight: '600' },
+  detailCard: { backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1.2, borderColor: '#E6ECE8', paddingHorizontal: 14 },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 11, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E6ECE8', gap: 12 },
+  detailLabel: { fontSize: 13, color: '#68776D' },
+  detailValue: { flex: 1, textAlign: 'right', fontSize: 13.5, fontWeight: '600', color: '#1E2B22' },
+  detailEmpty: { color: '#98A69D', fontStyle: 'italic', fontWeight: '400' },
   backCircle: { position: 'absolute', top: 30, left: 20, width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
   photoCountBadge: { position: 'absolute', bottom: 16, right: 16, backgroundColor: 'rgba(0,0,0,0.6)', paddingVertical: 4, paddingHorizontal: 12, borderRadius: 14 },
   photoCountText: { color: '#FFF', fontSize: 11, fontWeight: '700' },
   sheet: { padding: 22, backgroundColor: '#F6F8F6' },
   title: { fontSize: 24, fontWeight: '800', color: '#1E2B22' },
-  sub: { fontSize: 13.5, color: '#68776D', marginTop: 4 },
-  statusRow: { marginVertical: 12 },
-  endangeredPill: { backgroundColor: '#FDE2E2', paddingVertical: 4, paddingHorizontal: 10, borderRadius: 12, alignSelf: 'flex-start' },
-  endangeredText: { color: '#9B1C1C', fontSize: 11.5, fontWeight: '700' },
   heading: { fontSize: 12, fontWeight: '800', color: '#6A7D71', letterSpacing: 0.8, marginTop: 16, marginBottom: 6 },
   body: { fontSize: 13.5, color: '#2B392F', lineHeight: 20 },
-  locText: { fontSize: 14, fontWeight: '700', color: '#1E2B22', marginTop: 2 },
-  gpsSub: { fontSize: 12, color: '#68776D', marginTop: 2 },
   actionRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 18 },
   actionBtn: { flex: 1, backgroundColor: '#FFFFFF', height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center', borderWidth: 1.2, borderColor: '#DCE4DF', marginHorizontal: 4 },
   actionBtnText: { color: '#213B2A', fontWeight: '700', fontSize: 13.5 },
