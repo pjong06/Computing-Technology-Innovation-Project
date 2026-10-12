@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,8 +8,10 @@ import {
   Platform,
   StatusBar,
   Alert,
+  AppState,
+  Linking,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { CameraView, useCameraPermissions, Camera } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import Toast from 'react-native-toast-message';
@@ -17,16 +19,34 @@ import { useRecordStore } from '../../src/store/useRecordStore';
 
 export default function ScanScreen() {
   const router = useRouter();
-  const [permission, requestPermission] = useCameraPermissions();
+  const [permission, requestPermission, getPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [torch, setTorch] = useState(false);
   const records = useRecordStore((state) => state.records);
 
+  // Ask once. After a denial the fallback screen sends the user to Settings,
+  // instead of re-prompting every time the permission object changes.
   useEffect(() => {
-    if (!permission?.granted) {
+    if (permission?.status === 'undetermined') {
       requestPermission();
     }
-  }, [permission]);
+  }, [permission?.status]);
+
+  // Tab screens stay mounted, so re-arm the scanner each time the tab is shown.
+  useFocusEffect(
+    useCallback(() => {
+      setScanned(false);
+      getPermission();
+    }, [getPermission])
+  );
+
+  // Pick up a permission change made in the Settings app.
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') getPermission();
+    });
+    return () => subscription.remove();
+  }, [getPermission]);
 
   const processScannedCode = (rawCode: string) => {
     const code = rawCode.trim();
@@ -111,7 +131,7 @@ export default function ScanScreen() {
           <Text style={styles.fallbackSub}>
             Niah Ground-Truth needs the camera to scan plant tags and take record photos.
           </Text>
-          <TouchableOpacity style={styles.primaryBtn} onPress={requestPermission}>
+          <TouchableOpacity style={styles.primaryBtn} onPress={() => Linking.openSettings()}>
             <Text style={styles.primaryBtnText}>Open settings</Text>
           </TouchableOpacity>
           <TouchableOpacity
