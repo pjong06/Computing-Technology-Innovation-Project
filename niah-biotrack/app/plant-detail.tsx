@@ -28,7 +28,9 @@ export default function PlantDetailScreen() {
 
         <View style={styles.sheet}>
           <Text style={styles.title}>{matched.scientificName}</Text>
-          <Text style={styles.sub}>{matched.commonName} · {matched.family}</Text>
+          <Text style={styles.sub}>
+            {[matched.commonName, matched.family].filter(Boolean).join(' · ') || 'Common name and family not recorded'}
+          </Text>
 
           <View style={styles.statusRow}>
             <View style={styles.endangeredPill}><Text style={styles.endangeredText}>• Endangered</Text></View>

@@ -13,10 +13,6 @@ export default function SaveConfirmScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
-        <View style={styles.topStatusPill}>
-          <Text style={styles.topStatusText}>Offline - working from this device</Text>
-        </View>
-
         <View style={styles.card}>
           <View style={styles.checkIconCircle}><Text style={{ color: '#FFF', fontSize: 24 }}>✓</Text></View>
           <Text style={styles.title}>Record saved</Text>
@@ -24,7 +20,9 @@ export default function SaveConfirmScreen() {
 
           <View style={styles.infoBox}>
             <Text style={styles.plantTitle}>{matched?.scientificName}</Text>
-            <Text style={styles.plantTaxa}>{matched?.commonName} · {matched?.family}</Text>
+            <Text style={styles.plantTaxa}>
+              {[matched?.commonName, matched?.family].filter(Boolean).join(' · ') || 'Common name and family not recorded'}
+            </Text>
             <Text style={styles.plantLoc}>📍 {matched?.locationName}</Text>
             <Text style={styles.plantGps}>{matched?.gpsCoordination}</Text>
             <Text style={styles.metaRow}>🕒 {matched?.createdAt} · {matched?.photoUris?.length || 0} photos</Text>
@@ -53,8 +51,6 @@ export default function SaveConfirmScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F6F8F6', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
   container: { flex: 1, padding: 22, justifyContent: 'center' },
-  topStatusPill: { alignSelf: 'center', backgroundColor: '#EDF5EF', paddingVertical: 4, paddingHorizontal: 14, borderRadius: 14, marginBottom: 20 },
-  topStatusText: { fontSize: 11.5, color: '#213B2A', fontWeight: '700' },
   card: { backgroundColor: '#FFFFFF', borderRadius: 28, padding: 24, alignItems: 'center', borderWidth: 1.2, borderColor: '#E6ECE8', marginBottom: 20 },
   checkIconCircle: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#213B2A', justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
   title: { fontSize: 22, fontWeight: '800', color: '#1E2B22' },

@@ -32,6 +32,8 @@ interface GpsFix {
 }
 type GpsStatus = 'acquiring' | 'ready' | 'unavailable';
 
+type FieldErrors = Partial<Record<'photos' | 'scientificName' | 'locationName' | 'gps', string>>;
+
 const PICKER_OPTIONS: ImagePicker.ImagePickerOptions = {
   mediaTypes: ['images'],
   allowsEditing: true,
@@ -61,6 +63,10 @@ export default function NewRecordScreen() {
   const [gpsError, setGpsError] = useState('');
   const screenActive = useRef(true);
   const gpsRequestId = useRef(0);
+
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const clearError = (field: keyof FieldErrors) =>
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: undefined } : prev));
 
   const identifyRequest = useRef<AbortController | null>(null);
   const [suggestions, setSuggestions] = useState<SpeciesSuggestion[]>([]);
@@ -118,6 +124,7 @@ export default function NewRecordScreen() {
         accuracyM: loc.coords.accuracy ?? null,
       });
       setGpsStatus('ready');
+      clearError('gps');
     } catch {
       markUnavailable('Could not get a GPS fix.');
     }
@@ -138,6 +145,7 @@ export default function NewRecordScreen() {
     clearSuggestionFields();
 
     setPhotos((prev) => ({ ...prev, [slot]: asset }));
+    clearError('photos');
     setSuggestions([]);
     setSelectedSpecies(null);
     setIdentifyMessage('');
@@ -226,43 +234,42 @@ export default function NewRecordScreen() {
     setScientificName(suggestion.scientificName);
     setCommonName(suggestion.commonName ?? '');
     setFamily(suggestion.family ?? '');
+    clearError('scientificName');
   };
 
   const handleScientificNameChange = (value: string) => {
     setScientificName(value);
     setSelectedSpecies(null);
+    clearError('scientificName');
+  };
+
+  const handleLocationNameChange = (value: string) => {
+    setLocationName(value);
+    clearError('locationName');
   };
 
   const handleSave = () => {
-    if (!scientificName.trim()) {
-      Toast.show({
-        type: 'error',
-        text1: 'Required Field',
-        text2: 'Please provide a scientific name.',
-      });
-      return;
-    }
-
-    if (!gpsFix) {
-      Toast.show({
-        type: 'error',
-        text1: 'GPS required',
-        text2: 'Wait for a GPS fix, or tap the GPS card to retry.',
-      });
-      return;
-    }
-
     const photoList = PHOTO_SLOTS.map((slot) => photos[slot]?.uri).filter(Boolean) as string[];
+
+    const nextErrors: FieldErrors = {};
+    if (photoList.length === 0) nextErrors.photos = 'Add at least one photo.';
+    if (!scientificName.trim()) nextErrors.scientificName = 'Enter the scientific name, or pick an AI suggestion.';
+    if (!locationName.trim()) nextErrors.locationName = 'Enter a location name.';
+    if (!gpsFix) nextErrors.gps = 'A GPS fix is required. Wait for it, or tap the GPS card to retry.';
+
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0 || !gpsFix) return;
+
     const recordId = `NP-2026-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const saved = addRecord({
       recordId,
       scientificName: scientificName.trim(),
-      commonName: commonName.trim() || 'Unknown',
-      family: family.trim() || 'General Flora',
-      height: height.trim() || '0.5 m',
-      morphology: morphology.trim() || 'Field specimen observation.',
-      locationName: locationName.trim() || 'Niah Trail Point',
+      commonName: commonName.trim(),
+      family: family.trim(),
+      height: height.trim() || undefined,
+      morphology: morphology.trim() || undefined,
+      locationName: locationName.trim(),
       latitude: gpsFix.latitude,
       longitude: gpsFix.longitude,
       gpsAccuracyM: gpsFix.accuracyM,
@@ -276,18 +283,12 @@ export default function NewRecordScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.offlineNoticeBar}>
-        <Text style={styles.offlineNoticeText}>Offline - record will save to this device</Text>
-      </View>
-
       <View style={styles.navRow}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.navSide}>
           <Text style={styles.backChevron}>‹</Text>
         </TouchableOpacity>
         <Text style={styles.navTitle}>New Plant Record</Text>
-        <View style={styles.draftBadge}>
-          <Text style={styles.draftBadgeText}>Draft saved</Text>
-        </View>
+        <View style={styles.navSide} />
       </View>
 
       <ScrollView
@@ -317,6 +318,7 @@ export default function NewRecordScreen() {
             );
           })}
         </View>
+        {errors.photos && <Text style={styles.errorText}>{errors.photos}</Text>}
 
         {identifyPhoto && (
           <View style={styles.aiSection}>
@@ -380,12 +382,13 @@ export default function NewRecordScreen() {
         <Text style={styles.sectionLabel}>SPECIES DETAILS</Text>
         <Text style={styles.fieldLabel}>Scientific name *</Text>
         <TextInput
-          style={styles.input}
+          style={[styles.input, errors.scientificName && styles.inputError]}
           placeholder="e.g. Nepenthes ampullaria"
           placeholderTextColor="#8C9A91"
           value={scientificName}
           onChangeText={handleScientificNameChange}
         />
+        {errors.scientificName && <Text style={styles.errorText}>{errors.scientificName}</Text>}
 
         <Text style={styles.fieldLabel}>Common name</Text>
         <TextInput
@@ -428,12 +431,13 @@ export default function NewRecordScreen() {
         <Text style={styles.sectionLabel}>LOCATION</Text>
         <Text style={styles.fieldLabel}>Location name *</Text>
         <TextInput
-          style={styles.input}
+          style={[styles.input, errors.locationName && styles.inputError]}
           placeholder="e.g. Cave entrance area"
           placeholderTextColor="#8C9A91"
           value={locationName}
-          onChangeText={setLocationName}
+          onChangeText={handleLocationNameChange}
         />
+        {errors.locationName && <Text style={styles.errorText}>{errors.locationName}</Text>}
 
         <Text style={styles.fieldLabel}>GPS coordinates *</Text>
         {gpsStatus === 'acquiring' && (
@@ -467,6 +471,11 @@ export default function NewRecordScreen() {
             </TouchableOpacity>
           </View>
         )}
+        {errors.gps && !gpsFix && <Text style={[styles.errorText, styles.gpsErrorText]}>{errors.gps}</Text>}
+
+        {Object.values(errors).some(Boolean) && (
+          <Text style={styles.errorSummary}>Fix the highlighted fields above to save.</Text>
+        )}
 
         <TouchableOpacity style={styles.saveBtn} activeOpacity={0.85} onPress={handleSave}>
           <Text style={styles.saveBtnText}>Save record</Text>
@@ -482,8 +491,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#F6F8F6',
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
-  offlineNoticeBar: { backgroundColor: '#F0F6F2', paddingVertical: 6, alignItems: 'center' },
-  offlineNoticeText: { fontSize: 11.5, color: '#32503B', fontWeight: '600' },
   navRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -493,8 +500,7 @@ const styles = StyleSheet.create({
   },
   backChevron: { fontSize: 32, color: '#213B2A' },
   navTitle: { fontSize: 17, fontWeight: '700', color: '#1E2B22' },
-  draftBadge: { backgroundColor: '#E4EDE7', paddingVertical: 4, paddingHorizontal: 10, borderRadius: 12 },
-  draftBadgeText: { fontSize: 11, fontWeight: '600', color: '#213B2A' },
+  navSide: { width: 40 },
   scrollContent: { paddingHorizontal: 20, paddingBottom: 40 },
   sectionHeaderRow: {
     flexDirection: 'row',
@@ -561,6 +567,10 @@ const styles = StyleSheet.create({
     borderColor: '#E6ECE8',
     marginBottom: 8,
   },
+  inputError: { borderColor: '#E59A9A' },
+  errorText: { fontSize: 12, color: '#9B1C1C', marginTop: -2, marginBottom: 10, paddingHorizontal: 4 },
+  gpsErrorText: { marginTop: -16 },
+  errorSummary: { fontSize: 12.5, color: '#9B1C1C', fontWeight: '700', textAlign: 'center', marginBottom: 10 },
   gpsCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 18,
