@@ -15,6 +15,7 @@ import { useRouter } from 'expo-router';
 import * as Location from 'expo-location';
 import type * as ImagePicker from 'expo-image-picker';
 import { pickImageFromLibrary, takePhotoWithCamera, type PickImageResult } from '../src/utils/imagePicker';
+import { savePhotoPermanently, deleteStoredPhoto } from '../src/utils/photoStorage';
 import Toast from 'react-native-toast-message';
 import { useRecordStore, RecordStatus } from '../src/store/useRecordStore';
 import { identifyPlant, IdentifyNetworkError, type SpeciesSuggestion } from '../src/services/identifyPlant';
@@ -79,6 +80,12 @@ export default function NewRecordScreen() {
   const identifySlot = PHOTO_SLOTS.find((slot) => photos[slot] !== null);
   const identifyPhoto = identifySlot ? photos[identifySlot] : null;
 
+  // Photos are copied to permanent storage as soon as they're picked. If the user
+  // leaves without saving, those copies are deleted so no orphan files pile up.
+  const photosRef = useRef(photos);
+  photosRef.current = photos;
+  const recordSaved = useRef(false);
+
   useEffect(() => {
     screenActive.current = true;
     fetchLocation();
@@ -87,6 +94,9 @@ export default function NewRecordScreen() {
       screenActive.current = false;
       identifyRequest.current?.abort();
       identifyRequest.current = null;
+      if (!recordSaved.current) {
+        PHOTO_SLOTS.forEach((slot) => deleteStoredPhoto(photosRef.current[slot]?.uri));
+      }
     };
   }, []);
 
@@ -146,6 +156,10 @@ export default function NewRecordScreen() {
     identifyRequest.current = null;
     clearSuggestionFields();
 
+    // Replacing or removing a photo deletes the permanent copy of the old one.
+    const previous = photosRef.current[slot];
+    if (previous && previous.uri !== asset?.uri) deleteStoredPhoto(previous.uri);
+
     setPhotos((prev) => ({ ...prev, [slot]: asset }));
     if (asset) clearError('photos');
     setSuggestions([]);
@@ -158,9 +172,21 @@ export default function NewRecordScreen() {
   // so the picker is never presented while a native alert is closing.
   const [activeSlot, setActiveSlot] = useState<PhotoSlot | null>(null);
 
-  const handlePickResult = (slot: PhotoSlot, result: PickImageResult) => {
+  const handlePickResult = async (slot: PhotoSlot, result: PickImageResult) => {
     if (result.status === 'picked') {
-      setSlotPhoto(slot, result.asset);
+      let permanentUri: string;
+      try {
+        permanentUri = await savePhotoPermanently(result.asset.uri);
+      } catch {
+        Toast.show({ type: 'error', text1: 'Photo not saved', text2: 'The photo could not be stored on this device.' });
+        return;
+      }
+      if (!screenActive.current) {
+        deleteStoredPhoto(permanentUri); // user left the screen while the copy was running
+        return;
+      }
+      // Keep the picker's metadata (size, type, name) but point at the permanent copy.
+      setSlotPhoto(slot, { ...result.asset, uri: permanentUri });
       setActiveSlot(null);
     } else if (result.status === 'permission-denied') {
       Toast.show({
@@ -270,6 +296,7 @@ export default function NewRecordScreen() {
       status: RecordStatus.PENDING,
     });
 
+    recordSaved.current = true; // the record now owns the stored photos
     router.replace({ pathname: '/save-confirm', params: { id: saved.recordId } } as any);
   };
 
