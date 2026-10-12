@@ -1,21 +1,31 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Platform, StatusBar } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, Platform, StatusBar } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import Toast from 'react-native-toast-message';
 import { useRecordStore } from '../src/store/useRecordStore';
+import PlantNotFound from '../src/components/PlantNotFound';
+import FormScrollView from '../src/components/FormScrollView';
+import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
+
+const DONE_BAR_ID = 'add-observation-done';
 
 export default function AddObservationScreen() {
   const router = useRouter();
-  const { id } = useLocalSearchParams();
+  const { id } = useLocalSearchParams<{ id?: string }>();
   const records = useRecordStore((state) => state.records);
   const addObservation = useRecordStore((state) => state.addObservation);
 
-  const matched = records.find((r) => r.recordId === id || r.id === id) || records[0];
+  const matched = records.find((r) => r.recordId === id || r.id === id);
 
   const [health, setHealth] = useState<'Healthy' | 'Stressed' | 'Damaged' | 'Dead'>('Healthy');
   const [stage, setStage] = useState<'Bud' | 'Flowering' | 'Vegetative' | 'Fruiting'>('Flowering');
   const [measurement, setMeasurement] = useState('0.62');
   const [notes, setNotes] = useState('');
+
+  // Hooks above must run on every render, so the not-found check comes after them.
+  if (!matched) {
+    return <PlantNotFound code={id} />;
+  }
 
   const handleSave = () => {
     addObservation(matched.recordId, {
@@ -45,7 +55,7 @@ export default function AddObservationScreen() {
         <View style={{ width: 28 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.container}>
+      <FormScrollView contentContainerStyle={styles.container}>
         <Text style={styles.plantTitle}>{matched.scientificName}</Text>
         <Text style={styles.metaSubtitle}>{matched.recordId} · {matched.locationName} visit #{matched.observations.length + 1}</Text>
 
@@ -68,15 +78,30 @@ export default function AddObservationScreen() {
         </View>
 
         <Text style={styles.label}>Height / diameter (m)</Text>
-        <TextInput style={styles.input} keyboardType="numeric" value={measurement} onChangeText={setMeasurement} placeholder="e.g. 0.62" />
+        <TextInput
+          style={styles.input}
+          keyboardType="decimal-pad"
+          value={measurement}
+          onChangeText={setMeasurement}
+          placeholder="e.g. 0.62"
+          inputAccessoryViewID={DONE_BAR_ID}
+        />
 
         <Text style={styles.label}>Notes</Text>
-        <TextInput style={[styles.input, { height: 90, textAlignVertical: 'top' }]} multiline value={notes} onChangeText={setNotes} placeholder="Day 2 of bloom, perigone lobes fully open..." />
+        <TextInput
+          style={[styles.input, { height: 90, textAlignVertical: 'top' }]}
+          multiline
+          value={notes}
+          onChangeText={setNotes}
+          placeholder="Day 2 of bloom, perigone lobes fully open..."
+          inputAccessoryViewID={DONE_BAR_ID}
+        />
 
         <TouchableOpacity style={styles.submitBtn} onPress={handleSave}>
           <Text style={styles.submitBtnText}>Save observation</Text>
         </TouchableOpacity>
-      </ScrollView>
+      </FormScrollView>
+      <KeyboardDoneBar nativeID={DONE_BAR_ID} />
     </SafeAreaView>
   );
 }

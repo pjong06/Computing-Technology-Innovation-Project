@@ -2,13 +2,18 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Platform, StatusBar, Alert } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useRecordStore } from '../src/store/useRecordStore';
+import PlantNotFound from '../src/components/PlantNotFound';
 
 export default function PlantTagScreen() {
   const router = useRouter();
-  const { id } = useLocalSearchParams();
+  const { id } = useLocalSearchParams<{ id?: string }>();
   const records = useRecordStore((state) => state.records);
 
-  const matched = records.find((r) => r.recordId === id || r.id === id) || records[0];
+  const matched = records.find((r) => r.recordId === id || r.id === id);
+
+  if (!matched) {
+    return <PlantNotFound code={id} />;
+  }
 
   return (
     <SafeAreaView style={styles.safeArea}>

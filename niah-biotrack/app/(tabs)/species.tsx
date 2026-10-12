@@ -12,20 +12,61 @@ const SPECIES_CATALOG = [
   { id: '6', name: 'Nepenthes rafflesiana', status: 'LC', loc: 'Plankwalk km 1.2' },
 ];
 
+const STATUS_LABELS: Record<string, string> = {
+  CR: 'Critically Endangered',
+  EN: 'Endangered',
+  VU: 'Vulnerable',
+  LC: 'Least Concern',
+};
+
+// Filter options come from the catalog itself, so only values that exist are offered.
+const LOCATION_OPTIONS = [...new Set(SPECIES_CATALOG.map((s) => s.loc))].sort();
+const STATUS_OPTIONS = Object.keys(STATUS_LABELS).filter((code) => SPECIES_CATALOG.some((s) => s.status === code));
+
+type FilterKey = 'location' | 'status';
+
 export default function SpeciesScreen() {
   const router = useRouter();
   const [search, setSearch] = useState('');
+  const [locationFilter, setLocationFilter] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [openFilter, setOpenFilter] = useState<FilterKey | null>(null);
   const records = useRecordStore((state) => state.records);
 
-  const filtered = SPECIES_CATALOG.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()));
+  const filtered = SPECIES_CATALOG.filter(
+    (s) =>
+      s.name.toLowerCase().includes(search.toLowerCase()) &&
+      (locationFilter === null || s.loc === locationFilter) &&
+      (statusFilter === null || s.status === statusFilter)
+  );
+
+  const hasFilters = locationFilter !== null || statusFilter !== null;
 
   const getStatusColor = (status: string) => {
     switch (status) {
+      case 'CR':
       case 'EN': return { bg: '#FDE2E2', text: '#9B1C1C' };
       case 'VU': return { bg: '#FEF08A', text: '#854D0E' };
       default: return { bg: '#E4F2E7', text: '#215A36' };
     }
   };
+
+  const toggleFilter = (key: FilterKey) => setOpenFilter((current) => (current === key ? null : key));
+
+  const chooseOption = (value: string | null) => {
+    if (openFilter === 'location') setLocationFilter(value);
+    if (openFilter === 'status') setStatusFilter(value);
+    setOpenFilter(null);
+  };
+
+  const clearFilters = () => {
+    setLocationFilter(null);
+    setStatusFilter(null);
+    setOpenFilter(null);
+  };
+
+  const openOptions = openFilter === 'location' ? LOCATION_OPTIONS : openFilter === 'status' ? STATUS_OPTIONS : [];
+  const openSelected = openFilter === 'location' ? locationFilter : statusFilter;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -33,24 +74,72 @@ export default function SpeciesScreen() {
         <Text style={styles.title}>Species Reference</Text>
         <TextInput
           style={styles.searchBar}
-          placeholder="Search scientific or common name"
+          placeholder="Search scientific name"
           placeholderTextColor="#8C9A91"
           value={search}
           onChangeText={setSearch}
+          autoCorrect={false}
+          returnKeyType="search"
+          clearButtonMode="while-editing"
         />
 
         <View style={styles.filterRow}>
-          <TouchableOpacity style={styles.filterPill}><Text style={styles.filterText}>Category ▾</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.filterPill}><Text style={styles.filterText}>Location ▾</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.filterPill}><Text style={styles.filterText}>Conservation status ▾</Text></TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.filterPill, (locationFilter !== null || openFilter === 'location') && styles.filterPillActive]}
+            onPress={() => toggleFilter('location')}
+          >
+            <Text style={[styles.filterText, locationFilter !== null && styles.filterTextActive]} numberOfLines={1}>
+              {locationFilter ?? 'Location'} {openFilter === 'location' ? '▴' : '▾'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.filterPill, (statusFilter !== null || openFilter === 'status') && styles.filterPillActive]}
+            onPress={() => toggleFilter('status')}
+          >
+            <Text style={[styles.filterText, statusFilter !== null && styles.filterTextActive]} numberOfLines={1}>
+              {statusFilter ? STATUS_LABELS[statusFilter] : 'Conservation status'} {openFilter === 'status' ? '▴' : '▾'}
+            </Text>
+          </TouchableOpacity>
         </View>
 
-        <Text style={styles.countBanner}>48 species available offline</Text>
+        {openFilter !== null && (
+          <View style={styles.optionPanel}>
+            <TouchableOpacity style={styles.optionRow} onPress={() => chooseOption(null)}>
+              <Text style={[styles.optionText, openSelected === null && styles.optionTextSelected]}>
+                {openFilter === 'location' ? 'All locations' : 'All statuses'}
+              </Text>
+              {openSelected === null && <Text style={styles.optionCheck}>✓</Text>}
+            </TouchableOpacity>
+            {openOptions.map((option) => (
+              <TouchableOpacity key={option} style={styles.optionRow} onPress={() => chooseOption(option)}>
+                <Text style={[styles.optionText, openSelected === option && styles.optionTextSelected]}>
+                  {openFilter === 'status' ? `${STATUS_LABELS[option]} (${option})` : option}
+                </Text>
+                {openSelected === option && <Text style={styles.optionCheck}>✓</Text>}
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
+        <View style={styles.countRow}>
+          <Text style={styles.countBanner}>
+            Showing {filtered.length} of {SPECIES_CATALOG.length} species
+          </Text>
+          {hasFilters && (
+            <TouchableOpacity onPress={clearFilters} hitSlop={8}>
+              <Text style={styles.clearText}>Clear filters</Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
         <FlatList
           data={filtered}
           keyExtractor={(item) => item.id}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          automaticallyAdjustKeyboardInsets
+          ListEmptyComponent={<Text style={styles.emptyText}>No species match your search or filters.</Text>}
           renderItem={({ item }) => {
             const badge = getStatusColor(item.status);
             const matchedRecord = records.find((r) => r.scientificName === item.name);
@@ -84,9 +173,19 @@ const styles = StyleSheet.create({
   title: { fontSize: 24, fontWeight: '800', color: '#213B2A', marginBottom: 14 },
   searchBar: { backgroundColor: '#FFFFFF', height: 50, borderRadius: 25, paddingHorizontal: 18, borderWidth: 1.2, borderColor: '#E6ECE8', marginBottom: 12 },
   filterRow: { flexDirection: 'row', marginBottom: 12 },
-  filterPill: { backgroundColor: '#FFFFFF', paddingVertical: 7, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1, borderColor: '#DCE4DF', marginRight: 8 },
+  filterPill: { flexShrink: 1, backgroundColor: '#FFFFFF', paddingVertical: 7, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1, borderColor: '#DCE4DF', marginRight: 8 },
+  filterPillActive: { borderColor: '#213B2A', backgroundColor: '#EEF5F0' },
   filterText: { fontSize: 12, fontWeight: '600', color: '#4E6254' },
-  countBanner: { fontSize: 12.5, color: '#68776D', marginBottom: 14, fontWeight: '500' },
+  filterTextActive: { color: '#213B2A', fontWeight: '700' },
+  optionPanel: { backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1, borderColor: '#DCE4DF', marginBottom: 12, paddingVertical: 4 },
+  optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 11, paddingHorizontal: 16 },
+  optionText: { fontSize: 13.5, color: '#3A5243' },
+  optionTextSelected: { color: '#213B2A', fontWeight: '700' },
+  optionCheck: { fontSize: 14, color: '#213B2A', fontWeight: '800' },
+  countRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  countBanner: { fontSize: 12.5, color: '#68776D', fontWeight: '500' },
+  clearText: { fontSize: 12.5, color: '#213B2A', fontWeight: '700' },
+  emptyText: { fontSize: 13, color: '#68776D', textAlign: 'center', marginTop: 24 },
   speciesCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', padding: 18, borderRadius: 24, marginBottom: 10, borderWidth: 1.2, borderColor: '#E6ECE8' },
   speciesName: { fontSize: 15, fontWeight: '700', color: '#1E2B22' },
   statusBadge: { marginLeft: 8, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },

@@ -2,13 +2,18 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, SafeAreaView, Platform, StatusBar } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useRecordStore, RecordStatus } from '../src/store/useRecordStore';
+import PlantNotFound from '../src/components/PlantNotFound';
 
 export default function PlantDetailScreen() {
   const router = useRouter();
-  const { id } = useLocalSearchParams();
+  const { id } = useLocalSearchParams<{ id?: string }>();
   const records = useRecordStore((state) => state.records);
 
-  const matched = records.find((r) => r.recordId === id || r.id === id) || records[0];
+  const matched = records.find((r) => r.recordId === id || r.id === id);
+
+  if (!matched) {
+    return <PlantNotFound code={id} />;
+  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -23,7 +28,9 @@ export default function PlantDetailScreen() {
 
         <View style={styles.sheet}>
           <Text style={styles.title}>{matched.scientificName}</Text>
-          <Text style={styles.sub}>{matched.commonName} · {matched.family}</Text>
+          <Text style={styles.sub}>
+            {[matched.commonName, matched.family].filter(Boolean).join(' · ') || 'Common name and family not recorded'}
+          </Text>
 
           <View style={styles.statusRow}>
             <View style={styles.endangeredPill}><Text style={styles.endangeredText}>• Endangered</Text></View>

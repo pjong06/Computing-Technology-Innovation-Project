@@ -20,6 +20,15 @@ interface IdentificationResponse {
   suggestions?: SpeciesSuggestion[];
 }
 
+// Thrown when the request never reached the backend
+// (no connection, or the server address is unreachable).
+export class IdentifyNetworkError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'IdentifyNetworkError';
+  }
+}
+
 const MAX_IMAGE_SIZE =
   10 * 1024 * 1024;
 
@@ -151,7 +160,7 @@ export async function identifyPlant(
         ? error.message
         : 'Unknown network error';
 
-    throw new Error(
+    throw new IdentifyNetworkError(
       `Photo upload failed: ${detail}`
     );
   }

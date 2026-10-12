@@ -29,7 +29,11 @@ export interface PlantRecord {
   morphology?: string;
   description?: string;
   locationName: string;
-  gpsCoordination: string;
+  // Raw GPS fix. Optional because records saved before 1.2 only have the display string.
+  latitude?: number;
+  longitude?: number;
+  gpsAccuracyM?: number | null; // null when the device didn't report accuracy
+  gpsCoordination: string; // formatted for display only, e.g. "3.81760° N, 113.78100° E (±5 m)"
   photoUris: string[];
   status: RecordStatus;
   createdAt: string;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,25 +8,45 @@ import {
   Platform,
   StatusBar,
   Alert,
+  AppState,
+  Linking,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { CameraView, useCameraPermissions, Camera } from 'expo-camera';
-import * as ImagePicker from 'expo-image-picker';
+import { pickImageFromLibrary } from '../../src/utils/imagePicker';
 import Toast from 'react-native-toast-message';
 import { useRecordStore } from '../../src/store/useRecordStore';
 
 export default function ScanScreen() {
   const router = useRouter();
-  const [permission, requestPermission] = useCameraPermissions();
+  const [permission, requestPermission, getPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [torch, setTorch] = useState(false);
   const records = useRecordStore((state) => state.records);
 
+  // Ask once. After a denial the fallback screen sends the user to Settings,
+  // instead of re-prompting every time the permission object changes.
   useEffect(() => {
-    if (!permission?.granted) {
+    if (permission?.status === 'undetermined') {
       requestPermission();
     }
-  }, [permission]);
+  }, [permission?.status]);
+
+  // Tab screens stay mounted, so re-arm the scanner each time the tab is shown.
+  useFocusEffect(
+    useCallback(() => {
+      setScanned(false);
+      getPermission();
+    }, [getPermission])
+  );
+
+  // Pick up a permission change made in the Settings app.
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') getPermission();
+    });
+    return () => subscription.remove();
+  }, [getPermission]);
 
   const processScannedCode = (rawCode: string) => {
     const code = rawCode.trim();
@@ -56,42 +76,30 @@ export default function ScanScreen() {
   };
 
   const handleUploadImage = async () => {
+    const picked = await pickImageFromLibrary();
+    if (picked.status === 'canceled') return;
+    if (picked.status !== 'picked') {
+      Toast.show({ type: 'error', text1: 'Photos unavailable', text2: 'The photo library could not be opened.' });
+      return;
+    }
+
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Toast.show({
-          type: 'error',
-          text1: 'Permission Denied',
-          text2: 'Gallery permission is required to select QR images.',
-        });
-        return;
-      }
+      // Scan barcode directly from the selected image URI
+      const scannedResults = await Camera.scanFromURLAsync(picked.asset.uri, ['qr']);
 
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: false,
-        quality: 1,
-      });
-
-      if (!result.canceled && result.assets?.[0]?.uri) {
-        const imageUri = result.assets[0].uri;
-
-        // Scan barcode directly from the selected image URI
-        const scannedResults = await Camera.scanFromURLAsync(imageUri, ['qr']);
-
-        if (scannedResults && scannedResults.length > 0 && scannedResults[0].data) {
-          processScannedCode(scannedResults[0].data);
-        } else {
-          Alert.alert(
-            'No QR Code Found',
-            'No valid plant tag QR code could be detected in this photo. Try another image or enter the code manually.',
-            [
-              { text: 'Try Again', onPress: handleUploadImage },
-              { text: 'Enter code', onPress: () => router.push('/manual-qr' as any) },
-              { text: 'Cancel', style: 'cancel' },
-            ]
-          );
-        }
+      if (scannedResults && scannedResults.length > 0 && scannedResults[0].data) {
+        processScannedCode(scannedResults[0].data);
+      } else {
+        // No "Try again" button here: relaunching the picker from inside an Alert
+        // presents it while the alert is closing. "Upload image" is right on screen.
+        Alert.alert(
+          'No QR Code Found',
+          'No valid plant tag QR code could be detected in this photo. Try another image or enter the code manually.',
+          [
+            { text: 'Enter code', onPress: () => router.push('/manual-qr' as any) },
+            { text: 'OK', style: 'cancel' },
+          ]
+        );
       }
     } catch (error) {
       Toast.show({
@@ -111,7 +119,7 @@ export default function ScanScreen() {
           <Text style={styles.fallbackSub}>
             Niah Ground-Truth needs the camera to scan plant tags and take record photos.
           </Text>
-          <TouchableOpacity style={styles.primaryBtn} onPress={requestPermission}>
+          <TouchableOpacity style={styles.primaryBtn} onPress={() => Linking.openSettings()}>
             <Text style={styles.primaryBtnText}>Open settings</Text>
           </TouchableOpacity>
           <TouchableOpacity
