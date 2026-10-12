@@ -9,7 +9,7 @@ export default function PlantTagScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const records = useRecordStore((state) => state.records);
 
-  const matched = records.find((r) => r.recordId === id || r.id === id);
+  const matched = records.find((r) => r.id === id);
 
   if (!matched) {
     return <PlantNotFound code={id} />;
@@ -26,7 +26,7 @@ export default function PlantTagScreen() {
           <View style={styles.qrMockBox}>
             <Text style={{ fontSize: 90 }}>🏁</Text>
           </View>
-          <Text style={styles.tagCode}>{matched.recordId}</Text>
+          <Text style={styles.tagCode}>{matched.tagCode ?? 'No tag attached'}</Text>
           <Text style={styles.speciesName}>{matched.scientificName}</Text>
           <Text style={styles.location}>{matched.locationName}</Text>
           <Text style={styles.notice}>Attach a printed tag near the plant. Staff see the full record; visitors see a public summary only.</Text>

@@ -15,6 +15,7 @@ import { useRouter } from 'expo-router';
 import * as Location from 'expo-location';
 import type * as ImagePicker from 'expo-image-picker';
 import { pickImageFromLibrary, takePhotoWithCamera, type PickImageResult } from '../src/utils/imagePicker';
+import { savePhotoPermanently, deleteStoredPhoto } from '../src/utils/photoStorage';
 import Toast from 'react-native-toast-message';
 import { useRecordStore, RecordStatus } from '../src/store/useRecordStore';
 import { identifyPlant, IdentifyNetworkError, type SpeciesSuggestion } from '../src/services/identifyPlant';
@@ -33,7 +34,29 @@ interface GpsFix {
   longitude: number;
   accuracyM: number | null;
 }
-type GpsStatus = 'acquiring' | 'ready' | 'unavailable';
+type GpsStatus = 'acquiring' | 'ready' | 'unavailable' | 'timeout';
+
+const GPS_TIMEOUT_MS = 20_000;
+
+class GpsTimeoutError extends Error {}
+
+// Rejects if the device hasn't produced a fix in time. The underlying request
+// keeps running, but its late result is ignored (see isCurrent in fetchLocation).
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new GpsTimeoutError()), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
 
 type FieldErrors = Partial<Record<'photos' | 'scientificName' | 'locationName' | 'gps', string>>;
 
@@ -79,6 +102,12 @@ export default function NewRecordScreen() {
   const identifySlot = PHOTO_SLOTS.find((slot) => photos[slot] !== null);
   const identifyPhoto = identifySlot ? photos[identifySlot] : null;
 
+  // Photos are copied to permanent storage as soon as they're picked. If the user
+  // leaves without saving, those copies are deleted so no orphan files pile up.
+  const photosRef = useRef(photos);
+  photosRef.current = photos;
+  const recordSaved = useRef(false);
+
   useEffect(() => {
     screenActive.current = true;
     fetchLocation();
@@ -87,6 +116,9 @@ export default function NewRecordScreen() {
       screenActive.current = false;
       identifyRequest.current?.abort();
       identifyRequest.current = null;
+      if (!recordSaved.current) {
+        PHOTO_SLOTS.forEach((slot) => deleteStoredPhoto(photosRef.current[slot]?.uri));
+      }
     };
   }, []);
 
@@ -116,7 +148,10 @@ export default function NewRecordScreen() {
         return;
       }
 
-      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      const loc = await withTimeout(
+        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }),
+        GPS_TIMEOUT_MS
+      );
       if (!isCurrent()) return;
 
       setGpsFix({
@@ -126,7 +161,14 @@ export default function NewRecordScreen() {
       });
       setGpsStatus('ready');
       clearError('gps');
-    } catch {
+    } catch (error) {
+      if (error instanceof GpsTimeoutError) {
+        if (!isCurrent()) return;
+        setGpsFix(null);
+        setGpsError('');
+        setGpsStatus('timeout');
+        return;
+      }
       markUnavailable('Could not get a GPS fix.');
     }
   };
@@ -146,6 +188,10 @@ export default function NewRecordScreen() {
     identifyRequest.current = null;
     clearSuggestionFields();
 
+    // Replacing or removing a photo deletes the permanent copy of the old one.
+    const previous = photosRef.current[slot];
+    if (previous && previous.uri !== asset?.uri) deleteStoredPhoto(previous.uri);
+
     setPhotos((prev) => ({ ...prev, [slot]: asset }));
     if (asset) clearError('photos');
     setSuggestions([]);
@@ -158,9 +204,21 @@ export default function NewRecordScreen() {
   // so the picker is never presented while a native alert is closing.
   const [activeSlot, setActiveSlot] = useState<PhotoSlot | null>(null);
 
-  const handlePickResult = (slot: PhotoSlot, result: PickImageResult) => {
+  const handlePickResult = async (slot: PhotoSlot, result: PickImageResult) => {
     if (result.status === 'picked') {
-      setSlotPhoto(slot, result.asset);
+      let permanentUri: string;
+      try {
+        permanentUri = await savePhotoPermanently(result.asset.uri);
+      } catch {
+        Toast.show({ type: 'error', text1: 'Photo not saved', text2: 'The photo could not be stored on this device.' });
+        return;
+      }
+      if (!screenActive.current) {
+        deleteStoredPhoto(permanentUri); // user left the screen while the copy was running
+        return;
+      }
+      // Keep the picker's metadata (size, type, name) but point at the permanent copy.
+      setSlotPhoto(slot, { ...result.asset, uri: permanentUri });
       setActiveSlot(null);
     } else if (result.status === 'permission-denied') {
       Toast.show({
@@ -252,10 +310,7 @@ export default function NewRecordScreen() {
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0 || !gpsFix) return;
 
-    const recordId = `NP-2026-${Math.floor(1000 + Math.random() * 9000)}`;
-
     const saved = addRecord({
-      recordId,
       scientificName: scientificName.trim(),
       commonName: commonName.trim(),
       family: family.trim(),
@@ -270,7 +325,8 @@ export default function NewRecordScreen() {
       status: RecordStatus.PENDING,
     });
 
-    router.replace({ pathname: '/save-confirm', params: { id: saved.recordId } } as any);
+    recordSaved.current = true; // the record now owns the stored photos
+    router.replace({ pathname: '/save-confirm', params: { id: saved.id } } as any);
   };
 
   return (
@@ -479,7 +535,20 @@ export default function NewRecordScreen() {
               <ActivityIndicator color="#213B2A" />
               <Text style={styles.gpsStatusPending}>Acquiring GPS fix...</Text>
             </View>
-            <Text style={styles.gpsDetails}>This can take longer under dense canopy.</Text>
+            <Text style={styles.gpsDetails}>This can take longer under dense canopy. Gives up after 20 seconds.</Text>
+            <TouchableOpacity style={styles.refreshGpsBtn} onPress={fetchLocation}>
+              <Text style={styles.refreshGpsBtnText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {gpsStatus === 'timeout' && (
+          <View style={[styles.gpsCard, styles.gpsCardError]}>
+            <Text style={styles.gpsStatusError}>Couldn't get a GPS fix – move to an open spot</Text>
+            <Text style={styles.gpsDetails}>No fix after 20 seconds. Step away from dense canopy or rock walls, then retry.</Text>
+            <TouchableOpacity style={styles.refreshGpsBtn} onPress={fetchLocation}>
+              <Text style={styles.refreshGpsBtnText}>Retry</Text>
+            </TouchableOpacity>
           </View>
         )}
 

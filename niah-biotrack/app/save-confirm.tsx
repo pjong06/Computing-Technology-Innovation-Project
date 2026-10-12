@@ -1,14 +1,28 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Platform, StatusBar } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useRecordStore } from '../src/store/useRecordStore';
+import { useRecordStore, RecordStatus } from '../src/store/useRecordStore';
+import PlantNotFound from '../src/components/PlantNotFound';
 
 export default function SaveConfirmScreen() {
   const router = useRouter();
-  const { id } = useLocalSearchParams();
+  const { id } = useLocalSearchParams<{ id?: string }>();
   const records = useRecordStore((state) => state.records);
 
-  const matched = records.find((r) => r.recordId === id || r.id === id) || records[0];
+  const matched = records.find((r) => r.id === id);
+
+  if (!matched) {
+    return <PlantNotFound code={id} />;
+  }
+
+  // Describe the record's real local status. Nothing is uploaded yet, so a new
+  // record is always Pending here.
+  const statusText =
+    matched.status === RecordStatus.SYNCED
+      ? 'Status: Synced to the server'
+      : matched.status === RecordStatus.FAILED
+        ? 'Status: Upload failed – saved on this device'
+        : 'Status: Pending – saved on this device only';
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -16,23 +30,26 @@ export default function SaveConfirmScreen() {
         <View style={styles.card}>
           <View style={styles.checkIconCircle}><Text style={{ color: '#FFF', fontSize: 24 }}>✓</Text></View>
           <Text style={styles.title}>Record saved</Text>
-          <Text style={styles.subtitle}>Saved on device - will sync when online</Text>
+          <Text style={styles.subtitle}>{statusText}</Text>
+          {matched.status !== RecordStatus.SYNCED && (
+            <Text style={styles.subtitle}>Uploading to the server is not available yet.</Text>
+          )}
 
           <View style={styles.infoBox}>
-            <Text style={styles.plantTitle}>{matched?.scientificName}</Text>
+            <Text style={styles.plantTitle}>{matched.scientificName}</Text>
             <Text style={styles.plantTaxa}>
-              {[matched?.commonName, matched?.family].filter(Boolean).join(' · ') || 'Common name and family not recorded'}
+              {[matched.commonName, matched.family].filter(Boolean).join(' · ') || 'Common name and family not recorded'}
             </Text>
-            <Text style={styles.plantLoc}>📍 {matched?.locationName}</Text>
-            <Text style={styles.plantGps}>{matched?.gpsCoordination}</Text>
-            <Text style={styles.metaRow}>🕒 {matched?.createdAt} · {matched?.photoUris?.length || 0} photos</Text>
-            <Text style={styles.recordIdTag}># Record ID: {matched?.recordId} (reserved offline)</Text>
+            <Text style={styles.plantLoc}>📍 {matched.locationName}</Text>
+            <Text style={styles.plantGps}>{matched.gpsCoordination}</Text>
+            <Text style={styles.metaRow}>🕒 {matched.createdAt} · {matched.photoUris?.length || 0} photos</Text>
+            <Text style={styles.recordIdTag}>Tag: {matched.tagCode ?? 'No tag attached'}</Text>
           </View>
 
-          <Text style={styles.helperNotice}>You can print the QR tag now - it stays valid after syncing.</Text>
+          <Text style={styles.helperNotice}>A pre-printed plant tag can be attached to this record later.</Text>
         </View>
 
-        <TouchableOpacity style={styles.primaryBtn} onPress={() => router.push({ pathname: '/plant-tag', params: { id: matched?.recordId } } as any)}>
+        <TouchableOpacity style={styles.primaryBtn} onPress={() => router.push({ pathname: '/plant-tag', params: { id: matched.id } } as any)}>
           <Text style={styles.primaryBtnText}>Generate QR tag</Text>
         </TouchableOpacity>
 

@@ -14,11 +14,11 @@ export default function ManualQREntryScreen() {
 
   const handleLookup = () => {
     const clean = code.trim().toUpperCase();
-    const matched = records.find((r) => r.recordId.toUpperCase() === clean);
+    const matched = records.find((r) => r.tagCode !== null && r.tagCode.toUpperCase() === clean);
 
     if (matched) {
       setHasError(false);
-      router.push({ pathname: '/plant-detail', params: { id: matched.recordId } } as any);
+      router.push({ pathname: '/plant-detail', params: { id: matched.id } } as any);
     } else {
       setHasError(true);
     }
@@ -32,12 +32,12 @@ export default function ManualQREntryScreen() {
         </TouchableOpacity>
 
         <Text style={styles.title}>Enter Code</Text>
-        <Text style={styles.subtitle}>Type the record code on the tag if the QR code can't be scanned.</Text>
+        <Text style={styles.subtitle}>Type the code printed on the tag if the QR code can't be scanned.</Text>
 
-        <Text style={styles.label}>Record code</Text>
+        <Text style={styles.label}>Tag code</Text>
         <TextInput
           style={styles.input}
-          placeholder="e.g. NP-2026-0417"
+          placeholder="Code printed on the plant tag"
           placeholderTextColor="#8C9A91"
           value={code}
           onChangeText={(val) => {
@@ -55,7 +55,7 @@ export default function ManualQREntryScreen() {
         {hasError && (
           <View style={styles.errorBox}>
             <Text style={styles.errorTitle}>Record not found</Text>
-            <Text style={styles.errorSub}>No record matches {code}. Check the tag isn't damaged, or the record may not have synced yet.</Text>
+            <Text style={styles.errorSub}>No record on this device has tag code {code}. Attaching pre-printed tags to records is not available yet.</Text>
           </View>
         )}
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -9,37 +9,18 @@ import {
   Platform,
   StatusBar,
   Image,
-  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import Toast from 'react-native-toast-message';
 import { useRecordStore, RecordStatus } from '../../src/store/useRecordStore';
 
 export default function HomeScreen() {
   const router = useRouter();
   const records = useRecordStore((state) => state.records);
-  const syncPending = useRecordStore((state) => state.syncPending);
   const retryRecord = useRecordStore((state) => state.retryRecord);
-
-  const [isSyncing, setIsSyncing] = useState(false);
 
   const pendingCount = records.filter((r) => r.status === RecordStatus.PENDING).length;
   const failedCount = records.filter((r) => r.status === RecordStatus.FAILED).length;
   const totalToSync = pendingCount + failedCount;
-
-  const handleSyncNow = () => {
-    setIsSyncing(true);
-    setTimeout(() => {
-      syncPending();
-      setIsSyncing(false);
-      Toast.show({
-        type: 'success',
-        text1: 'Sync complete',
-        text2: 'Records uploaded to the server.',
-        position: 'bottom',
-      });
-    }, 1200);
-  };
 
   const getStatusBadge = (status: RecordStatus) => {
     switch (status) {
@@ -65,41 +46,17 @@ export default function HomeScreen() {
           <Text style={styles.headerTitle}>Niah Ground-Truth</Text>
         </View>
 
-        {/* Sync Status / Progress Card */}
+        {/* Sync status: real local counts only. There is no upload to the server yet. */}
         {totalToSync > 0 ? (
-          <TouchableOpacity
-            style={styles.syncCard}
-            activeOpacity={0.85}
-            onPress={handleSyncNow}
-          >
-            <View style={styles.syncCardTop}>
-              <View style={styles.spinnerCircle}>
-                <ActivityIndicator size="small" color="#284632" animating={isSyncing} />
-              </View>
-              <View style={styles.syncTextCol}>
-                <View style={styles.syncTitleRow}>
-                  <Text style={styles.syncTitle}>
-                    {isSyncing ? `Syncing ${totalToSync} records...` : `${totalToSync} records waiting`}
-                  </Text>
-                  <Text style={styles.syncFraction}>1 of {totalToSync}</Text>
-                </View>
-
-                {/* Progress Bar */}
-                <View style={styles.progressBarTrack}>
-                  <View
-                    style={[
-                      styles.progressBarFill,
-                      { width: isSyncing ? '65%' : `${Math.max(25, (1 / totalToSync) * 100)}%` },
-                    ]}
-                  />
-                </View>
-
-                <Text style={styles.syncSub}>
-                  Automatic while online {failedCount > 0 ? `· ${failedCount} failed below` : ''}
-                </Text>
-              </View>
-            </View>
-          </TouchableOpacity>
+          <View style={styles.syncCard}>
+            <Text style={styles.syncTitle}>
+              {totalToSync} {totalToSync === 1 ? 'record' : 'records'} not yet uploaded
+            </Text>
+            <Text style={styles.syncSub}>
+              {pendingCount} pending{failedCount > 0 ? ` · ${failedCount} failed` : ''} · saved on this device
+            </Text>
+            <Text style={styles.syncSub}>Uploading to the server is not available yet.</Text>
+          </View>
         ) : null}
 
         {/* 2x1 Action Cards Grid */}
@@ -171,7 +128,7 @@ export default function HomeScreen() {
                     onPress={() =>
                       router.push({
                         pathname: '/plant-detail',
-                        params: { id: item.recordId },
+                        params: { id: item.id },
                       } as any)
                     }
                   >
@@ -191,7 +148,7 @@ export default function HomeScreen() {
 
                   {item.status === RecordStatus.FAILED && (
                     <View style={styles.errorSubRow}>
-                      <Text style={styles.errorSubText}>Photo upload timed out (weak signal)</Text>
+                      <Text style={styles.errorSubText}>Upload failed</Text>
                       <TouchableOpacity onPress={() => retryRecord(item.id)}>
                         <Text style={styles.retryBtn}>Retry</Text>
                       </TouchableOpacity>
@@ -245,53 +202,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginBottom: 16,
   },
-  syncCardTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  spinnerCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  syncTextCol: {
-    flex: 1,
-  },
-  syncTitleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
   syncTitle: {
     fontSize: 14.5,
     fontWeight: '700',
     color: '#213B2A',
-  },
-  syncFraction: {
-    fontSize: 12.5,
-    color: '#5C7163',
-    fontWeight: '600',
-  },
-  progressBarTrack: {
-    height: 6,
-    backgroundColor: '#D1DFD6',
-    borderRadius: 3,
-    overflow: 'hidden',
-    marginBottom: 6,
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: '#284632',
-    borderRadius: 3,
+    marginBottom: 4,
   },
   syncSub: {
     fontSize: 12,
     color: '#5C7163',
+    marginTop: 2,
   },
 
   /* Action Grid (2x1) */
