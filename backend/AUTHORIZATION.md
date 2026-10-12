@@ -1,0 +1,15 @@
+# Section 1.5: staff JWT and RBAC
+
+Run `npm install` in `backend`, copy `.env.example` to `.env`, and set the project's publishable key. Start the API with `npm start`. The `.env` file is ignored by Git. Existing `SUPABASE_KEY` configurations also work.
+
+Protected requests use `Authorization: Bearer <Supabase access token>`. The middleware verifies the token with Supabase Auth, then reads the caller's own `profiles` row under that token. Only active `botanist`, `officer`, `researcher`, and `admin` profiles proceed. Missing or invalid tokens return 401; missing or inactive staff profiles return 403. `GET /api/me` and `GET /api/auth/me` return the verified user ID, email, and role.
+
+The knowledge API remains available at `/api/knowledge/species` and `/api/knowledge/species/:id`. It queries approved species through the public publishable-key client and Supabase RLS.
+
+The combined branch's `/api/identify` and `/api/iot` prototype routes are preserved. Section 1.2 restricts operational IoT information to Conservation Officers, so `/api/iot` requires an active officer account. The team has confirmed that AI plant identification is available to everyone, including unauthenticated Park Visitors. Therefore `/api/identify` has no login or role requirement; its suggestions are identification aids, not final species classifications.
+
+Current plant routes use temporary in-memory data. Botanists can create records, upload photos to records they created, and generate QR codes. Officers can read all prototype records. Botanists can read their own records and approved records; researchers can read approved records. Administrators can read approved public fields. Exact GPS is returned to administrators only when a trusted species classification explicitly marks the plant as non-endangered; the prototype has no such classification yet, so it withholds that GPS. Generic plant update and delete routes are denied because Section 1.2 does not authorize those broad operations.
+
+The public Park Visitor QR page is outside Section 1.5. The visitor feature must expose only approved information, allow exact GPS for non-endangered plants, and hide all location details for endangered plants. Visitors do not need a profile or JWT.
+
+Before the full role matrix can be enforced through the backend, the plant and observation endpoints need persistent ownership, approval status, and trusted species conservation status from Supabase. As checked on 2026-10-12, the Supabase `align_observation_review_rls_with_matrix` migration replaced the earlier observation policies: Botanists can update their own Draft or Rejected observations, not Pending or Approved ones; officers can read observations and submit reviews of Pending observations rather than use an unrestricted observation-management policy. The corresponding table privileges are present. These rules have been inspected but not yet verified end-to-end with real observation records and multiple user roles. The current `/api/plants` route still uses temporary in-memory records, so its successful role tests do not prove the database-backed plant workflow or the entire Section 1.2 matrix.

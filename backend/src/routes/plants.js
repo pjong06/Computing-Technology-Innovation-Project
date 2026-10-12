@@ -1,6 +1,7 @@
 const express = require("express");
 const upload = require("../services/storageService");
 const { generatePlantQR } = require("../services/qrService");
+const { requireAuth, requireRole } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -24,9 +25,55 @@ const plants = [
     }
 ];
 
+// The public QR visitor endpoint belongs to the visitor feature, not this staff API.
+router.use(requireAuth);
+
+function canReadPlant(plant, profile) {
+    if (profile.role === "officer") return true;
+    if (profile.role === "botanist" && plant.registered_by === profile.id) return true;
+    return plant.plant_status === "approved" &&
+        ["botanist", "researcher", "admin"].includes(profile.role);
+}
+
+function visiblePlant(plant, profile) {
+    if (profile.role === "officer" ||
+        (profile.role === "botanist" && plant.registered_by === profile.id)) return plant;
+
+    const { registered_by, ...approvedData } = plant;
+    if (profile.role === "botanist" || profile.role === "researcher") return approvedData;
+
+    // Admins receive public fields only. Unknown species sensitivity hides GPS.
+    const publicData = {
+        plant_id: plant.plant_id,
+        scientific_name: plant.scientific_name,
+        common_name: plant.common_name
+    };
+    if (plant.photo) publicData.photo = plant.photo;
+    if (plant.species_endangered === false) {
+        publicData.latitude = plant.latitude;
+        publicData.longitude = plant.longitude;
+        publicData.gps_accuracy_m = plant.gps_accuracy_m;
+    }
+    return publicData;
+}
+
+function denyUnspecifiedMutation(req, res) {
+    return res.status(403).json({ message: "Generic plant updates and deletes are not authorized" });
+}
+
+function requireOwnPlant(req, res, next) {
+    const plant = plants.find(p => p.plant_id === parseInt(req.params.id));
+    if (!plant) return res.status(404).json({ message: "Plant not found" });
+    if (plant.registered_by !== req.user.id) {
+        return res.status(403).json({ message: "Only the record owner may upload a photo" });
+    }
+    req.plant = plant;
+    next();
+}
+
 // GET all plants
 router.get("/", (req, res) => {
-    res.json(plants);
+    res.json(plants.filter(p => canReadPlant(p, req.profile)).map(p => visiblePlant(p, req.profile)));
 });
 
 // GET one plant by ID
@@ -41,11 +88,15 @@ router.get("/:id", (req, res) => {
         });
     }
 
-    res.json(plant);
+    if (!canReadPlant(plant, req.profile)) {
+        return res.status(404).json({ message: "Plant not found" });
+    }
+
+    res.json(visiblePlant(plant, req.profile));
 });
 
 // CREATE a new plant
-router.post("/", (req, res) => {
+router.post("/", requireRole("botanist"), (req, res) => {
     const { latitude, longitude } = req.body;
 
     if (
@@ -65,7 +116,9 @@ router.post("/", (req, res) => {
         common_name: req.body.common_name,
         latitude: req.body.latitude,
         longitude: req.body.longitude,
-        gps_accuracy_m: req.body.gps_accuracy_m
+        gps_accuracy_m: req.body.gps_accuracy_m,
+        registered_by: req.user.id,
+        plant_status: "pending"
     };
 
     plants.push(newPlant);
@@ -77,7 +130,7 @@ router.post("/", (req, res) => {
 });
 
 // UPDATE a plant by ID
-router.put("/:id", (req, res) => {
+router.put("/:id", denyUnspecifiedMutation, (req, res) => {
     const plantId = parseInt(req.params.id);
 
         const { latitude, longitude } = req.body;
@@ -114,7 +167,7 @@ router.put("/:id", (req, res) => {
 });
 
 // DELETE a plant by ID
-router.delete("/:id", (req, res) => {
+router.delete("/:id", denyUnspecifiedMutation, (req, res) => {
     const plantId = parseInt(req.params.id);
 
     const plantIndex = plants.findIndex(p => p.plant_id === plantId);
@@ -134,7 +187,7 @@ router.delete("/:id", (req, res) => {
 });
 
 // UPLOAD a photo for a plant
-router.post("/:id/photo", upload.single("photo"), (req, res) => {
+router.post("/:id/photo", requireRole("botanist"), requireOwnPlant, upload.single("photo"), (req, res) => {
     const plantId = parseInt(req.params.id);
 
     const plant = plants.find(p => p.plant_id === plantId);
@@ -161,7 +214,7 @@ router.post("/:id/photo", upload.single("photo"), (req, res) => {
 });
 
 // GENERATE QR code for a plant
-router.get("/:id/qr", async (req, res) => {
+router.get("/:id/qr", requireRole("botanist"), async (req, res) => {
     const plantId = parseInt(req.params.id);
 
     const plant = plants.find(p => p.plant_id === plantId);
@@ -189,7 +242,7 @@ router.get("/:id/qr", async (req, res) => {
 });
 
 // DISPLAY QR code as an image
-router.get("/:id/qr/image", async (req, res) => {
+router.get("/:id/qr/image", requireRole("botanist"), async (req, res) => {
     const plantId = parseInt(req.params.id);
 
     const plant = plants.find(p => p.plant_id === plantId);
