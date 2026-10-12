@@ -2,16 +2,39 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Platform, StatusBar, Switch, Modal } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useRecordStore, RecordStatus } from '../../src/store/useRecordStore';
+import { deleteAllStoredPhotos } from '../../src/utils/photoStorage';
 
 export default function ProfileScreen() {
   const router = useRouter();
   const records = useRecordStore((state) => state.records);
+  const clearAllData = useRecordStore((state) => state.clearAllData);
 
   const [mobileDataPhotos, setMobileDataPhotos] = useState(true);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const pendingCount = records.filter((r) => r.status === RecordStatus.PENDING).length;
   const failedCount = records.filter((r) => r.status === RecordStatus.FAILED).length;
+
+  // A record still needs uploading if it isn't Synced, or if any of its visits aren't.
+  const unsyncedCount = records.filter(
+    (r) => r.status !== RecordStatus.SYNCED || r.observations.some((o) => o.status !== RecordStatus.SYNCED)
+  ).length;
+
+  const handleLogoutPress = () => {
+    if (unsyncedCount === 0) {
+      router.replace('/' as any);
+      return;
+    }
+    setShowLogoutModal(true);
+  };
+
+  const handleLogoutAnyway = () => {
+    // Really remove everything this device holds: records, routes and stored photos.
+    clearAllData();
+    deleteAllStoredPhotos();
+    setShowLogoutModal(false);
+    router.replace('/' as any);
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -51,24 +74,25 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        <TouchableOpacity style={styles.logoutBtn} onPress={() => setShowLogoutModal(true)}>
+        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogoutPress}>
           <Text style={styles.logoutBtnText}>Log out</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Unsynced Safeguard Modal */}
-      <Modal visible={showLogoutModal} transparent animationType="fade">
+      {/* Shown only when there are unsynced records (see handleLogoutPress). */}
+      <Modal visible={showLogoutModal} transparent animationType="fade" onRequestClose={() => setShowLogoutModal(false)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Log out with unsynced records?</Text>
             <Text style={styles.modalBody}>
-              {pendingCount + failedCount} records haven't synced yet. If you log out now they'll be deleted from this device.
+              {unsyncedCount} {unsyncedCount === 1 ? 'record has' : 'records have'} not been uploaded to the server.
+              Logging out deletes {unsyncedCount === 1 ? 'it' : 'them'} and all photos from this device. This cannot be undone.
             </Text>
-            <TouchableOpacity style={styles.modalSecondary} onPress={() => { setShowLogoutModal(false); router.replace('/' as any); }}>
-              <Text style={styles.modalSecondaryText}>Log out anyway</Text>
+            <TouchableOpacity style={styles.modalPrimary} onPress={() => setShowLogoutModal(false)}>
+              <Text style={styles.modalPrimaryText}>Stay logged in</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.modalCancel} onPress={() => setShowLogoutModal(false)}>
-              <Text style={styles.modalCancelText}>Cancel</Text>
+            <TouchableOpacity style={styles.modalSecondary} onPress={handleLogoutAnyway}>
+              <Text style={styles.modalSecondaryText}>Log out anyway</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -105,6 +129,4 @@ const styles = StyleSheet.create({
   modalPrimaryText: { color: '#FFF', fontWeight: '700' },
   modalSecondary: { height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center', marginBottom: 4 },
   modalSecondaryText: { color: '#9B1C1C', fontWeight: '700' },
-  modalCancel: { paddingVertical: 10, alignItems: 'center' },
-  modalCancelText: { color: '#68776D', fontWeight: '600' },
 });
