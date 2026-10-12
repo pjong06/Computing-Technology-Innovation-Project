@@ -59,7 +59,6 @@ interface RecordState {
   activeDraftRoute: RecordedRoute | null;
   addRecord: (record: Omit<PlantRecord, 'id' | 'tagCode' | 'createdAt' | 'observations'>) => PlantRecord;
   addObservation: (plantRecordId: string, observation: Omit<ObservationVisit, 'id' | 'status'>) => void;
-  syncPending: () => void;
   retryRecord: (id: string) => void;
   saveRoute: (route: Omit<RecordedRoute, 'id' | 'createdAt'>) => RecordedRoute;
   clearActiveDraftRoute: () => void;
@@ -77,7 +76,6 @@ export const useRecordStore = create<RecordState>()(
           ...recordData,
           id: randomUUID(),
           tagCode: null, // set later from a pre-printed tag
-
           createdAt: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
           observations: [],
         };
@@ -99,15 +97,8 @@ export const useRecordStore = create<RecordState>()(
           }),
         }));
       },
-      syncPending: () => {
-        set((state) => ({
-          records: state.records.map((r) => ({
-            ...r,
-            status: RecordStatus.SYNCED,
-            observations: r.observations.map((o) => ({ ...o, status: RecordStatus.SYNCED })),
-          })),
-        }));
-      },
+      // There is deliberately no action that marks records Synced: only a real upload
+      // to the server (not built yet) may set that status.
       retryRecord: (id) => {
         set((state) => ({
           records: state.records.map((r) => (r.id === id ? { ...r, status: RecordStatus.PENDING } : r)),
@@ -131,13 +122,25 @@ export const useRecordStore = create<RecordState>()(
     {
       name: 'niah-ground-truth-store',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 1,
+      version: 2,
       migrate: (persistedState, version) => {
         const state = persistedState as { records?: Record<string, unknown>[] };
         if (version < 1 && Array.isArray(state.records)) {
           // v0 records carried a random "NP-2026-xxxx" recordId that was never on a
           // physical tag. Drop it; those records simply have no tag attached.
           state.records = state.records.map(({ recordId: _discarded, ...record }) => ({ ...record, tagCode: null }));
+        }
+        if (version < 2 && Array.isArray(state.records)) {
+          // Before v2 a fake "Sync" button marked records (and observations) as Synced
+          // without uploading anything. Nothing has ever reached a server, so every
+          // record goes back to Pending.
+          state.records = state.records.map((record) => ({
+            ...record,
+            status: RecordStatus.PENDING,
+            observations: Array.isArray(record.observations)
+              ? record.observations.map((obs: Record<string, unknown>) => ({ ...obs, status: RecordStatus.PENDING }))
+              : [],
+          }));
         }
         return state as unknown as RecordState;
       },

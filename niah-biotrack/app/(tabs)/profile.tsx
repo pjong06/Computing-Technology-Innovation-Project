@@ -6,7 +6,6 @@ import { useRecordStore, RecordStatus } from '../../src/store/useRecordStore';
 export default function ProfileScreen() {
   const router = useRouter();
   const records = useRecordStore((state) => state.records);
-  const syncPending = useRecordStore((state) => state.syncPending);
 
   const [mobileDataPhotos, setMobileDataPhotos] = useState(true);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
@@ -65,16 +64,6 @@ export default function ProfileScreen() {
             <Text style={styles.modalBody}>
               {pendingCount + failedCount} records haven't synced yet. If you log out now they'll be deleted from this device.
             </Text>
-            <TouchableOpacity
-              style={styles.modalPrimary}
-              onPress={() => {
-                syncPending();
-                setShowLogoutModal(false);
-                router.replace('/' as any);
-              }}
-            >
-              <Text style={styles.modalPrimaryText}>Sync first</Text>
-            </TouchableOpacity>
             <TouchableOpacity style={styles.modalSecondary} onPress={() => { setShowLogoutModal(false); router.replace('/' as any); }}>
               <Text style={styles.modalSecondaryText}>Log out anyway</Text>
             </TouchableOpacity>
