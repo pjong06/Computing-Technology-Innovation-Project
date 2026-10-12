@@ -1,4 +1,5 @@
 const { createClient } = require("@supabase/supabase-js");
+const fs = require("node:fs");
 const path = require("node:path");
 const { stdin, stdout } = require("node:process");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
@@ -56,6 +57,12 @@ function askInput(prompt, hidden = false) {
     });
 }
 
+function requiredEnv(name) {
+    const value = process.env[name];
+    if (!value) throw new Error(`Set ${name} before running this option.`);
+    return value;
+}
+
 async function main() {
     try {
         const email = (await askInput("Staff account email: ")).trim();
@@ -88,6 +95,78 @@ async function main() {
 
         console.log(`/api/me: HTTP ${response.status}`);
         console.log(await response.text());
+
+        if (process.argv.includes("--create-species")) {
+            const speciesResponse = await fetch("http://localhost:3000/api/knowledge/species", {
+                method: "POST",
+                headers: { ...headers, "Content-Type": "application/json" },
+                body: JSON.stringify({ scientific_name: requiredEnv("KNOWLEDGE_SPECIES_NAME") }),
+            });
+            console.log(`POST /api/knowledge/species: HTTP ${speciesResponse.status}`);
+            console.log(await speciesResponse.text());
+        }
+
+        if (process.argv.includes("--edit-species")) {
+            const speciesId = requiredEnv("KNOWLEDGE_SPECIES_ID");
+            const editResponse = await fetch(
+                `http://localhost:3000/api/knowledge/species/${speciesId}`,
+                {
+                    method: "PATCH",
+                    headers: { ...headers, "Content-Type": "application/json" },
+                    body: JSON.stringify({ habitat: requiredEnv("KNOWLEDGE_HABITAT") }),
+                }
+            );
+            console.log(`PATCH /api/knowledge/species: HTTP ${editResponse.status}`);
+            console.log(await editResponse.text());
+        }
+
+        if (process.argv.includes("--test-photo")) {
+            const speciesId = requiredEnv("KNOWLEDGE_SPECIES_ID");
+            const photoResponse = await fetch(
+                `http://localhost:3000/api/knowledge/species/${speciesId}/photos`,
+                { method: "POST", headers }
+            );
+
+            console.log(`POST species photo: HTTP ${photoResponse.status}`);
+            console.log(await photoResponse.text());
+        }
+
+        if (process.argv.includes("--upload-species-photo")) {
+            const speciesId = requiredEnv("KNOWLEDGE_SPECIES_ID");
+            const photoPath = requiredEnv("KNOWLEDGE_PHOTO_PATH");
+            const extension = path.extname(photoPath).toLowerCase();
+            if (![".jpg", ".jpeg", ".png"].includes(extension)) {
+                throw new Error("KNOWLEDGE_PHOTO_PATH must point to a JPEG or PNG file.");
+            }
+            const photoBytes = fs.readFileSync(photoPath);
+            const contentType = extension === ".png" ? "image/png" : "image/jpeg";
+
+            const form = new FormData();
+            form.append(
+                "photo",
+                new Blob([photoBytes], { type: contentType }),
+                path.basename(photoPath)
+            );
+
+            const uploadResponse = await fetch(
+                `http://localhost:3000/api/knowledge/species/${speciesId}/photos`,
+                { method: "POST", headers, body: form }
+            );
+
+            console.log(`POST species photo upload: HTTP ${uploadResponse.status}`);
+            console.log(await uploadResponse.text());
+        }
+
+        if (process.argv.includes("--archive-species")) {
+            const speciesId = requiredEnv("KNOWLEDGE_SPECIES_ID");
+            const archiveResponse = await fetch(
+                `http://localhost:3000/api/knowledge/species/${speciesId}`,
+                { method: "DELETE", headers }
+            );
+
+            console.log(`DELETE /api/knowledge/species: HTTP ${archiveResponse.status}`);
+            console.log(await archiveResponse.text());
+        }
 
         const iotResponse = await fetch("http://localhost:3000/api/iot/summary", {
             headers,
