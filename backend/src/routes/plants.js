@@ -131,6 +131,55 @@ router.get("/", async (req, res) => {
     }
 });
 
+// Find a plant using its scanned QR tag
+router.get("/qr/:qrValue", async (req, res) => {
+    const { qrValue } = req.params;
+
+    if (!/^NIAH-PLT-\d{5}$/.test(qrValue)) {
+        return res.status(400).json({
+            message: "Invalid QR tag"
+        });
+    }
+
+    try {
+        const { data: plant, error } = await req.supabase
+            .from("plants")
+            .select(`
+                *,
+                species:species_id (
+                    scientific_name,
+                    common_name,
+                    conservation_status
+                )
+            `)
+            .eq("qr_code_value", qrValue)
+            .maybeSingle();
+
+        if (error) {
+            console.error("QR lookup error:", error);
+            return res.status(500).json({
+                message: "Failed to look up plant"
+            });
+        }
+
+        if (!plant || !canReadPlant(plant, req.profile)) {
+            return res.status(404).json({
+                message: "Plant not found"
+            });
+        }
+
+        return res.status(200).json({
+            message: "Plant found successfully",
+            plant: visiblePlant(plant, req.profile)
+        });
+    } catch (error) {
+        console.error("QR lookup error:", error);
+        return res.status(500).json({
+            message: "Server error"
+        });
+    }
+});
+
 // GET one plant by ID from Supabase
 router.get("/:id", async (req, res) => {
     const { id } = req.params;

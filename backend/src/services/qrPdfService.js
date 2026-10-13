@@ -33,7 +33,7 @@ async function generateQRBatchPDF(tagValues) {
     const columns = 3;
     const rows = 5;
     const cellWidth = 170;
-    const cellHeight = 145;
+    const cellHeight = 140;
     const startX = 42;
     const startY = 55;
 
