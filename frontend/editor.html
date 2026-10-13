@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Species record editor - Niah Biotrack</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="images/logo.png">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app">
+
+<nav id="menu"></nav>
+
+<main>
+<section class="page on">
+  <h1 id="editor-title">Add <span>species record</span></h1>
+  <p class="lead">Changes appear in the catalogue and in the mobile Species Reference.</p>
+  <div class="card">
+    <div class="form">
+      <label>Scientific name<input id="f-sci"></label>
+      <label>Common name<input id="f-com"></label>
+      <label>Family (taxonomy)<input id="f-fam"></label>
+      <label>Conservation status
+        <select id="f-status"><option>Least Concern</option><option>Vulnerable</option><option>Endangered</option></select>
+      </label>
+      <label>Location name<input id="f-loc"></label>
+      <label>GPS (lat, lng)<input id="f-gps" placeholder="3.2247, 113.7631"></label>
+      <label class="full">Description<textarea id="f-desc"></textarea></label>
+      <label class="full">Botanical photograph
+        <div class="pv" id="photo-preview"></div>
+        <input type="file" accept="image/*" onchange="previewPhoto(this)">
+      </label>
+    </div>
+    <div class="acts">
+      <button class="btn" onclick="saveSpecies()">Save species</button>
+      <button class="btn ghost" onclick="location.href='species.html'">Cancel</button>
+    </div>
+  </div>
+</section>
+</main>
+</div>
+
+<div id="toast" role="status"></div>
+
+<script src="js/shared.js"></script>
+<script src="js/editor.js"></script>
+</body>
+</html>
