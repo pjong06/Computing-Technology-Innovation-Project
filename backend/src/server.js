@@ -11,6 +11,7 @@ const iotRoutes = require('./routes/iot');
 const { publicClient } = require("./config/supabase");
 const knowledgeRoutes = require("./routes/knowledge");
 const { requireAuth, requireRole } = require("./middleware/auth");
+const { startMqttIngestion } = require('./services/mqttIngestionService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -55,4 +56,5 @@ app.get('/api/auth/me', requireAuth, currentUser);
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Backend server running on port ${PORT}`);
+  startMqttIngestion();
 });
