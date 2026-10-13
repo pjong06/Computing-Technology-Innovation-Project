@@ -86,7 +86,6 @@ export default function SpeciesScreen() {
       return (
         <View style={styles.centerBox}>
           <ActivityIndicator color="#213B2A" />
-          <Text style={styles.emptyText}>Loading species list…</Text>
         </View>
       );
     }
@@ -95,6 +94,7 @@ export default function SpeciesScreen() {
         <View style={styles.centerBox}>
           <Text style={styles.emptyTitle}>Couldn't load the species list</Text>
           <Text style={styles.emptyText}>Check your connection. Once loaded, the list works offline.</Text>
+          <Text style={styles.emptyText}>{error}</Text>
           <TouchableOpacity style={styles.retryBtn} onPress={loadSpecies}>
             <Text style={styles.retryText}>Retry</Text>
           </TouchableOpacity>
@@ -126,7 +126,7 @@ export default function SpeciesScreen() {
         {error && species.length > 0 && (
           <View style={styles.offlineBanner}>
             <Text style={styles.offlineText}>
-              Couldn't refresh – showing the list saved on this phone{updatedText ? ` (updated ${updatedText})` : ''}.
+              Couldn't refresh - showing the list saved on this phone{updatedText ? ` (updated ${updatedText})` : ''}.
             </Text>
           </View>
         )}
