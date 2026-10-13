@@ -17,7 +17,9 @@ import type * as ImagePicker from 'expo-image-picker';
 import { pickImageFromLibrary, takePhotoWithCamera, type PickImageResult } from '../src/utils/imagePicker';
 import { savePhotoPermanently, deleteStoredPhoto } from '../src/utils/photoStorage';
 import Toast from 'react-native-toast-message';
-import { useRecordStore, SyncStatus } from '../src/store/useRecordStore';
+import { useRecordStore, SyncStatus, UNKNOWN_SPECIES } from '../src/store/useRecordStore';
+import { useSpeciesStore } from '../src/store/useSpeciesStore';
+import SpeciesPicker, { type SpeciesChoice } from '../src/components/SpeciesPicker';
 import { identifyPlant, IdentifyNetworkError, type SpeciesSuggestion } from '../src/services/identifyPlant';
 import { formatCoordinates, describeAccuracy } from '../src/utils/formatCoordinates';
 import FormScrollView from '../src/components/FormScrollView';
@@ -71,7 +73,10 @@ export default function NewRecordScreen() {
     Bark: null,
   });
 
-  const [scientificName, setScientificName] = useState('');
+  const [speciesChoice, setSpeciesChoice] = useState<SpeciesChoice>(null);
+  const [speciesQuery, setSpeciesQuery] = useState('');
+  const [speciesNotice, setSpeciesNotice] = useState('');
+  const allSpecies = useSpeciesStore((state) => state.species);
   const [commonName, setCommonName] = useState('');
   const [family, setFamily] = useState('');
   const [height, setHeight] = useState('');
@@ -177,7 +182,10 @@ export default function NewRecordScreen() {
   const clearSuggestionFields = () => {
     if (!selectedSpecies) return;
     const { scientificName: name, commonName: common, family: fam } = selectedSpecies;
-    setScientificName((value) => (value === name ? '' : value));
+    setSpeciesChoice((choice) =>
+      choice?.kind === 'species' && choice.species.scientific_name === name ? null : choice
+    );
+    setSpeciesNotice('');
     if (common) setCommonName((value) => (value === common ? '' : value));
     if (fam) setFamily((value) => (value === fam ? '' : value));
   };
@@ -280,16 +288,34 @@ export default function NewRecordScreen() {
   const selectSuggestion = (suggestion: SpeciesSuggestion) => {
     clearSuggestionFields(); // undo the previously selected suggestion first
     setSelectedSpecies(suggestion);
-    setScientificName(suggestion.scientificName);
+
+    // Only species in the approved list can be chosen.
+    const wanted = suggestion.scientificName.trim().toLowerCase();
+    const match = allSpecies.find((s) => s.scientific_name.trim().toLowerCase() === wanted);
+    if (match) {
+      setSpeciesChoice({ kind: 'species', species: match });
+      setSpeciesNotice('');
+    } else {
+      setSpeciesChoice(null);
+      setSpeciesQuery(suggestion.scientificName);
+      setSpeciesNotice(
+        `"${suggestion.scientificName}" isn't in the approved species list. Pick a listed species, or choose Unknown species.`
+      );
+    }
+
     // Only overwrite what the suggestion actually knows; keep anything the user typed otherwise.
     if (suggestion.commonName) setCommonName(suggestion.commonName);
     if (suggestion.family) setFamily(suggestion.family);
     clearError('scientificName');
   };
 
-  const handleScientificNameChange = (value: string) => {
-    setScientificName(value);
-    setSelectedSpecies(null);
+  const handleSpeciesChange = (choice: SpeciesChoice) => {
+    setSpeciesChoice(choice);
+    setSelectedSpecies(null); // a manual choice replaces the AI pick
+    setSpeciesNotice('');
+    if (choice?.kind === 'species' && choice.species.common_name) {
+      setCommonName(choice.species.common_name);
+    }
     clearError('scientificName');
   };
 
@@ -303,15 +329,16 @@ export default function NewRecordScreen() {
 
     const nextErrors: FieldErrors = {};
     if (photoList.length === 0) nextErrors.photos = 'Add at least one photo.';
-    if (!scientificName.trim()) nextErrors.scientificName = 'Enter the scientific name, or pick an AI suggestion.';
-    if (!locationName.trim()) nextErrors.locationName = 'Enter a location name.';
+    if (!speciesChoice) nextErrors.scientificName = 'Choose a species from the list, or Unknown species.';    if (!locationName.trim()) nextErrors.locationName = 'Enter a location name.';
     if (!gpsFix) nextErrors.gps = 'A GPS fix is required. Wait for it, or tap the GPS card to retry.';
 
     setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0 || !gpsFix) return;
+    if (Object.keys(nextErrors).length > 0 || !gpsFix || !speciesChoice) return;
 
     const saved = addRecord({
-      scientificName: scientificName.trim(),
+      scientificName:
+        speciesChoice.kind === 'species' ? speciesChoice.species.scientific_name : UNKNOWN_SPECIES,
+      speciesId: speciesChoice.kind === 'species' ? speciesChoice.species.id : null,
       commonName: commonName.trim(),
       family: family.trim(),
       height: height.trim() || undefined,
@@ -452,18 +479,15 @@ export default function NewRecordScreen() {
         )}
 
         <Text style={styles.sectionLabel}>SPECIES DETAILS</Text>
-        <Text style={styles.fieldLabel}>Scientific name *</Text>
-        <TextInput
-          style={[styles.input, errors.scientificName && styles.inputError]}
-          placeholder="e.g. Nepenthes ampullaria"
-          placeholderTextColor="#8C9A91"
-          value={scientificName}
-          onChangeText={handleScientificNameChange}
-          autoCorrect={false}
-          returnKeyType="next"
-          submitBehavior="submit"
-          onSubmitEditing={() => commonNameRef.current?.focus()}
+          <Text style={styles.fieldLabel}>Species *</Text>
+        <SpeciesPicker
+          value={speciesChoice}
+          onChange={handleSpeciesChange}
+          query={speciesQuery}
+          onQueryChange={setSpeciesQuery}
+          hasError={!!errors.scientificName}
         />
+        {speciesNotice !== '' && <Text style={styles.identifyMessage}>{speciesNotice}</Text>}
         {errors.scientificName && <Text style={styles.errorText}>{errors.scientificName}</Text>}
 
         <Text style={styles.fieldLabel}>Common name</Text>
