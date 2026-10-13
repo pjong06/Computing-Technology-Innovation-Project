@@ -175,7 +175,6 @@ router.get("/species/:id", async (req, res) => {
     description,
     morphology,
     habitat,
-    distribution_notes,
     cultural_significance,
     taxonomy (
         kingdom,
@@ -191,7 +190,7 @@ router.get("/species/:id", async (req, res) => {
         media_type,
         is_primary
     )
-`)
+ `)
         .eq("id", id)
         .eq("verification_status", "approved")
         .maybeSingle();
