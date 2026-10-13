@@ -1,23 +1,51 @@
 import React, { useRef, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, Platform, StatusBar } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, Platform, StatusBar, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import LeafLogo from '../src/components/LeafLogo';
 import FormScrollView from '../src/components/FormScrollView';
+import { supabase } from '../src/lib/supabase';
 
 export default function LoginScreen() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [authError, setAuthError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const passwordRef = useRef<TextInput>(null);
 
-  const handleLogin = () => {
-    if (!email.trim() || !password.trim()) {
-      setAuthError(true);
+  const handleLogin = async () => {
+    if (loading) return; // ignore double taps
+
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!trimmedEmail || !password) {
+      setErrorMessage('Enter your email and password.');
       return;
     }
-    setAuthError(false);
+
+    setLoading(true);
+    setErrorMessage(null);
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email: trimmedEmail,
+      password,
+    });
+
+    setLoading(false);
+
+    if (error) {
+      // status 0 / fetch error = the phone never reached Supabase
+      if (error.name === 'AuthRetryableFetchError' || error.status === 0) {
+        setErrorMessage("Can't reach the server. Check your connection and try again.");
+      } else if (error.code === 'invalid_credentials' || error.status === 400) {
+        setErrorMessage('Incorrect email or password. Check them and try again, or reset your password below.');
+      } else {
+        setErrorMessage('Sign-in failed. Please try again.');
+      }
+      return;
+    }
+
+    setPassword(''); // don't keep the password in memory
     router.replace('/(tabs)/home' as any);
   };
 
@@ -31,7 +59,7 @@ export default function LoginScreen() {
         <Text style={styles.brandSubtitle}>Biodiversity documentation system</Text>
 
         <View style={styles.form}>
-          <Text style={styles.inputLabel}>Staff ID or email</Text>
+          <Text style={styles.inputLabel}>Email</Text>
           <TextInput
             style={styles.input}
             placeholder="e.g. sfc.botanist@sarawakforestry.com"
@@ -64,14 +92,19 @@ export default function LoginScreen() {
             </TouchableOpacity>
           </View>
 
-          {authError && (
-            <Text style={styles.errorText}>
-              Incorrect password. Check it and try again, or reset it below.
-            </Text>
-          )}
+          {errorMessage && <Text style={styles.errorText}>{errorMessage}</Text>}
 
-          <TouchableOpacity style={styles.loginBtn} activeOpacity={0.85} onPress={handleLogin}>
-            <Text style={styles.loginBtnText}>Log in</Text>
+          <TouchableOpacity
+            style={[styles.loginBtn, loading && styles.loginBtnDisabled]}
+            activeOpacity={0.85}
+            onPress={handleLogin}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.loginBtnText}>Log in</Text>
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity onPress={() => router.push('/forgot-password' as any)} style={styles.forgotBtn}>
@@ -104,6 +137,7 @@ const styles = StyleSheet.create({
   errorText: { color: '#9B1C1C', fontSize: 12.5, marginBottom: 10 },
   loginBtn: { backgroundColor: '#213B2A', height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', marginTop: 10 },
   loginBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
+  loginBtnDisabled: { opacity: 0.6 },
   forgotBtn: { alignSelf: 'center', marginTop: 14 },
   forgotBtnText: { color: '#213B2A', fontSize: 13, fontWeight: '700' },
   footer: { marginTop: 32, alignItems: 'center' },
