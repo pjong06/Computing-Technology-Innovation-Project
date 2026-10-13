@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isAuthRetryableFetchError } from '@supabase/supabase-js';
 import { supabase } from './supabase';
+import { useProfileStore } from '../store/useProfileStore';
 
 // True if this phone has a saved login, even when offline.
 export async function hasSavedSession(): Promise<boolean> {
@@ -13,6 +14,7 @@ export async function hasSavedSession(): Promise<boolean> {
 
 // Remove the login from this phone, online or offline.
 export async function signOutOnThisPhone(): Promise<void> {
+  useProfileStore.getState().clear(); // forget the cached account
   const { error } = await supabase.auth.signOut({ scope: 'local' });
   if (error) {
     // Supabase couldn't finish (e.g. offline + expired token), so remove
