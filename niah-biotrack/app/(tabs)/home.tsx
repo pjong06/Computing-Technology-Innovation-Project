@@ -11,25 +11,25 @@ import {
   Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useRecordStore, RecordStatus } from '../../src/store/useRecordStore';
+import { useRecordStore, SyncStatus } from '../../src/store/useRecordStore';
 
 export default function HomeScreen() {
   const router = useRouter();
   const records = useRecordStore((state) => state.records);
   const retryRecord = useRecordStore((state) => state.retryRecord);
 
-  const pendingCount = records.filter((r) => r.status === RecordStatus.PENDING).length;
-  const failedCount = records.filter((r) => r.status === RecordStatus.FAILED).length;
+  const pendingCount = records.filter((r) => r.syncStatus === SyncStatus.NOT_UPLOADED).length;
+  const failedCount = records.filter((r) => r.syncStatus === SyncStatus.FAILED).length;
   const totalToSync = pendingCount + failedCount;
 
-  const getStatusBadge = (status: RecordStatus) => {
+  const getStatusBadge = (status: SyncStatus) => {
     switch (status) {
-      case RecordStatus.SYNCED:
-        return { bg: '#E4F2E7', text: '#215A36', label: '• Synced' };
-      case RecordStatus.PENDING:
-        return { bg: '#FDF4D8', text: '#8C5E03', label: '• Pending' };
-      case RecordStatus.FAILED:
-        return { bg: '#FDE2E2', text: '#9B1C1C', label: '• Failed' };
+      case SyncStatus.UPLOADED:
+        return { bg: '#E4F2E7', text: '#215A36', label: '• Uploaded' };
+      case SyncStatus.NOT_UPLOADED:
+        return { bg: '#FDF4D8', text: '#8C5E03', label: '• Not Upploaded' };
+      case SyncStatus.FAILED:
+        return { bg: '#FDE2E2', text: '#9B1C1C', label: '• Upload failed' };
     }
   };
 
@@ -53,7 +53,7 @@ export default function HomeScreen() {
               {totalToSync} {totalToSync === 1 ? 'record' : 'records'} not yet uploaded
             </Text>
             <Text style={styles.syncSub}>
-              {pendingCount} pending{failedCount > 0 ? ` · ${failedCount} failed` : ''} · saved on this device
+              {pendingCount} not uploaded{failedCount > 0 ? ` · ${failedCount} failed` : ''} · saved on this device
             </Text>
             <Text style={styles.syncSub}>Uploading to the server is not available yet.</Text>
           </View>
@@ -119,7 +119,7 @@ export default function HomeScreen() {
             keyExtractor={(item) => item.id}
             showsVerticalScrollIndicator={false}
             renderItem={({ item }) => {
-              const badge = getStatusBadge(item.status);
+              const badge = getStatusBadge(item.syncStatus);
               return (
                 <View style={styles.recordItem}>
                   <TouchableOpacity
@@ -146,7 +146,7 @@ export default function HomeScreen() {
                     </View>
                   </TouchableOpacity>
 
-                  {item.status === RecordStatus.FAILED && (
+                  {item.syncStatus === SyncStatus.FAILED && (
                     <View style={styles.errorSubRow}>
                       <Text style={styles.errorSubText}>Upload failed</Text>
                       <TouchableOpacity onPress={() => retryRecord(item.id)}>

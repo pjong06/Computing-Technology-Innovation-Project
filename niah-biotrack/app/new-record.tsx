@@ -17,7 +17,7 @@ import type * as ImagePicker from 'expo-image-picker';
 import { pickImageFromLibrary, takePhotoWithCamera, type PickImageResult } from '../src/utils/imagePicker';
 import { savePhotoPermanently, deleteStoredPhoto } from '../src/utils/photoStorage';
 import Toast from 'react-native-toast-message';
-import { useRecordStore, RecordStatus } from '../src/store/useRecordStore';
+import { useRecordStore, SyncStatus } from '../src/store/useRecordStore';
 import { identifyPlant, IdentifyNetworkError, type SpeciesSuggestion } from '../src/services/identifyPlant';
 import { formatCoordinates, describeAccuracy } from '../src/utils/formatCoordinates';
 import FormScrollView from '../src/components/FormScrollView';
@@ -322,7 +322,7 @@ export default function NewRecordScreen() {
       gpsAccuracyM: gpsFix.accuracyM,
       gpsCoordination: formatCoordinates(gpsFix.latitude, gpsFix.longitude, gpsFix.accuracyM),
       photoUris: photoList,
-      status: RecordStatus.PENDING,
+      syncStatus: SyncStatus.NOT_UPLOADED,
     });
 
     recordSaved.current = true; // the record now owns the stored photos
