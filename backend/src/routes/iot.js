@@ -80,20 +80,15 @@ router.get('/summary', async (req, res) => {
 
     const totalStations = stations.length;
 
-    const onlineStations = stations.filter(
-      station => station.station_status === 'online'
-    ).length;
-
-    const offlineStations = stations.filter(
-      station => station.station_status === 'offline'
+    const activeStations = stations.filter(
+      station => station.station_status === 'active'
     ).length;
 
     return res.json({
       message: 'IoT dashboard summary retrieved successfully',
       data: {
         total_stations: totalStations,
-        online_stations: onlineStations,
-        offline_stations: offlineStations
+        active_stations: activeStations
       }
     });
 
@@ -105,7 +100,7 @@ router.get('/summary', async (req, res) => {
     });
   }
 });
-// GET IoT dashboard summary directly from Supabase
+// GET live IoT dashboard summary from in-memory MQTT telemetry
 router.get('/summary/live', async (req, res) => {
   res.json({
     message: 'IoT dashboard summary retrieved successfully',
