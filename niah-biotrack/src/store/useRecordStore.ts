@@ -17,6 +17,10 @@ export enum ReviewStatus {
   REJECTED = 'rejected', // officer sent it back with a comment
 }
 
+// Shown and saved as the name when the botanist doesn't know the species.
+// The officer assigns the real species during review.
+export const UNKNOWN_SPECIES = 'Unknown species';
+
 export interface ObservationVisit {
   id: string;
   date: string;
@@ -32,6 +36,7 @@ export interface PlantRecord {
   id: string; // UUID generated on the phone; stays the same after sync
   tagCode: string | null; // code of the pre-printed tag on the plant; null until one is attached
   scientificName: string;
+  speciesId: string | null;
   commonName: string;
   family: string;
   height?: string;
@@ -173,7 +178,7 @@ export const useRecordStore = create<RecordState>()(
     {
       name: 'niah-ground-truth-store',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 4,
+      version: 5,
       migrate: (persistedState, version) => {
         const state = persistedState as { records?: Record<string, unknown>[] };
         if (version < 1 && Array.isArray(state.records)) {
@@ -223,6 +228,11 @@ export const useRecordStore = create<RecordState>()(
             reviewStatus: ReviewStatus.DRAFT,
             reviewComment: null,
           }));
+        }
+
+                if (version < 5 && Array.isArray(state.records)) {
+          // v5: records link to a species by ID. Older records only have a name.
+          state.records = state.records.map((record) => ({ ...record, speciesId: null }));
         }
 
         return state as unknown as RecordState;
