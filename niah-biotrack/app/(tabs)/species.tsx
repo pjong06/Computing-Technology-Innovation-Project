@@ -86,6 +86,7 @@ export default function SpeciesScreen() {
       return (
         <View style={styles.centerBox}>
           <ActivityIndicator color="#213B2A" />
+
         </View>
       );
     }
