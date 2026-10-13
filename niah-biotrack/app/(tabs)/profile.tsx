@@ -14,6 +14,7 @@ import {
 import { useRouter } from 'expo-router';
 import { RecordStatus, useRecordStore } from '../../src/store/useRecordStore';
 import { deleteAllStoredPhotos } from '../../src/utils/photoStorage';
+import { signOutOnThisPhone } from '../../src/lib/auth';
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -82,8 +83,9 @@ export default function ProfileScreen() {
           ? `${pendingObservationCount} pending`
           : `${syncedObservationCount} synced`;
 
-  const handleLogoutPress = () => {
+  const handleLogoutPress = async () => {
     if (unsyncedRecordCount === 0) {
+      await signOutOnThisPhone();
       router.replace('/' as never);
       return;
     }
@@ -91,12 +93,13 @@ export default function ProfileScreen() {
     setShowLogoutModal(true);
   };
 
-  const handleLogoutAnyway = () => {
+  const handleLogoutAnyway = async () => {
     // Clear records, routes and stored photos together so logout does not leave
     // field data behind on the device.
     clearAllData();
     void deleteAllStoredPhotos();
     setShowLogoutModal(false);
+    await signOutOnThisPhone();
     router.replace('/' as never);
   };
 

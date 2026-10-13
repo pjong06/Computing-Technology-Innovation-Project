@@ -1,4 +1,5 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { hasSavedSession } from '../src/lib/auth';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, Platform, StatusBar, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import LeafLogo from '../src/components/LeafLogo';
@@ -13,6 +14,18 @@ export default function LoginScreen() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const passwordRef = useRef<TextInput>(null);
+
+  const [checkingSession, setCheckingSession] = useState(true);
+
+  // If this phone already has a login saved, skip the login screen.
+  useEffect(() => {
+    hasSavedSession()
+      .then((signedIn) => {
+        if (signedIn) router.replace('/(tabs)/home' as any);
+        else setCheckingSession(false);
+      })
+      .catch(() => setCheckingSession(false));
+  }, []);
 
   const handleLogin = async () => {
     if (loading) return; // ignore double taps
@@ -48,6 +61,15 @@ export default function LoginScreen() {
     setPassword(''); // don't keep the password in memory
     router.replace('/(tabs)/home' as any);
   };
+
+  // Show a spinner while checking, so the login form doesn't flash.
+  if (checkingSession) {
+    return (
+      <SafeAreaView style={[styles.safeArea, styles.centered]}>
+        <ActivityIndicator color="#213B2A" />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -96,6 +118,7 @@ export default function LoginScreen() {
 
           <TouchableOpacity
             style={[styles.loginBtn, loading && styles.loginBtnDisabled]}
+        
             activeOpacity={0.85}
             onPress={handleLogin}
             disabled={loading}
@@ -138,6 +161,7 @@ const styles = StyleSheet.create({
   loginBtn: { backgroundColor: '#213B2A', height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', marginTop: 10 },
   loginBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
   loginBtnDisabled: { opacity: 0.6 },
+  centered: { justifyContent: 'center', alignItems: 'center' },
   forgotBtn: { alignSelf: 'center', marginTop: 14 },
   forgotBtnText: { color: '#213B2A', fontSize: 13, fontWeight: '700' },
   footer: { marginTop: 32, alignItems: 'center' },
