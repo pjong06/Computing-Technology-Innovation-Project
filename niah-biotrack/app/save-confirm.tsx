@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Platform, StatusBar } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useRecordStore, RecordStatus } from '../src/store/useRecordStore';
+import { useRecordStore, SyncStatus } from '../src/store/useRecordStore';
 import PlantNotFound from '../src/components/PlantNotFound';
 
 export default function SaveConfirmScreen() {
@@ -16,13 +16,13 @@ export default function SaveConfirmScreen() {
   }
 
   // Describe the record's real local status. Nothing is uploaded yet, so a new
-  // record is always Pending here.
+  // record is always Not Uploaded here.
   const statusText =
-    matched.status === RecordStatus.SYNCED
+    matched.syncStatus === SyncStatus.UPLOADED
       ? 'Status: Synced to the server'
-      : matched.status === RecordStatus.FAILED
+      : matched.syncStatus === SyncStatus.FAILED
         ? 'Status: Upload failed – saved on this device'
-        : 'Status: Pending – saved on this device only';
+        : 'Status: Not uploaded – saved on this device only';
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -31,7 +31,7 @@ export default function SaveConfirmScreen() {
           <View style={styles.checkIconCircle}><Text style={{ color: '#FFF', fontSize: 24 }}>✓</Text></View>
           <Text style={styles.title}>Record saved</Text>
           <Text style={styles.subtitle}>{statusText}</Text>
-          {matched.status !== RecordStatus.SYNCED && (
+          {matched.syncStatus !== SyncStatus.UPLOADED && (
             <Text style={styles.subtitle}>Uploading to the server is not available yet.</Text>
           )}
 

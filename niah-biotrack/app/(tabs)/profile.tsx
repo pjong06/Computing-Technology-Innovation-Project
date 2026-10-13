@@ -12,7 +12,7 @@ import {
   View,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { RecordStatus, useRecordStore } from '../../src/store/useRecordStore';
+import { SyncStatus, useRecordStore } from '../../src/store/useRecordStore';
 import { deleteAllStoredPhotos } from '../../src/utils/photoStorage';
 import { signOutOnThisPhone } from '../../src/lib/auth';
 import { useProfileStore } from '../../src/store/useProfileStore';
@@ -41,19 +41,19 @@ export default function ProfileScreen() {
 
   // Task 3.6 counts are derived from the persisted records. Keeping them out of
   // AsyncStorage prevents a separate sync report from drifting out of date.
-  const syncedRecordCount = records.filter((record) => record.status === RecordStatus.SYNCED).length;
-  const pendingRecordCount = records.filter((record) => record.status === RecordStatus.PENDING).length;
-  const failedRecordCount = records.filter((record) => record.status === RecordStatus.FAILED).length;
+  const syncedRecordCount = records.filter((record) => record.syncStatus === SyncStatus.UPLOADED).length;
+  const pendingRecordCount = records.filter((record) => record.syncStatus === SyncStatus.NOT_UPLOADED).length;
+  const failedRecordCount = records.filter((record) => record.syncStatus === SyncStatus.FAILED).length;
 
   const observations = records.flatMap((record) => record.observations);
   const syncedObservationCount = observations.filter(
-    (observation) => observation.status === RecordStatus.SYNCED
+    (observation) => observation.syncStatus === SyncStatus.UPLOADED
   ).length;
   const pendingObservationCount = observations.filter(
-    (observation) => observation.status === RecordStatus.PENDING
+    (observation) => observation.syncStatus === SyncStatus.NOT_UPLOADED
   ).length;
   const failedObservationCount = observations.filter(
-    (observation) => observation.status === RecordStatus.FAILED
+    (observation) => observation.syncStatus === SyncStatus.FAILED
   ).length;
 
   const pendingItemCount = pendingRecordCount + pendingObservationCount;
@@ -63,8 +63,8 @@ export default function ProfileScreen() {
   // observations waiting to upload. This is the number used by the logout warning.
   const unsyncedRecordCount = records.filter(
     (record) =>
-      record.status !== RecordStatus.SYNCED ||
-      record.observations.some((observation) => observation.status !== RecordStatus.SYNCED)
+      record.syncStatus !== SyncStatus.UPLOADED ||
+      record.observations.some((observation) => observation.syncStatus !== SyncStatus.UPLOADED)
   ).length;
 
   let overallStatus = 'No records';

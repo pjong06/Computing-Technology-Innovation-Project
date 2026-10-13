@@ -13,7 +13,7 @@ import {
   type NativeScrollEvent,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useRecordStore, RecordStatus } from '../src/store/useRecordStore';
+import { useRecordStore, SyncStatus } from '../src/store/useRecordStore';
 import PlantNotFound from '../src/components/PlantNotFound';
 import { resolveStoredPhotoUri } from '../src/utils/photoStorage';
 import { formatCoordinates } from '../src/utils/formatCoordinates';
@@ -164,8 +164,8 @@ export default function PlantDetailScreen() {
               <View style={styles.obsCard}>
                 <View style={styles.obsCardTop}>
                   <Text style={styles.obsDate}>{obs.date}</Text>
-                  <Text style={[styles.obsStatus, obs.status === RecordStatus.PENDING && { color: '#8C5E03' }]}>
-                    • {obs.status}
+                  <Text style={[styles.obsStatus, obs.syncStatus === SyncStatus.NOT_UPLOADED && { color: '#8C5E03' }]}>
+                    • {obs.syncStatus}
                   </Text>
                 </View>
                 <Text style={styles.obsAuthor}>{obs.recordedBy}</Text>

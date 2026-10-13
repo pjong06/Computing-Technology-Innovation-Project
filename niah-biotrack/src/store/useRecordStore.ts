@@ -3,10 +3,10 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { randomUUID } from 'expo-crypto';
 
-export enum RecordStatus {
-  SYNCED = 'Synced',
-  PENDING = 'Pending',
-  FAILED = 'Failed',
+export enum SyncStatus {
+  UPLOADED = 'Uploaded',
+  NOT_UPLOADED = 'Not uploaded',
+  FAILED = 'Upload failed',
 }
 
 export interface ObservationVisit {
@@ -17,7 +17,7 @@ export interface ObservationVisit {
   stage: 'Bud' | 'Flowering' | 'Vegetative' | 'Fruiting';
   measurement: string;
   notes: string;
-  status: RecordStatus;
+  syncStatus: SyncStatus;
 }
 
 export interface PlantRecord {
@@ -36,7 +36,7 @@ export interface PlantRecord {
   gpsAccuracyM?: number | null; // null when the device didn't report accuracy
   gpsCoordination: string; // formatted for display only, e.g. "3.81760° N, 113.78100° E (±5 m)"
   photoUris: string[];
-  status: RecordStatus;
+  syncStatus: SyncStatus;
   createdAt: string;
   conservationStatus?: 'EN' | 'VU' | 'LC' | 'CR';
   routeLength?: string;
@@ -58,7 +58,7 @@ interface RecordState {
   routes: RecordedRoute[];
   activeDraftRoute: RecordedRoute | null;
   addRecord: (record: Omit<PlantRecord, 'id' | 'tagCode' | 'createdAt' | 'observations'>) => PlantRecord;
-  addObservation: (plantRecordId: string, observation: Omit<ObservationVisit, 'id' | 'status'>) => void;
+  addObservation: (plantRecordId: string, observation: Omit<ObservationVisit, 'id' | 'syncStatus'>) => void;
   retryRecord: (id: string) => void;
   findByTag: (tagCode: string) => PlantRecord | undefined;
   attachTag: (recordId: string, tagCode: string) => { ok: true } | { ok: false; reason: string };
@@ -91,7 +91,7 @@ export const useRecordStore = create<RecordState>()(
               const newObs: ObservationVisit = {
                 ...observationData,
                 id: `obs-${Date.now()}`,
-                status: RecordStatus.PENDING,
+                syncStatus: SyncStatus.NOT_UPLOADED,
               };
               return { ...r, observations: [newObs, ...r.observations] };
             }
@@ -103,7 +103,7 @@ export const useRecordStore = create<RecordState>()(
       // to the server (not built yet) may set that status.
       retryRecord: (id) => {
         set((state) => ({
-          records: state.records.map((r) => (r.id === id ? { ...r, status: RecordStatus.PENDING } : r)),
+          records: state.records.map((r) => (r.id === id ? { ...r, syncStatus: SyncStatus.NOT_UPLOADED } : r)),
         }));
       },
       findByTag: (tagCode) => get().records.find((r) => r.tagCode === tagCode),
@@ -140,7 +140,7 @@ export const useRecordStore = create<RecordState>()(
     {
       name: 'niah-ground-truth-store',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 2,
+      version: 3,
       migrate: (persistedState, version) => {
         const state = persistedState as { records?: Record<string, unknown>[] };
         if (version < 1 && Array.isArray(state.records)) {
@@ -154,12 +154,34 @@ export const useRecordStore = create<RecordState>()(
           // record goes back to Pending.
           state.records = state.records.map((record) => ({
             ...record,
-            status: RecordStatus.PENDING,
+            status: SyncStatus.NOT_UPLOADED,
             observations: Array.isArray(record.observations)
-              ? record.observations.map((obs: Record<string, unknown>) => ({ ...obs, status: RecordStatus.PENDING }))
+              ? record.observations.map((obs: Record<string, unknown>) => ({ ...obs, status: SyncStatus.NOT_UPLOADED }))
               : [],
           }));
         }
+
+          if (version < 3 && Array.isArray(state.records)) {
+          // v3: "status" (Synced/Pending/Failed) became "syncStatus", so the phone's
+          // upload state isn't confused with the officer's review status.
+          const toSync = (old: unknown) =>
+            old === 'Synced' || old === 'Uploaded'
+              ? SyncStatus.UPLOADED
+              : old === 'Failed' || old === 'Upload failed'
+                ? SyncStatus.FAILED
+                : SyncStatus.NOT_UPLOADED;
+          state.records = state.records.map(({ status, ...record }) => ({
+            ...record,
+            syncStatus: toSync(status),
+            observations: Array.isArray(record.observations)
+              ? record.observations.map(({ status: obsStatus, ...obs }: Record<string, unknown>) => ({
+                  ...obs,
+                  syncStatus: toSync(obsStatus),
+                }))
+              : [],
+          }));
+        }
+
         return state as unknown as RecordState;
       },
     }
