@@ -113,4 +113,44 @@ router.get('/summary/database', async (req, res) => {
   });
 });
 
+// GET recent IoT alerts from Supabase
+router.get('/alerts', async (req, res) => {
+  try {
+    const { data, error } = await req.supabase
+      .from('alerts')
+      .select(`
+        id,
+        station_id,
+        reading_id,
+        alert_message,
+        severity,
+        alert_status,
+        triggered_at,
+        acknowledged_by,
+        acknowledged_at,
+        resolved_by,
+        resolved_at
+      `)
+      .order('triggered_at', { ascending: false })
+      .limit(100);
+
+    if (error) {
+      console.error('IoT alerts error:', error);
+      return res.status(500).json({
+        message: 'Failed to retrieve IoT alerts'
+      });
+    }
+
+    return res.json({
+      message: 'IoT alerts retrieved successfully',
+      data
+    });
+  } catch (error) {
+    console.error('IoT alerts error:', error);
+    return res.status(500).json({
+      message: 'Internal server error'
+    });
+  }
+});
+
 module.exports = router;
