@@ -3,24 +3,32 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, Plat
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useRecordStore } from '../src/store/useRecordStore';
 import FormScrollView from '../src/components/FormScrollView';
+import { parseTagCode } from '../src/utils/tagCode';
 
 export default function ManualQREntryScreen() {
   const router = useRouter();
   const { initialCode, notFound } = useLocalSearchParams();
-  const records = useRecordStore((state) => state.records);
+  const findByTag = useRecordStore((state) => state.findByTag);
 
   const [code, setCode] = useState((initialCode as string) || '');
-  const [hasError, setHasError] = useState(notFound === 'true');
+  // null = no error, 'invalid' = not a Niah tag, 'notFound' = valid tag but no record has it
+  const [error, setError] = useState<null | 'invalid' | 'notFound'>(
+    notFound === 'true' ? 'notFound' : null
+  );
 
   const handleLookup = () => {
-    const clean = code.trim().toUpperCase();
-    const matched = records.find((r) => r.tagCode !== null && r.tagCode.toUpperCase() === clean);
+    const clean = parseTagCode(code);
+    if (!clean) {
+      setError('invalid');
+      return;
+    }
 
+    const matched = findByTag(clean);
     if (matched) {
-      setHasError(false);
+      setError(null);
       router.push({ pathname: '/plant-detail', params: { id: matched.id } } as any);
     } else {
-      setHasError(true);
+      setError('notFound');
     }
   };
 
@@ -37,12 +45,12 @@ export default function ManualQREntryScreen() {
         <Text style={styles.label}>Tag code</Text>
         <TextInput
           style={styles.input}
-          placeholder="Code printed on the plant tag"
+          placeholder="NIAH-PLT-00001"
           placeholderTextColor="#8C9A91"
           value={code}
           onChangeText={(val) => {
             setCode(val);
-            if (hasError) setHasError(false);
+            if (error) setError(null);
           }}
           autoCapitalize="characters"
           autoCorrect={false}
@@ -52,10 +60,16 @@ export default function ManualQREntryScreen() {
 
         <Text style={styles.caption}>ℹ Printed below the QR code on the physical plant tag.</Text>
 
-        {hasError && (
+        {error && (
           <View style={styles.errorBox}>
-            <Text style={styles.errorTitle}>Record not found</Text>
-            <Text style={styles.errorSub}>No record on this device has tag code {code}. Attaching pre-printed tags to records is not available yet.</Text>
+            <Text style={styles.errorTitle}>
+              {error === 'invalid' ? 'Not a plant tag' : 'Record not found'}
+            </Text>
+            <Text style={styles.errorSub}>
+              {error === 'invalid'
+                ? 'Tag codes look like NIAH-PLT-00001. Check the code and try again.'
+                : `No record on this device has tag ${code.trim().toUpperCase()}. Check the tag, or the record may not have synced to this phone yet.`}
+            </Text>
           </View>
         )}
 

@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
+  parseTagCode
+} from '../../src/utils/tagCode'
+import {
   View,
   Text,
   StyleSheet,
@@ -22,7 +25,7 @@ export default function ScanScreen() {
   const [permission, requestPermission, getPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [torch, setTorch] = useState(false);
-  const records = useRecordStore((state) => state.records);
+  const findByTag = useRecordStore((state) => state.findByTag);
 
   // Ask once. After a denial the fallback screen sends the user to Settings,
   // instead of re-prompting every time the permission object changes.
@@ -49,23 +52,21 @@ export default function ScanScreen() {
   }, [getPermission]);
 
   const processScannedCode = (rawCode: string) => {
-    const code = rawCode.trim();
-    const matched = records.find(
-      (r) =>
-        (r.tagCode !== null && r.tagCode.toUpperCase() === code.toUpperCase()) ||
-        r.scientificName.toLowerCase() === code.toLowerCase()
-    );
+    // 1. Is it one of our tags? (cleans case, spaces and URL form)
+    const code = parseTagCode(rawCode);
+    if (!code) {
+      Alert.alert('Not a plant tag', "That isn't a Niah plant tag.", [
+        { text: 'OK', onPress: () => setScanned(false) }, // let them scan again
+      ]);
+      return;
+    }
 
+    // 2. Find the plant with this tag
+    const matched = findByTag(code);
     if (matched) {
-      router.push({
-        pathname: '/plant-detail',
-        params: { id: matched.id },
-      } as any);
+      router.push({ pathname: '/plant-detail', params: { id: matched.id } } as any);
     } else {
-      router.push({
-        pathname: '/manual-qr',
-        params: { initialCode: code, notFound: 'true' },
-      } as any);
+      router.push({ pathname: '/manual-qr', params: { initialCode: code, notFound: 'true' } } as any);
     }
   };
 
