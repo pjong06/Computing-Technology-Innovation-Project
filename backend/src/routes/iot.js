@@ -106,7 +106,7 @@ router.get('/summary', async (req, res) => {
   }
 });
 // GET IoT dashboard summary directly from Supabase
-router.get('/summary/database', async (req, res) => {
+router.get('/summary/live', async (req, res) => {
   res.json({
     message: 'IoT dashboard summary retrieved successfully',
     data: getSummary(),
