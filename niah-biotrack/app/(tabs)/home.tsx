@@ -1,85 +1,160 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, FlatList, SafeAreaView, StatusBar, Platform } from 'react-native';
+import React from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  FlatList,
+  SafeAreaView,
+  Platform,
+  StatusBar,
+  Image,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import { useRecordStore, RecordStatus } from '../../src/store/useRecordStore';
 
 export default function HomeScreen() {
   const router = useRouter();
   const records = useRecordStore((state) => state.records);
-  const [searchQuery, setSearchQuery] = useState('');
+  const retryRecord = useRecordStore((state) => state.retryRecord);
 
-  const filteredRecords = records.filter(
-    (item) => item.scientificName.toLowerCase().includes(searchQuery.toLowerCase()) || item.locationName.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const pendingCount = records.filter((r) => r.status === RecordStatus.PENDING).length;
+  const failedCount = records.filter((r) => r.status === RecordStatus.FAILED).length;
+  const totalToSync = pendingCount + failedCount;
 
- const getStatusStyle = (status: string) => {
+  const getStatusBadge = (status: RecordStatus) => {
     switch (status) {
       case RecordStatus.SYNCED:
-        return { bg: '#AECBB7', text: '#20402C' };
+        return { bg: '#E4F2E7', text: '#215A36', label: '• Synced' };
       case RecordStatus.PENDING:
-        return { bg: '#F8DB96', text: '#7C4A03' };
+        return { bg: '#FDF4D8', text: '#8C5E03', label: '• Pending' };
       case RecordStatus.FAILED:
-        return { bg: '#F8B4B4', text: '#771D1D' };
-      default:
-        return { bg: '#DDE5E0', text: '#3E5044' };
+        return { bg: '#FDE2E2', text: '#9B1C1C', label: '• Failed' };
     }
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F6F8F6" />
       <View style={styles.container}>
-        
-        <View style={styles.topHeader}>
-          <Text style={styles.brandTitle}>Niah BioTrack</Text>
+        {/* Header with Inline Logo */}
+        <View style={styles.headerRow}>
+          <Image
+            source={require('../../assets/logo.png')}
+            style={styles.headerLogo}
+            resizeMode="contain"
+          />
+          <Text style={styles.headerTitle}>Niah Ground-Truth</Text>
         </View>
 
-        <View style={styles.searchBarContainer}>
-          <Text style={styles.searchIcon}>🔍</Text>
-          <TextInput style={styles.searchInput} placeholder="Search species" placeholderTextColor="#8C9A91" value={searchQuery} onChangeText={setSearchQuery} />
-        </View>
+        {/* Sync status: real local counts only. There is no upload to the server yet. */}
+        {totalToSync > 0 ? (
+          <View style={styles.syncCard}>
+            <Text style={styles.syncTitle}>
+              {totalToSync} {totalToSync === 1 ? 'record' : 'records'} not yet uploaded
+            </Text>
+            <Text style={styles.syncSub}>
+              {pendingCount} pending{failedCount > 0 ? ` · ${failedCount} failed` : ''} · saved on this device
+            </Text>
+            <Text style={styles.syncSub}>Uploading to the server is not available yet.</Text>
+          </View>
+        ) : null}
 
-        <View style={styles.actionRow}>
-          <TouchableOpacity style={[styles.bigCard, styles.scanCard]} activeOpacity={0.85} onPress={() => router.push('/scan-qr' as any)}>
-            <Text style={{fontSize: 32}}>📷</Text>
-            <Text style={styles.bigCardText}>Scan QR</Text>
+        {/* 2x1 Action Cards Grid */}
+        <View style={styles.actionGrid}>
+          {/* Scan QR (Soft Mint) */}
+          <TouchableOpacity
+            style={styles.scanCard}
+            activeOpacity={0.85}
+            onPress={() => router.push('/(tabs)/scan' as any)}
+          >
+            <View style={styles.scanIconWrap}>
+              <Text style={styles.scanIconGlyph}>⛶</Text>
+            </View>
+            <Text style={styles.scanCardLabel}>Scan QR</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={[styles.bigCard, styles.newRecordCard]} activeOpacity={0.85} onPress={() => router.push('/new-record' as any)}>
-            <Text style={{fontSize: 32}}>➕</Text>
-            <Text style={styles.bigCardText}>New Record</Text>
+          {/* New Record (Forest Green) */}
+          <TouchableOpacity
+            style={styles.newRecordCard}
+            activeOpacity={0.85}
+            onPress={() => router.push('/new-record' as any)}
+          >
+            <Text style={styles.newRecordPlus}>+</Text>
+            <Text style={styles.newRecordLabel}>New Record</Text>
           </TouchableOpacity>
         </View>
 
-        <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>Recent Records</Text>
-          <TouchableOpacity onPress={() => router.push('/(tabs)/records' as any)}><Text style={styles.seeAllText}>See All</Text></TouchableOpacity>
+        {/* Record Route Stadium Pill */}
+        <TouchableOpacity
+          style={styles.routePill}
+          activeOpacity={0.85}
+          onPress={() => router.push('/record-route' as any)}
+        >
+          <View style={styles.routeLeft}>
+            <Text style={styles.routeIcon}>⥉</Text>
+            <Text style={styles.routeLabel}>Record route</Text>
+          </View>
+          <Text style={styles.routeTag}>works offline</Text>
+        </TouchableOpacity>
+
+        {/* Recent records Header */}
+        <View style={styles.sectionRow}>
+          <Text style={styles.sectionHeading}>Recent records</Text>
+          <TouchableOpacity onPress={() => router.push('/(tabs)/records' as any)}>
+            <Text style={styles.seeAll}>See all</Text>
+          </TouchableOpacity>
         </View>
 
-        {filteredRecords.length === 0 ? (
+        {/* Records list */}
+        {records.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyIcon}>📋</Text>
             <Text style={styles.emptyTitle}>No records logged yet</Text>
-            <Text style={styles.emptySubtitle}>Tap "New Record" above to document your first plant observation.</Text>
+            <Text style={styles.emptySub}>
+              Plants you record in the field will appear here even before they sync.
+            </Text>
           </View>
         ) : (
           <FlatList
-            data={filteredRecords}
+            data={records.slice(0, 5)}
             keyExtractor={(item) => item.id}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.listContent}
             renderItem={({ item }) => {
-              const badge = getStatusStyle(item.status);
+              const badge = getStatusBadge(item.status);
               return (
-                <TouchableOpacity style={styles.pillCard} activeOpacity={0.7} onPress={() => router.push({ pathname: '/plant-detail', params: { id: item.recordId } } as any)}>
-                  <View style={styles.cardLeft}>
-                    <Text style={styles.speciesName}>{item.scientificName}</Text>
-                    <Text style={styles.locationSubtitle}>{item.locationName}</Text>
-                  </View>
-                  <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
-                    <Text style={[styles.statusBadgeText, { color: badge.text }]}>{item.status}</Text>
-                  </View>
-                </TouchableOpacity>
+                <View style={styles.recordItem}>
+                  <TouchableOpacity
+                    style={styles.recordCard}
+                    activeOpacity={0.7}
+                    onPress={() =>
+                      router.push({
+                        pathname: '/plant-detail',
+                        params: { id: item.id },
+                      } as any)
+                    }
+                  >
+                    <View style={styles.plantIconCircle}>
+                      <Text style={{ fontSize: 20 }}>🌿</Text>
+                    </View>
+                    <View style={{ flex: 1, marginHorizontal: 12 }}>
+                      <Text style={styles.speciesText}>{item.scientificName}</Text>
+                      <Text style={styles.locationText}>
+                        {item.locationName} · {item.createdAt}
+                      </Text>
+                    </View>
+                    <View style={[styles.badgePill, { backgroundColor: badge.bg }]}>
+                      <Text style={[styles.badgeText, { color: badge.text }]}>{badge.label}</Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  {item.status === RecordStatus.FAILED && (
+                    <View style={styles.errorSubRow}>
+                      <Text style={styles.errorSubText}>Upload failed</Text>
+                      <TouchableOpacity onPress={() => retryRecord(item.id)}>
+                        <Text style={styles.retryBtn}>Retry</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
               );
             }}
           />
@@ -90,30 +165,228 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F6F8F6',paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
-  container: { flex: 1, paddingHorizontal: 22, paddingTop: 16 },
-  topHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 20, marginTop: 6 },
-  brandTitle: { fontSize: 24, fontWeight: '800', color: '#213B2A', letterSpacing: -0.4 },
-  searchBarContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', height: 54, borderRadius: 27, paddingHorizontal: 18, marginBottom: 20, borderWidth: 1.2, borderColor: '#E6ECE8', elevation: 1 },
-  searchIcon: { fontSize: 16, color: '#8C9A91', marginRight: 10 },
-  searchInput: { flex: 1, fontSize: 15, color: '#1E2B22' },
-  actionRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 28 },
-  bigCard: { flex: 1, height: 150, borderRadius: 24, justifyContent: 'center', alignItems: 'center', elevation: 1 },
-  scanCard: { backgroundColor: '#DDEAE2', marginRight: 10, borderWidth: 1, borderColor: '#D0E0D6' },
-  newRecordCard: { backgroundColor: '#EEF4F0', marginLeft: 10, borderWidth: 1, borderColor: '#E2ECE5' },
-  bigCardText: { fontSize: 16, fontWeight: '700', color: '#233F2E', marginTop: 14 },
-  sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
-  sectionTitle: { fontSize: 17, fontWeight: '800', color: '#213B2A' },
-  seeAllText: { fontSize: 13, color: '#526659', fontWeight: '600' },
-  listContent: { paddingBottom: 24 },
-  pillCard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#FFFFFF', paddingVertical: 18, paddingHorizontal: 22, borderRadius: 28, marginBottom: 12, borderWidth: 1.2, borderColor: '#E7EEE9', elevation: 1 },
-  cardLeft: { flex: 1, paddingRight: 10 },
-  speciesName: { fontSize: 16, fontWeight: '700', color: '#22382A', marginBottom: 4 },
-  locationSubtitle: { fontSize: 13, color: '#6F8074' },
-  statusBadge: { paddingVertical: 8, paddingHorizontal: 18, borderRadius: 20 },
-  statusBadgeText: { fontSize: 13, fontWeight: '700' },
-  emptyContainer: { alignItems: 'center', justifyContent: 'center', marginTop: 40, paddingHorizontal: 20 },
-  emptyIcon: { fontSize: 42, marginBottom: 10 },
-  emptyTitle: { fontSize: 16, fontWeight: '700', color: '#22382A' },
-  emptySubtitle: { fontSize: 13, color: '#718377', textAlign: 'center', marginTop: 4, lineHeight: 18 },
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#F6F8F6',
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
+  },
+  container: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+  },
+
+  /* Header */
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  headerLogo: {
+    width: 38,
+    height: 38,
+    marginRight: 10,
+  },
+  headerTitle: {
+    fontSize: 23,
+    fontWeight: '800',
+    color: '#284632',
+    letterSpacing: -0.3,
+  },
+
+  /* Sync Card */
+  syncCard: {
+    backgroundColor: '#E6EFE9',
+    borderRadius: 22,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 16,
+  },
+  syncTitle: {
+    fontSize: 14.5,
+    fontWeight: '700',
+    color: '#213B2A',
+    marginBottom: 4,
+  },
+  syncSub: {
+    fontSize: 12,
+    color: '#5C7163',
+    marginTop: 2,
+  },
+
+  /* Action Grid (2x1) */
+  actionGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 12,
+  },
+  scanCard: {
+    flex: 1,
+    height: 140,
+    backgroundColor: '#DDEAE1',
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scanIconWrap: {
+    marginBottom: 8,
+  },
+  scanIconGlyph: {
+    fontSize: 34,
+    color: '#284632',
+    fontWeight: '900',
+  },
+  scanCardLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#284632',
+  },
+  newRecordCard: {
+    flex: 1,
+    height: 140,
+    backgroundColor: '#284632',
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  newRecordPlus: {
+    fontSize: 34,
+    color: '#FFFFFF',
+    fontWeight: '300',
+    lineHeight: 36,
+    marginBottom: 6,
+  },
+  newRecordLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+
+  /* Record Route Pill */
+  routePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#284632',
+    borderRadius: 30,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    marginBottom: 20,
+  },
+  routeLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  routeIcon: {
+    fontSize: 18,
+    color: '#284632',
+    fontWeight: '800',
+    marginRight: 10,
+  },
+  routeLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#284632',
+  },
+  routeTag: {
+    fontSize: 12.5,
+    color: '#5C7163',
+    fontWeight: '500',
+  },
+
+  /* Recent Records Section */
+  sectionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  sectionHeading: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1E2B22',
+  },
+  seeAll: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#526659',
+  },
+  recordItem: {
+    marginBottom: 10,
+  },
+  recordCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    borderRadius: 24,
+    borderWidth: 1.2,
+    borderColor: '#E6ECE8',
+  },
+  plantIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#E7EFEA',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  speciesText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1E2B22',
+  },
+  locationText: {
+    fontSize: 12.5,
+    color: '#68776D',
+    marginTop: 3,
+  },
+  badgePill: {
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+  },
+  badgeText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
+  errorSubRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#FDF2F2',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 12,
+    marginTop: 4,
+  },
+  errorSubText: {
+    fontSize: 11.5,
+    color: '#9B1C1C',
+  },
+  retryBtn: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#9B1C1C',
+    textDecorationLine: 'underline',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    paddingVertical: 36,
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1E2B22',
+    marginBottom: 6,
+  },
+  emptySub: {
+    fontSize: 13,
+    color: '#68776D',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
 });

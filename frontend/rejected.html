@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rejected observations - Niah Biotrack</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="images/logo.png">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app">
+
+<nav id="menu"></nav>
+
+<main>
+<section class="page on">
+  <h1>Rejected <span>observations</span></h1>
+  <p class="lead" id="rejected-count"></p>
+  <div class="bar">
+    <a class="btn ghost" href="queue.html" style="text-decoration:none">Back to approval queue</a>
+  </div>
+  <div class="split" id="rejected-area">
+    <div id="rejected-list"></div>
+    <div id="rejected-detail"></div>
+  </div>
+  <div class="card" id="rejected-empty" hidden>No rejected observations. If an officer rejects an observation by mistake, it will appear here so it can be evaluated again.</div>
+</section>
+</main>
+</div>
+
+<div id="toast" role="status"></div>
+
+<script src="js/shared.js"></script>
+<script src="js/rejected.js"></script>
+</body>
+</html>

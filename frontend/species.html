@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Species catalogue - Niah Biotrack</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="images/logo.png">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app">
+
+<nav id="menu"></nav>
+
+<main>
+<section class="page on">
+  <h1>Species <span>catalogue</span></h1>
+  <p class="lead">Search, filter and manage every plant species record.</p>
+  <div class="bar">
+    <input id="search-box" class="grow" placeholder="Search by scientific or common name" oninput="drawSpeciesTable()">
+    <select id="status-filter" onchange="drawSpeciesTable()">
+      <option value="">All conservation status</option>
+      <option>Endangered</option>
+      <option>Vulnerable</option>
+      <option>Least Concern</option>
+    </select>
+    <button class="btn" onclick="openEditorFor(-1)">Add species</button>
+  </div>
+  <div class="card tw">
+    <table class="big">
+      <thead><tr><th>Species</th><th>Family</th><th>Location</th><th>Status</th><th>First recorded</th><th>Last updated</th><th></th></tr></thead>
+      <tbody id="species-body"></tbody>
+    </table>
+    <p class="muted" id="no-species" hidden>No species match. Clear the search or add a new species.</p>
+  </div>
+</section>
+</main>
+</div>
+
+<div id="toast" role="status"></div>
+
+<script src="js/shared.js"></script>
+<script src="js/species.js"></script>
+</body>
+</html>
