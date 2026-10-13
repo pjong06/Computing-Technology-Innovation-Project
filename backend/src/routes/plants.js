@@ -182,37 +182,100 @@ router.get("/:id", async (req, res) => {
 });
 
 // CREATE a new plant
-router.post("/", requireRole("botanist"), (req, res) => {
-    const { latitude, longitude } = req.body;
+router.post("/", requireRole("botanist"), async (req, res) => {
+const {
+    client_record_id,
+    species_id,
+    qr_code_value,
+    latitude,
+    longitude,
+    gps_accuracy_m,
+    location_description
+} = req.body;
 
-    if (
-        latitude < -90 ||
-        latitude > 90 ||
-        longitude < -180 ||
-        longitude > 180
-    ) {
-        return res.status(400).json({
-            message: "Invalid GPS coordinates"
+if (
+    typeof client_record_id !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(client_record_id) ||
+    typeof qr_code_value !== "string" ||
+    !qr_code_value.trim()
+) {
+    return res.status(400).json({
+        message: "Valid client_record_id and qr_code_value are required"
+    });
+}
+
+if (
+    typeof latitude !== "number" ||
+    typeof longitude !== "number" ||
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    longitude < -180 ||
+    longitude > 180
+) {
+    return res.status(400).json({
+        message: "Invalid GPS coordinates"
+    });
+}
+const location = `POINT(${longitude} ${latitude})`;
+
+const newPlant = {
+    client_record_id,
+    species_id: species_id || null,
+    qr_code_value,
+    location,
+    gps_accuracy_m: gps_accuracy_m ?? null,
+    location_description: location_description || null,
+    registered_by: req.user.id,
+    plant_status: "pending"
+};
+
+const { data: existingPlant, error: lookupError } = await req.supabase
+    .from("plants")
+    .select("*")
+    .eq("client_record_id", client_record_id)
+    .maybeSingle();
+
+    if (lookupError) {
+    console.error("Plant lookup error:", lookupError);
+
+    return res.status(500).json({
+        message: "Failed to check existing plant"
+    });
+}
+
+
+if (existingPlant) {
+    return res.status(200).json({
+        message: "Plant already registered",
+        plant: existingPlant
+    });
+}
+const { data, error } = await req.supabase
+    .from("plants")
+    .insert(newPlant)
+    .select()
+    .single();
+
+if (error) {
+    if (error.code === "23505") {
+        return res.status(409).json({
+            message: "Plant already registered or QR tag already exists"
         });
     }
 
-    const newPlant = {
-        plant_id: plants.length + 1,
-        scientific_name: req.body.scientific_name,
-        common_name: req.body.common_name,
-        latitude: req.body.latitude,
-        longitude: req.body.longitude,
-        gps_accuracy_m: req.body.gps_accuracy_m,
-        registered_by: req.user.id,
-        plant_status: "pending"
-    };
+    console.error("Plant registration error:", error);
 
-    plants.push(newPlant);
-
-    res.status(201).json({
-        message: "Plant created successfully",
-        plant: newPlant
+    return res.status(500).json({
+        message: "Failed to register plant"
     });
+}
+
+return res.status(201).json({
+    message: "Plant created successfully",
+    plant: data
+});
 });
 
 // UPDATE a plant by ID
