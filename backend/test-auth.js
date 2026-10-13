@@ -89,7 +89,7 @@ async function main() {
         const headers = {
             Authorization: `Bearer ${data.session.access_token}`,
         };
-        const response = await fetch("http://127.0.0.1:3002/api/me", {
+        const response = await fetch("http://127.0.0.1:3000/api/me", {
             headers,
         });
 
@@ -99,7 +99,7 @@ async function main() {
         if (process.argv.includes("--create-taxonomy")) {
             const taxonomy = JSON.parse(requiredEnv("KNOWLEDGE_TAXONOMY_JSON"));
             const taxonomyResponse = await fetch(
-                "http://127.0.0.1:3002/api/knowledge/taxonomy",
+                "http://127.0.0.1:3000/api/knowledge/taxonomy",
                 {
                     method: "POST",
                     headers: { ...headers, "Content-Type": "application/json" },
@@ -113,7 +113,7 @@ async function main() {
 
         if (process.argv.includes("--list-manage-species")) {
             const response = await fetch(
-                "http://127.0.0.1:3002/api/knowledge/species/manage",
+                "http://127.0.0.1:3000/api/knowledge/species/manage",
                 { headers }
             );
 
@@ -124,7 +124,7 @@ async function main() {
         if (process.argv.includes("--manage-species")) {
             const speciesId = requiredEnv("KNOWLEDGE_SPECIES_ID");
             const manageResponse = await fetch(
-                `http://127.0.0.1:3002/api/knowledge/species/${speciesId}/manage`,
+                `http://127.0.0.1:3000/api/knowledge/species/${speciesId}/manage`,
                 { headers }
             );
 
@@ -133,7 +133,7 @@ async function main() {
         }
 
         if (process.argv.includes("--create-species")) {
-            const speciesResponse = await fetch("http://127.0.0.1:3002/api/knowledge/species", {
+            const speciesResponse = await fetch("http://127.0.0.1:3000/api/knowledge/species", {
                 method: "POST",
                 headers: { ...headers, "Content-Type": "application/json" },
                 body: JSON.stringify({ scientific_name: requiredEnv("KNOWLEDGE_SPECIES_NAME") }),
@@ -147,7 +147,7 @@ async function main() {
             const taxonomyId = requiredEnv("KNOWLEDGE_TAXONOMY_ID");
 
             const linkResponse = await fetch(
-                `http://127.0.0.1:3002/api/knowledge/species/${speciesId}`,
+                `http://127.0.0.1:3000/api/knowledge/species/${speciesId}`,
                 {
                     method: "PATCH",
                     headers: { ...headers, "Content-Type": "application/json" },
@@ -164,7 +164,7 @@ async function main() {
             const scientificName = requiredEnv("KNOWLEDGE_SPECIES_NAME");
 
             const renameResponse = await fetch(
-                `http://127.0.0.1:3002/api/knowledge/species/${speciesId}`,
+                `http://127.0.0.1:3000/api/knowledge/species/${speciesId}`,
                 {
                     method: "PATCH",
                     headers: { ...headers, "Content-Type": "application/json" },
@@ -180,7 +180,7 @@ async function main() {
             const speciesId = requiredEnv("KNOWLEDGE_SPECIES_ID");
 
             const response = await fetch(
-                `http://127.0.0.1:3002/api/knowledge/species/${speciesId}`,
+                `http://127.0.0.1:3000/api/knowledge/species/${speciesId}`,
                 {
                     method: "PATCH",
                     headers: { ...headers, "Content-Type": "application/json" },
@@ -195,7 +195,7 @@ async function main() {
         if (process.argv.includes("--edit-species")) {
             const speciesId = requiredEnv("KNOWLEDGE_SPECIES_ID");
             const editResponse = await fetch(
-                `http://127.0.0.1:3002/api/knowledge/species/${speciesId}`,
+                `http://127.0.0.1:3000/api/knowledge/species/${speciesId}`,
                 {
                     method: "PATCH",
                     headers: { ...headers, "Content-Type": "application/json" },
@@ -209,7 +209,7 @@ async function main() {
         if (process.argv.includes("--test-photo")) {
             const speciesId = requiredEnv("KNOWLEDGE_SPECIES_ID");
             const photoResponse = await fetch(
-                `http://127.0.0.1:3002/api/knowledge/species/${speciesId}/photos`,
+                `http://127.0.0.1:3000/api/knowledge/species/${speciesId}/photos`,
                 { method: "POST", headers }
             );
 
@@ -235,7 +235,7 @@ async function main() {
             );
 
             const uploadResponse = await fetch(
-                `http://127.0.0.1:3002/api/knowledge/species/${speciesId}/photos`,
+                `http://127.0.0.1:3000/api/knowledge/species/${speciesId}/photos`,
                 { method: "POST", headers, body: form }
             );
 
@@ -248,7 +248,7 @@ async function main() {
             const photoId = requiredEnv("KNOWLEDGE_PHOTO_ID");
 
             const primaryResponse = await fetch(
-                `http://127.0.0.1:3002/api/knowledge/species/${speciesId}/photos/${photoId}/primary`,
+                `http://127.0.0.1:3000/api/knowledge/species/${speciesId}/photos/${photoId}/primary`,
                 { method: "PATCH", headers }
             );
 
@@ -261,7 +261,7 @@ async function main() {
             const photoId = requiredEnv("KNOWLEDGE_PHOTO_ID");
 
             const deleteResponse = await fetch(
-                `http://127.0.0.1:3002/api/knowledge/species/${speciesId}/photos/${photoId}`,
+                `http://127.0.0.1:3000/api/knowledge/species/${speciesId}/photos/${photoId}`,
                 { method: "DELETE", headers }
             );
 
@@ -272,7 +272,7 @@ async function main() {
         if (process.argv.includes("--archive-species")) {
             const speciesId = requiredEnv("KNOWLEDGE_SPECIES_ID");
             const archiveResponse = await fetch(
-                `http://127.0.0.1:3002/api/knowledge/species/${speciesId}`,
+                `http://127.0.0.1:3000/api/knowledge/species/${speciesId}`,
                 { method: "DELETE", headers }
             );
 
@@ -280,14 +280,14 @@ async function main() {
             console.log(await archiveResponse.text());
         }
 
-        const iotResponse = await fetch("http://127.0.0.1:3002/api/iot/summary", {
+        const iotResponse = await fetch("http://127.0.0.1:3000/api/iot/summary", {
             headers,
         });
         console.log(`/api/iot/summary: HTTP ${iotResponse.status}`);
         console.log(await iotResponse.text());
 
         if (process.argv.includes("--create-test-plant")) {
-            const createResponse = await fetch("http://127.0.0.1:3002/api/plants", {
+            const createResponse = await fetch("http://127.0.0.1:3000/api/plants", {
                 method: "POST",
                 headers: { ...headers, "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -302,7 +302,7 @@ async function main() {
             console.log(await createResponse.text());
         }
 
-        const plantsResponse = await fetch("http://127.0.0.1:3002/api/plants", {
+        const plantsResponse = await fetch("http://127.0.0.1:3000/api/plants", {
             headers,
         });
         console.log(`/api/plants: HTTP ${plantsResponse.status}`);
