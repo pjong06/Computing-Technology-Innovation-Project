@@ -1,4 +1,5 @@
 const express = require("express");
+const { randomUUID } = require("node:crypto");
 const upload = require("../services/storageService");
 const { generatePlantQR } = require("../services/qrService");
 const { requireAuth, requireRole } = require("../middleware/auth");
@@ -95,37 +96,148 @@ router.get("/:id", (req, res) => {
     res.json(visiblePlant(plant, req.profile));
 });
 
-// CREATE a new plant
-router.post("/", requireRole("botanist"), (req, res) => {
-    const { latitude, longitude } = req.body;
+// Save a field record in Supabase under the signed-in botanist.
+router.post("/", requireRole("botanist"), async (req, res) => {
+    const { latitude, longitude } = req.body || {};
+    const scientificName =
+        typeof req.body?.scientific_name === "string"
+            ? req.body.scientific_name.trim()
+            : "";
+    const uuidPattern =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
     if (
+        typeof latitude !== "number" ||
+        !Number.isFinite(latitude) ||
         latitude < -90 ||
         latitude > 90 ||
+        typeof longitude !== "number" ||
+        !Number.isFinite(longitude) ||
         longitude < -180 ||
         longitude > 180
     ) {
+        return res.status(400).json({ message: "Valid latitude and longitude are required" });
+    }
+
+    if (
+        req.body?.gps_accuracy_m !== undefined &&
+        (typeof req.body.gps_accuracy_m !== "number" ||
+            !Number.isFinite(req.body.gps_accuracy_m) ||
+            req.body.gps_accuracy_m < 0)
+    ) {
+        return res.status(400).json({ message: "gps_accuracy_m must be a non-negative number" });
+    }
+
+    if (
+        req.body?.location_description !== undefined &&
+        (typeof req.body.location_description !== "string" ||
+            req.body.location_description.trim().length > 500)
+    ) {
+        return res.status(400).json({ message: "location_description must be text up to 500 characters" });
+    }
+
+    let speciesId = req.body?.species_id || null;
+    let species = null;
+
+    if (speciesId !== null) {
+        if (typeof speciesId !== "string" || !uuidPattern.test(speciesId)) {
+            return res.status(400).json({ message: "Invalid species_id" });
+        }
+
+        const { data, error } = await req.supabase
+            .from("species")
+            .select("id, scientific_name, common_name")
+            .eq("id", speciesId)
+            .eq("verification_status", "approved")
+            .maybeSingle();
+
+        if (error) {
+            console.error("Plant species lookup error:", error);
+            return res.status(500).json({ message: "Could not check the selected species" });
+        }
+        species = data;
+    } else if (scientificName) {
+        const { data, error } = await req.supabase
+            .from("species")
+            .select("id, scientific_name, common_name")
+            .eq("scientific_name", scientificName)
+            .eq("verification_status", "approved")
+            .maybeSingle();
+
+        if (error) {
+            console.error("Plant species lookup error:", error);
+            return res.status(500).json({ message: "Could not check the selected species" });
+        }
+        species = data;
+        speciesId = data?.id || null;
+    }
+
+    if (!species) {
         return res.status(400).json({
-            message: "Invalid GPS coordinates"
+            message: "Choose an approved species before saving the plant record",
         });
     }
 
-    const newPlant = {
-        plant_id: plants.length + 1,
-        scientific_name: req.body.scientific_name,
-        common_name: req.body.common_name,
-        latitude: req.body.latitude,
-        longitude: req.body.longitude,
-        gps_accuracy_m: req.body.gps_accuracy_m,
+    const clientRecordId = req.body?.client_record_id || randomUUID();
+    if (typeof clientRecordId !== "string" || !uuidPattern.test(clientRecordId)) {
+        return res.status(400).json({ message: "client_record_id must be a UUID" });
+    }
+
+    // Repeated sync requests with the same client ID return the saved row.
+    const { data: existing, error: existingError } = await req.supabase
+        .from("plants")
+        .select("id, client_record_id, species_id, qr_code_value, gps_accuracy_m, location_description, plant_status, registered_by, registered_at, row_version")
+        .eq("client_record_id", clientRecordId)
+        .maybeSingle();
+
+    if (existingError) {
+        console.error("Plant duplicate check error:", existingError);
+        return res.status(500).json({ message: "Could not check for an existing plant record" });
+    }
+    if (existing) {
+        return res.status(200).json({ message: "Plant record already saved", plant: existing });
+    }
+
+    const plant = {
+        client_record_id: clientRecordId,
+        species_id: speciesId,
+        qr_code_value: `plant:${clientRecordId}`,
+        location: `POINT(${longitude} ${latitude})`,
+        gps_accuracy_m: req.body.gps_accuracy_m ?? null,
+        location_description: req.body.location_description?.trim() || null,
+        plant_status: "pending",
         registered_by: req.user.id,
-        plant_status: "pending"
     };
 
-    plants.push(newPlant);
+    const { data, error } = await req.supabase
+        .from("plants")
+        .insert(plant)
+        .select("id, client_record_id, species_id, qr_code_value, gps_accuracy_m, location_description, plant_status, registered_by, registered_at, row_version")
+        .single();
 
-    res.status(201).json({
-        message: "Plant created successfully",
-        plant: newPlant
+    if (error?.code === "23505") {
+        return res.status(409).json({
+            message: "This client record has already been saved",
+        });
+    }
+    if (error?.code === "42501") {
+        return res.status(403).json({ message: "Botanist access is required to save plant records" });
+    }
+    if (error) {
+        console.error("Create plant error:", error);
+        return res.status(500).json({ message: "Could not save plant record" });
+    }
+
+    return res.status(201).json({
+        message: "Plant record saved to Supabase",
+        plant: {
+            ...data,
+            plant_id: data.id,
+            scientific_name: species.scientific_name,
+            common_name: species.common_name,
+            latitude,
+            longitude,
+        },
     });
 });
 
