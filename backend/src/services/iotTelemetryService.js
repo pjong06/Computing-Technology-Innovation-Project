@@ -1,3 +1,8 @@
+const {
+  processTelemetryForAlerts,
+  resetAlertsForTests,
+} = require('./iotAlertService');
+
 const latestByStation = new Map();
 const recentReadings = [];
 const MAX_RECENT_READINGS = 500;
@@ -65,10 +70,13 @@ function ingestTelemetry(payload, receivedAt = new Date()) {
     received_at: receivedAt.toISOString(),
   };
 
-  latestByStation.set(reading.station_id, reading);
-  recentReadings.push(reading);
-  if (recentReadings.length > MAX_RECENT_READINGS) recentReadings.shift();
-  return reading;
+processTelemetryForAlerts(reading);
+
+latestByStation.set(reading.station_id, reading);
+recentReadings.push(reading);
+if (recentReadings.length > MAX_RECENT_READINGS) recentReadings.shift();
+
+return reading;
 }
 
 function getLatestReadings() {
@@ -97,6 +105,7 @@ function getSummary(now = new Date()) {
 function resetTelemetryForTests() {
   latestByStation.clear();
   recentReadings.length = 0;
+  resetAlertsForTests();
 }
 
 module.exports = {
