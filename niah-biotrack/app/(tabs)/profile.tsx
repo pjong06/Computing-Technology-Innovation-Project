@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   Modal,
   Platform,
@@ -11,10 +11,11 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { RecordStatus, useRecordStore } from '../../src/store/useRecordStore';
 import { deleteAllStoredPhotos } from '../../src/utils/photoStorage';
 import { signOutOnThisPhone } from '../../src/lib/auth';
+import { useProfileStore } from '../../src/store/useProfileStore';
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -23,6 +24,20 @@ export default function ProfileScreen() {
 
   const [mobileDataPhotos, setMobileDataPhotos] = useState(true);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const me = useProfileStore((state) => state.me);
+  const profileError = useProfileStore((state) => state.error);
+  const loadMe = useProfileStore((state) => state.loadMe);
+
+  // Refresh account details every time the Profile tab is opened
+  // (keeps the saved copy if offline).
+  useFocusEffect(
+    useCallback(() => {
+      void loadMe();
+    }, [loadMe])
+  );
+  const displayName = me?.full_name || me?.email || null;
+  const initials = displayName ? displayName.trim().charAt(0).toUpperCase() : '?';
+  const roleLabel = me ? me.role.charAt(0).toUpperCase() + me.role.slice(1) : null;
 
   // Task 3.6 counts are derived from the persisted records. Keeping them out of
   // AsyncStorage prevents a separate sync report from drifting out of date.
@@ -108,79 +123,26 @@ export default function ProfileScreen() {
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>Profile</Text>
 
-        {/* No sign-in backend yet, so there is no real account to show. */}
-        <View style={styles.userCard}>
+         <View style={styles.userCard}>
           <View style={styles.avatarCircle}>
-            <Text style={styles.avatarInitials}>?</Text>
+            <Text style={styles.avatarInitials}>{initials}</Text>
           </View>
           <View style={styles.userDetails}>
-            <Text style={styles.userName}>Account details not available yet</Text>
-            <Text style={styles.userRole}>Sign-in is not connected to the server yet.</Text>
-          </View>
-        </View>
-
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Database Sync</Text>
-            <View style={[styles.statusPill, overallStatusStyle]}>
-              <Text style={[styles.statusPillText, overallStatusTextStyle]}>{overallStatus}</Text>
-            </View>
-          </View>
-
-          <Text style={styles.statusMessage}>{overallMessage}</Text>
-
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Last successful sync</Text>
-            <Text style={styles.infoVal}>Not available yet</Text>
-          </View>
-
-          <View style={styles.metricsRow}>
-            <View style={styles.metric}>
-              <Text style={styles.metricValue}>{syncedRecordCount}</Text>
-              <Text style={styles.metricLabel}>Synced</Text>
-            </View>
-            <View style={styles.metricDivider} />
-            <View style={styles.metric}>
-              <Text style={styles.metricValue}>{pendingRecordCount}</Text>
-              <Text style={styles.metricLabel}>Pending</Text>
-            </View>
-            <View style={styles.metricDivider} />
-            <View style={styles.metric}>
-              <Text style={styles.metricValue}>{failedRecordCount}</Text>
-              <Text style={styles.metricLabel}>Failed</Text>
-            </View>
-          </View>
-
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Observation visits</Text>
-            <Text style={styles.infoVal}>{observationSummary}</Text>
-          </View>
-
-          <Text style={styles.syncNote}>
-            Counts are calculated from data on this device. Server upload is not implemented yet, so this screen does not change record status.
-          </Text>
-
-          <View
-            accessibilityRole="button"
-            accessibilityState={{ disabled: true }}
-            style={[styles.syncBtn, styles.syncBtnDisabled]}
-          >
-            <Text style={styles.syncBtnText}>Upload to server not available yet</Text>
-          </View>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Field settings</Text>
-          <View style={styles.settingRow}>
-            <View style={styles.settingText}>
-              <Text style={styles.infoLabel}>Use mobile data for photos</Text>
-              <Text style={styles.infoSub}>On by default · no Wi-Fi in the field</Text>
-            </View>
-            <Switch
-              value={mobileDataPhotos}
-              onValueChange={setMobileDataPhotos}
-              trackColor={{ false: '#D0DCD3', true: '#213B2A' }}
-            />
+            {me ? (
+              <>
+                <Text style={styles.userName}>{displayName}</Text>
+                <Text style={styles.userRole}>
+                  {roleLabel}
+                  {me.staff_id ? ` · ${me.staff_id}` : ''}
+                </Text>
+                {me.full_name ? <Text style={styles.userRole}>{me.email}</Text> : null}
+              </>
+            ) : (
+              <>
+                <Text style={styles.userName}>Account details not loaded</Text>
+                <Text style={styles.userRole}>{profileError ?? 'Loading…'}</Text>
+              </>
+            )}
           </View>
         </View>
 
