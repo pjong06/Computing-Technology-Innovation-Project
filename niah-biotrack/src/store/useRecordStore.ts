@@ -9,6 +9,14 @@ export enum SyncStatus {
   FAILED = 'Upload failed',
 }
 
+// The officer's review (same values as review_status on the server).
+export enum ReviewStatus {
+  DRAFT = 'draft',       // botanist still working on it
+  PENDING = 'pending',   // submitted, waiting for an officer
+  APPROVED = 'approved',
+  REJECTED = 'rejected', // officer sent it back with a comment
+}
+
 export interface ObservationVisit {
   id: string;
   date: string;
@@ -37,6 +45,8 @@ export interface PlantRecord {
   gpsCoordination: string; // formatted for display only, e.g. "3.81760° N, 113.78100° E (±5 m)"
   photoUris: string[];
   syncStatus: SyncStatus;
+  reviewStatus: ReviewStatus;
+  reviewComment?: string | null; // officer's reason when rejected
   createdAt: string;
   conservationStatus?: 'EN' | 'VU' | 'LC' | 'CR';
   routeLength?: string;
@@ -57,9 +67,12 @@ interface RecordState {
   records: PlantRecord[];
   routes: RecordedRoute[];
   activeDraftRoute: RecordedRoute | null;
-  addRecord: (record: Omit<PlantRecord, 'id' | 'tagCode' | 'createdAt' | 'observations'>) => PlantRecord;
+  addRecord: (
+    record: Omit<PlantRecord, 'id' | 'tagCode' | 'createdAt' | 'observations' | 'reviewStatus' | 'reviewComment'>
+  ) => PlantRecord;
   addObservation: (plantRecordId: string, observation: Omit<ObservationVisit, 'id' | 'syncStatus'>) => void;
   retryRecord: (id: string) => void;
+  submitForReview: (id: string) => { ok: true } | { ok: false; reason: string };
   findByTag: (tagCode: string) => PlantRecord | undefined;
   attachTag: (recordId: string, tagCode: string) => { ok: true } | { ok: false; reason: string };
   saveRoute: (route: Omit<RecordedRoute, 'id' | 'createdAt'>) => RecordedRoute;
@@ -78,6 +91,8 @@ export const useRecordStore = create<RecordState>()(
           ...recordData,
           id: randomUUID(),
           tagCode: null, // set later from a pre-printed tag
+          reviewStatus: ReviewStatus.DRAFT,
+          reviewComment: null,
           createdAt: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
           observations: [],
         };
@@ -106,6 +121,24 @@ export const useRecordStore = create<RecordState>()(
           records: state.records.map((r) => (r.id === id ? { ...r, syncStatus: SyncStatus.NOT_UPLOADED } : r)),
         }));
       },
+
+      submitForReview: (id) => {
+        const record = get().records.find((r) => r.id === id);
+        if (!record) return { ok: false, reason: 'Record not found' };
+        if (record.reviewStatus !== ReviewStatus.DRAFT && record.reviewStatus !== ReviewStatus.REJECTED) {
+          return { ok: false, reason: 'This record has already been submitted' };
+        }
+        // The submission has to reach the server, so it also needs uploading again.
+        set((state) => ({
+          records: state.records.map((r) =>
+            r.id === id
+              ? { ...r, reviewStatus: ReviewStatus.PENDING, syncStatus: SyncStatus.NOT_UPLOADED }
+              : r
+          ),
+        }));
+        return { ok: true };
+      },
+
       findByTag: (tagCode) => get().records.find((r) => r.tagCode === tagCode),
       attachTag: (recordId, tagCode) => {
         // 1. Is this tag already on ANOTHER record?
@@ -140,7 +173,7 @@ export const useRecordStore = create<RecordState>()(
     {
       name: 'niah-ground-truth-store',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 3,
+      version: 4,
       migrate: (persistedState, version) => {
         const state = persistedState as { records?: Record<string, unknown>[] };
         if (version < 1 && Array.isArray(state.records)) {
@@ -179,6 +212,16 @@ export const useRecordStore = create<RecordState>()(
                   syncStatus: toSync(obsStatus),
                 }))
               : [],
+          }));
+        }
+
+        if (version < 4 && Array.isArray(state.records)) {
+          // v4: records get a review status. Nothing has been submitted yet,
+          // so every existing record starts as a draft.
+          state.records = state.records.map((record) => ({
+            ...record,
+            reviewStatus: ReviewStatus.DRAFT,
+            reviewComment: null,
           }));
         }
 

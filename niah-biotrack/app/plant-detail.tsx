@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
+  Alert,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
@@ -13,7 +14,8 @@ import {
   type NativeScrollEvent,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useRecordStore, SyncStatus } from '../src/store/useRecordStore';
+import { useRecordStore, SyncStatus, ReviewStatus } from '../src/store/useRecordStore';
+import { REVIEW_BADGE } from '../src/utils/reviewStatus';
 import PlantNotFound from '../src/components/PlantNotFound';
 import { resolveStoredPhotoUri } from '../src/utils/photoStorage';
 import { formatCoordinates } from '../src/utils/formatCoordinates';
@@ -41,6 +43,7 @@ export default function PlantDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id?: string }>();
   const records = useRecordStore((state) => state.records);
+  const submitForReview = useRecordStore((state) => state.submitForReview);
   const { width } = useWindowDimensions();
   const [photoIndex, setPhotoIndex] = useState(0);
   const [brokenPhotos, setBrokenPhotos] = useState<Record<string, boolean>>({});
@@ -57,6 +60,27 @@ export default function PlantDetailScreen() {
     matched.latitude !== undefined && matched.longitude !== undefined
       ? formatCoordinates(matched.latitude, matched.longitude, matched.gpsAccuracyM ?? null)
       : matched.gpsCoordination;
+
+  const review = REVIEW_BADGE[matched.reviewStatus];
+  const canSubmit =
+    matched.reviewStatus === ReviewStatus.DRAFT || matched.reviewStatus === ReviewStatus.REJECTED;
+
+  const handleSubmit = () => {
+    Alert.alert(
+      'Submit for review?',
+      "A Conservation Officer will check this record. You can't change it while it is waiting for review.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Submit',
+          onPress: () => {
+            const result = submitForReview(matched.id);
+            if (!result.ok) Alert.alert('Could not submit', result.reason);
+          },
+        },
+      ]
+    );
+  };
 
   const handlePhotoScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     setPhotoIndex(Math.round(event.nativeEvent.contentOffset.x / width));
@@ -108,6 +132,37 @@ export default function PlantDetailScreen() {
 
         <View style={styles.sheet}>
           <Text style={styles.title}>{matched.scientificName}</Text>
+
+
+          <View style={styles.statusRow}>
+            <View style={[styles.statusPill, { backgroundColor: review.bg }]}>
+              <Text style={[styles.statusPillText, { color: review.text }]}>{review.label}</Text>
+            </View>
+            <Text style={styles.syncText}>{matched.syncStatus}</Text>
+          </View>
+
+          {matched.reviewStatus === ReviewStatus.REJECTED && (
+            <View style={styles.commentBox}>
+              <Text style={styles.commentTitle}>Officer's comment</Text>
+              <Text style={styles.commentBody}>
+                {matched.reviewComment?.trim() || 'No comment was given.'}
+              </Text>
+            </View>
+          )}
+
+          {canSubmit ? (
+            <TouchableOpacity style={styles.submitBtn} onPress={handleSubmit}>
+              <Text style={styles.submitBtnText}>
+                {matched.reviewStatus === ReviewStatus.REJECTED ? 'Resubmit for review' : 'Submit for review'}
+              </Text>
+            </TouchableOpacity>
+          ) : matched.reviewStatus === ReviewStatus.PENDING ? (
+            <Text style={styles.lockedNote}>
+              {matched.syncStatus === SyncStatus.UPLOADED
+                ? 'Waiting for a Conservation Officer to review it.'
+                : 'Submitted. It will go to an officer when it uploads.'}
+            </Text>
+          ) : null}
 
           <Text style={styles.heading}>SPECIES DETAILS</Text>
           <View style={styles.detailCard}>
@@ -228,4 +283,14 @@ const styles = StyleSheet.create({
   obsNotes: { fontSize: 12.5, color: '#3A483E', lineHeight: 18 },
   addObsBtn: { backgroundColor: '#213B2A', height: 52, borderRadius: 26, justifyContent: 'center', alignItems: 'center', marginTop: 16, marginBottom: 30 },
   addObsBtnText: { color: '#FFF', fontWeight: '700', fontSize: 14.5 },
+    statusRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8, marginBottom: 12 },
+  statusPill: { paddingVertical: 5, paddingHorizontal: 12, borderRadius: 16 },
+  statusPillText: { fontSize: 12, fontWeight: '700' },
+  syncText: { fontSize: 12, color: '#68776D', fontWeight: '600' },
+  commentBox: { backgroundColor: '#FDF2F2', borderRadius: 16, borderWidth: 1.2, borderColor: '#F5C9C9', padding: 14, marginBottom: 12 },
+  commentTitle: { fontSize: 12, fontWeight: '800', color: '#9B1C1C', marginBottom: 4 },
+  commentBody: { fontSize: 13.5, color: '#1E2B22', lineHeight: 19 },
+  submitBtn: { backgroundColor: '#213B2A', height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
+  submitBtnText: { color: '#FFFFFF', fontSize: 14.5, fontWeight: '700' },
+  lockedNote: { fontSize: 12.5, color: '#68776D', marginBottom: 8 },
 });
