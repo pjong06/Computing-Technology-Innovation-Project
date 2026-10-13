@@ -237,7 +237,8 @@ const MENU = [
   { file: 'rejected.html', label: 'Rejected observations' },
   { file: 'map.html', label: 'Distribution map' },
   { file: 'reports.html', label: 'Reports & export' },
-  { file: 'users.html', label: 'User & role admin' }
+  { file: 'users.html', label: 'User & role admin' },
+  { file: 'alerts.html', label: 'IoT alerts' }
 ];
 
 // Builds the left menu inside <nav id="menu"> and highlights the page we are on (activeFile).
@@ -275,7 +276,7 @@ function drawMenu(activeFile) {
 
   const who = document.createElement('div');
   who.className = 'who';
-  who.textContent = 'Signed in as officer';
+  who.textContent = 'Conservation Officer portal';
   nav.appendChild(who);
 }
 

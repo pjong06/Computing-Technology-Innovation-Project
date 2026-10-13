@@ -23,6 +23,9 @@ app.use('/api/identify', identifyRoutes);
 app.use('/api/iot', requireAuth, requireRole('officer'), iotRoutes);
 app.use('/api/knowledge', knowledgeRoutes);
 
+// Serve the existing Conservation Officer portal from the same origin as its API.
+app.use('/portal', express.static(path.join(__dirname, '..', '..', 'frontend')));
+
 app.get('/', (_req, res) => {
   res.json({
     success: true,

@@ -804,3 +804,40 @@ table.big .btn {
 :root[data-theme="dark"] .logo {
   filter: brightness(1.9);
 }
+
+/* IoT alert panel */
+.alert-list {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.alert-card {
+  border-left: 4px solid var(--wat);
+}
+
+.alert-card.alert-critical {
+  border-left-color: var(--ert);
+}
+
+.alert-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.alert-heading h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.alert-detail {
+  margin: 4px 0;
+  color: var(--mute);
+}
+
+.alert-error {
+  color: var(--ert);
+}
