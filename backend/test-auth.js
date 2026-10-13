@@ -291,11 +291,12 @@ async function main() {
                 method: "POST",
                 headers: { ...headers, "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    scientific_name: "RBAC test plant",
-                    common_name: "Temporary test record",
-                    latitude: 0,
-                    longitude: 0,
-                    gps_accuracy_m: 0,
+                    scientific_name: "Clerodendrum paniculatum",
+                    common_name: "Pagoda Flower",
+                    latitude: 3.8176,
+                    longitude: 113.781,
+                    gps_accuracy_m: 5,
+                    location_description: "Plant API test record",
                 }),
             });
             console.log(`POST /api/plants: HTTP ${createResponse.status}`);
