@@ -246,7 +246,7 @@ if (
     typeof client_record_id !== "string" ||
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(client_record_id) ||
     typeof qr_code_value !== "string" ||
-    !qr_code_value.trim()
+    !/^NIAH-PLT-\d{5}$/.test(qr_code_value)
 ) {
     return res.status(400).json({
         message: "Valid client_record_id and qr_code_value are required"
