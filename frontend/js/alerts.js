@@ -130,7 +130,7 @@ async function loadAlerts() {
 
   try {
     const status = encodeURIComponent(filter.value);
-    const response = await fetch(`/api/iot/alerts?status=${status}`, {
+    const response = await fetch(`/api/iot/alerts/live?status=${status}`, {
       headers: { Authorization: `Bearer ${token}` },
       cache: 'no-store',
       signal: controller.signal,
