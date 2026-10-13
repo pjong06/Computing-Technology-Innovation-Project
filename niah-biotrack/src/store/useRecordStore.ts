@@ -60,6 +60,8 @@ interface RecordState {
   addRecord: (record: Omit<PlantRecord, 'id' | 'tagCode' | 'createdAt' | 'observations'>) => PlantRecord;
   addObservation: (plantRecordId: string, observation: Omit<ObservationVisit, 'id' | 'status'>) => void;
   retryRecord: (id: string) => void;
+  findByTag: (tagCode: string) => PlantRecord | undefined;
+  attachTag: (recordId: string, tagCode: string) => { ok: true } | { ok: false; reason: string };
   saveRoute: (route: Omit<RecordedRoute, 'id' | 'createdAt'>) => RecordedRoute;
   clearActiveDraftRoute: () => void;
   clearAllData: () => void;
@@ -67,7 +69,7 @@ interface RecordState {
 
 export const useRecordStore = create<RecordState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       records: [],
       routes: [],
       activeDraftRoute: null,
@@ -104,6 +106,22 @@ export const useRecordStore = create<RecordState>()(
           records: state.records.map((r) => (r.id === id ? { ...r, status: RecordStatus.PENDING } : r)),
         }));
       },
+      findByTag: (tagCode) => get().records.find((r) => r.tagCode === tagCode),
+      attachTag: (recordId, tagCode) => {
+        // 1. Is this tag already on ANOTHER record?
+        const existing = get().findByTag(tagCode);
+        if (existing && existing.id !== recordId ) {
+          return { ok: false, reason: `This tag is already attached to ${existing.scientificName}` };
+        } 
+
+        // 2. Update only the record with this recordId (copy retryRecord's pattern)
+        set((state) => ({
+          records: state.records.map((r) => (r.id === recordId ? { ...r, tagCode: tagCode } : r)),
+        }));
+
+        // 3. Tell the screen it worked
+        return { ok: true };
+      },      
       saveRoute: (routeData) => {
         const route: RecordedRoute = {
           ...routeData,

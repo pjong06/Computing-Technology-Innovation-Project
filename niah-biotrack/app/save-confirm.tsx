@@ -46,20 +46,30 @@ export default function SaveConfirmScreen() {
             <Text style={styles.recordIdTag}>Tag: {matched.tagCode ?? 'No tag attached'}</Text>
           </View>
 
-          <Text style={styles.helperNotice}>A pre-printed plant tag can be attached to this record later.</Text>
+          <Text style={styles.helperNotice}>
+            {matched.tagCode
+              ? 'Tag attached – scanning it opens this record.'
+            : 'Tie a pre-printed tag to the plant and scan it, or attach one later from its plant page.'}
+          </Text>
+      </View>    
+
+        {!matched.tagCode && (
+          <TouchableOpacity
+            style={styles.primaryBtn}
+            onPress={() => router.push({ pathname: '/attach-tag', params: { recordId: matched.id } } as any)}
+          >
+            <Text style={styles.primaryBtnText}>Attach tag</Text>
+          </TouchableOpacity>
+        )}
+
+        <View style={styles.buttonRow}>
+          <TouchableOpacity style={[styles.secondaryBtn, styles.halfBtn]} onPress={() => router.replace('/new-record' as any)}>
+            <Text style={styles.secondaryBtnText}>Add another</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.secondaryBtn, styles.halfBtn]} onPress={() => router.replace('/(tabs)/home' as any)}>
+            <Text style={styles.secondaryBtnText}>Back to home</Text>
+          </TouchableOpacity>
         </View>
-
-        <TouchableOpacity style={styles.primaryBtn} onPress={() => router.push({ pathname: '/plant-tag', params: { id: matched.id } } as any)}>
-          <Text style={styles.primaryBtnText}>Generate QR tag</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.push('/new-record' as any)}>
-          <Text style={styles.secondaryBtnText}>Add another</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.linkBtn} onPress={() => router.replace('/(tabs)/home' as any)}>
-          <Text style={styles.linkBtnText}>Back to home</Text>
-        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -84,6 +94,6 @@ const styles = StyleSheet.create({
   primaryBtnText: { color: '#FFF', fontWeight: '700', fontSize: 14.5 },
   secondaryBtn: { height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', borderWidth: 1.2, borderColor: '#213B2A', backgroundColor: '#FFF', marginBottom: 10 },
   secondaryBtnText: { color: '#213B2A', fontWeight: '700', fontSize: 14.5 },
-  linkBtn: { paddingVertical: 8, alignItems: 'center' },
-  linkBtnText: { color: '#68776D', fontWeight: '700', fontSize: 13.5 },
+  buttonRow: { flexDirection: 'row', gap: 10 },
+  halfBtn: { flex: 1, marginBottom: 0 },
 });

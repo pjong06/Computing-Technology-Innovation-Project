@@ -13,6 +13,7 @@ const knowledgeRoutes = require("./routes/knowledge");
 const { requireAuth, requireRole } = require("./middleware/auth");
 const qrBatchRoutes = require('./routes/qrBatch');
 const observationRoutes = require('./routes/observations');
+const { startMqttIngestion } = require('./services/mqttIngestionService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -80,4 +81,5 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Backend server running on port ${PORT}`);
+  startMqttIngestion();
 });

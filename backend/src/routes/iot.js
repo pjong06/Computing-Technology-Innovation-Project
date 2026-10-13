@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
 
-// GET latest IoT sensor readings from Supabase
-router.get('/readings', async (req, res) => {
+// GET sensor readings directly from Supabase
+router.get('/readings/history', async (req, res) => {
   try {
     const { data, error } = await req.supabase
       .from('sensor_readings')
@@ -40,6 +40,27 @@ router.get('/readings', async (req, res) => {
       message: 'Internal server error'
     });
   }
+});
+
+const {
+  getLatestReadings,
+  getRecentReadings,
+  getSummary,
+} = require('../services/iotTelemetryService');
+
+// GET all sensor readings
+router.get('/readings', (req, res) => {
+  res.json({
+    message: 'Sensor readings retrieved successfully',
+    data: getRecentReadings(req.query.limit),
+  });
+});
+
+router.get('/latest', (_req, res) => {
+  res.json({
+    message: 'Latest station readings retrieved successfully',
+    data: getLatestReadings(),
+  });
 });
 
 // GET IoT dashboard summary from Supabase
@@ -83,6 +104,13 @@ router.get('/summary', async (req, res) => {
       message: 'Internal server error'
     });
   }
+});
+// GET IoT dashboard summary directly from Supabase
+router.get('/summary/database', async (req, res) => {
+  res.json({
+    message: 'IoT dashboard summary retrieved successfully',
+    data: getSummary(),
+  });
 });
 
 module.exports = router;
