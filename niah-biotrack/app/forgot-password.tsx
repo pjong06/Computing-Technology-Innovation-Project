@@ -12,6 +12,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import * as Clipboard from 'expo-clipboard';
 import Toast from 'react-native-toast-message';
 import LeafLogo from '../src/components/LeafLogo';
 
@@ -74,7 +75,7 @@ export default function ForgotPasswordScreen() {
       Toast.show({
         type: 'success',
         text1: 'Temporary Password Set',
-        text2: 'Updated in database. Use this code to log in.',
+        text2: 'Updated in database. Tap the box below to copy.',
       });
     } catch (error: any) {
       Toast.show({
@@ -87,11 +88,15 @@ export default function ForgotPasswordScreen() {
     }
   };
 
-  const handleCopyNotice = () => {
+  const handleCopyPassword = async () => {
+    if (!tempPassword) return;
+
+    await Clipboard.setStringAsync(tempPassword);
+
     Toast.show({
-      type: 'info',
-      text1: 'Password Selected',
-      text2: 'You can copy or write down the temporary code.',
+      type: 'success',
+      text1: 'Copied to Clipboard',
+      text2: 'Temporary password copied. Paste it into the login screen.',
       position: 'bottom',
     });
   };
@@ -166,17 +171,17 @@ export default function ForgotPasswordScreen() {
                 <Text style={styles.highlightEmail}>{identifier}</Text>
               </Text>
 
-              {/* Password Display Box */}
+              {/* Password Display Box with Tap-to-Copy */}
               <TouchableOpacity
                 style={styles.passwordDisplayBox}
                 activeOpacity={0.7}
-                onPress={handleCopyNotice}
+                onPress={handleCopyPassword}
               >
                 <Text style={styles.passwordDisplayLabel}>TEMPORARY ACCESS CODE</Text>
-                <Text selectable style={styles.passwordCodeText}>
+                <Text style={styles.passwordCodeText}>
                   {tempPassword}
                 </Text>
-                <Text style={styles.copyHint}>Tap and hold code to copy</Text>
+                <Text style={styles.copyHint}>📋 Tap anywhere in this box to copy</Text>
               </TouchableOpacity>
 
               <View style={styles.infoNotice}>
@@ -356,9 +361,10 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
   },
   copyHint: {
-    fontSize: 11,
-    color: '#68776D',
-    marginTop: 6,
+    fontSize: 12,
+    color: '#284632',
+    fontWeight: '600',
+    marginTop: 8,
   },
   infoNotice: {
     backgroundColor: '#F9FAF9',
