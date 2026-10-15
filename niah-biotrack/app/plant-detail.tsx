@@ -22,7 +22,6 @@ import { formatCoordinates } from '../src/utils/formatCoordinates';
 
 const NOT_RECORDED = 'Not recorded';
 
-// Height is typed as a plain number in metres; older records already include "m".
 function formatHeight(height?: string) {
   const value = height?.trim();
   if (!value) return NOT_RECORDED;
@@ -61,7 +60,14 @@ export default function PlantDetailScreen() {
       ? formatCoordinates(matched.latitude, matched.longitude, matched.gpsAccuracyM ?? null)
       : matched.gpsCoordination;
 
-  const review = REVIEW_BADGE[matched.reviewStatus];
+  // Safe fallback to prevent crash if reviewStatus is undefined on local record
+  const review =
+    (matched.reviewStatus && REVIEW_BADGE[matched.reviewStatus]) || {
+      bg: '#E4F2E7',
+      text: '#215A36',
+      label: 'Draft',
+    };
+
   const canSubmit =
     matched.reviewStatus === ReviewStatus.DRAFT || matched.reviewStatus === ReviewStatus.REJECTED;
 
@@ -133,7 +139,6 @@ export default function PlantDetailScreen() {
         <View style={styles.sheet}>
           <Text style={styles.title}>{matched.scientificName}</Text>
 
-
           <View style={styles.statusRow}>
             <View style={[styles.statusPill, { backgroundColor: review.bg }]}>
               <Text style={[styles.statusPillText, { color: review.text }]}>{review.label}</Text>
@@ -153,7 +158,9 @@ export default function PlantDetailScreen() {
           {canSubmit ? (
             <TouchableOpacity style={styles.submitBtn} onPress={handleSubmit}>
               <Text style={styles.submitBtnText}>
-                {matched.reviewStatus === ReviewStatus.REJECTED ? 'Resubmit for review' : 'Submit for review'}
+                {matched.reviewStatus === ReviewStatus.REJECTED
+                  ? 'Resubmit for review'
+                  : 'Submit for review'}
               </Text>
             </TouchableOpacity>
           ) : matched.reviewStatus === ReviewStatus.PENDING ? (
@@ -189,7 +196,10 @@ export default function PlantDetailScreen() {
           </View>
 
           <View style={styles.actionRow}>
-            <TouchableOpacity style={styles.actionBtn} onPress={() => router.push('/offline-map' as any)}>
+            <TouchableOpacity
+              style={styles.actionBtn}
+              onPress={() => router.push('/offline-map' as any)}
+            >
               <Text style={styles.actionBtnText}>🧭 Navigate</Text>
             </TouchableOpacity>
             {matched.tagCode ? (
@@ -199,7 +209,12 @@ export default function PlantDetailScreen() {
             ) : (
               <TouchableOpacity
                 style={styles.actionBtn}
-                onPress={() => router.push({ pathname: '/attach-tag', params: { recordId: matched.id } } as any)}
+                onPress={() =>
+                  router.push({
+                    pathname: '/attach-tag',
+                    params: { recordId: matched.id },
+                  } as any)
+                }
               >
                 <Text style={styles.actionBtnText}>🏷️ Attach tag</Text>
               </TouchableOpacity>
@@ -209,25 +224,36 @@ export default function PlantDetailScreen() {
           {/* Observation Visits Timeline */}
           <View style={styles.obsHeaderRow}>
             <Text style={styles.heading}>OBSERVATION HISTORY</Text>
-            <Text style={styles.obsCount}>{matched.observations.length} visits</Text>
+            <Text style={styles.obsCount}>{(matched.observations ?? []).length} visits</Text>
           </View>
 
-          {matched.observations.map((obs) => (
+          {(matched.observations ?? []).map((obs) => (
             <View key={obs.id} style={styles.timelineItem}>
               <View style={styles.timelineLine} />
               <View style={styles.timelineDot} />
               <View style={styles.obsCard}>
                 <View style={styles.obsCardTop}>
                   <Text style={styles.obsDate}>{obs.date}</Text>
-                  <Text style={[styles.obsStatus, obs.syncStatus === SyncStatus.NOT_UPLOADED && { color: '#8C5E03' }]}>
+                  <Text
+                    style={[
+                      styles.obsStatus,
+                      obs.syncStatus === SyncStatus.NOT_UPLOADED && { color: '#8C5E03' },
+                    ]}
+                  >
                     • {obs.syncStatus}
                   </Text>
                 </View>
                 <Text style={styles.obsAuthor}>{obs.recordedBy}</Text>
                 <View style={styles.pillGroup}>
-                  <View style={styles.tagPill}><Text style={styles.tagPillText}>{obs.health}</Text></View>
-                  <View style={styles.tagPill}><Text style={styles.tagPillText}>{obs.stage}</Text></View>
-                  <View style={styles.tagPill}><Text style={styles.tagPillText}>{obs.measurement}</Text></View>
+                  <View style={styles.tagPill}>
+                    <Text style={styles.tagPillText}>{obs.health}</Text>
+                  </View>
+                  <View style={styles.tagPill}>
+                    <Text style={styles.tagPillText}>{obs.stage}</Text>
+                  </View>
+                  <View style={styles.tagPill}>
+                    <Text style={styles.tagPillText}>{obs.measurement}</Text>
+                  </View>
                 </View>
                 <Text style={styles.obsNotes}>{obs.notes}</Text>
               </View>
@@ -236,7 +262,9 @@ export default function PlantDetailScreen() {
 
           <TouchableOpacity
             style={styles.addObsBtn}
-            onPress={() => router.push({ pathname: '/add-observation', params: { id: matched.id } } as any)}
+            onPress={() =>
+              router.push({ pathname: '/add-observation', params: { id: matched.id } } as any)
+            }
           >
             <Text style={styles.addObsBtnText}>+ Add observation</Text>
           </TouchableOpacity>
@@ -252,45 +280,154 @@ const styles = StyleSheet.create({
   heroPhoto: { height: 260 },
   heroEmpty: { justifyContent: 'center', alignItems: 'center' },
   heroEmptyText: { color: '#DCE4DF', fontSize: 13.5, fontWeight: '600' },
-  detailCard: { backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1.2, borderColor: '#E6ECE8', paddingHorizontal: 14 },
-  detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 11, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E6ECE8', gap: 12 },
+  detailCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1.2,
+    borderColor: '#E6ECE8',
+    paddingHorizontal: 14,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 11,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E6ECE8',
+    gap: 12,
+  },
   detailLabel: { fontSize: 13, color: '#68776D' },
-  detailValue: { flex: 1, textAlign: 'right', fontSize: 13.5, fontWeight: '600', color: '#1E2B22' },
+  detailValue: {
+    flex: 1,
+    textAlign: 'right',
+    fontSize: 13.5,
+    fontWeight: '600',
+    color: '#1E2B22',
+  },
   detailEmpty: { color: '#98A69D', fontStyle: 'italic', fontWeight: '400' },
-  backCircle: { position: 'absolute', top: 30, left: 20, width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
-  photoCountBadge: { position: 'absolute', bottom: 16, right: 16, backgroundColor: 'rgba(0,0,0,0.6)', paddingVertical: 4, paddingHorizontal: 12, borderRadius: 14 },
+  backCircle: {
+    position: 'absolute',
+    top: 30,
+    left: 20,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  photoCountBadge: {
+    position: 'absolute',
+    bottom: 16,
+    right: 16,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+  },
   photoCountText: { color: '#FFF', fontSize: 11, fontWeight: '700' },
   sheet: { padding: 22, backgroundColor: '#F6F8F6' },
   title: { fontSize: 24, fontWeight: '800', color: '#1E2B22' },
-  heading: { fontSize: 12, fontWeight: '800', color: '#6A7D71', letterSpacing: 0.8, marginTop: 16, marginBottom: 6 },
+  heading: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#6A7D71',
+    letterSpacing: 0.8,
+    marginTop: 16,
+    marginBottom: 6,
+  },
   body: { fontSize: 13.5, color: '#2B392F', lineHeight: 20 },
   actionRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 18 },
-  actionBtn: { flex: 1, backgroundColor: '#FFFFFF', height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center', borderWidth: 1.2, borderColor: '#DCE4DF', marginHorizontal: 4 },
+  actionBtn: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1.2,
+    borderColor: '#DCE4DF',
+    marginHorizontal: 4,
+  },
   actionBtnText: { color: '#213B2A', fontWeight: '700', fontSize: 13.5 },
-  obsHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, marginBottom: 12 },
+  obsHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 10,
+    marginBottom: 12,
+  },
   obsCount: { fontSize: 12, color: '#68776D', fontWeight: '600' },
   timelineItem: { position: 'relative', paddingLeft: 24, marginBottom: 16 },
-  timelineLine: { position: 'absolute', left: 6, top: 12, bottom: -12, width: 2, backgroundColor: '#D6E2DA' },
-  timelineDot: { position: 'absolute', left: 2, top: 6, width: 10, height: 10, borderRadius: 5, backgroundColor: '#213B2A' },
-  obsCard: { backgroundColor: '#FFFFFF', borderRadius: 18, padding: 16, borderWidth: 1.2, borderColor: '#E6ECE8' },
+  timelineLine: {
+    position: 'absolute',
+    left: 6,
+    top: 12,
+    bottom: -12,
+    width: 2,
+    backgroundColor: '#D6E2DA',
+  },
+  timelineDot: {
+    position: 'absolute',
+    left: 2,
+    top: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#213B2A',
+  },
+  obsCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1.2,
+    borderColor: '#E6ECE8',
+  },
   obsCardTop: { flexDirection: 'row', justifyContent: 'space-between' },
   obsDate: { fontSize: 13, fontWeight: '700', color: '#1E2B22' },
   obsStatus: { fontSize: 11, fontWeight: '700', color: '#215A36' },
   obsAuthor: { fontSize: 11.5, color: '#7E8F83', marginTop: 2 },
   pillGroup: { flexDirection: 'row', marginVertical: 8 },
-  tagPill: { backgroundColor: '#EDF5EF', paddingVertical: 3, paddingHorizontal: 8, borderRadius: 8, marginRight: 6 },
+  tagPill: {
+    backgroundColor: '#EDF5EF',
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    marginRight: 6,
+  },
   tagPillText: { fontSize: 11, fontWeight: '700', color: '#213B2A' },
   obsNotes: { fontSize: 12.5, color: '#3A483E', lineHeight: 18 },
-  addObsBtn: { backgroundColor: '#213B2A', height: 52, borderRadius: 26, justifyContent: 'center', alignItems: 'center', marginTop: 16, marginBottom: 30 },
+  addObsBtn: {
+    backgroundColor: '#213B2A',
+    height: 52,
+    borderRadius: 26,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 16,
+    marginBottom: 30,
+  },
   addObsBtnText: { color: '#FFF', fontWeight: '700', fontSize: 14.5 },
-    statusRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8, marginBottom: 12 },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8, marginBottom: 12 },
   statusPill: { paddingVertical: 5, paddingHorizontal: 12, borderRadius: 16 },
   statusPillText: { fontSize: 12, fontWeight: '700' },
   syncText: { fontSize: 12, color: '#68776D', fontWeight: '600' },
-  commentBox: { backgroundColor: '#FDF2F2', borderRadius: 16, borderWidth: 1.2, borderColor: '#F5C9C9', padding: 14, marginBottom: 12 },
+  commentBox: {
+    backgroundColor: '#FDF2F2',
+    borderRadius: 16,
+    borderWidth: 1.2,
+    borderColor: '#F5C9C9',
+    padding: 14,
+    marginBottom: 12,
+  },
   commentTitle: { fontSize: 12, fontWeight: '800', color: '#9B1C1C', marginBottom: 4 },
   commentBody: { fontSize: 13.5, color: '#1E2B22', lineHeight: 19 },
-  submitBtn: { backgroundColor: '#213B2A', height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
+  submitBtn: {
+    backgroundColor: '#213B2A',
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
   submitBtnText: { color: '#FFFFFF', fontSize: 14.5, fontWeight: '700' },
   lockedNote: { fontSize: 12.5, color: '#68776D', marginBottom: 8 },
 });

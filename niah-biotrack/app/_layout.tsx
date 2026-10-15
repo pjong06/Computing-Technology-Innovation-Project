@@ -15,6 +15,7 @@ export default function RootLayout() {
         <Stack.Screen name="new-record" />
         <Stack.Screen name="save-confirm" />
         <Stack.Screen name="plant-detail" />
+        <Stack.Screen name="attach-tag" />
         <Stack.Screen name="add-observation" />
         <Stack.Screen name="record-route" />
         <Stack.Screen name="link-route" />
