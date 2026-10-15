@@ -13,6 +13,7 @@ const knowledgeRoutes = require("./routes/knowledge");
 const { requireAuth, requireRole } = require("./middleware/auth");
 const qrBatchRoutes = require('./routes/qrBatch');
 const observationRoutes = require('./routes/observations');
+const reportRoutes = require('./routes/reports');
 const { startMqttIngestion } = require('./services/mqttIngestionService');
 const authRoutes = require('./routes/auth');
 
@@ -27,6 +28,7 @@ app.use('/api/iot', requireAuth, requireRole('officer'), iotRoutes);
 app.use('/api/knowledge', knowledgeRoutes);
 app.use('/api/qr-batch', qrBatchRoutes);
 app.use('/api/observations', observationRoutes);
+app.use('/api/reports', reportRoutes);
 app.use('/api/auth', authRoutes);
 
 // Serve the existing Conservation Officer portal from the same origin as its API.

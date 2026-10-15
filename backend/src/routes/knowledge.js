@@ -112,44 +112,63 @@ router.get("/species/manage", requireAuth, requireRole("officer"), async (_req, 
 
 // GET /api/knowledge/species
 router.get("/species", async (req, res) => {
-    const q = req.query.q;
-
-    if (q !== undefined && typeof q !== "string") {
-        return res.status(400).json({ message: "Invalid search text" });
+    const { q = "", family = "", conservation_status: status = "", category = "", page = "1", page_size: pageSize = "50" } = req.query;
+    const textFields = [q, family, status, category];
+    if (textFields.some(value => typeof value !== "string" || value.length > 100) ||
+        typeof page !== "string" || typeof pageSize !== "string" ||
+        !/^[\p{L}\p{N} .'-]*$/u.test(q) ||
+        !/^[\p{L}\p{N} .'-]*$/u.test(family) ||
+        !/^[\p{L}\p{N} .'-]*$/u.test(status) ||
+        !/^[\p{L}\p{N} .'-]*$/u.test(category) ||
+        !/^[1-9]\d*$/.test(page) || !/^[1-9]\d*$/.test(pageSize)) {
+        return res.status(400).json({ message: "Invalid species filters" });
     }
 
-    const search = (q || "").trim();
-
-    if (
-        search.length > 60 ||
-        (search && !/^[\p{L}\p{N} -]+$/u.test(search))
-    ) {
-        return res.status(400).json({ message: "Invalid search text" });
+    const pageNumber = Number(page);
+    const size = Number(pageSize);
+    if (!Number.isSafeInteger(pageNumber) || pageNumber > 100000 || size > 100) {
+        return res.status(400).json({ message: "Invalid page or page_size" });
     }
 
+    // The public catalogue contains approved species only. Family belongs to taxonomy.
+    const taxonomyJoin = family ? "taxonomy!inner(family)" : "taxonomy(family)";
     let query = supabase
         .from("species")
-        .select(
-            "id, scientific_name, common_name, local_name, conservation_status, description"
-        )
-        //.eq("verification_status", "approved");
+        .select(`id, scientific_name, common_name, local_name, species_category, conservation_status, description, ${taxonomyJoin}`, { count: "exact" })
+        .eq("verification_status", "approved");
 
-    if (search) {
-        query = query.or(
-            `scientific_name.ilike.%${search}%,common_name.ilike.%${search}%`
-        );
+    if (q.trim()) {
+        const search = q.trim();
+        query = query.or(`scientific_name.ilike.%${search}%,common_name.ilike.%${search}%,local_name.ilike.%${search}%`);
     }
+    if (family.trim()) query = query.eq("taxonomy.family", family.trim());
+    if (status.trim()) {
+        query = status.trim().toLowerCase() === "unknown"
+            ? query.is("conservation_status", null)
+            : query.eq("conservation_status", status.trim());
+    }
+    if (category.trim()) query = query.eq("species_category", category.trim());
 
-    const { data, error } = await query
+    const start = (pageNumber - 1) * size;
+    const { data, error, count } = await query
         .order("scientific_name")
-        .limit(50);
+        .order("id")
+        .range(start, start + size - 1);
 
     if (error) {
         console.error("Species query error:", error);
         return res.status(500).json({ message: "Could not load species" });
     }
 
-    res.json({ data });
+    return res.json({
+        data,
+        pagination: {
+            page: pageNumber,
+            page_size: size,
+            total: count || 0,
+            total_pages: Math.ceil((count || 0) / size),
+        },
+    });
 });
 
 // GET /api/knowledge/species/:id
