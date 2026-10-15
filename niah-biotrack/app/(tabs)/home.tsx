@@ -27,7 +27,7 @@ export default function HomeScreen() {
       case SyncStatus.UPLOADED:
         return { bg: '#E4F2E7', text: '#215A36', label: '• Uploaded' };
       case SyncStatus.NOT_UPLOADED:
-        return { bg: '#FDF4D8', text: '#8C5E03', label: '• Not Upploaded' };
+        return { bg: '#FDF4D8', text: '#8C5E03', label: '• Not uploaded' };
       case SyncStatus.FAILED:
         return { bg: '#FDE2E2', text: '#9B1C1C', label: '• Upload failed' };
     }
@@ -46,7 +46,7 @@ export default function HomeScreen() {
           <Text style={styles.headerTitle}>Niah Ground-Truth</Text>
         </View>
 
-        {/* Sync status: real local counts only. There is no upload to the server yet. */}
+        {/* Sync status banner */}
         {totalToSync > 0 ? (
           <View style={styles.syncCard}>
             <Text style={styles.syncTitle}>
@@ -61,7 +61,6 @@ export default function HomeScreen() {
 
         {/* 2x1 Action Cards Grid */}
         <View style={styles.actionGrid}>
-          {/* Scan QR (Soft Mint) */}
           <TouchableOpacity
             style={styles.scanCard}
             activeOpacity={0.85}
@@ -73,7 +72,6 @@ export default function HomeScreen() {
             <Text style={styles.scanCardLabel}>Scan QR</Text>
           </TouchableOpacity>
 
-          {/* New Record (Forest Green) */}
           <TouchableOpacity
             style={styles.newRecordCard}
             activeOpacity={0.85}
@@ -175,8 +173,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 12,
   },
-
-  /* Header */
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -193,8 +189,6 @@ const styles = StyleSheet.create({
     color: '#284632',
     letterSpacing: -0.3,
   },
-
-  /* Sync Card */
   syncCard: {
     backgroundColor: '#E6EFE9',
     borderRadius: 22,
@@ -213,8 +207,6 @@ const styles = StyleSheet.create({
     color: '#5C7163',
     marginTop: 2,
   },
-
-  /* Action Grid (2x1) */
   actionGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -262,8 +254,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
   },
-
-  /* Record Route Pill */
   routePill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -296,8 +286,6 @@ const styles = StyleSheet.create({
     color: '#5C7163',
     fontWeight: '500',
   },
-
-  /* Recent Records Section */
   sectionRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

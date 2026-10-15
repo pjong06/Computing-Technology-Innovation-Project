@@ -132,7 +132,7 @@ router.get("/species", async (req, res) => {
         .select(
             "id, scientific_name, common_name, local_name, conservation_status, description"
         )
-        .eq("verification_status", "approved");
+        //.eq("verification_status", "approved");
 
     if (search) {
         query = query.or(
