@@ -72,28 +72,77 @@ function requireOwnPlant(req, res, next) {
     next();
 }
 
-// GET all plants
-router.get("/", (req, res) => {
-    res.json(plants.filter(p => canReadPlant(p, req.profile)).map(p => visiblePlant(p, req.profile)));
+// List plants visible to the signed-in staff member.
+router.get("/", requireRole("botanist", "officer", "researcher"), async (req, res) => {
+    const page = req.query.page === undefined ? 1 : Number(req.query.page);
+    const pageSize = 50;
+
+    if (!Number.isSafeInteger(page) || page < 1) {
+        return res.status(400).json({ message: "page must be a positive integer" });
+    }
+
+    const firstRow = (page - 1) * pageSize;
+
+    const { data, error, count } = await req.supabase
+        .from("plants")
+        .select(
+            "id, species_id, qr_code_value, plant_status, registered_at",
+            { count: "exact" }
+        )
+        .order("registered_at", { ascending: false })
+        .range(firstRow, firstRow + pageSize - 1);
+
+    if (error) {
+        console.error("List plants error:", error);
+        return res.status(500).json({ message: "Could not load plants" });
+    }
+
+    return res.json({
+        data: data.map(plant => ({
+            ...plant,
+            plant_id: plant.id
+        })),
+        pagination: {
+            page,
+            page_size: pageSize,
+            total: count
+        }
+    });
 });
 
 // GET one plant by ID
-router.get("/:id", (req, res) => {
-    const plantId = parseInt(req.params.id);
+// Load one plant visible to the signed-in staff member.
+router.get("/:id", requireRole("botanist", "officer", "researcher"), async (req, res) => {
+    const plantId = req.params.id;
+    const uuidPattern =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-    const plant = plants.find(p => p.plant_id === plantId);
-
-    if (!plant) {
-        return res.status(404).json({
-            message: "Plant not found"
-        });
+    if (!uuidPattern.test(plantId)) {
+        return res.status(400).json({ message: "Valid plant ID is required" });
     }
 
-    if (!canReadPlant(plant, req.profile)) {
+    const { data, error } = await req.supabase
+        .from("plants")
+        .select(
+            "id, species_id, qr_code_value, plant_status, registered_at, " +
+            "gps_accuracy_m, location_description"
+        )
+        .eq("id", plantId)
+        .maybeSingle();
+
+    if (error) {
+        console.error("Get plant error:", error);
+        return res.status(500).json({ message: "Could not load plant" });
+    }
+
+    if (!data) {
         return res.status(404).json({ message: "Plant not found" });
     }
 
-    res.json(visiblePlant(plant, req.profile));
+    return res.json({
+        ...data,
+        plant_id: data.id
+    });
 });
 
 // Save a field record in Supabase under the signed-in botanist.
@@ -172,15 +221,31 @@ router.post("/", requireRole("botanist"), async (req, res) => {
         speciesId = data?.id || null;
     }
 
-    if (!species) {
+    //allow unknown species
+    if ((speciesId !== null || scientificName) && !species) {
         return res.status(400).json({
-            message: "Choose an approved species before saving the plant record",
+            message: "Selected species must be approved; omit species fields for an unidentified plant"
         });
     }
 
     const clientRecordId = req.body?.client_record_id || randomUUID();
     if (typeof clientRecordId !== "string" || !uuidPattern.test(clientRecordId)) {
         return res.status(400).json({ message: "client_record_id must be a UUID" });
+    }
+
+    // Use the physical tag when present; keep an internal value until a tag is attached.
+    const inputTag = req.body?.qr_code_value;
+    const qrCodeValue =
+        inputTag == null
+            ? `plant:${clientRecordId}`
+            : typeof inputTag === "string"
+                ? inputTag.trim().toUpperCase()
+                : "";
+
+    if (inputTag != null && !/^NIAH-PLT-\d{5}$/.test(qrCodeValue)) {
+        return res.status(400).json({
+            message: "qr_code_value must look like NIAH-PLT-00001"
+        });
     }
 
     // Repeated sync requests with the same client ID return the saved row.
@@ -201,7 +266,7 @@ router.post("/", requireRole("botanist"), async (req, res) => {
     const plant = {
         client_record_id: clientRecordId,
         species_id: speciesId,
-        qr_code_value: `plant:${clientRecordId}`,
+        qr_code_value: qrCodeValue,
         location: `POINT(${longitude} ${latitude})`,
         gps_accuracy_m: req.body.gps_accuracy_m ?? null,
         location_description: req.body.location_description?.trim() || null,
@@ -217,7 +282,7 @@ router.post("/", requireRole("botanist"), async (req, res) => {
 
     if (error?.code === "23505") {
         return res.status(409).json({
-            message: "This client record has already been saved",
+            message: "Client record ID or QR tag is already in use",
         });
     }
     if (error?.code === "42501") {
@@ -233,8 +298,9 @@ router.post("/", requireRole("botanist"), async (req, res) => {
         plant: {
             ...data,
             plant_id: data.id,
-            scientific_name: species.scientific_name,
-            common_name: species.common_name,
+            //unknown species shows null instead of server throwing error
+            scientific_name: species?.scientific_name ?? null,
+            common_name: species?.common_name ?? null,
             latitude,
             longitude,
         },
@@ -245,7 +311,7 @@ router.post("/", requireRole("botanist"), async (req, res) => {
 router.put("/:id", denyUnspecifiedMutation, (req, res) => {
     const plantId = parseInt(req.params.id);
 
-        const { latitude, longitude } = req.body;
+    const { latitude, longitude } = req.body;
 
     if (
         latitude < -90 ||
@@ -325,62 +391,79 @@ router.post("/:id/photo", requireRole("botanist"), requireOwnPlant, upload.singl
     });
 });
 
-// GENERATE QR code for a plant
-router.get("/:id/qr", requireRole("botanist"), async (req, res) => {
-    const plantId = parseInt(req.params.id);
+// Find the signed-in botanist's plant and its physical QR tag.
+async function findOwnedPlantQrTag(req, res) {
+    const plantId = req.params.id;
+    const uuidPattern =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-    const plant = plants.find(p => p.plant_id === plantId);
-
-    if (!plant) {
-        return res.status(404).json({
-            message: "Plant not found"
-        });
+    if (!uuidPattern.test(plantId)) {
+        res.status(400).json({ message: "Valid plant ID is required" });
+        return null;
     }
 
-    try {
-        const qr = await generatePlantQR(plantId);
+    const { data, error } = await req.supabase
+        .from("plants")
+        .select("id, qr_code_value")
+        .eq("id", plantId)
+        .eq("registered_by", req.user.id)
+        .maybeSingle();
 
-        res.json({
+    if (error) {
+        console.error("Plant QR lookup error:", error);
+        res.status(500).json({ message: "Could not load plant QR tag" });
+        return null;
+    }
+
+    if (!data) {
+        res.status(404).json({ message: "Plant not found" });
+        return null;
+    }
+
+    if (!/^NIAH-PLT-\d{5}$/.test(data.qr_code_value)) {
+        res.status(409).json({
+            message: "Attach a NIAH-PLT tag before generating its QR code"
+        });
+        return null;
+    }
+
+    return data.qr_code_value;
+}
+
+// Generate QR data for a plant owned by the signed-in botanist.
+router.get("/:id/qr", requireRole("botanist"), async (req, res) => {
+    const qrValue = await findOwnedPlantQrTag(req, res);
+    if (!qrValue) return;
+
+    try {
+        const qr = await generatePlantQR(qrValue);
+        return res.json({
             message: "QR code generated successfully",
-            plant_id: plantId,
+            plant_id: req.params.id,
             qr_value: qr.qrValue,
             qr_code: qr.qrCode
         });
     } catch (error) {
-        res.status(500).json({
-            message: "Failed to generate QR code"
-        });
+        console.error("Plant QR generation error:", error);
+        return res.status(500).json({ message: "Failed to generate QR code" });
     }
 });
 
-// DISPLAY QR code as an image
+// Return a QR image for a plant owned by the signed-in botanist.
 router.get("/:id/qr/image", requireRole("botanist"), async (req, res) => {
-    const plantId = parseInt(req.params.id);
-
-    const plant = plants.find(p => p.plant_id === plantId);
-
-    if (!plant) {
-        return res.status(404).json({
-            message: "Plant not found"
-        });
-    }
+    const qrValue = await findOwnedPlantQrTag(req, res);
+    if (!qrValue) return;
 
     try {
-        const qr = await generatePlantQR(plantId);
-
-        const base64Data = qr.qrCode.replace(
-            /^data:image\/png;base64,/,
-            ""
-        );
-
+        const qr = await generatePlantQR(qrValue);
+        const base64Data = qr.qrCode.replace(/^data:image\/png;base64,/, "");
         const imageBuffer = Buffer.from(base64Data, "base64");
 
         res.setHeader("Content-Type", "image/png");
-        res.send(imageBuffer);
+        return res.send(imageBuffer);
     } catch (error) {
-        res.status(500).json({
-            message: "Failed to generate QR code"
-        });
+        console.error("Plant QR image error:", error);
+        return res.status(500).json({ message: "Failed to generate QR image" });
     }
 });
 
