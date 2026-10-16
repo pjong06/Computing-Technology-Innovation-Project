@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Create account - Niah Biotrack</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="images/logo.png">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="auth-wrap">
+  <div class="card auth-card">
+    <img class="logo" src="images/logo.png" alt="Niah Biotrack logo">
+    <h1>Create <span>account</span></h1>
+    <p class="lead">Create a botanist account. The conservation officer account already exists.</p>
+
+    <div class="form one">
+      <label>Username (3-20 letters, numbers or _)<input id="su-username" autocomplete="username" autocapitalize="none"></label>
+      <label>Email<input id="su-email" type="email" autocomplete="email"></label>
+      <label>Password (8+ characters with a letter, a number and a symbol)<input id="su-password" type="password" autocomplete="new-password"></label>
+      <label>Confirm password<input id="su-confirm" type="password" autocomplete="new-password"></label>
+    </div>
+    <p class="auth-error" id="auth-error" role="alert" hidden></p>
+    <button class="btn" id="su-button" onclick="doSignup()">Create account</button>
+
+    <p class="muted">Already have an account? <a href="login.html">Log in</a></p>
+  </div>
+</div>
+
+<div id="toast" role="status"></div>
+
+<script src="js/shared.js"></script>
+<script src="js/signup.js"></script>
+</body>
+</html>
