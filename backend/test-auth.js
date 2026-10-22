@@ -86,6 +86,19 @@ async function main() {
             return;
         }
 
+        if (process.argv.includes("--check-assign-species")) {
+            const { error: assignError } = await supabase.rpc(
+                "officer_assign_plant_species",
+                {
+                    p_plant_id: "00000000-0000-0000-0000-000000000000",
+                    p_species_id: "00000000-0000-0000-0000-000000000000",
+                }
+            );
+
+            console.log("Assignment check:", assignError?.message ?? "Unexpected success");
+            return;
+        }
+
         const headers = {
             Authorization: `Bearer ${data.session.access_token}`,
         };
@@ -95,6 +108,133 @@ async function main() {
 
         console.log(`/api/me: HTTP ${response.status}`);
         console.log(await response.text());
+
+        if (process.argv.includes("--review-queue")) {
+            const queueResponse = await fetch(
+                "http://127.0.0.1:3000/api/officer/reviews/pending",
+                { headers }
+            );
+            const contentType = queueResponse.headers.get("content-type") || "";
+            const body = await queueResponse.text();
+
+            console.log(`GET pending reviews: HTTP ${queueResponse.status}`);
+            console.log("Content-Type:", contentType);
+            console.log("Response preview:", body.slice(0, 150));
+            return;
+        }
+
+        if (process.argv.includes("--check-officer-species-route")) {
+            const assignmentResponse = await fetch(
+                "http://127.0.0.1:3000/api/officer/reviews/plants/not-a-uuid/species",
+                {
+                    method: "PATCH",
+                    headers: {
+                        ...headers,
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        species_id: "00000000-0000-0000-0000-000000000000"
+                    })
+                }
+            );
+
+            console.log(`PATCH species route: HTTP ${assignmentResponse.status}`);
+            console.log(await assignmentResponse.text());
+            return;
+        }
+
+        if (process.argv.includes("--check-officer-review-route")) {
+            const reviewResponse = await fetch(
+                "http://127.0.0.1:3000/api/officer/reviews/00000000-0000-0000-0000-000000000000/decision",
+                {
+                    method: "POST",
+                    headers: {
+                        ...headers,
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({ decision: "approved" })
+                }
+            );
+
+            console.log(`POST review route: HTTP ${reviewResponse.status}`);
+            console.log(await reviewResponse.text());
+            return;
+        }
+
+        if (process.argv.includes("--report-inventory")) {
+            const reportResponse = await fetch(
+                "http://127.0.0.1:3000/api/reports/inventory",
+                { headers }
+            );
+
+            console.log(`GET /api/reports/inventory: HTTP ${reportResponse.status}`);
+            console.log(await reportResponse.text());
+            return;
+        }
+
+        if (process.argv.includes("--report-status-csv")) {
+            const reportResponse = await fetch(
+                "http://127.0.0.1:3000/api/reports/status?format=csv",
+                { headers }
+            );
+
+            console.log(`GET status CSV: HTTP ${reportResponse.status}`);
+            console.log(`Content-Type: ${reportResponse.headers.get("content-type")}`);
+            console.log(await reportResponse.text());
+            return;
+        }
+
+        if (process.argv.includes("--report-status-pdf")) {
+            const reportResponse = await fetch(
+                "http://127.0.0.1:3000/api/reports/status?format=pdf",
+                { headers }
+            );
+
+            console.log(`GET status PDF: HTTP ${reportResponse.status}`);
+            console.log(`Content-Type: ${reportResponse.headers.get("content-type")}`);
+
+            if (!reportResponse.ok) {
+                console.log(await reportResponse.text());
+                return;
+            }
+
+            const pdfPath = path.join(
+                require("node:os").tmpdir(),
+                "niah-status-report.pdf"
+            );
+            fs.writeFileSync(pdfPath, Buffer.from(await reportResponse.arrayBuffer()));
+            console.log(`Saved PDF: ${pdfPath}`);
+            return;
+        }
+
+        if (process.argv.includes("--report-botanist")) {
+            const reportResponse = await fetch(
+                "http://127.0.0.1:3000/api/reports/botanist",
+                { headers }
+            );
+
+            const result = await reportResponse.json();
+            console.log(`GET botanist report: HTTP ${reportResponse.status}`);
+            console.log(`Title: ${result.data?.title || ""}`);
+            console.log(`Rows: ${result.data?.total ?? ""}`);
+            console.log(`Error: ${result.message || "none"}`);
+            return;
+        }
+
+        if (process.argv.includes("--report-date-range")) {
+            const reportResponse = await fetch(
+                "http://127.0.0.1:3000/api/reports/inventory?from=2026-10-15&to=2026-10-15",
+                { headers }
+            );
+
+            const result = await reportResponse.json();
+            console.log(`GET dated inventory: HTTP ${reportResponse.status}`);
+            console.log(`From: ${result.data?.from || ""}`);
+            console.log(`To: ${result.data?.to || ""}`);
+            console.log(`Rows: ${result.data?.total ?? ""}`);
+            console.log(`Error: ${result.message || "none"}`);
+            return;
+        }
 
         if (process.argv.includes("--create-taxonomy")) {
             const taxonomy = JSON.parse(requiredEnv("KNOWLEDGE_TAXONOMY_JSON"));
