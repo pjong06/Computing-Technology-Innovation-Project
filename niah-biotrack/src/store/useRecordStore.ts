@@ -22,8 +22,11 @@ export enum ReviewStatus {
 export const UNKNOWN_SPECIES = 'Unknown species';
 
 export interface ObservationVisit {
-  id: string;
-  date: string;
+  id: string; // UUID generated on the phone; sent as client_record_id
+  date: string; // for display only, e.g. "22 Oct 2026 · 3:15 PM"
+  // When the visit happened, as an ISO 8601 string (e.g. "2026-10-22T07:15:00.000Z").
+  // This is what gets uploaded. Visits saved before store v6 don't have it.
+  observedAt?: string;
   recordedBy: string;
   health: 'Healthy' | 'Stressed' | 'Damaged' | 'Dead';
   stage: 'Bud' | 'Flowering' | 'Vegetative' | 'Fruiting';
@@ -75,7 +78,11 @@ interface RecordState {
   addRecord: (
     record: Omit<PlantRecord, 'id' | 'tagCode' | 'createdAt' | 'observations' | 'reviewStatus' | 'reviewComment'>
   ) => PlantRecord;
-  addObservation: (plantRecordId: string, observation: Omit<ObservationVisit, 'id' | 'syncStatus'>) => void;
+  // observedAt is required for new visits (it's only optional on the type for old ones).
+  addObservation: (
+    plantRecordId: string,
+    observation: Omit<ObservationVisit, 'id' | 'syncStatus' | 'observedAt'> & { observedAt: string }
+  ) => void;
   retryRecord: (id: string) => void;
   submitForReview: (id: string) => { ok: true } | { ok: false; reason: string };
   findByTag: (tagCode: string) => PlantRecord | undefined;
@@ -110,7 +117,8 @@ export const useRecordStore = create<RecordState>()(
             if (r.id === plantRecordId) {
               const newObs: ObservationVisit = {
                 ...observationData,
-                id: `obs-${Date.now()}`,
+                // A real UUID: the backend rejects anything else as client_record_id.
+                id: randomUUID(),
                 syncStatus: SyncStatus.NOT_UPLOADED,
               };
               return { ...r, observations: [newObs, ...r.observations] };
@@ -178,7 +186,7 @@ export const useRecordStore = create<RecordState>()(
     {
       name: 'niah-ground-truth-store',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 5,
+      version: 6,
       migrate: (persistedState, version) => {
         const state = persistedState as { records?: Record<string, unknown>[] };
         if (version < 1 && Array.isArray(state.records)) {
@@ -233,6 +241,23 @@ export const useRecordStore = create<RecordState>()(
                 if (version < 5 && Array.isArray(state.records)) {
           // v5: records link to a species by ID. Older records only have a name.
           state.records = state.records.map((record) => ({ ...record, speciesId: null }));
+        }
+
+        if (version < 6 && Array.isArray(state.records)) {
+          // v6: observation IDs must be UUIDs, because the backend uses them as
+          // client_record_id and rejects anything else. Visits saved before v6 had
+          // IDs like "obs-1761118500000", so each of those gets a fresh UUID.
+          // (These old visits also have no observedAt, only the display "date"
+          // text, so they upload without observed_at and the server uses the
+          // upload time instead.)
+          state.records = state.records.map((record) => ({
+            ...record,
+            observations: Array.isArray(record.observations)
+              ? record.observations.map((obs: Record<string, unknown>) =>
+                  typeof obs.id === 'string' && obs.id.startsWith('obs-') ? { ...obs, id: randomUUID() } : obs
+                )
+              : [],
+          }));
         }
 
         return state as unknown as RecordState;

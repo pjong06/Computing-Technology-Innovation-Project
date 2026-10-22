@@ -50,6 +50,7 @@ export default function AddObservationScreen() {
 
     addObservation(matched.id, {
       date: `${formattedDate} · ${formattedTime}`,
+      observedAt: now.toISOString(), // machine-readable copy of the same moment, for upload
       recordedBy: 'Brendan Noel',
       health,
       stage,
