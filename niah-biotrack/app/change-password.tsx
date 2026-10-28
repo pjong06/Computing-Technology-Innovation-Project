@@ -1,83 +1,83 @@
-import React, { useRef, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, Platform, StatusBar } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Linking, Platform, SafeAreaView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
-import Toast from 'react-native-toast-message';
-import LeafLogo from '../src/components/LeafLogo';
 import FormScrollView from '../src/components/FormScrollView';
+import { supabase } from '../src/lib/supabase';
 
 export default function ChangePasswordScreen() {
   const router = useRouter();
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const confirmRef = useRef<TextInput>(null);
+  const [confirm, setConfirm] = useState('');
+  const [ready, setReady] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
-  const hasLength = password.length >= 8;
-  const hasNumber = /\d/.test(password);
+  useEffect(() => {
+    let active = true;
+    const prepare = async (url: string | null) => {
+      try {
+        if (url && url.startsWith('niahbiotrack://change-password')) {
+          const fragment = url.split('#')[1] || '';
+          const query = url.split('?')[1]?.split('#')[0] || '';
+          const params = new URLSearchParams(fragment || query);
+          const access_token = params.get('access_token');
+          const refresh_token = params.get('refresh_token');
+          if (access_token && refresh_token) {
+            const { error: sessionError } = await supabase.auth.setSession({ access_token, refresh_token });
+            if (sessionError) throw sessionError;
+          } else if (params.get('error')) {
+            throw new Error('This recovery link is invalid or expired. Request a new link.');
+          }
+        }
+        const { data, error: userError } = await supabase.auth.getUser();
+        if (userError || !data.user) throw new Error('Open a valid recovery link from your email.');
+        if (active) { setError(''); setReady(true); }
+      } catch (cause) {
+        if (active) setError(cause instanceof Error ? cause.message : 'Could not verify recovery link.');
+      }
+    };
+    Linking.getInitialURL().then(prepare).catch(() => setError('Could not open the recovery link.'));
+    const subscription = Linking.addEventListener('url', ({ url }) => prepare(url));
+    return () => { active = false; subscription.remove(); };
+  }, []);
 
-  const handleReset = () => {
-    if (!hasLength || !hasNumber || password !== confirmPassword) {
-      Toast.show({
-        type: 'error',
-        text1: 'Password Error',
-        text2: 'Please satisfy all password criteria.',
-      });
+  const save = async () => {
+    if (saving) return;
+    if (password.length < 8 || !/\d/.test(password) || password !== confirm) {
+      setError('Use at least 8 characters and a number, and make both entries match.');
       return;
     }
-
-    Toast.show({
-      type: 'success',
-      text1: 'Password Reset',
-      text2: 'Your password has been updated.',
-    });
+    setSaving(true);
+    setError('');
+    const { error: updateError } = await supabase.auth.updateUser({ password });
+    setSaving(false);
+    if (updateError) {
+      setError('Could not update password. Request a new link and try again.');
+      return;
+    }
+    setPassword('');
+    setConfirm('');
+    await supabase.auth.signOut({ scope: 'local' });
     router.replace('/');
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <FormScrollView contentContainerStyle={styles.container}>
-        <LeafLogo width={100} height={64} marginBottom={14} />
-
         <Text style={styles.title}>Set new password</Text>
-        <Text style={styles.subtitle}>For sfc.botanist@sarawakforestry.com</Text>
-
-        <Text style={styles.label}>New password</Text>
-        <TextInput
-          style={styles.input}
-          secureTextEntry
-          placeholder="••••••••••"
-          placeholderTextColor="#8C9A91"
-          value={password}
-          onChangeText={setPassword}
-          returnKeyType="next"
-          submitBehavior="submit"
-          onSubmitEditing={() => confirmRef.current?.focus()}
-        />
-
-        <View style={styles.criteriaRow}>
-          <Text style={[styles.criteriaText, hasLength && styles.criteriaActive]}>
-            {hasLength ? '☑' : '☐'} At least 8 characters
-          </Text>
-          <Text style={[styles.criteriaText, hasNumber && styles.criteriaActive]}>
-            {hasNumber ? '☑' : '☐'} Includes a number
-          </Text>
-        </View>
-
-        <Text style={styles.label}>Confirm password</Text>
-        <TextInput
-          ref={confirmRef}
-          style={styles.input}
-          secureTextEntry
-          placeholder="••••••••••"
-          placeholderTextColor="#8C9A91"
-          value={confirmPassword}
-          onChangeText={setConfirmPassword}
-          returnKeyType="done"
-          onSubmitEditing={handleReset}
-        />
-
-        <TouchableOpacity style={styles.primaryBtn} onPress={handleReset}>
-          <Text style={styles.primaryBtnText}>Reset password</Text>
-        </TouchableOpacity>
+        {!ready && !error ? <ActivityIndicator color="#213B2A" /> : null}
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+        {ready ? <>
+          <TextInput style={styles.input} secureTextEntry placeholder="New password" value={password}
+            onChangeText={setPassword} autoComplete="new-password" />
+          <TextInput style={styles.input} secureTextEntry placeholder="Confirm password" value={confirm}
+            onChangeText={setConfirm} autoComplete="new-password" />
+          <TouchableOpacity style={styles.button} onPress={save} disabled={saving}>
+            <Text style={styles.buttonText}>{saving ? 'Saving...' : 'Update password'}</Text>
+          </TouchableOpacity>
+        </> : <TouchableOpacity onPress={() => router.replace('/forgot-password')}>
+          <Text style={styles.link}>Request a new link</Text>
+        </TouchableOpacity>}
       </FormScrollView>
     </SafeAreaView>
   );
@@ -85,14 +85,11 @@ export default function ChangePasswordScreen() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F6F8F6', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
-  container: { flexGrow: 1, paddingHorizontal: 24, paddingVertical: 32, justifyContent: 'center' },
-  title: { fontSize: 24, fontWeight: '800', color: '#213B2A', textAlign: 'center', marginBottom: 4 },
-  subtitle: { fontSize: 13, color: '#68776D', textAlign: 'center', marginBottom: 24 },
-  label: { fontSize: 13, fontWeight: '700', color: '#213B2A', marginBottom: 6, marginTop: 4 },
-  input: { backgroundColor: '#FFFFFF', height: 50, borderRadius: 25, paddingHorizontal: 18, fontSize: 14, color: '#1E2B22', borderWidth: 1.2, borderColor: '#E6ECE8', marginBottom: 10 },
-  criteriaRow: { marginBottom: 14, paddingHorizontal: 4 },
-  criteriaText: { fontSize: 12, color: '#88988D', marginVertical: 2 },
-  criteriaActive: { color: '#215A36', fontWeight: '700' },
-  primaryBtn: { backgroundColor: '#213B2A', height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', marginTop: 14 },
-  primaryBtnText: { color: '#FFF', fontSize: 14.5, fontWeight: '700' },
+  container: { flexGrow: 1, paddingHorizontal: 24, justifyContent: 'center' },
+  title: { fontSize: 24, fontWeight: '800', color: '#213B2A', textAlign: 'center', marginBottom: 20 },
+  input: { backgroundColor: '#fff', height: 50, borderRadius: 25, paddingHorizontal: 18, marginBottom: 12 },
+  error: { color: '#9B1C1C', textAlign: 'center', marginBottom: 16 },
+  button: { backgroundColor: '#213B2A', height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center' },
+  buttonText: { color: '#fff', fontWeight: '700' },
+  link: { color: '#213B2A', textAlign: 'center', marginTop: 16 },
 });

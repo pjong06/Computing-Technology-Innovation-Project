@@ -1,81 +1,72 @@
 const express = require('express');
-const router = express.Router();
 const { createClient } = require('@supabase/supabase-js');
-const { publicClient } = require('../config/supabase');
 
-// Create admin client using service_role key if available, otherwise fallback to existing key
-const supabaseUrl = process.env.SUPABASE_URL;
-const adminKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY;
+const recoveryClient = process.env.SUPABASE_URL && process.env.SUPABASE_PUBLISHABLE_KEY
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  })
+  : null;
 
-const supabaseAdmin = createClient(supabaseUrl, adminKey, {
-  auth: { persistSession: false, autoRefreshToken: false },
-});
+const GENERIC_MESSAGE = 'If an account exists for that email, a password reset link will be sent.';
+const WINDOW_MS = 60 * 60 * 1000;
+const MAX_PER_IP = 10;
+const MAX_PER_EMAIL = 3;
 
-// POST /api/auth/temp-password
-router.post('/temp-password', async (req, res) => {
-  try {
-    const { identifier, tempPassword } = req.body;
+function createAuthRouter(client = recoveryClient, now = () => Date.now()) {
+  const router = express.Router();
+  const attempts = new Map();
 
-    if (!identifier || !tempPassword) {
-      return res.status(400).json({
-        error: 'Identifier (email or staff ID) and temporary password are required.',
-      });
+  function limited(key, max) {
+    const time = now();
+    const previous = attempts.get(key) || [];
+    const recent = previous.filter((stamp) => time - stamp < WINDOW_MS);
+    if (recent.length >= max) {
+      attempts.set(key, recent);
+      return true;
     }
-
-    const cleanId = identifier.trim().toLowerCase();
-
-    // 1. Look up user profile in the 'profiles' table using publicClient
-    let userId = null;
-    try {
-      const { data: profile } = await publicClient
-        .from('profiles')
-        .select('id, staff_id')
-        .or(`staff_id.eq.${cleanId},id.eq.${cleanId}`)
-        .maybeSingle();
-
-      if (profile) {
-        userId = profile.id;
-      }
-    } catch (e) {
-      // Continue to auth lookup if profiles query fails
-    }
-
-    // 2. If not found by staff_id, check Supabase Auth users by email
-    if (!userId) {
-      try {
-        const { data: usersData } = await supabaseAdmin.auth.admin.listUsers();
-        const matched = usersData?.users?.find(
-          (u) => u.email?.toLowerCase() === cleanId
-        );
-        if (matched) {
-          userId = matched.id;
-        }
-      } catch (e) {
-        // Admin listUsers not permitted with anon key
-      }
-    }
-
-    // 3. Attempt to update password in Supabase Auth if user exists
-    if (userId) {
-      try {
-        await supabaseAdmin.auth.admin.updateUserById(userId, {
-          password: tempPassword,
-        });
-      } catch (err) {
-        console.warn('Could not update password via Supabase Admin API:', err.message);
-      }
-    }
-
-    // Return success to the client
-    return res.status(200).json({
-      success: true,
-      message: 'Temporary password set successfully.',
-      identifier: cleanId,
-      userId: userId || 'demo-user',
-    });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
+    recent.push(time);
+    attempts.set(key, recent);
+    return false;
   }
-});
 
-module.exports = router;
+  router.post('/forgot-password', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'Enter a valid email address.' });
+    }
+
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    const ipLimited = limited(`ip:${ip}`, MAX_PER_IP);
+    const emailLimited = limited(`email:${email}`, MAX_PER_EMAIL);
+    if (ipLimited || emailLimited) {
+      res.set('Retry-After', '3600');
+      return res.status(429).json({ error: 'Too many requests. Please try again later.' });
+    }
+
+    if (!client) {
+      return res.status(503).json({ error: 'Password recovery is temporarily unavailable.' });
+    }
+
+    const redirectTo = process.env.PASSWORD_RESET_REDIRECT_URL;
+    if (!redirectTo) {
+      console.error('PASSWORD_RESET_REDIRECT_URL is not configured');
+      return res.status(503).json({ error: 'Password recovery is temporarily unavailable.' });
+    }
+
+    try {
+      const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo });
+      if (error) {
+        console.warn('Password recovery request failed:', error.code || error.status || 'unknown');
+      }
+    } catch (error) {
+      console.warn('Password recovery request failed:', error.code || 'network_error');
+    }
+    return res.status(202).json({ message: GENERIC_MESSAGE });
+  });
+
+  return router;
+}
+
+module.exports = createAuthRouter();
+module.exports.createAuthRouter = createAuthRouter;
