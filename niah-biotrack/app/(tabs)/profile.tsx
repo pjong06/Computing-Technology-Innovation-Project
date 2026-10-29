@@ -6,100 +6,75 @@ import {
   ScrollView,
   StatusBar,
   StyleSheet,
-  Switch,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { SyncStatus, useRecordStore } from '../../src/store/useRecordStore';
+
+import { useRecordStore } from '../../src/store/useRecordStore';
+import { buildSyncSummary } from '../../src/services/syncSummary';
 import { deleteAllStoredPhotos } from '../../src/utils/photoStorage';
 import { signOutOnThisPhone } from '../../src/lib/auth';
 import { useProfileStore } from '../../src/store/useProfileStore';
 
 export default function ProfileScreen() {
   const router = useRouter();
+
   const records = useRecordStore((state) => state.records);
   const clearAllData = useRecordStore((state) => state.clearAllData);
 
-  const [mobileDataPhotos, setMobileDataPhotos] = useState(true);
-  const [showLogoutModal, setShowLogoutModal] = useState(false);
   const me = useProfileStore((state) => state.me);
   const profileError = useProfileStore((state) => state.error);
   const loadMe = useProfileStore((state) => state.loadMe);
 
-  // Refresh account details every time the Profile tab is opened
-  // (keeps the saved copy if offline).
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
+
   useFocusEffect(
     useCallback(() => {
       void loadMe();
     }, [loadMe])
   );
+
   const displayName = me?.full_name || me?.email || null;
-  const initials = displayName ? displayName.trim().charAt(0).toUpperCase() : '?';
-  const roleLabel = me ? me.role.charAt(0).toUpperCase() + me.role.slice(1) : null;
+  const initials = displayName
+    ? displayName.trim().charAt(0).toUpperCase()
+    : '?';
 
-  // Task 3.6 counts are derived from the persisted records. Keeping them out of
-  // AsyncStorage prevents a separate sync report from drifting out of date.
-  const syncedRecordCount = records.filter((record) => record.syncStatus === SyncStatus.UPLOADED).length;
-  const pendingRecordCount = records.filter((record) => record.syncStatus === SyncStatus.NOT_UPLOADED).length;
-  const failedRecordCount = records.filter((record) => record.syncStatus === SyncStatus.FAILED).length;
+  const roleLabel = me
+    ? me.role.charAt(0).toUpperCase() + me.role.slice(1)
+    : null;
 
-  const observations = records.flatMap((record) => record.observations);
-  const syncedObservationCount = observations.filter(
-    (observation) => observation.syncStatus === SyncStatus.UPLOADED
-  ).length;
-  const pendingObservationCount = observations.filter(
-    (observation) => observation.syncStatus === SyncStatus.NOT_UPLOADED
-  ).length;
-  const failedObservationCount = observations.filter(
-    (observation) => observation.syncStatus === SyncStatus.FAILED
-  ).length;
+  /*
+   * Task 3.6:
+   * Counts are derived from the records currently saved on the device.
+   * They are not stored as separate values, which prevents the summary
+   * from becoming inconsistent with the actual records.
+   *
+   * isSyncing remains false until the real SQLite Sync Engine is connected.
+   */
+  const syncSummary = buildSyncSummary(records, false);
 
-  const pendingItemCount = pendingRecordCount + pendingObservationCount;
-  const failedItemCount = failedRecordCount + failedObservationCount;
+  const statusPillStyle =
+    syncSummary.overallTone === 'failed'
+      ? styles.statusFailed
+      : syncSummary.overallTone === 'pending'
+        ? styles.statusPending
+        : syncSummary.overallTone === 'synced'
+          ? styles.statusSynced
+          : styles.statusNeutral;
 
-  // Count affected plant records once, even when one record has several
-  // observations waiting to upload. This is the number used by the logout warning.
-  const unsyncedRecordCount = records.filter(
-    (record) =>
-      record.syncStatus !== SyncStatus.UPLOADED ||
-      record.observations.some((observation) => observation.syncStatus !== SyncStatus.UPLOADED)
-  ).length;
-
-  let overallStatus = 'No records';
-  let overallMessage = 'Create a plant record to start the local sync queue.';
-  let overallStatusStyle = styles.statusNeutral;
-  let overallStatusTextStyle = styles.statusNeutralText;
-
-  if (failedItemCount > 0) {
-    overallStatus = 'Attention needed';
-    overallMessage = `${failedItemCount} ${failedItemCount === 1 ? 'item has' : 'items have'} a failed status and can be retried from its record.`;
-    overallStatusStyle = styles.statusFailed;
-    overallStatusTextStyle = styles.statusFailedText;
-  } else if (pendingItemCount > 0) {
-    overallStatus = `${pendingItemCount} pending`;
-    overallMessage = 'Pending data is saved on this device and waiting for server upload.';
-    overallStatusStyle = styles.statusPending;
-    overallStatusTextStyle = styles.statusPendingText;
-  } else if (records.length > 0) {
-    overallStatus = 'Up to date';
-    overallMessage = 'All local records and observation visits have a synced status.';
-    overallStatusStyle = styles.statusSynced;
-    overallStatusTextStyle = styles.statusSyncedText;
-  }
-
-  const observationSummary =
-    observations.length === 0
-      ? 'None recorded'
-      : failedObservationCount > 0
-        ? `${pendingObservationCount} pending · ${failedObservationCount} failed`
-        : pendingObservationCount > 0
-          ? `${pendingObservationCount} pending`
-          : `${syncedObservationCount} synced`;
+  const statusTextStyle =
+    syncSummary.overallTone === 'failed'
+      ? styles.statusFailedText
+      : syncSummary.overallTone === 'pending'
+        ? styles.statusPendingText
+        : syncSummary.overallTone === 'synced'
+          ? styles.statusSyncedText
+          : styles.statusNeutralText;
 
   const handleLogoutPress = async () => {
-    if (unsyncedRecordCount === 0) {
+    if (syncSummary.unsyncedRecordCount === 0) {
       await signOutOnThisPhone();
       router.replace('/' as never);
       return;
@@ -109,44 +84,149 @@ export default function ProfileScreen() {
   };
 
   const handleLogoutAnyway = async () => {
-    // Clear records, routes and stored photos together so logout does not leave
-    // field data behind on the device.
+    /*
+     * Clear records, routes and stored photos together so logout does not
+     * leave field data behind on the device.
+     */
     clearAllData();
     void deleteAllStoredPhotos();
+
     setShowLogoutModal(false);
+
     await signOutOnThisPhone();
     router.replace('/' as never);
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.container}
+        showsVerticalScrollIndicator={false}
+      >
         <Text style={styles.title}>Profile</Text>
 
-         <View style={styles.userCard}>
+        <View style={styles.userCard}>
           <View style={styles.avatarCircle}>
             <Text style={styles.avatarInitials}>{initials}</Text>
           </View>
+
           <View style={styles.userDetails}>
             {me ? (
               <>
                 <Text style={styles.userName}>{displayName}</Text>
+
                 <Text style={styles.userRole}>
                   {roleLabel}
                   {me.staff_id ? ` · ${me.staff_id}` : ''}
                 </Text>
-                {me.full_name ? <Text style={styles.userRole}>{me.email}</Text> : null}
+
+                {me.full_name ? (
+                  <Text style={styles.userRole}>{me.email}</Text>
+                ) : null}
               </>
             ) : (
               <>
-                <Text style={styles.userName}>Account details not loaded</Text>
-                <Text style={styles.userRole}>{profileError ?? 'Loading…'}</Text>
+                <Text style={styles.userName}>
+                  Account details not loaded
+                </Text>
+
+                <Text style={styles.userRole}>
+                  {profileError ?? 'Loading…'}
+                </Text>
               </>
             )}
           </View>
         </View>
 
-        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogoutPress}>
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Database Sync</Text>
+
+            <View style={[styles.statusPill, statusPillStyle]}>
+              <Text style={[styles.statusPillText, statusTextStyle]}>
+                {syncSummary.overallStatus}
+              </Text>
+            </View>
+          </View>
+
+          <Text style={styles.statusMessage}>
+            {syncSummary.overallMessage}
+          </Text>
+
+          <View style={styles.infoRow}>
+            <View>
+              <Text style={styles.infoLabel}>
+                Last successful sync
+              </Text>
+
+              <Text style={styles.infoSub}>
+                Server synchronization is not connected yet
+              </Text>
+            </View>
+
+            <Text style={styles.infoVal}>Not available yet</Text>
+          </View>
+
+          <View style={styles.metricsRow}>
+            <View style={styles.metric}>
+              <Text style={styles.metricValue}>
+                {syncSummary.uploadedRecordCount}
+              </Text>
+
+              <Text style={styles.metricLabel}>Uploaded</Text>
+            </View>
+
+            <View style={styles.metricDivider} />
+
+            <View style={styles.metric}>
+              <Text style={styles.metricValue}>
+                {syncSummary.pendingRecordCount}
+              </Text>
+
+              <Text style={styles.metricLabel}>Pending</Text>
+            </View>
+
+            <View style={styles.metricDivider} />
+
+            <View style={styles.metric}>
+              <Text style={styles.metricValue}>
+                {syncSummary.failedRecordCount}
+              </Text>
+
+              <Text style={styles.metricLabel}>Failed</Text>
+            </View>
+          </View>
+
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Observation visits</Text>
+
+            <Text style={styles.infoVal}>
+              {syncSummary.observationSummary}
+            </Text>
+          </View>
+
+          <Text style={styles.syncNote}>
+            Counts are calculated from records currently saved on this
+            device. The SQLite offline-sync engine will later provide real
+            upload results and the last successful sync time.
+          </Text>
+
+          <TouchableOpacity
+            style={[styles.syncBtn, styles.syncBtnDisabled]}
+            disabled
+            accessibilityRole="button"
+            accessibilityState={{ disabled: true }}
+          >
+            <Text style={styles.syncBtnText}>
+              Sync service not connected yet
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <TouchableOpacity
+          style={styles.logoutBtn}
+          onPress={handleLogoutPress}
+        >
           <Text style={styles.logoutBtnText}>Log out</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -159,16 +239,36 @@ export default function ProfileScreen() {
       >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Log out with unsynced records?</Text>
-            <Text style={styles.modalBody}>
-              {unsyncedRecordCount} {unsyncedRecordCount === 1 ? 'record has' : 'records have'} not been uploaded to the server. Logging out deletes{' '}
-              {unsyncedRecordCount === 1 ? 'it' : 'them'} and all photos from this device. This cannot be undone.
+            <Text style={styles.modalTitle}>
+              Log out with unsynced records?
             </Text>
-            <TouchableOpacity style={styles.modalPrimary} onPress={() => setShowLogoutModal(false)}>
-              <Text style={styles.modalPrimaryText}>Stay logged in</Text>
+
+            <Text style={styles.modalBody}>
+              {syncSummary.unsyncedRecordCount}{' '}
+              {syncSummary.unsyncedRecordCount === 1
+                ? 'record has'
+                : 'records have'}{' '}
+              not been uploaded to the server. Logging out deletes{' '}
+              {syncSummary.unsyncedRecordCount === 1 ? 'it' : 'them'} and
+              all photos from this device. This cannot be undone.
+            </Text>
+
+            <TouchableOpacity
+              style={styles.modalPrimary}
+              onPress={() => setShowLogoutModal(false)}
+            >
+              <Text style={styles.modalPrimaryText}>
+                Stay logged in
+              </Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.modalSecondary} onPress={handleLogoutAnyway}>
-              <Text style={styles.modalSecondaryText}>Log out anyway</Text>
+
+            <TouchableOpacity
+              style={styles.modalSecondary}
+              onPress={handleLogoutAnyway}
+            >
+              <Text style={styles.modalSecondaryText}>
+                Log out anyway
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -181,10 +281,23 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#F6F8F6',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
+    paddingTop:
+      Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
-  container: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 28 },
-  title: { fontSize: 24, fontWeight: '800', color: '#1E2B22', marginBottom: 16 },
+
+  container: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 28,
+  },
+
+  title: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#1E2B22',
+    marginBottom: 16,
+  },
+
   userCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -195,6 +308,7 @@ const styles = StyleSheet.create({
     borderColor: '#E6ECE8',
     marginBottom: 14,
   },
+
   avatarCircle: {
     width: 50,
     height: 50,
@@ -203,10 +317,30 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  avatarInitials: { fontSize: 16, fontWeight: '800', color: '#213B2A' },
-  userDetails: { marginLeft: 16, flex: 1 },
-  userName: { fontSize: 16, fontWeight: '700', color: '#1E2B22' },
-  userRole: { fontSize: 12, color: '#68776D', marginTop: 2 },
+
+  avatarInitials: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#213B2A',
+  },
+
+  userDetails: {
+    marginLeft: 16,
+    flex: 1,
+  },
+
+  userName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1E2B22',
+  },
+
+  userRole: {
+    fontSize: 12,
+    color: '#68776D',
+    marginTop: 2,
+  },
+
   card: {
     backgroundColor: '#FFFFFF',
     borderRadius: 24,
@@ -215,33 +349,99 @@ const styles = StyleSheet.create({
     borderColor: '#E6ECE8',
     marginBottom: 14,
   },
+
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 8,
   },
-  cardTitle: { fontSize: 15, fontWeight: '700', color: '#1E2B22' },
-  statusPill: { borderRadius: 18, paddingHorizontal: 12, paddingVertical: 6 },
-  statusPillText: { fontSize: 11.5, fontWeight: '800' },
-  statusNeutral: { backgroundColor: '#EEF1EF' },
-  statusNeutralText: { color: '#68776D' },
-  statusPending: { backgroundColor: '#FDF4D8' },
-  statusPendingText: { color: '#8C5E03' },
-  statusFailed: { backgroundColor: '#FDE2E2' },
-  statusFailedText: { color: '#9B1C1C' },
-  statusSynced: { backgroundColor: '#E4F2E7' },
-  statusSyncedText: { color: '#215A36' },
-  statusMessage: { fontSize: 12, color: '#68776D', lineHeight: 17, marginBottom: 14 },
+
+  cardTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1E2B22',
+  },
+
+  statusPill: {
+    borderRadius: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    maxWidth: '55%',
+  },
+
+  statusPillText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+
+  statusNeutral: {
+    backgroundColor: '#EEF1EF',
+  },
+
+  statusNeutralText: {
+    color: '#68776D',
+  },
+
+  statusPending: {
+    backgroundColor: '#FDF4D8',
+  },
+
+  statusPendingText: {
+    color: '#8C5E03',
+  },
+
+  statusFailed: {
+    backgroundColor: '#FDE2E2',
+  },
+
+  statusFailedText: {
+    color: '#9B1C1C',
+  },
+
+  statusSynced: {
+    backgroundColor: '#E4F2E7',
+  },
+
+  statusSyncedText: {
+    color: '#215A36',
+  },
+
+  statusMessage: {
+    fontSize: 12,
+    color: '#68776D',
+    lineHeight: 17,
+    marginBottom: 14,
+  },
+
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 12,
+    gap: 12,
   },
-  infoLabel: { fontSize: 13, color: '#68776D' },
-  infoSub: { fontSize: 11, color: '#88988D', marginTop: 2 },
-  infoVal: { fontSize: 13, fontWeight: '700', color: '#1E2B22', textAlign: 'right' },
+
+  infoLabel: {
+    fontSize: 13,
+    color: '#68776D',
+  },
+
+  infoSub: {
+    fontSize: 11,
+    color: '#88988D',
+    marginTop: 2,
+  },
+
+  infoVal: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E2B22',
+    textAlign: 'right',
+    flexShrink: 1,
+  },
+
   metricsRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -250,10 +450,30 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     marginBottom: 12,
   },
-  metric: { flex: 1, alignItems: 'center' },
-  metricValue: { fontSize: 22, fontWeight: '800', color: '#213B2A' },
-  metricLabel: { fontSize: 11.5, color: '#68776D', marginTop: 2 },
-  metricDivider: { width: 1, height: 34, backgroundColor: '#DDE5DF' },
+
+  metric: {
+    flex: 1,
+    alignItems: 'center',
+  },
+
+  metricValue: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#213B2A',
+  },
+
+  metricLabel: {
+    fontSize: 11.5,
+    color: '#68776D',
+    marginTop: 2,
+  },
+
+  metricDivider: {
+    width: 1,
+    height: 34,
+    backgroundColor: '#DDE5DF',
+  },
+
   syncNote: {
     fontSize: 11,
     lineHeight: 16,
@@ -263,6 +483,7 @@ const styles = StyleSheet.create({
     padding: 10,
     marginTop: 2,
   },
+
   syncBtn: {
     backgroundColor: '#213B2A',
     minHeight: 46,
@@ -272,12 +493,29 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingHorizontal: 18,
   },
-  syncBtnDisabled: { backgroundColor: '#9AAA9F' },
-  syncBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 13.5, textAlign: 'center' },
-  settingRow: { flexDirection: 'row', alignItems: 'center', marginTop: 12 },
-  settingText: { flex: 1, paddingRight: 10 },
-  logoutBtn: { paddingVertical: 14, alignItems: 'center' },
-  logoutBtnText: { color: '#9B1C1C', fontWeight: '700', fontSize: 14 },
+
+  syncBtnDisabled: {
+    backgroundColor: '#9AAA9F',
+  },
+
+  syncBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 13.5,
+    textAlign: 'center',
+  },
+
+  logoutBtn: {
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+
+  logoutBtnText: {
+    color: '#9B1C1C',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -285,9 +523,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 24,
   },
-  modalCard: { backgroundColor: '#FFFFFF', borderRadius: 26, padding: 24, width: '100%' },
-  modalTitle: { fontSize: 17, fontWeight: '800', color: '#1E2B22', marginBottom: 8 },
-  modalBody: { fontSize: 13, color: '#68776D', lineHeight: 18, marginBottom: 20 },
+
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 26,
+    padding: 24,
+    width: '100%',
+  },
+
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#1E2B22',
+    marginBottom: 8,
+  },
+
+  modalBody: {
+    fontSize: 13,
+    color: '#68776D',
+    lineHeight: 18,
+    marginBottom: 20,
+  },
+
   modalPrimary: {
     backgroundColor: '#213B2A',
     height: 48,
@@ -296,7 +553,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
-  modalPrimaryText: { color: '#FFFFFF', fontWeight: '700' },
+
+  modalPrimaryText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+
   modalSecondary: {
     height: 44,
     borderRadius: 22,
@@ -304,5 +566,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 4,
   },
-  modalSecondaryText: { color: '#9B1C1C', fontWeight: '700' },
+
+  modalSecondaryText: {
+    color: '#9B1C1C',
+    fontWeight: '700',
+  },
 });
