@@ -8,6 +8,7 @@ const { createKnowledgeRouter } = require('../src/routes/knowledge');
 
 async function main() {
   const app = express();
+  app.disable('x-powered-by');
   app.use('/api/knowledge', createKnowledgeRouter());
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
@@ -41,18 +42,22 @@ async function main() {
         if (i >= 0) measurements.push({ ms: elapsed, rows: body.data.length, total: body.pagination.total });
       }
       const times = measurements.map(x => x.ms).sort((a, b) => a - b);
-      results.push({ name, endpoint, samples, failures: 0,
+      results.push({
+        name, endpoint, samples, failures: 0,
         median_ms: percentile(times, .5), p95_ms: percentile(times, .95),
         min_ms: times[0], max_ms: times.at(-1),
         under_1000ms_percent: 100 * times.filter(x => x < 1000).length / samples,
-        measurements });
+        measurements
+      });
       console.log(`${name}: median ${percentile(times, .5).toFixed(1)} ms, p95 ${percentile(times, .95).toFixed(1)} ms`);
     }
-    const report = { measured_at: new Date().toISOString(), supabase_url: process.env.SUPABASE_URL,
+    const report = {
+      measured_at: new Date().toISOString(), supabase_url: process.env.SUPABASE_URL,
       runtime: process.version, concurrency: 1, warmups_per_scenario: 1,
       scope: 'Local Express API through live Supabase, including network, count and taxonomy join; excludes hosted API and browser rendering.',
       limitation: 'Small existing development catalogue; does not establish performance at production scale or whole-system coverage.',
-      results };
+      results
+    };
     const output = path.resolve(process.env.BENCHMARK_OUTPUT || 'benchmark-results/knowledge-search.json');
     fs.mkdirSync(path.dirname(output), { recursive: true });
     fs.writeFileSync(output, JSON.stringify(report, null, 2) + '\n');

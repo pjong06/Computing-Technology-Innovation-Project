@@ -1,0 +1,38 @@
+{
+  "checked_at_utc": "2026-10-30T15:14:15.7247146Z",
+  "backend_tests": {
+    "failed": 0,
+    "recovery_and_auth_tests": 24,
+    "passed": 83,
+    "existing_tests": 59
+  },
+  "install": "Clean npm ci --ignore-scripts in an isolated copy of the current backend",
+  "audit": {
+    "moderate": 0,
+    "info": 0,
+    "high": 0,
+    "critical": 0,
+    "total": 0,
+    "low": 0
+  },
+  "patched_versions": {
+    "multer": "2.5.0",
+    "body-parser": "2.4.0",
+    "qs": "6.17.1"
+  },
+  "sender_secret_review": {
+    "tracked": false,
+    "reachable_blobs_scanned": 1075,
+    "filename_commit_matches": 0,
+    "exact_token_matches": 0,
+    "ignored": true
+  },
+  "live_password_changes": 0,
+  "recovery_activation": "Disabled until client, redirect allowlist and email template are configured",
+  "cloud_gate": "Requires fresh SonarQube analysis after push",
+  "limits": [
+    "Backend dependencies only; npm audit is not a complete security assessment",
+    "Login/signup and recovery requests were mocked; no live account login or recovery was attempted",
+    "History scan covers local reachable objects and reflogs, not other clones or external logs"
+  ]
+}

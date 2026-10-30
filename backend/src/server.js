@@ -19,6 +19,7 @@ const authRoutes = require('./routes/auth');
 const officerReviewRoutes = require("./routes/officerReviews");
 
 const app = express();
+app.disable('x-powered-by');
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
