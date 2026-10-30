@@ -51,3 +51,7 @@ The request limiter is process-local and does not replace gateway/shared limits 
 ## Verification
 
 Run a clean `npm ci --ignore-scripts`, `npm test`, and `npm audit` in backend. Tests mock all recovery, signup and sign-in network responses. Covered cases include old endpoint denial, missing/invalid/expired proof, mismatched identity, ordinary-login token rejection, weak passwords, provider failure, no-store responses, session cleanup, throttling and normal Supabase sign-in/signup contracts. See `security-results` for the recorded output. SonarQube must complete a fresh cloud analysis before its Quality Gate can be declared passed.
+
+## Email validation follow-up
+
+The recovery email regex was replaced by bounded linear string checks for a single @, a domain dot and whitespace. Two regression tests cover malformed/adversarial inputs and normal addresses. All 85 backend tests passed after this change; no live email or password operations were performed.

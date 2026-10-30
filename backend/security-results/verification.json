@@ -1,9 +1,9 @@
 {
-  "checked_at_utc": "2026-10-30T15:14:15.7247146Z",
+  "checked_at_utc": "2026-10-30T15:20:47.2074473Z",
   "backend_tests": {
     "failed": 0,
-    "recovery_and_auth_tests": 24,
-    "passed": 83,
+    "recovery_and_auth_tests": 26,
+    "passed": 85,
     "existing_tests": 59
   },
   "install": "Clean npm ci --ignore-scripts in an isolated copy of the current backend",

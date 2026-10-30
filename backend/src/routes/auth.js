@@ -31,6 +31,19 @@ function createLimiter(now) {
   };
 }
 
+// Basic email shape check with bounded linear scans and no backtracking regex.
+function validEmail(email) {
+  if (!email || email.length > 254) return false;
+  const at = email.indexOf('@');
+  if (at <= 0 || at !== email.lastIndexOf('@')) return false;
+  const dot = email.lastIndexOf('.');
+  if (dot <= at + 1 || dot === email.length - 1) return false;
+  for (const character of email) {
+    if (character.trim() === '') return false;
+  }
+  return true;
+}
+
 function validRedirect(value) {
   try {
     const url = new URL(value);
@@ -57,7 +70,7 @@ function createAuthRouter({ createRecoveryClient = defaultClient,
       return res.status(429).json({ message: 'Too many requests. Try again later.' });
     }
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (!validEmail(email)) {
       return res.status(400).json({ message: 'A valid email address is required.' });
     }
     // Do not send mail until the owner has configured the recovery client and email template.

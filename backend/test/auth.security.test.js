@@ -194,3 +194,24 @@ test('normal registration still uses Supabase signup without an admin API', asyn
   assert.match(requests[0].url, /auth\/v1\/signup/);
   assert.ok(requests.every(r => !r.url.includes('/admin/')));
 });
+
+
+test('email validation rejects malformed and adversarial inputs before contacting Auth', async t => {
+  const s = await setup(t);
+  for (const email of ['', '@example.test', 'a@@example.test', 'a@example',
+    'a@.test', 'a@example.', 'a b@example.test', 'a@example. test',
+    'a\tb@example.test', 'a\u00a0b@example.test', 'a@' + 'x'.repeat(250),
+    'a@' + '.'.repeat(20000), 123, null]) {
+    assert.equal((await s.request('/forgot-password', { email })).status, 400);
+  }
+  assert.equal(s.created(), 0);
+});
+
+test('linear email validation preserves ordinary email normalization and subdomains', async t => {
+  const s = await setup(t);
+  for (const email of [' User.Name+tag@Example.test ', 'user@sub.example.test', 'a@b.c']) {
+    assert.equal((await s.request('/forgot-password', { email })).status, 202);
+  }
+  assert.equal(s.calls[0][1], 'user.name+tag@example.test');
+  assert.equal(s.calls.filter(c => c[0] === 'email').length, 3);
+});
