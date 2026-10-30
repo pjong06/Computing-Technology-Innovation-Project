@@ -1,6 +1,6 @@
 # Knowledge API completion evidence
 
-Implemented in the existing local checkout, based on commit b2b8be6. Existing password-recovery changes were preserved. These changes are not pushed or deployed.
+Implemented in the existing local checkout, based on commit b2b8be6. Existing password-recovery changes were preserved. These changes are pushed to a feature branch for pull request review and are not deployed.
 
 ## Completed tasks
 
@@ -11,7 +11,7 @@ Implemented in the existing local checkout, based on commit b2b8be6. Existing pa
 
 ## Validation
 
-63 backend tests passed: 45 Knowledge API tests and 18 existing tests. Knowledge router line coverage was 73.96%, branch coverage 90.06%. The runtime reports 79.46% line coverage across loaded source files; this excludes unimported backend modules and does not prove 70% coverage of the entire backend. Coverage figures precede removal of one unused import. Photo storage success/failure workflows need additional coverage beyond the current input and permission tests.
+59 tests included in this change passed: 45 Knowledge API tests and 14 existing IoT tests. The full local checkout passed 63 tests, including four unfinished password-recovery tests excluded from this change. Knowledge router line coverage was 73.96%, branch coverage 90.06%. The runtime reports 79.46% line coverage across loaded source files; this excludes unimported backend modules and does not prove 70% coverage of the entire backend. Coverage figures precede removal of one unused import. Photo storage success/failure workflows need additional coverage beyond the current input and permission tests.
 
 ## Live benchmark
 
@@ -37,8 +37,8 @@ From backend:
 - `npm run test:coverage`
 - `npm run benchmark:knowledge`
 
-The benchmark requires SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY in the process environment or an ignored backend/.env. It uses public read access, never a service-role key. Optional BENCHMARK_SAMPLES is 1–100 (default 20); BENCHMARK_OUTPUT chooses the JSON destination. Failed requests abort the benchmark instead of generating a misleading success report. No keys are stored in benchmark results.
+The benchmark requires SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY in the process environment or an ignored backend/.env. It uses public read access, never a service-role key. Optional BENCHMARK_SAMPLES is 1â€“100 (default 20); BENCHMARK_OUTPUT chooses the JSON destination. Failed requests abort the benchmark instead of generating a misleading success report. No keys are stored in benchmark results.
 
 ## Integration notes
 
-Website clients must use pagination metadata and request subsequent pages. The current officer species website still needs its separate API integration work; this was outside these four backend tasks. The workflow is prepared locally and has not run on GitHub yet. No database schema changes were necessary.
+Website clients must use pagination metadata and request subsequent pages. The current officer species website still needs its separate API integration work; this was outside these four backend tasks. The workflow runs on GitHub when this feature branch is pushed. No database schema changes were necessary.
