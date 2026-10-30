@@ -17,10 +17,6 @@ export enum ReviewStatus {
   REJECTED = 'rejected', // officer sent it back with a comment
 }
 
-// Shown and saved as the name when the botanist doesn't know the species.
-// The officer assigns the real species during review.
-export const UNKNOWN_SPECIES = 'Unknown species';
-
 export interface ObservationVisit {
   id: string;
   date: string;

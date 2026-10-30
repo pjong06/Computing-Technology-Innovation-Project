@@ -17,7 +17,7 @@ import type * as ImagePicker from 'expo-image-picker';
 import { pickImageFromLibrary, takePhotoWithCamera, type PickImageResult } from '../src/utils/imagePicker';
 import { savePhotoPermanently, deleteStoredPhoto } from '../src/utils/photoStorage';
 import Toast from 'react-native-toast-message';
-import { useRecordStore, SyncStatus, UNKNOWN_SPECIES } from '../src/store/useRecordStore';
+import { useRecordStore, SyncStatus } from '../src/store/useRecordStore';
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
 import SpeciesPicker, { type SpeciesChoice } from '../src/components/SpeciesPicker';
 import { identifyPlant, IdentifyNetworkError, type SpeciesSuggestion } from '../src/services/identifyPlant';
@@ -299,7 +299,7 @@ export default function NewRecordScreen() {
       setSpeciesChoice(null);
       setSpeciesQuery(suggestion.scientificName);
       setSpeciesNotice(
-        `"${suggestion.scientificName}" isn't in the approved species list. Pick a listed species, or choose Unknown species.`
+        `"${suggestion.scientificName}" isn't in the approved species list. Search for and select an approved species.`
       );
     }
 
@@ -329,16 +329,16 @@ export default function NewRecordScreen() {
 
     const nextErrors: FieldErrors = {};
     if (photoList.length === 0) nextErrors.photos = 'Add at least one photo.';
-    if (!speciesChoice) nextErrors.scientificName = 'Choose a species from the list, or Unknown species.';    if (!locationName.trim()) nextErrors.locationName = 'Enter a location name.';
+    if (!speciesChoice) nextErrors.scientificName = 'Choose a species from the approved list.';
+    if (!locationName.trim()) nextErrors.locationName = 'Enter a location name.';
     if (!gpsFix) nextErrors.gps = 'A GPS fix is required. Wait for it, or tap the GPS card to retry.';
 
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0 || !gpsFix || !speciesChoice) return;
 
     const saved = addRecord({
-      scientificName:
-        speciesChoice.kind === 'species' ? speciesChoice.species.scientific_name : UNKNOWN_SPECIES,
-      speciesId: speciesChoice.kind === 'species' ? speciesChoice.species.id : null,
+      scientificName: speciesChoice.species.scientific_name,
+      speciesId: speciesChoice.species.id,
       commonName: commonName.trim(),
       family: family.trim(),
       height: height.trim() || undefined,
