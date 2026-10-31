@@ -371,11 +371,32 @@ router.delete("/:id", denyUnspecifiedMutation, (req, res) => {
     });
 });
 
-// UPLOAD a photo for a plant
-router.post("/:id/photo", requireRole("botanist"), requireOwnPlant, upload.single("photo"), (req, res) => {
-    const plantId = parseInt(req.params.id);
 
-    const plant = plants.find(p => p.plant_id === plantId);
+ // UPLOAD a photo for a plant
+router.post("/:id/photo", requireRole("botanist"), async (req, res, next) => {
+    const plantId = req.params.id;
+
+    const uuidPattern =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    if (!uuidPattern.test(plantId)) {
+        return res.status(400).json({
+            message: "Valid plant ID is required"
+        });
+    }
+
+    const { data: plant, error } = await req.supabase
+        .from("plants")
+        .select("id, registered_by")
+        .eq("id", plantId)
+        .maybeSingle();
+
+    if (error) {
+        console.error("Plant photo ownership lookup error:", error);
+        return res.status(500).json({
+            message: "Failed to check plant"
+        });
+    }
 
     if (!plant) {
         return res.status(404).json({
@@ -383,20 +404,107 @@ router.post("/:id/photo", requireRole("botanist"), requireOwnPlant, upload.singl
         });
     }
 
+    if (plant.registered_by !== req.user.id) {
+        return res.status(403).json({
+            message: "Only the plant owner may upload photos"
+        });
+    }
+
+    next();
+}, upload.single("photo"), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({
             message: "No photo uploaded"
         });
     }
 
-    plant.photo = req.file.filename;
+    const allowedPhotoTypes = [
+        "whole_plant",
+        "leaf",
+        "flower",
+        "bark"
+    ];
 
-    res.status(200).json({
-        message: "Photo uploaded successfully",
-        plant_id: plantId,
-        photo: req.file.filename
-    });
+    const photoType = req.body.photo_type;
+
+    if (!allowedPhotoTypes.includes(photoType)) {
+        return res.status(400).json({
+            message: "photo_type must be whole_plant, leaf, flower or bark"
+        });
+    }
+
+    const extension = {
+        "image/jpeg": "jpg",
+        "image/png": "png",
+        "image/webp": "webp"
+    }[req.file.mimetype];
+
+    if (!extension) {
+        return res.status(400).json({
+            message: "Unsupported image type"
+        });
+    }
+
+    const plantId = req.params.id;
+    const filePath =
+        `${req.user.id}/${plantId}/${randomUUID()}.${extension}`;
+
+    try {
+        // Store the image in Supabase Storage
+        const { error: uploadError } = await req.supabase.storage
+            .from("plant-media")
+            .upload(filePath, req.file.buffer, {
+                contentType: req.file.mimetype,
+                upsert: false
+            });
+
+        if (uploadError) {
+            console.error("Plant photo storage error:", uploadError);
+            return res.status(500).json({
+                message: "Failed to upload plant photo"
+            });
+        }
+
+        // Save its path and category in the plant_media table
+        const { data: media, error: mediaError } = await req.supabase
+            .from("plant_media")
+            .insert({
+                plant_id: plantId,
+                uploaded_by: req.user.id,
+                file_path: filePath,
+                media_type: "image",
+                photo_type: photoType,
+                is_primary: photoType === "whole_plant"
+            })
+            .select()
+            .single();
+
+        if (mediaError) {
+            // Avoid leaving an orphaned image in Storage
+            await req.supabase.storage
+                .from("plant-media")
+                .remove([filePath]);
+
+            console.error("Plant media insert error:", mediaError);
+            return res.status(500).json({
+                message: "Failed to save plant photo record"
+            });
+        }
+
+        return res.status(201).json({
+            message: "Plant photo uploaded successfully",
+            plant_id: plantId,
+            media
+        });
+    } catch (error) {
+        console.error("Plant photo upload error:", error);
+
+        return res.status(500).json({
+            message: "Plant photo upload failed"
+        });
+    }
 });
+
 
 // Find the signed-in botanist's plant and its physical QR tag.
 async function findOwnedPlantQrTag(req, res) {
