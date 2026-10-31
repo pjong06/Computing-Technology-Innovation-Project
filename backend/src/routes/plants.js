@@ -1,7 +1,7 @@
 const express = require("express");
 const { randomUUID } = require("node:crypto");
 const upload = require("../services/storageService");
-const { generatePlantQR } = require("../services/qrService");
+const { generatePlantQR, QrConfigurationError } = require("../services/qrService");
 const { requireAuth, requireRole } = require("../middleware/auth");
 
 const router = express.Router();
@@ -441,9 +441,11 @@ router.get("/:id/qr", requireRole("botanist"), async (req, res) => {
             message: "QR code generated successfully",
             plant_id: req.params.id,
             qr_value: qr.qrValue,
+            public_url: qr.publicUrl,
             qr_code: qr.qrCode
         });
     } catch (error) {
+        if (error instanceof QrConfigurationError) return res.status(503).json({ message: "Public QR URL is not configured" });
         console.error("Plant QR generation error:", error);
         return res.status(500).json({ message: "Failed to generate QR code" });
     }
@@ -462,6 +464,7 @@ router.get("/:id/qr/image", requireRole("botanist"), async (req, res) => {
         res.setHeader("Content-Type", "image/png");
         return res.send(imageBuffer);
     } catch (error) {
+        if (error instanceof QrConfigurationError) return res.status(503).json({ message: "Public QR URL is not configured" });
         console.error("Plant QR image error:", error);
         return res.status(500).json({ message: "Failed to generate QR image" });
     }
