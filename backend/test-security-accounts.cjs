@@ -2,6 +2,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const net = require('node:net');
 const { spawn, execFileSync } = require('node:child_process');
+// Fixed executable locations prevent PATH-hijacking during evidence collection.
+const gitExecutable = process.platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe' : '/usr/bin/git';
 const { createClient } = require('@supabase/supabase-js');
 const localEnv = path.join(__dirname, '.env');
 require('dotenv').config({ path: fs.existsSync(localEnv) ? localEnv : path.resolve(__dirname, '../../Computing-Technology-Innovation-Project/backend/.env'), quiet: true });
@@ -39,7 +41,7 @@ async function main() {
   const occupied = await new Promise(resolve => { const s = net.connect(3001, '127.0.0.1'); s.once('connect', () => { s.destroy(); resolve(true); }); s.once('error', () => resolve(false)); });
   if (occupied) throw new Error('Port 3001 occupied. Stop its service before testing.');
   const server = spawn(process.execPath, ['src/server.js'], { cwd: __dirname, env: { ...process.env, PORT:'3001', MQTT_URL:'' }, stdio:'ignore', windowsHide:true });
-  const output = { date: new Date().toISOString(), baseline: execFileSync('git',['rev-parse','HEAD'],{cwd:__dirname,encoding:'utf8'}).trim(), branch:'steven/sprint-2-security', note:'Uncommitted security additions and patched lockfile; read-only data queries. No fixture-backed RLS acceptance verdict.', results:[] };
+  const output = { date: new Date().toISOString(), baseline: execFileSync(gitExecutable,['rev-parse','HEAD'],{cwd:__dirname,encoding:'utf8'}).trim(), branch:'steven/sprint-2-security', note:'Uncommitted security additions and patched lockfile; read-only data queries. No fixture-backed RLS acceptance verdict.', results:[] };
   const approvedMode = process.argv.includes('--approved-read');
   const destination = path.join(__dirname,approvedMode?'approved-observation-read-results.json':'security-account-results.json');
   if (fs.existsSync(destination) && approvedMode) { server.kill(); throw new Error('Approved-read evidence already exists; review it before replacing.'); }

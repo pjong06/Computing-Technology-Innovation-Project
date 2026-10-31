@@ -76,3 +76,10 @@ test('Malformed claims fail closed', () => {
     assert.equal(hasExpectedClaims('a.invalid.c', userId, projectUrl), false);
     assert.equal(hasExpectedClaims(signed(base), userId, undefined), false);
 });
+
+test('Issuer normalization removes trailing slashes without backtracking', () => {
+    const token = signed(base);
+    assert.equal(hasExpectedClaims(token, userId, projectUrl + '/'), true);
+    assert.equal(hasExpectedClaims(token, userId, projectUrl + '/'.repeat(100000)), true);
+    assert.equal(hasExpectedClaims(token, userId, projectUrl + '/other/'), false);
+});

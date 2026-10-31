@@ -5,7 +5,9 @@ function hasExpectedClaims(token, verifiedUserId, supabaseUrl) {
         const parts = token.split('.');
         if (parts.length !== 3 || !supabaseUrl) return false;
         const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-        const expectedIssuer = `${supabaseUrl.replace(/\/+$/, '')}/auth/v1`;
+        let issuerEnd = supabaseUrl.length;
+        while (issuerEnd > 0 && supabaseUrl[issuerEnd - 1] === '/') issuerEnd--;
+        const expectedIssuer = `${supabaseUrl.slice(0, issuerEnd)}/auth/v1`;
         const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
         return claims.iss === expectedIssuer &&
             audiences.includes('authenticated') &&

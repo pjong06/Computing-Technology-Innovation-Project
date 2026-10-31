@@ -4,13 +4,15 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const net = require('node:net');
 const { spawn, execFileSync } = require('node:child_process');
+// Fixed executable locations prevent PATH-hijacking during evidence collection.
+const gitExecutable = process.platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe' : '/usr/bin/git';
 const localEnv = path.join(__dirname, '.env');
 require('dotenv').config({ path: fs.existsSync(localEnv) ? localEnv : path.resolve(__dirname, '../../Computing-Technology-Innovation-Project/backend/.env'), quiet: true });
 const mounts = { plants:'/api/plants', identify:'/api/identify', iot:'/api/iot', knowledge:'/api/knowledge', qrBatch:'/api/qr-batch', observations:'/api/observations', reports:'/api/reports', auth:'/api/auth', officerReviews:'/api/officer/reviews', iotIngestion:'/api/ingestion/telemetry' };
 async function main(){
   const port=3004;
   const occupied=await new Promise(resolve=>{const s=net.connect(port,'127.0.0.1');s.once('connect',()=>{s.destroy();resolve(true);});s.once('error',()=>resolve(false));});if(occupied)throw new Error('Port 3004 occupied.');
-  const output={started_at:new Date().toISOString(),baseline:execFileSync('git',['rev-parse','HEAD'],{cwd:__dirname,encoding:'utf8'}).trim(),status:'IN PROGRESS',source_sha256:{},routes:[],results:[],findings:[],scope:'Current local working source; static literal-route inventory. JWT checks do not prove role/RLS correctness. No valid user/device credentials sent.'};
+  const output={started_at:new Date().toISOString(),baseline:execFileSync(gitExecutable,['rev-parse','HEAD'],{cwd:__dirname,encoding:'utf8'}).trim(),status:'IN PROGRESS',source_sha256:{},routes:[],results:[],findings:[],scope:'Current local working source; static literal-route inventory. JWT checks do not prove role/RLS correctness. No valid user/device credentials sent.'};
   const file=path.join(__dirname,`endpoint-auth-${Date.now()}-results.json`);
   const save=()=>fs.writeFileSync(file,JSON.stringify(output,null,2));
   const source=file=>{const bytes=fs.readFileSync(path.join(__dirname,'src',file));output.source_sha256[file]=crypto.createHash('sha256').update(bytes).digest('hex');return bytes.toString();};
@@ -21,13 +23,24 @@ async function main(){
     if(name==='iotIngestion'&&!serverSource.includes("'/api/ingestion/telemetry'"))continue;
     const text=source(`routes/${name}.js`);
     const globalAuth=/router\.use\(requireAuth/.test(text)||name==='iot';
-    const pattern=/router\.(get|post|put|patch|delete)\(\s*(['"])(.*?)\2([\s\S]*?)(?=async\s*\(|\([^)]*\)\s*=>)/g;
+    const pattern=/router\.(get|post|put|patch|delete)\(/g;
     const expectedCount=[...text.matchAll(/router\.(?:get|post|put|patch|delete)\(/g)].length;
     const found=[];
     for(const match of text.matchAll(pattern)){
-      const route=prefix+(match[3]==='/'?'':match[3]);
-      const retired=name==='auth'&&match[3]==='/temp-password'&&text.includes("code: 'TEMP_PASSWORD_DISABLED'");
-      const policy=retired?'retired (410, no credential operations)':name==='iotIngestion'?'device credential (separate from staff JWT)':globalAuth||/requireAuth/.test(match[4])?'staff JWT':'public/ungated';
+      const tail=text.slice(match.index+match[0].length).trimStart();
+      const quote=tail[0];
+      const closing=tail.indexOf(quote,1);
+      if(!["'",'"'].includes(quote)||closing<1)throw new Error('Nonliteral route requires manual review.');
+      const routePath=tail.slice(1,closing);
+      const handler=tail.slice(closing+1);
+      const arrow=handler.indexOf('=>');
+      const asyncStart=handler.indexOf('async');
+      const boundary=asyncStart>=0&&(arrow<0||asyncStart<arrow)?asyncStart:arrow;
+      if(boundary<0)throw new Error('Unrecognized route handler requires manual review.');
+      const guards=handler.slice(0,boundary);
+      const route=prefix+(routePath==='/'?'':routePath);
+      const retired=name==='auth'&&routePath==='/temp-password'&&text.includes("code: 'TEMP_PASSWORD_DISABLED'");
+      const policy=retired?'retired (410, no credential operations)':name==='iotIngestion'?'device credential (separate from staff JWT)':globalAuth||/requireAuth/.test(guards)?'staff JWT':'public/ungated';
       found.push({method:match[1].toUpperCase(),path:route,policy,source:`src/routes/${name}.js`,line:text.slice(0,match.index).split('\n').length});
     }
     if(found.length!==expectedCount)throw new Error(`Inventory parser mismatch in ${name}: ${found.length}/${expectedCount}; manual review required.`);

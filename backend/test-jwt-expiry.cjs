@@ -3,6 +3,8 @@ const { ask } = require('./test-security-accounts.cjs');
 const { createClient } = require('@supabase/supabase-js');
 const { createHash } = require('node:crypto');
 const { spawn, execFileSync } = require('node:child_process');
+// Fixed executable locations prevent PATH-hijacking during evidence collection.
+const gitExecutable = process.platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe' : '/usr/bin/git';
 const fs = require('node:fs');
 const path = require('node:path');
 const net = require('node:net');
@@ -14,7 +16,7 @@ async function main(){
   if(!url?.startsWith('https://')||!(key?.startsWith('sb_publishable_')||keyRole==='anon'))throw new Error('HTTPS and public/anon key required.');
   const occupied=await new Promise(resolve=>{const s=net.connect(port,'127.0.0.1');s.once('connect',()=>{s.destroy();resolve(true);});s.once('error',()=>resolve(false));});if(occupied)throw new Error(`Port ${port} occupied; stop its test before this run.`);
   const destination=path.join(__dirname,`jwt-expiry-${Date.now()}-results.json`);
-  const out={started_at:new Date().toISOString(),baseline:execFileSync('git',['rev-parse','HEAD'],{cwd:__dirname,encoding:'utf8'}).trim(),status:'IN PROGRESS',results:[],scope:'Read-only JWT and rejection-body tests. Token retained only in process memory; auto-refresh and persistence disabled.'};
+  const out={started_at:new Date().toISOString(),baseline:execFileSync(gitExecutable,['rev-parse','HEAD'],{cwd:__dirname,encoding:'utf8'}).trim(),status:'IN PROGRESS',results:[],scope:'Read-only JWT and rejection-body tests. Token retained only in process memory; auto-refresh and persistence disabled.'};
   const save=()=>fs.writeFileSync(destination,JSON.stringify(out,null,2));
   function record(test,pass,detail={}){out.results.push({test,result:pass?'PASS':'FAIL',...detail});save();console.log(`${pass?'PASS':'FAIL'}: ${test}`);if(!pass)throw new Error('Assertion failed; see sanitized results.');}
   const client=createClient(url,key,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}});let server;
