@@ -177,13 +177,20 @@ router.post("/", requireRole("botanist"), async (req, res) => {
         return res.status(400).json({ message: "gps_accuracy_m must be a non-negative number" });
     }
 
-    if (
-        req.body?.location_description !== undefined &&
-        (typeof req.body.location_description !== "string" ||
-            req.body.location_description.trim().length > 500)
-    ) {
-        return res.status(400).json({ message: "location_description must be text up to 500 characters" });
-    }
+
+const locationDescription =
+    req.body?.location_description ?? req.body?.location_name;
+
+if (
+    locationDescription != null &&
+    (typeof locationDescription !== "string" ||
+        locationDescription.trim().length > 500)
+) {
+    return res.status(400).json({
+        message: "location must be text up to 500 characters"
+    });
+}
+
 
     let speciesId = req.body?.species_id || null;
     let species = null;
@@ -269,7 +276,7 @@ router.post("/", requireRole("botanist"), async (req, res) => {
         qr_code_value: qrCodeValue,
         location: `POINT(${longitude} ${latitude})`,
         gps_accuracy_m: req.body.gps_accuracy_m ?? null,
-        location_description: req.body.location_description?.trim() || null,
+        location_description: locationDescription?.trim() || null,
         plant_status: "pending",
         registered_by: req.user.id,
     };
