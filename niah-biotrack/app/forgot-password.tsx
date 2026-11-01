@@ -17,7 +17,7 @@ import Toast from 'react-native-toast-message';
 import LeafLogo from '../src/components/LeafLogo';
 
 // Computer LAN IP running the backend
-const API_BASE_URL = 'http://172.17.97.165:3000';
+const API_BASE_URL = 'http://192.168.0.167:3000';
 
 export default function ForgotPasswordScreen() {
   const router = useRouter();

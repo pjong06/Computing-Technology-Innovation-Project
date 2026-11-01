@@ -55,7 +55,6 @@ export default function HomeScreen() {
             <Text style={styles.syncSub}>
               {pendingCount} not uploaded{failedCount > 0 ? ` · ${failedCount} failed` : ''} · saved on this device
             </Text>
-            <Text style={styles.syncSub}>Uploading to the server is not available yet.</Text>
           </View>
         ) : null}
 

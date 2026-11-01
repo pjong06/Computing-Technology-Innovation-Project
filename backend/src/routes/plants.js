@@ -6,26 +6,6 @@ const { requireAuth, requireRole } = require("../middleware/auth");
 
 const router = express.Router();
 
-// Temporary plant data for testing
-const plants = [
-    {
-        plant_id: 1,
-        scientific_name: "Clerodendrum paniculatum",
-        common_name: "Pagoda Flower",
-        latitude: 3.8176,
-        longitude: 113.7810,
-        gps_accuracy_m: 5
-    },
-    {
-        plant_id: 2,
-        scientific_name: "Shorea macrophylla",
-        common_name: "Engkabang",
-        latitude: 3.8180,
-        longitude: 113.7820,
-        gps_accuracy_m: 8
-    }
-];
-
 // The public QR visitor endpoint belongs to the visitor feature, not this staff API.
 router.use(requireAuth);
 
@@ -56,20 +36,6 @@ function visiblePlant(plant, profile) {
         publicData.gps_accuracy_m = plant.gps_accuracy_m;
     }
     return publicData;
-}
-
-function denyUnspecifiedMutation(req, res) {
-    return res.status(403).json({ message: "Generic plant updates and deletes are not authorized" });
-}
-
-function requireOwnPlant(req, res, next) {
-    const plant = plants.find(p => p.plant_id === parseInt(req.params.id));
-    if (!plant) return res.status(404).json({ message: "Plant not found" });
-    if (plant.registered_by !== req.user.id) {
-        return res.status(403).json({ message: "Only the record owner may upload a photo" });
-    }
-    req.plant = plant;
-    next();
 }
 
 // List plants visible to the signed-in staff member.
@@ -110,8 +76,68 @@ router.get("/", requireRole("botanist", "officer", "researcher"), async (req, re
     });
 });
 
+// ── C10: LOOK UP PLANT BY TAG CODE ──────────────────────────────
+// Placed before /:id so Express does not treat "tag" as an :id parameter
+router.get("/tag/:tagCode", requireRole("botanist", "officer", "researcher"), async (req, res) => {
+    const rawTag = req.params.tagCode?.trim().toUpperCase();
+
+    if (!/^NIAH-PLT-\d{5}$/.test(rawTag)) {
+        return res.status(400).json({ message: "Tag code must follow NIAH-PLT-00001 format" });
+    }
+
+    try {
+        const { data, error } = await req.supabase
+            .from("plants")
+            .select(`
+                id,
+                client_record_id,
+                species_id,
+                qr_code_value,
+                location,
+                gps_accuracy_m,
+                location_description,
+                morphology,
+                description,
+                plant_status,
+                registered_by,
+                registered_at,
+                species:species_id (
+                    id,
+                    scientific_name,
+                    common_name,
+                    local_name,
+                    conservation_status
+                )
+            `)
+            .eq("qr_code_value", rawTag)
+            .maybeSingle();
+
+        if (error) {
+            console.error("Plant tag lookup error:", error);
+            return res.status(500).json({ message: "Could not query tag from database" });
+        }
+
+        if (!data) {
+            return res.status(404).json({ message: "No plant record found with this tag code" });
+        }
+
+        return res.json({
+            data: {
+                ...data,
+                plant_id: data.id,
+                tag_code: data.qr_code_value,
+                scientific_name: data.species?.scientific_name ?? "Unknown species",
+                common_name: data.species?.common_name ?? "",
+                location_name: data.location_description ?? "Niah National Park",
+            }
+        });
+    } catch (err) {
+        console.error("Server error looking up tag:", err);
+        return res.status(500).json({ message: "Internal server error" });
+    }
+});
+
 // GET one plant by ID
-// Load one plant visible to the signed-in staff member.
 router.get("/:id", requireRole("botanist", "officer", "researcher"), async (req, res) => {
     const plantId = req.params.id;
     const uuidPattern =
@@ -148,19 +174,18 @@ router.get("/:id", requireRole("botanist", "officer", "researcher"), async (req,
 // Save a field record in Supabase under the signed-in botanist.
 router.post("/", requireRole("botanist"), async (req, res) => {
     const { latitude, longitude } = req.body || {};
-    
-const { morphology, description } = req.body || {};
+    const { morphology, description } = req.body || {};
 
-for (const [field, value] of Object.entries({ morphology, description })) {
-    if (
-        value != null &&
-        (typeof value !== "string" || value.length > 5000)
-    ) {
-        return res.status(400).json({
-            message: `${field} must be text of at most 5000 characters`
-        });
+    for (const [field, value] of Object.entries({ morphology, description })) {
+        if (
+            value != null &&
+            (typeof value !== "string" || value.length > 5000)
+        ) {
+            return res.status(400).json({
+                message: `${field} must be text of at most 5000 characters`
+            });
+        }
     }
-}
 
     const scientificName =
         typeof req.body?.scientific_name === "string"
@@ -191,20 +216,18 @@ for (const [field, value] of Object.entries({ morphology, description })) {
         return res.status(400).json({ message: "gps_accuracy_m must be a non-negative number" });
     }
 
+    const locationDescription =
+        req.body?.location_description ?? req.body?.location_name;
 
-const locationDescription =
-    req.body?.location_description ?? req.body?.location_name;
-
-if (
-    locationDescription != null &&
-    (typeof locationDescription !== "string" ||
-        locationDescription.trim().length > 500)
-) {
-    return res.status(400).json({
-        message: "location must be text up to 500 characters"
-    });
-}
-
+    if (
+        locationDescription != null &&
+        (typeof locationDescription !== "string" ||
+            locationDescription.trim().length > 500)
+    ) {
+        return res.status(400).json({
+            message: "location must be text up to 500 characters"
+        });
+    }
 
     let speciesId = req.body?.species_id || null;
     let species = null;
@@ -242,7 +265,7 @@ if (
         speciesId = data?.id || null;
     }
 
-    //allow unknown species
+    // Allow unknown species
     if ((speciesId !== null || scientificName) && !species) {
         return res.status(400).json({
             message: "Selected species must be approved; omit species fields for an unidentified plant"
@@ -254,7 +277,6 @@ if (
         return res.status(400).json({ message: "client_record_id must be a UUID" });
     }
 
-    // Use the physical tag when present; keep an internal value until a tag is attached.
     const inputTag = req.body?.qr_code_value;
     const qrCodeValue =
         inputTag == null
@@ -269,7 +291,7 @@ if (
         });
     }
 
-    // Repeated sync requests with the same client ID return the saved row.
+    // Repeated sync requests with the same client ID return the saved row
     const { data: existing, error: existingError } = await req.supabase
         .from("plants")
         .select("id, client_record_id, species_id, qr_code_value, gps_accuracy_m, location_description, plant_status, registered_by, registered_at, row_version")
@@ -284,20 +306,18 @@ if (
         return res.status(200).json({ message: "Plant record already saved", plant: existing });
     }
 
-
-const plant = {
-    client_record_id: clientRecordId,
-    species_id: speciesId,
-    qr_code_value: qrCodeValue,
-    location: `POINT(${longitude} ${latitude})`,
-    gps_accuracy_m: req.body.gps_accuracy_m ?? null,
-    location_description: locationDescription?.trim() || null,
-    morphology: morphology?.trim() || null,
-    description: description?.trim() || null,
-    plant_status: "pending",
-    registered_by: req.user.id,
-};
-
+    const plant = {
+        client_record_id: clientRecordId,
+        species_id: speciesId,
+        qr_code_value: qrCodeValue,
+        location: `POINT(${longitude} ${latitude})`,
+        gps_accuracy_m: req.body.gps_accuracy_m ?? null,
+        location_description: locationDescription?.trim() || null,
+        morphology: morphology?.trim() || null,
+        description: description?.trim() || null,
+        plant_status: "pending",
+        registered_by: req.user.id,
+    };
 
     const { data, error } = await req.supabase
         .from("plants")
@@ -323,7 +343,6 @@ const plant = {
         plant: {
             ...data,
             plant_id: data.id,
-            //unknown species shows null instead of server throwing error
             scientific_name: species?.scientific_name ?? null,
             common_name: species?.common_name ?? null,
             latitude,
@@ -332,65 +351,111 @@ const plant = {
     });
 });
 
-// UPDATE a plant by ID
-router.put("/:id", denyUnspecifiedMutation, (req, res) => {
-    const plantId = parseInt(req.params.id);
+// ── EDIT / UPDATE PLANT RECORD ──────────────────────────────────
+router.patch("/:id", requireRole("botanist", "officer"), async (req, res) => {
+    const plantId = req.params.id;
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-    const { latitude, longitude } = req.body;
-
-    if (
-        latitude < -90 ||
-        latitude > 90 ||
-        longitude < -180 ||
-        longitude > 180
-    ) {
-        return res.status(400).json({
-            message: "Invalid GPS coordinates"
-        });
+    if (!uuidPattern.test(plantId)) {
+        return res.status(400).json({ message: "Valid plant ID is required" });
     }
 
-    const plant = plants.find(p => p.plant_id === plantId);
+    const {
+        location_name,
+        location_description,
+        morphology,
+        description,
+        tag_code,
+        qr_code_value,
+    } = req.body;
 
-    if (!plant) {
-        return res.status(404).json({
-            message: "Plant not found"
-        });
+    const updates = {};
+    const loc = location_description ?? location_name;
+    if (loc !== undefined) updates.location_description = loc ? loc.trim() : null;
+    if (morphology !== undefined) updates.morphology = morphology ? morphology.trim() : null;
+    if (description !== undefined) updates.description = description ? description.trim() : null;
+
+    const newTag = qr_code_value ?? tag_code;
+    if (newTag !== undefined) {
+        const cleaned = newTag.trim().toUpperCase();
+        if (!/^NIAH-PLT-\d{5}$/.test(cleaned)) {
+            return res.status(400).json({ message: "Tag code must look like NIAH-PLT-00001" });
+        }
+        updates.qr_code_value = cleaned;
     }
 
-    plant.scientific_name = req.body.scientific_name;
-    plant.common_name = req.body.common_name;
-    plant.latitude = req.body.latitude;
-    plant.longitude = req.body.longitude;
-    plant.gps_accuracy_m = req.body.gps_accuracy_m;
+    if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ message: "No valid fields provided to update" });
+    }
 
-    res.json({
-        message: "Plant updated successfully",
-        plant: plant
-    });
+    try {
+        const { data, error } = await req.supabase
+            .from("plants")
+            .update(updates)
+            .eq("id", plantId)
+            .select()
+            .maybeSingle();
+
+        if (error) {
+            console.error("Update plant error:", error);
+            return res.status(500).json({ message: "Could not update plant record" });
+        }
+
+        if (!data) {
+            return res.status(404).json({ message: "Plant record not found" });
+        }
+
+        return res.json({
+            message: "Record updated successfully",
+            plant: { ...data, plant_id: data.id }
+        });
+    } catch (err) {
+        console.error("Server error updating plant:", err);
+        return res.status(500).json({ message: "Internal server error" });
+    }
 });
 
-// DELETE a plant by ID
-router.delete("/:id", denyUnspecifiedMutation, (req, res) => {
-    const plantId = parseInt(req.params.id);
+// ── DELETE PLANT RECORD ─────────────────────────────────────────
+router.delete("/:id", requireRole("botanist", "officer"), async (req, res) => {
+    const plantId = req.params.id;
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-    const plantIndex = plants.findIndex(p => p.plant_id === plantId);
-
-    if (plantIndex === -1) {
-        return res.status(404).json({
-            message: "Plant not found"
-        });
+    if (!uuidPattern.test(plantId)) {
+        return res.status(400).json({ message: "Valid plant ID is required" });
     }
 
-    const deletedPlant = plants.splice(plantIndex, 1);
+    try {
+        // Delete child observations if any exist
+        await req.supabase.from("observations").delete().eq("plant_id", plantId);
 
-    res.json({
-        message: "Plant deleted successfully",
-        plant: deletedPlant[0]
-    });
+        // Delete the plant record
+        const { data, error } = await req.supabase
+            .from("plants")
+            .delete()
+            .eq("id", plantId)
+            .select("id")
+            .maybeSingle();
+
+        if (error) {
+            console.error("Delete plant error:", error);
+            return res.status(500).json({ message: "Could not delete plant record" });
+        }
+
+        if (!data) {
+            return res.status(404).json({ message: "Plant record not found" });
+        }
+
+        return res.json({
+            message: "Plant deleted successfully",
+            plant_id: data.id
+        });
+    } catch (err) {
+        console.error("Server error deleting plant:", err);
+        return res.status(500).json({ message: "Internal server error" });
+    }
 });
 
-
- // UPLOAD a photo for a plant
+// UPLOAD a photo for a plant
 router.post("/:id/photo", requireRole("botanist"), async (req, res, next) => {
     const plantId = req.params.id;
 
@@ -468,7 +533,6 @@ router.post("/:id/photo", requireRole("botanist"), async (req, res, next) => {
         `${req.user.id}/${plantId}/${randomUUID()}.${extension}`;
 
     try {
-        // Store the image in Supabase Storage
         const { error: uploadError } = await req.supabase.storage
             .from("plant-media")
             .upload(filePath, req.file.buffer, {
@@ -483,7 +547,6 @@ router.post("/:id/photo", requireRole("botanist"), async (req, res, next) => {
             });
         }
 
-        // Save its path and category in the plant_media table
         const { data: media, error: mediaError } = await req.supabase
             .from("plant_media")
             .insert({
@@ -498,7 +561,6 @@ router.post("/:id/photo", requireRole("botanist"), async (req, res, next) => {
             .single();
 
         if (mediaError) {
-            // Avoid leaving an orphaned image in Storage
             await req.supabase.storage
                 .from("plant-media")
                 .remove([filePath]);
@@ -516,13 +578,11 @@ router.post("/:id/photo", requireRole("botanist"), async (req, res, next) => {
         });
     } catch (error) {
         console.error("Plant photo upload error:", error);
-
         return res.status(500).json({
             message: "Plant photo upload failed"
         });
     }
 });
-
 
 // Find the signed-in botanist's plant and its physical QR tag.
 async function findOwnedPlantQrTag(req, res) {
@@ -604,4 +664,3 @@ router.get("/:id/qr/image", requireRole("botanist"), async (req, res) => {
 });
 
 module.exports = router;
-

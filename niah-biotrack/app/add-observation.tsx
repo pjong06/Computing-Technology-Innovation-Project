@@ -12,6 +12,7 @@ import {
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import Toast from 'react-native-toast-message';
 import { useRecordStore } from '../src/store/useRecordStore';
+import { useProfileStore } from '../src/store/useProfileStore';
 import PlantNotFound from '../src/components/PlantNotFound';
 import FormScrollView from '../src/components/FormScrollView';
 import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
@@ -23,12 +24,13 @@ export default function AddObservationScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const records = useRecordStore((state) => state.records);
   const addObservation = useRecordStore((state) => state.addObservation);
+  const me = useProfileStore((state) => state.me);
 
   const matched = records.find((r) => r.id === id);
 
   const [health, setHealth] = useState<'Healthy' | 'Stressed' | 'Damaged' | 'Dead'>('Healthy');
   const [stage, setStage] = useState<'Bud' | 'Flowering' | 'Vegetative' | 'Fruiting'>('Flowering');
-  const [measurement, setMeasurement] = useState('0.62');
+  const [measurement, setMeasurement] = useState('');
   const [notes, setNotes] = useState('');
 
   if (!matched) {
@@ -48,13 +50,15 @@ export default function AddObservationScreen() {
       hour12: true,
     });
 
+    const recordedByName = me?.full_name || me?.email || 'Field Staff';
+
     addObservation(matched.id, {
       date: `${formattedDate} · ${formattedTime}`,
-      recordedBy: 'Brendan Noel',
+      recordedBy: recordedByName,
       health,
       stage,
-      measurement: `${measurement} m`,
-      notes: notes || 'Observation logged in field.',
+      measurement: measurement.trim() ? `${measurement.trim()} m` : 'Not recorded',
+      notes: notes.trim() || 'Observation logged in field.',
     });
 
     Toast.show({
@@ -117,6 +121,7 @@ export default function AddObservationScreen() {
           value={measurement}
           onChangeText={setMeasurement}
           placeholder="e.g. 0.62"
+          placeholderTextColor="#8C9A91"
           inputAccessoryViewID={DONE_BAR_ID}
         />
 
@@ -127,6 +132,7 @@ export default function AddObservationScreen() {
           value={notes}
           onChangeText={setNotes}
           placeholder="Day 2 of bloom, perigone lobes fully open..."
+          placeholderTextColor="#8C9A91"
           inputAccessoryViewID={DONE_BAR_ID}
         />
 
