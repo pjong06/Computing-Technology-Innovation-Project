@@ -11,15 +11,19 @@ router.use(requireAuth, requireRole("botanist"));
 
 
 router.post("/", async (req, res) => {
-    const {
-        client_record_id,
-        plant_id,
-        observed_at,
-        notes,
-        health_status,
-        life_stage,
-        measurement
-    } = req.body;
+
+const {
+    client_record_id,
+    plant_id,
+    observed_at,
+    notes,
+    health_status,
+    life_stage,
+    measurement,
+    height_cm,
+    diameter_cm
+} = req.body;
+
 
     const uuidPattern =
         /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -124,14 +128,33 @@ router.post("/", async (req, res) => {
         });
     }
 
+    
+for (const [field, value] of Object.entries({
+    height_cm,
+    diameter_cm
+})) {
+    if (
+        value != null &&
+        (typeof value !== "number" ||
+            !Number.isFinite(value) ||
+            value < 0)
+    ) {
+        return res.status(400).json({
+            message: `${field} must be a non-negative number in centimetres`
+        });
+    }
+}
+
     const newObservation = {
         client_record_id: observationClientId,
         plant_id,
         observer_id: req.user.id,
         observed_at: observed_at || new Date().toISOString(),
         notes: observationNotes,
-        health_status: health_status?.trim() ?? null,
-        life_stage: life_stage?.trim() ?? null,
+health_status: health_status?.trim() ?? null,
+life_stage: life_stage?.trim() ?? null,
+height_cm: height_cm ?? null,
+diameter_cm: diameter_cm ?? null,
         review_status: "draft"
     };
 

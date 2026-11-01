@@ -86,22 +86,45 @@ async function post(base, endpoint, payload) {
   return { status: response.status, body: await response.json() };
 }
 
-test('C16: mobile location_name maps to plant location_description', async () => {
+
+test('C16: mobile plant fields are stored correctly', async () => {
   currentDb = fakeSupabase();
+
   await withApp(async base => {
     const response = await post(base, '/api/plants', {
       latitude: 3.8176,
       longitude: 113.781,
       location_name: 'Niah Cave entrance',
+      morphology: 'Large green leaves with a woody stem',
+      description: 'Young plant growing near the cave entrance',
       gps_accuracy_m: 5,
       client_record_id: '33333333-3333-4333-8333-333333333333'
     });
+
     assert.equal(response.status, 201, JSON.stringify(response.body));
     assert.equal(currentDb.inserts.length, 1);
-    assert.equal(currentDb.inserts[0].table, 'plants');
-    assert.equal(currentDb.inserts[0].row.location_description, 'Niah Cave entrance');
+
+    const saved = currentDb.inserts[0];
+
+    assert.equal(saved.table, 'plants');
+
+    assert.equal(
+      saved.row.location_description,
+      'Niah Cave entrance'
+    );
+
+    assert.equal(
+      saved.row.morphology,
+      'Large green leaves with a woody stem'
+    );
+
+    assert.equal(
+      saved.row.description,
+      'Young plant growing near the cave entrance'
+    );
   });
 });
+
 
 test('C16: observation stores health, life stage and measurement text', async () => {
   currentDb = fakeSupabase();
@@ -109,17 +132,19 @@ test('C16: observation stores health, life stage and measurement text', async ()
     const response = await post(base, '/api/observations', {
       plant_id: '44444444-4444-4444-8444-444444444444',
       observed_at: '2026-10-31T02:00:00.000Z',
-      health_status: 'healthy',
-      life_stage: 'flowering',
-      measurement: '2.5 m tall',
+health_status: 'healthy',
+life_stage: 'flowering',
+height_cm: 250,
+diameter_cm: 20,
+measurement: '2.5 m tall',
       notes: 'Leaves present'
     });
     assert.equal(response.status, 201, JSON.stringify(response.body));
     assert.equal(currentDb.inserts.length, 1);
     const saved = currentDb.inserts[0];
     assert.equal(saved.table, 'observations');
-    assert.equal(saved.row.health_status, 'healthy');
-    assert.equal(saved.row.life_stage, 'flowering');
+assert.equal(saved.row.height_cm, 250);
+assert.equal(saved.row.diameter_cm, 20);
     assert.equal(saved.row.notes, 'Measurement: 2.5 m tall\n\nLeaves present');
     assert.match(saved.row.client_record_id, /^[0-9a-f-]{36}$/i);
     assert.equal(saved.row.observer_id, '11111111-1111-4111-8111-111111111111');

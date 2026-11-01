@@ -148,6 +148,20 @@ router.get("/:id", requireRole("botanist", "officer", "researcher"), async (req,
 // Save a field record in Supabase under the signed-in botanist.
 router.post("/", requireRole("botanist"), async (req, res) => {
     const { latitude, longitude } = req.body || {};
+    
+const { morphology, description } = req.body || {};
+
+for (const [field, value] of Object.entries({ morphology, description })) {
+    if (
+        value != null &&
+        (typeof value !== "string" || value.length > 5000)
+    ) {
+        return res.status(400).json({
+            message: `${field} must be text of at most 5000 characters`
+        });
+    }
+}
+
     const scientificName =
         typeof req.body?.scientific_name === "string"
             ? req.body.scientific_name.trim()
@@ -270,16 +284,20 @@ if (
         return res.status(200).json({ message: "Plant record already saved", plant: existing });
     }
 
-    const plant = {
-        client_record_id: clientRecordId,
-        species_id: speciesId,
-        qr_code_value: qrCodeValue,
-        location: `POINT(${longitude} ${latitude})`,
-        gps_accuracy_m: req.body.gps_accuracy_m ?? null,
-        location_description: locationDescription?.trim() || null,
-        plant_status: "pending",
-        registered_by: req.user.id,
-    };
+
+const plant = {
+    client_record_id: clientRecordId,
+    species_id: speciesId,
+    qr_code_value: qrCodeValue,
+    location: `POINT(${longitude} ${latitude})`,
+    gps_accuracy_m: req.body.gps_accuracy_m ?? null,
+    location_description: locationDescription?.trim() || null,
+    morphology: morphology?.trim() || null,
+    description: description?.trim() || null,
+    plant_status: "pending",
+    registered_by: req.user.id,
+};
+
 
     const { data, error } = await req.supabase
         .from("plants")
