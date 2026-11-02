@@ -6,7 +6,9 @@ import Toast from 'react-native-toast-message';
 export default function RootLayout() {
   return (
     <>
-      <StatusBar barStyle="dark-content" backgroundColor="#F6F8F6" />
+      {/* No backgroundColor: React Native 0.88 removed it (Android is always edge-to-edge
+          now, so the screen's own #F6F8F6 background shows behind the status bar). */}
+      <StatusBar barStyle="dark-content" />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#F6F8F6' } }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="forgot-password" />

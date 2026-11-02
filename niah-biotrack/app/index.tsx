@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { hasSavedSession } from '../src/lib/auth';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, Platform, StatusBar, ActivityIndicator } from 'react-native';
+import type { TextInputInstance } from 'react-native';
 import { useRouter } from 'expo-router';
 import LeafLogo from '../src/components/LeafLogo';
 import FormScrollView from '../src/components/FormScrollView';
@@ -13,7 +14,8 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const passwordRef = useRef<TextInput>(null);
+  // RN 0.88: a TextInput ref holds a TextInputInstance, not the TextInput component.
+  const passwordRef = useRef<TextInputInstance>(null);
 
   const [checkingSession, setCheckingSession] = useState(true);
 
