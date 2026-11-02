@@ -39,6 +39,9 @@ export interface ObservationVisit {
   // The server's id for this visit (observations.id), saved after a successful upload.
   // Needed later to submit the visit for review (PATCH /api/observations/:id/submit).
   serverId?: string;
+  // True once the server has accepted this visit for officer review (it's "pending"
+  // there). Visits without it are still drafts on the server.
+  submittedForReview?: boolean;
 }
 
 export interface PlantRecord {
@@ -85,7 +88,18 @@ export interface RecordedRoute {
 }
 
 // What syncRecord tells the screen: success, or a message it can show to the user.
-export type SyncResult = { ok: true } | { ok: false; reason: string };
+// submittedForReview is true when the record is pending on the phone and every one of
+// its visits is now in the officer's review queue on the server.
+export type SyncResult = { ok: true; submittedForReview: boolean } | { ok: false; reason: string };
+
+// True when a record pending on the phone has every visit submitted on the server.
+function isFullySubmitted(record: PlantRecord | undefined): boolean {
+  return (
+    record?.reviewStatus === ReviewStatus.PENDING &&
+    record.observations.length > 0 &&
+    record.observations.every((obs) => obs.submittedForReview)
+  );
+}
 
 // What syncAll tells the screen: how many records went up, how many didn't, and how
 // many it left alone because they were already uploading (e.g. Retry was tapped first).
@@ -215,7 +229,9 @@ export const useRecordStore = create<RecordState>()(
       syncRecord: async (id) => {
         const record = get().records.find((r) => r.id === id);
         if (!record) return { ok: false, reason: 'Record not found' };
-        if (record.syncStatus === SyncStatus.UPLOADED) return { ok: true }; // nothing new to send
+        if (record.syncStatus === SyncStatus.UPLOADED) {
+          return { ok: true, submittedForReview: isFullySubmitted(record) }; // nothing new to send
+        }
         if (uploadsInProgress.has(id)) return { ok: false, reason: 'This record is already uploading' };
 
         // Small helpers that change just this record (or one of its visits) in the store.
@@ -272,23 +288,36 @@ export const useRecordStore = create<RecordState>()(
             updateObservation(obs.id, { syncStatus: SyncStatus.UPLOADED, serverId: response.observation.id });
           }
 
-          // TODO(submit): once Gerald restores PATCH /api/observations/:id/submit (removed
-          // from main in 4efe9c5), submit the visits here. If this record is PENDING on the
-          // phone, call the route for every visit that has a serverId and is still a draft
-          // on the server, and treat "already pending" (200) as success. Doing it here,
-          // not in submitForReview, means a submit whose upload failed still reaches the
-          // officer queue later via Retry or "Sync now". Throw on any other error so the
-          // record is marked FAILED like an upload failure. Also extend SyncResult (or
-          // SubmitResult) with a flag so plant-detail can say "Submitted to officer review".
+          // 3. Submit for officer review, if the botanist has submitted this record on the
+          //    phone. This happens here rather than in submitForReview so that a submit
+          //    whose upload failed (no signal) still reaches the officer queue later, the
+          //    next time Retry or "Sync now" runs. The server reviews visits, not plants,
+          //    so each uploaded visit that isn't submitted yet is sent on its own.
+          const afterUpload = get().records.find((r) => r.id === id);
+          if (afterUpload?.reviewStatus === ReviewStatus.PENDING) {
+            const visitsToSubmit = [...afterUpload.observations]
+              .reverse() // oldest first, like the uploads
+              .filter((obs) => obs.serverId && !obs.submittedForReview);
 
-          // 3. Mark the record UPLOADED, but only if nothing new appeared meanwhile. A visit
+            for (const obs of visitsToSubmit) {
+              // The server answers 200 both when it submits the visit and when the visit
+              // was already pending (e.g. an earlier attempt got through but the phone lost
+              // the reply), so a repeat is safe. Any other answer throws an ApiError, and
+              // the record is marked FAILED below like any other upload problem.
+              await apiFetch(`/api/observations/${obs.serverId}/submit`, { method: 'PATCH' });
+              // Remember it straight away, so a later failure doesn't send this one again.
+              updateObservation(obs.id, { submittedForReview: true });
+            }
+          }
+
+          // 4. Mark the record UPLOADED, but only if nothing new appeared meanwhile. A visit
           //    added while we were uploading wasn't in visitsToSend; leaving the record
-          //    NOT_UPLOADED means the next sync picks it up instead of skipping it forever.
-          const unsentLeft = get()
-            .records.find((r) => r.id === id)
-            ?.observations.some((obs) => obs.syncStatus !== SyncStatus.UPLOADED);
+          //    NOT_UPLOADED means the next sync picks it up (and submits it) instead of
+          //    skipping it forever.
+          const finalRecord = get().records.find((r) => r.id === id);
+          const unsentLeft = finalRecord?.observations.some((obs) => obs.syncStatus !== SyncStatus.UPLOADED);
           updateRecord({ syncStatus: unsentLeft ? SyncStatus.NOT_UPLOADED : SyncStatus.UPLOADED });
-          return { ok: true };
+          return { ok: true, submittedForReview: isFullySubmitted(finalRecord) };
         } catch (error) {
           // Whatever went wrong, the record stays on the phone and shows Retry.
           updateRecord({ syncStatus: SyncStatus.FAILED });
@@ -400,7 +429,7 @@ export const useRecordStore = create<RecordState>()(
     {
       name: 'niah-ground-truth-store',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 7,
+      version: 8,
       migrate: (persistedState, version) => {
         const state = persistedState as { records?: Record<string, unknown>[] };
         if (version < 1 && Array.isArray(state.records)) {
@@ -477,6 +506,18 @@ export const useRecordStore = create<RecordState>()(
         // v7: new records get createdAtIso. Nothing to convert: older records only have
         // the "2 Nov" display date, which has no year or time to rebuild it from, so they
         // simply go without it.
+
+        if (version < 8 && Array.isArray(state.records)) {
+          // v8: syncRecord now also submits visits for review. A record submitted before
+          // this could already be marked Uploaded without its visits ever reaching the
+          // officer queue, and syncRecord skips Uploaded records. Mark those as Not
+          // uploaded so the next sync submits them (the plant and visits aren't sent again).
+          state.records = state.records.map((record) =>
+            record.reviewStatus === ReviewStatus.PENDING && record.syncStatus === SyncStatus.UPLOADED
+              ? { ...record, syncStatus: SyncStatus.NOT_UPLOADED }
+              : record
+          );
+        }
 
         return state as unknown as RecordState;
       },
