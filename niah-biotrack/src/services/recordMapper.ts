@@ -79,7 +79,12 @@ export function mapLocalObservationToBackend(
     // Left out when missing (registration visit); the backend stores them as null.
     health_status: obs.health?.toLowerCase(),
     life_stage: obs.stage?.toLowerCase(),
-    measurement: obs.measurement,
+    // "Not recorded" is only display text for the app, not a measurement, so it (and an
+    // empty value) is left out rather than saved on the server as "Measurement: Not recorded".
+    measurement:
+      obs.measurement && obs.measurement.trim() && obs.measurement.trim() !== 'Not recorded'
+        ? obs.measurement
+        : undefined,
     notes: obs.notes,
   };
 }
