@@ -81,11 +81,18 @@ export interface RecordedRoute {
 // What syncRecord tells the screen: success, or a message it can show to the user.
 export type SyncResult = { ok: true } | { ok: false; reason: string };
 
-// What syncAll tells the screen: how many records went up and how many didn't.
+// What syncAll tells the screen: how many records went up, how many didn't, and how
+// many it left alone because they were already uploading (e.g. Retry was tapped first).
 export interface SyncAllResult {
   uploaded: number;
   failed: number;
+  skipped: number;
 }
+
+// What submitForReview tells the screen. ok: false means the record was NOT submitted
+// (it stays as it was). ok: true means it is now pending on this phone; `sync` then says
+// whether the upload that followed worked, so the screen can warn if it didn't.
+export type SubmitResult = { ok: true; sync: SyncResult } | { ok: false; reason: string };
 
 // Server responses we read. Both routes return the saved row, also when it was
 // already saved by an earlier attempt (200 instead of 201).
@@ -116,7 +123,7 @@ interface RecordState {
   retryRecord: (id: string) => void;
   syncRecord: (id: string) => Promise<SyncResult>;
   syncAll: () => Promise<SyncAllResult>;
-  submitForReview: (id: string) => { ok: true } | { ok: false; reason: string };
+  submitForReview: (id: string) => Promise<SubmitResult>;
   findByTag: (tagCode: string) => PlantRecord | undefined;
   attachTag: (recordId: string, tagCode: string) => { ok: true } | { ok: false; reason: string };
   saveRoute: (route: Omit<RecordedRoute, 'id' | 'createdAt'>) => RecordedRoute;
@@ -273,15 +280,24 @@ export const useRecordStore = create<RecordState>()(
 
         let uploaded = 0;
         let failed = 0;
+        let skipped = 0;
         for (const id of ids) {
+          // Already uploading (from Retry or a submit)? That upload will finish on its
+          // own, so don't count it as a failure. Checking here is safe: syncRecord adds
+          // the ID to uploadsInProgress before its first await, so nothing can slip in
+          // between this check and the call.
+          if (uploadsInProgress.has(id)) {
+            skipped += 1;
+            continue;
+          }
           const result = await get().syncRecord(id);
           if (result.ok) uploaded += 1;
           else failed += 1;
         }
-        return { uploaded, failed };
+        return { uploaded, failed, skipped };
       },
 
-      submitForReview: (id) => {
+      submitForReview: async (id) => {
         const record = get().records.find((r) => r.id === id);
         if (!record) return { ok: false, reason: 'Record not found' };
         if (record.reviewStatus !== ReviewStatus.DRAFT && record.reviewStatus !== ReviewStatus.REJECTED) {
@@ -295,7 +311,11 @@ export const useRecordStore = create<RecordState>()(
               : r
           ),
         }));
-        return { ok: true };
+        // Upload straight away. The record is already pending on the phone, so if the
+        // upload fails (e.g. no signal in the field) the submission is kept and goes up
+        // later with "Sync now" or Retry; syncRecord marks it FAILED and never throws.
+        const sync = await get().syncRecord(id);
+        return { ok: true, sync };
       },
 
       findByTag: (tagCode) => get().records.find((r) => r.tagCode === tagCode),

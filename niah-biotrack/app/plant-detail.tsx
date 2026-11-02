@@ -79,9 +79,17 @@ export default function PlantDetailScreen() {
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Submit',
-          onPress: () => {
-            const result = submitForReview(matched.id);
-            if (!result.ok) Alert.alert('Could not submit', result.reason);
+          onPress: async () => {
+            const result = await submitForReview(matched.id);
+            if (!result.ok) {
+              Alert.alert('Could not submit', result.reason);
+            } else if (!result.sync.ok) {
+              // Submitted on the phone, but the upload didn't go through. Nothing is lost.
+              Alert.alert(
+                'Saved, not uploaded yet',
+                `${result.sync.reason}\n\nThe record is kept on this phone. Use Sync now or Retry when you have a connection.`
+              );
+            }
           },
         },
       ]
