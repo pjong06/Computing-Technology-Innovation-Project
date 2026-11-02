@@ -10,7 +10,15 @@ test('normal and error responses expose shape only, never fields or credentials'
     assert.doesNotMatch(output, /private|test-secret|FORGED|PASS|\x1b|\r|\n/);
   }
   assert.deepEqual(responseSummary('null'), { format:'json', shape:'null' });
-  assert.equal(responseSummary('{"data":{"total":3}}').rowCount, 3);
+  assert.equal(responseSummary('{"data":{"total":3}}').rowCount, undefined);
   assert.equal(responseSummary('{"data":{"total":"forged\\nPASS"}}').rowCount, undefined);
   assert.equal(responseSummary('{"data":{"total":-1}}').rowCount, undefined);
+});
+
+test('summary output is restricted to fixed literal shapes for all JSON kinds', () => {
+  for (const [input, shape] of [['[]','array'], ['{}','object'], ['null','null'],
+    ['123','primitive'], ['true','primitive'], ['"remote text"','primitive']]) {
+    assert.deepEqual(responseSummary(input), { format: 'json', shape });
+  }
+  assert.deepEqual(responseSummary('not json'), { format: 'non-json' });
 });

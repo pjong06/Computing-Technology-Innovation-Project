@@ -2,13 +2,12 @@
 function responseSummary(text) {
   try {
     const value = JSON.parse(text);
-    const summary = { format: 'json', shape: Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value };
-    if (Array.isArray(value)) summary.rowCount = value.length;
-    else if (value && typeof value === 'object') {
-      if (Array.isArray(value.data)) summary.rowCount = value.data.length;
-      else if (Number.isSafeInteger(value.data?.total) && value.data.total >= 0) summary.rowCount = value.data.total;
-    }
-    return summary;
+    // Every output value is a fixed literal; no response-derived values cross
+    // the diagnostic boundary, including numeric totals or array lengths.
+    if (Array.isArray(value)) return { format: 'json', shape: 'array' };
+    if (value === null) return { format: 'json', shape: 'null' };
+    if (typeof value === 'object') return { format: 'json', shape: 'object' };
+    return { format: 'json', shape: 'primitive' };
   } catch { return { format: 'non-json' }; }
 }
 
