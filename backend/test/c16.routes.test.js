@@ -4,6 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const path = require('node:path');
+// Fixture-only public origin; no real network request is made to this host.
+process.env.PUBLIC_PLANT_BASE_URL = 'https://example.test/p';
 
 // Replace auth only within this isolated test process. Do not change auth.js.
 const authPath = require.resolve('../src/middleware/auth');

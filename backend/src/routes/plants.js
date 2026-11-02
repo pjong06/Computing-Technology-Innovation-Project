@@ -416,43 +416,14 @@ router.patch("/:id", requireRole("botanist", "officer"), async (req, res) => {
 });
 
 // ── DELETE PLANT RECORD ─────────────────────────────────────────
-router.delete("/:id", requireRole("botanist", "officer"), async (req, res) => {
-    const plantId = req.params.id;
-    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Generic plant replacement and hard deletion are forbidden; use the reviewed
+// observation workflow for lifecycle changes. Never delete children here.
+router.put("/:id", (_req, res) => {
+    return res.status(403).json({ message: "Direct plant replacement is not permitted" });
+});
 
-    if (!uuidPattern.test(plantId)) {
-        return res.status(400).json({ message: "Valid plant ID is required" });
-    }
-
-    try {
-        // Delete child observations if any exist
-        await req.supabase.from("observations").delete().eq("plant_id", plantId);
-
-        // Delete the plant record
-        const { data, error } = await req.supabase
-            .from("plants")
-            .delete()
-            .eq("id", plantId)
-            .select("id")
-            .maybeSingle();
-
-        if (error) {
-            console.error("Delete plant error:", error);
-            return res.status(500).json({ message: "Could not delete plant record" });
-        }
-
-        if (!data) {
-            return res.status(404).json({ message: "Plant record not found" });
-        }
-
-        return res.json({
-            message: "Plant deleted successfully",
-            plant_id: data.id
-        });
-    } catch (err) {
-        console.error("Server error deleting plant:", err);
-        return res.status(500).json({ message: "Internal server error" });
-    }
+router.delete("/:id", (_req, res) => {
+    return res.status(403).json({ message: "Direct plant deletion is not permitted" });
 });
 
 // UPLOAD a photo for a plant
