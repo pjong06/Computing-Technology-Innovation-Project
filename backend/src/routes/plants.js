@@ -38,6 +38,32 @@ function visiblePlant(plant, profile) {
     return publicData;
 }
 
+// Ownership check for edits and deletes. Officers may change any plant; botanists
+// may only change plants they registered themselves. Call this before any write so
+// nothing is changed or deleted when access is denied.
+async function checkPlantWriteAccess(req, res, plantId) {
+    const { data: plant, error } = await req.supabase
+        .from("plants")
+        .select("id, registered_by")
+        .eq("id", plantId)
+        .maybeSingle();
+
+    if (error) {
+        console.error("Plant access check error:", error);
+        res.status(500).json({ message: "Could not check plant access" });
+        return false;
+    }
+    if (!plant) {
+        res.status(404).json({ message: "Plant record not found" });
+        return false;
+    }
+    if (req.profile.role !== "officer" && plant.registered_by !== req.user.id) {
+        res.status(403).json({ message: "You can only change your own plant records" });
+        return false;
+    }
+    return true;
+}
+
 // List plants visible to the signed-in staff member.
 router.get("/", requireRole("botanist", "officer", "researcher"), async (req, res) => {
     const page = req.query.page === undefined ? 1 : Number(req.query.page);
@@ -388,6 +414,8 @@ router.patch("/:id", requireRole("botanist", "officer"), async (req, res) => {
         return res.status(400).json({ message: "No valid fields provided to update" });
     }
 
+    if (!(await checkPlantWriteAccess(req, res, plantId))) return;
+
     try {
         const { data, error } = await req.supabase
             .from("plants")
@@ -423,6 +451,8 @@ router.delete("/:id", requireRole("botanist", "officer"), async (req, res) => {
     if (!uuidPattern.test(plantId)) {
         return res.status(400).json({ message: "Valid plant ID is required" });
     }
+
+    if (!(await checkPlantWriteAccess(req, res, plantId))) return;
 
     try {
         // Delete child observations if any exist
