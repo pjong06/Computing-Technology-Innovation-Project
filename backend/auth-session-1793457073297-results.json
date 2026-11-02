@@ -1,0 +1,33 @@
+{
+  "started_at": "2026-10-31T14:31:13.296Z",
+  "status": "COMPLETE",
+  "results": [
+    {
+      "test": "Real Supabase JWT passes new issuer/audience/subject guard",
+      "result": "PASS",
+      "http": 200
+    },
+    {
+      "test": "Local sign-out request accepted",
+      "result": "PASS"
+    },
+    {
+      "test": "Auth client session cleared",
+      "result": "PASS"
+    },
+    {
+      "test": "Revoked refresh token cannot create a new session",
+      "result": "PASS",
+      "code": "refresh_token_not_found",
+      "http": 400
+    },
+    {
+      "test": "Previously issued access JWT after logout",
+      "result": "OBSERVATION",
+      "http": 401,
+      "meaning": "Backend rejected this access JWT after logout in this run."
+    }
+  ],
+  "scope": "Local backend claim regression and revocation of only the session created by this test. No mobile logout/device storage assertions.",
+  "finished_at": "2026-10-31T14:31:35.050Z"
+}

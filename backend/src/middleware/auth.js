@@ -1,5 +1,6 @@
 // Import Supabase clients for token verification and user-specific requests
 const { verifier, forUser } = require("../config/supabase");
+const { hasExpectedClaims } = require('./verifiedJwtClaims');
 
 // Define the roles that are considered staff
 const STAFF_ROLES = new Set(["botanist", "officer", "researcher", "admin"]);
@@ -14,6 +15,10 @@ async function requireAuth(req, res, next) {
         // Use the token to verify and get the logged-in user
         const { data: { user }, error: userError } = await verifier.auth.getUser(match[1]);
         if (userError || !user) {
+            return res.status(401).json({ message: "Invalid or expired token" });
+        }
+
+        if (!hasExpectedClaims(match[1], user.id, process.env.SUPABASE_URL)) {
             return res.status(401).json({ message: "Invalid or expired token" });
         }
 
