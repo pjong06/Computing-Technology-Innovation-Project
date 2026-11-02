@@ -2,6 +2,11 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { randomUUID } from 'expo-crypto';
+import { apiFetch, ApiError } from '../api/client';
+// Note: recordMapper also imports from this file (types and UNKNOWN_SPECIES). That
+// circular import is safe because neither file uses the other's values while loading,
+// only later inside functions.
+import { mapLocalRecordToBackend, mapLocalObservationToBackend } from '../services/recordMapper';
 
 export enum SyncStatus {
   UPLOADED = 'Uploaded',
@@ -33,10 +38,17 @@ export interface ObservationVisit {
   measurement: string;
   notes: string;
   syncStatus: SyncStatus;
+  // The server's id for this visit (observations.id), saved after a successful upload.
+  // Needed later to submit the visit for review (PATCH /api/observations/:id/submit).
+  serverId?: string;
 }
 
 export interface PlantRecord {
   id: string; // UUID generated on the phone; stays the same after sync
+  // The server's id for this plant (plants.id), saved as soon as the plant upload
+  // succeeds. Observations are uploaded with it as plant_id. If it's set, the plant
+  // itself is already on the server and a retry only re-sends the observations.
+  serverId?: string;
   tagCode: string | null; // code of the pre-printed tag on the plant; null until one is attached
   scientificName: string;
   speciesId: string | null;
@@ -71,6 +83,23 @@ export interface RecordedRoute {
   createdAt: string;
 }
 
+// What syncRecord tells the screen: success, or a message it can show to the user.
+export type SyncResult = { ok: true } | { ok: false; reason: string };
+
+// Server responses we read. Both routes return the saved row, also when it was
+// already saved by an earlier attempt (200 instead of 201).
+interface PlantUploadResponse {
+  plant: { id: string };
+}
+interface ObservationUploadResponse {
+  observation: { id: string };
+}
+
+// IDs of records currently uploading. Stops "Sync now" and "Retry" from uploading
+// the same record twice at the same time. (The server would not create a duplicate
+// anyway, thanks to client_record_id, but it saves needless requests.)
+const uploadsInProgress = new Set<string>();
+
 interface RecordState {
   records: PlantRecord[];
   routes: RecordedRoute[];
@@ -84,6 +113,7 @@ interface RecordState {
     observation: Omit<ObservationVisit, 'id' | 'syncStatus' | 'observedAt'> & { observedAt: string }
   ) => void;
   retryRecord: (id: string) => void;
+  syncRecord: (id: string) => Promise<SyncResult>;
   submitForReview: (id: string) => { ok: true } | { ok: false; reason: string };
   findByTag: (tagCode: string) => PlantRecord | undefined;
   attachTag: (recordId: string, tagCode: string) => { ok: true } | { ok: false; reason: string };
@@ -121,18 +151,111 @@ export const useRecordStore = create<RecordState>()(
                 id: randomUUID(),
                 syncStatus: SyncStatus.NOT_UPLOADED,
               };
-              return { ...r, observations: [newObs, ...r.observations] };
+              return {
+                ...r,
+                observations: [newObs, ...r.observations],
+                // A record that was fully uploaded now has a visit the server hasn't
+                // seen, so it needs uploading again (syncRecord skips UPLOADED records).
+                syncStatus: r.syncStatus === SyncStatus.UPLOADED ? SyncStatus.NOT_UPLOADED : r.syncStatus,
+              };
             }
             return r;
           }),
         }));
       },
-      // There is deliberately no action that marks records Synced: only a real upload
-      // to the server (not built yet) may set that status.
       retryRecord: (id) => {
         set((state) => ({
           records: state.records.map((r) => (r.id === id ? { ...r, syncStatus: SyncStatus.NOT_UPLOADED } : r)),
         }));
+      },
+
+      // Uploads one record (the plant, then its visits) to the backend.
+      // This is the ONLY place that may mark a record UPLOADED: it happens only after
+      // the server has confirmed every part. It never throws; the screen gets a
+      // SyncResult it can show in a message.
+      syncRecord: async (id) => {
+        const record = get().records.find((r) => r.id === id);
+        if (!record) return { ok: false, reason: 'Record not found' };
+        if (record.syncStatus === SyncStatus.UPLOADED) return { ok: true }; // nothing new to send
+        if (uploadsInProgress.has(id)) return { ok: false, reason: 'This record is already uploading' };
+
+        // Small helpers that change just this record (or one of its visits) in the store.
+        // They always start from the latest state, because uploads take time and the
+        // user may have changed something meanwhile.
+        const updateRecord = (changes: Partial<PlantRecord>) =>
+          set((state) => ({
+            records: state.records.map((r) => (r.id === id ? { ...r, ...changes } : r)),
+          }));
+        const updateObservation = (obsId: string, changes: Partial<ObservationVisit>) =>
+          set((state) => ({
+            records: state.records.map((r) =>
+              r.id === id
+                ? { ...r, observations: r.observations.map((o) => (o.id === obsId ? { ...o, ...changes } : o)) }
+                : r
+            ),
+          }));
+
+        uploadsInProgress.add(id);
+        try {
+          // 1. The plant. Skipped if an earlier attempt already got it onto the server.
+          let serverId = record.serverId;
+          if (!serverId) {
+            const response = await apiFetch<PlantUploadResponse>('/api/plants', {
+              method: 'POST',
+              body: mapLocalRecordToBackend(record),
+            });
+            serverId = response.plant.id;
+            // Save it straight away. If a visit fails below, the next retry sees serverId
+            // and only re-sends the visits instead of the plant.
+            updateRecord({ serverId });
+          }
+
+          // TODO(photos): upload the record's photos here, once the teammate has fixed
+          // POST /api/plants/:id/photo on the backend. Use serverId in the URL, send each
+          // file in photoUris (resolve them with resolveStoredPhotoUri first), and only
+          // continue to the visits when every photo is on the server.
+
+          // 2. The visits, one at a time, oldest first so they arrive in the order they
+          //    happened (the list is stored newest first). Read them fresh from the store
+          //    in case one was added while the plant was uploading.
+          const latest = get().records.find((r) => r.id === id);
+          const visitsToSend = [...(latest?.observations ?? [])]
+            .reverse()
+            .filter((obs) => obs.syncStatus !== SyncStatus.UPLOADED);
+
+          for (const obs of visitsToSend) {
+            const response = await apiFetch<ObservationUploadResponse>('/api/observations', {
+              method: 'POST',
+              body: mapLocalObservationToBackend(serverId, obs),
+            });
+            // Mark each visit as soon as the server confirms it, so a later failure
+            // doesn't make us send this one again.
+            updateObservation(obs.id, { syncStatus: SyncStatus.UPLOADED, serverId: response.observation.id });
+          }
+
+          // 3. Mark the record UPLOADED, but only if nothing new appeared meanwhile. A visit
+          //    added while we were uploading wasn't in visitsToSend; leaving the record
+          //    NOT_UPLOADED means the next sync picks it up instead of skipping it forever.
+          const unsentLeft = get()
+            .records.find((r) => r.id === id)
+            ?.observations.some((obs) => obs.syncStatus !== SyncStatus.UPLOADED);
+          updateRecord({ syncStatus: unsentLeft ? SyncStatus.NOT_UPLOADED : SyncStatus.UPLOADED });
+          return { ok: true };
+        } catch (error) {
+          // Whatever went wrong, the record stays on the phone and shows Retry.
+          updateRecord({ syncStatus: SyncStatus.FAILED });
+
+          if (error instanceof ApiError) {
+            // apiFetch already wrote a readable message: "Could not reach the server..."
+            // when status is 0 (no signal, timeout), otherwise the server's own message,
+            // e.g. "Valid latitude and longitude are required".
+            return { ok: false, reason: error.message };
+          }
+          // Not an ApiError (e.g. an unexpected response shape): still don't crash the screen.
+          return { ok: false, reason: 'Upload failed unexpectedly. Please try again.' };
+        } finally {
+          uploadsInProgress.delete(id);
+        }
       },
 
       submitForReview: (id) => {
