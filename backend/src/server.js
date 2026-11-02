@@ -17,11 +17,14 @@ const reportRoutes = require('./routes/reports');
 const { startMqttIngestion } = require('./services/mqttIngestionService');
 const authRoutes = require('./routes/auth');
 const officerReviewRoutes = require("./routes/officerReviews");
+const publicPlantRoutes = require('./routes/publicPlants');
 
 const app = express();
+app.disable('x-powered-by');
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
+app.use(require('./middleware/jsonErrorHandler'));
 app.use('/api/plants', plantRoutes);
 app.use('/api/identify', identifyRoutes);
 app.use('/api/iot', requireAuth, requireRole('officer'), iotRoutes);
@@ -31,6 +34,8 @@ app.use('/api/observations', observationRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/auth', authRoutes);
 app.use("/api/officer/reviews", officerReviewRoutes);
+
+app.use(publicPlantRoutes);
 
 // Serve the existing Conservation Officer portal from the same origin as its API.
 app.use('/portal', express.static(path.join(__dirname, '..', '..', 'frontend')));

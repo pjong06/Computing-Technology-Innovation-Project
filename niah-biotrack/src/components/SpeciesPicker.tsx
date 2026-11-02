@@ -3,8 +3,8 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-nativ
 import { useSpeciesStore } from '../store/useSpeciesStore';
 import type { Species } from '../api/species';
 
-// What the botanist chose: a listed species, "Unknown", or nothing yet.
-export type SpeciesChoice = { kind: 'species'; species: Species } | { kind: 'unknown' } | null;
+// What the botanist chose: an approved species, or nothing yet.
+export type SpeciesChoice = { kind: 'species'; species: Species } | null;
 
 interface Props {
   value: SpeciesChoice;
@@ -41,17 +41,8 @@ export default function SpeciesPicker({ value, onChange, query, onQueryChange, h
     return (
       <View style={styles.chosenCard}>
         <View style={{ flex: 1 }}>
-          {value.kind === 'species' ? (
-            <>
-              <Text style={styles.chosenName}>{value.species.scientific_name}</Text>
-              {value.species.common_name ? <Text style={styles.chosenSub}>{value.species.common_name}</Text> : null}
-            </>
-          ) : (
-            <>
-              <Text style={styles.unknownName}>Unknown species</Text>
-              <Text style={styles.chosenSub}>A Conservation Officer will identify it during review.</Text>
-            </>
-          )}
+          <Text style={styles.chosenName}>{value.species.scientific_name}</Text>
+          {value.species.common_name ? <Text style={styles.chosenSub}>{value.species.common_name}</Text> : null}
         </View>
         <TouchableOpacity onPress={() => onChange(null)} hitSlop={8}>
           <Text style={styles.changeText}>Change</Text>
@@ -74,7 +65,7 @@ export default function SpeciesPicker({ value, onChange, query, onQueryChange, h
 
       {species.length === 0 && (
         <Text style={styles.helpText}>
-          The species list hasn't downloaded to this phone yet. Connect once, or choose Unknown species.
+          The species list hasn't downloaded to this phone yet. Connect once to download the approved list.
         </Text>
       )}
 
@@ -92,12 +83,8 @@ export default function SpeciesPicker({ value, onChange, query, onQueryChange, h
       ))}
 
       {query.trim() !== '' && matches.length === 0 && species.length > 0 && (
-        <Text style={styles.helpText}>No approved species match. If you're not sure, choose Unknown species.</Text>
+        <Text style={styles.helpText}>No approved species match. Try another scientific, common or local name.</Text>
       )}
-
-      <TouchableOpacity style={styles.unknownBtn} onPress={() => onChange({ kind: 'unknown' })}>
-        <Text style={styles.unknownBtnText}>I don't know – Unknown species</Text>
-      </TouchableOpacity>
     </View>
   );
 }
@@ -109,11 +96,8 @@ const styles = StyleSheet.create({
   resultRow: { backgroundColor: '#FFFFFF', borderRadius: 14, borderWidth: 1.2, borderColor: '#E6ECE8', paddingVertical: 10, paddingHorizontal: 14, marginBottom: 6 },
   resultName: { fontSize: 14, fontWeight: '700', fontStyle: 'italic', color: '#1E2B22' },
   resultSub: { fontSize: 12, color: '#68776D', marginTop: 2 },
-  unknownBtn: { alignSelf: 'flex-start', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 16, borderWidth: 1.2, borderColor: '#213B2A', marginBottom: 8 },
-  unknownBtnText: { fontSize: 12.5, fontWeight: '700', color: '#213B2A' },
   chosenCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#E4F2E7', borderRadius: 16, padding: 14, marginBottom: 8 },
   chosenName: { fontSize: 15, fontWeight: '700', fontStyle: 'italic', color: '#1E2B22' },
-  unknownName: { fontSize: 15, fontWeight: '700', color: '#1E2B22' },
   chosenSub: { fontSize: 12, color: '#4A5A50', marginTop: 2 },
   changeText: { fontSize: 13, fontWeight: '700', color: '#213B2A', marginLeft: 12 },
 });

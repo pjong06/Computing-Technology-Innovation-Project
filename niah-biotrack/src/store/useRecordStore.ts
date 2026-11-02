@@ -3,9 +3,8 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { randomUUID } from 'expo-crypto';
 import { apiFetch, ApiError } from '../api/client';
-// Note: recordMapper also imports from this file (types and UNKNOWN_SPECIES). That
-// circular import is safe because neither file uses the other's values while loading,
-// only later inside functions.
+// recordMapper imports only types from this file (import type), so there is no
+// runtime circular dependency between the two.
 import { mapLocalRecordToBackend, mapLocalObservationToBackend } from '../services/recordMapper';
 
 export enum SyncStatus {
@@ -21,10 +20,6 @@ export enum ReviewStatus {
   APPROVED = 'approved',
   REJECTED = 'rejected', // officer sent it back with a comment
 }
-
-// Shown and saved as the name when the botanist doesn't know the species.
-// The officer assigns the real species during review.
-export const UNKNOWN_SPECIES = 'Unknown species';
 
 export interface ObservationVisit {
   id: string; // UUID generated on the phone; sent as client_record_id

@@ -66,3 +66,22 @@ browser `localStorage` sample data. They do not show these API results yet.
 The web login task must provide an officer access token before the reports
 page can use the protected endpoint. The IoT alerts page already expects a
 `window.getOfficerAccessToken()` hook; the reports page can use the same hook.
+
+
+## Officer species and taxonomy pagination
+
+`GET /api/knowledge/species/manage` requires an active officer token and returns approved and archived species allowed by RLS. Default `page_size` is 50.
+
+`GET /api/knowledge/taxonomy` is public. Default `page_size` is 100.
+
+Both accept `page` (1–100000) and `page_size` (1–100), return the existing `data` array plus `pagination: { page, page_size, total, total_pages }`, and sort by name/genus then ID. Empty or out-of-range pages return an empty array with the matching total, not a 404. Invalid or repeated pagination values return 400. Clients must request subsequent pages to load the full catalogue.
+
+## Species validation and errors
+
+Create/update accept only the existing editable fields. Scientific names are required on creation and limited to 200 characters. Optional common/local names allow 200 characters; category/status allow 100; descriptive fields allow 10000. Optional fields accept trimmed non-empty text or null on both create and update; use null to clear a value and omit a field to leave it unchanged. Category and conservation-status values remain free text pending a project-approved vocabulary.
+
+Malformed JSON returns 400; oversized JSON returns 413. Existing UUID, duplicate (409), missing taxonomy (400), missing resource (404), and officer permission checks remain. Unexpected Knowledge API failures return a generic JSON 500 without database details.
+
+## Tests and performance evidence
+
+Run `npm test`, `npm run test:knowledge`, or `npm run test:coverage`. The GitHub workflow runs tests after these changes are pushed. Run `npm run benchmark:knowledge` with Supabase URL and publishable key configured to benchmark read-only live searches. See [benchmark evidence](benchmark-results/README.md) and raw results in `benchmark-results/knowledge-search.json` for scope and limitations.
