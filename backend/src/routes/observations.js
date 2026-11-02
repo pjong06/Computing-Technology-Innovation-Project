@@ -183,4 +183,94 @@ diameter_cm: diameter_cm ?? null,
         observation: data
     });
 });
+
+ // Submit an observation for officer review.
+router.patch("/:id/submit", async (req, res) => {
+    const { id } = req.params;
+
+    const { data: observation, error } = await req.supabase
+        .from("observations")
+        .select("id, observer_id, review_status")
+        .eq("id", id)
+        .maybeSingle();
+
+    if (error) {
+        return res.status(500).json({
+            message: "Failed to check observation"
+        });
+    }
+
+    if (!observation) {
+        return res.status(404).json({
+            message: "Observation not found"
+        });
+    }
+
+    // Only the observation owner can submit it.
+    if (observation.observer_id !== req.user.id) {
+        return res.status(403).json({
+            message: "You do not own this observation"
+        });
+    }
+
+    // Retrying an already-submitted observation is successful.
+    if (observation.review_status === "pending") {
+        return res.status(200).json({
+            message: "Observation already submitted",
+            observation
+        });
+    }
+
+    if (!["draft", "rejected"].includes(observation.review_status)) {
+        return res.status(400).json({
+            message: "Only draft or rejected observations can be submitted"
+        });
+    }
+
+    const { data: updatedObservation, error: updateError } =
+        await req.supabase
+            .from("observations")
+            .update({ review_status: "pending" })
+            .eq("id", id)
+            .eq("observer_id", req.user.id)
+            .in("review_status", ["draft", "rejected"])
+            .select()
+            .maybeSingle();
+
+    if (updateError) {
+        console.error("Observation submission error:", updateError);
+
+        return res.status(500).json({
+            message: "Failed to submit observation"
+        });
+    }
+
+    // Another request may have submitted it at the same time.
+    if (!updatedObservation) {
+        const { data: current, error: recheckError } = await req.supabase
+            .from("observations")
+            .select("id, observer_id, review_status")
+            .eq("id", id)
+            .maybeSingle();
+
+        if (!recheckError &&
+            current?.observer_id === req.user.id &&
+            current.review_status === "pending") {
+            return res.status(200).json({
+                message: "Observation already submitted",
+                observation: current
+            });
+        }
+
+        return res.status(409).json({
+            message: "Observation status has changed. Please try again."
+        });
+    }
+
+    return res.status(200).json({
+        message: "Observation submitted successfully",
+        observation: updatedObservation
+    });
+});
+
 module.exports = router;
