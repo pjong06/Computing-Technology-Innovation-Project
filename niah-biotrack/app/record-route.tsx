@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,11 +9,16 @@ import {
   StatusBar,
   ScrollView,
   Alert,
+  Dimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const MAP_WIDTH = SCREEN_WIDTH - 32;
+const MAP_HEIGHT = 240;
 
 interface BreadcrumbPoint {
   latitude: number;
@@ -33,22 +38,25 @@ interface WaypointMarker {
 export default function RecordRouteScreen() {
   const router = useRouter();
 
-  // Telemetry & Session State
+  // Telemetry States
   const [isTracking, setIsTracking] = useState<boolean>(false);
   const [isPaused, setIsPaused] = useState<boolean>(false);
   const [secondsElapsed, setSecondsElapsed] = useState<number>(0);
   const [totalDistanceM, setTotalDistanceM] = useState<number>(0);
   const [currentSpeedKmh, setCurrentSpeedKmh] = useState<number>(0);
 
-  // GPS Coordinates & Quality
+  // GPS Data
   const [currentCoord, setCurrentCoord] = useState<BreadcrumbPoint | null>(null);
   const [accuracyM, setAccuracyM] = useState<number | null>(null);
   const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbPoint[]>([]);
   const [waypoints, setWaypoints] = useState<WaypointMarker[]>([]);
+  const [isSimulating, setIsSimulating] = useState<boolean>(false);
 
-  // Refs for background-safe tracking & timer intervals
+  // Tracking and Timer Refs
   const locationSubscription = useRef<Location.LocationSubscription | null>(null);
   const timerInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const simulatorInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastPointRef = useRef<BreadcrumbPoint | null>(null);
 
   // Timer runner
   useEffect(() => {
@@ -65,23 +73,23 @@ export default function RecordRouteScreen() {
     };
   }, [isTracking, isPaused]);
 
-  // Clean up location watcher on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (locationSubscription.current) {
-        locationSubscription.current.remove();
-      }
+      if (locationSubscription.current) locationSubscription.current.remove();
+      if (simulatorInterval.current) clearInterval(simulatorInterval.current);
+      if (timerInterval.current) clearInterval(timerInterval.current);
     };
   }, []);
 
-  // Haversine distance calculator between two GPS coordinates
+  // Haversine formula
   const calculateDistance = (
     lat1: number,
     lon1: number,
     lat2: number,
     lon2: number
   ): number => {
-    const R = 6371e3; // Earth radius in meters
+    const R = 6371e3;
     const toRad = (deg: number) => (deg * Math.PI) / 180;
     const dLat = toRad(lat2 - lat1);
     const dLon = toRad(lon2 - lon1);
@@ -97,82 +105,177 @@ export default function RecordRouteScreen() {
     return R * c;
   };
 
-  // Start GPS Tracking
+  // Start Real Hardware GPS Tracking
   const startTracking = async () => {
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert(
-        'GPS Permission Required',
-        'Enable location permissions to map botanical transects in Niah National Park.'
-      );
-      return;
-    }
-
-    setIsTracking(true);
-    setIsPaused(false);
-
     try {
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+      if (!servicesEnabled) {
+        Alert.alert(
+          'Location Services Disabled',
+          'Please enable GPS / Location in your phone settings to record routes.'
+        );
+        return;
+      }
+
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Permission Denied',
+          'Location permissions are required to trace your field transect path.'
+        );
+        return;
+      }
+
+      setIsTracking(true);
+      setIsPaused(false);
+      setIsSimulating(false);
+      lastPointRef.current = null;
+
+      // Get initial position fix immediately
+      const initialFix = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      const firstPoint: BreadcrumbPoint = {
+        latitude: Number(initialFix.coords.latitude.toFixed(6)),
+        longitude: Number(initialFix.coords.longitude.toFixed(6)),
+        timestamp: initialFix.timestamp,
+        accuracy: initialFix.coords.accuracy ? Math.round(initialFix.coords.accuracy) : null,
+      };
+
+      setCurrentCoord(firstPoint);
+      setAccuracyM(firstPoint.accuracy);
+      lastPointRef.current = firstPoint;
+      setBreadcrumbs([firstPoint]);
+
+      // Subscribe to active location updates
       locationSubscription.current = await Location.watchPositionAsync(
         {
-          accuracy: Location.Accuracy.BestForNavigation,
-          timeInterval: 2000,
-          distanceInterval: 3,
+          accuracy: Location.Accuracy.High,
+          timeInterval: 1500, // Update every 1.5 seconds
+          distanceInterval: 1, // Trigger upon 1 meter displacement
         },
         (loc) => {
+          const acc = loc.coords.accuracy ? Math.round(loc.coords.accuracy) : null;
+          setAccuracyM(acc);
+
+          // Reject extreme multipath GPS noise (e.g. > 35m accuracy)
+          if (acc !== null && acc > 35) return;
+
           const newPoint: BreadcrumbPoint = {
             latitude: Number(loc.coords.latitude.toFixed(6)),
             longitude: Number(loc.coords.longitude.toFixed(6)),
             timestamp: loc.timestamp,
-            accuracy: loc.coords.accuracy ? Math.round(loc.coords.accuracy) : null,
+            accuracy: acc,
           };
 
-          setAccuracyM(newPoint.accuracy);
           const rawSpeed = loc.coords.speed || 0;
           setCurrentSpeedKmh(Math.max(0, Number((rawSpeed * 3.6).toFixed(1))));
+          setCurrentCoord(newPoint);
 
-          setCurrentCoord((prevPoint) => {
-            if (prevPoint) {
-              const delta = calculateDistance(
-                prevPoint.latitude,
-                prevPoint.longitude,
-                newPoint.latitude,
-                newPoint.longitude
-              );
-              // Filter out GPS drift noise under 1.5 meters
-              if (delta >= 1.5) {
-                setTotalDistanceM((prevDist) => Math.round(prevDist + delta));
-                setBreadcrumbs((prevTrail) => [newPoint, ...prevTrail.slice(0, 199)]);
-              }
-            } else {
-              setBreadcrumbs([newPoint]);
+          if (lastPointRef.current) {
+            const delta = calculateDistance(
+              lastPointRef.current.latitude,
+              lastPointRef.current.longitude,
+              newPoint.latitude,
+              newPoint.longitude
+            );
+
+            // Filter out micro jitter (< 1.2m) and impossible GPS leaps (> 30m in 1.5s)
+            if (delta >= 1.2 && delta <= 30) {
+              setTotalDistanceM((prev) => Math.round(prev + delta));
+              setBreadcrumbs((prevTrail) => [...prevTrail, newPoint]);
+              lastPointRef.current = newPoint;
             }
-            return newPoint;
-          });
+          } else {
+            lastPointRef.current = newPoint;
+            setBreadcrumbs([newPoint]);
+          }
         }
       );
 
       Toast.show({
         type: 'success',
-        text1: 'Route Recording Active',
-        text2: 'Logging GPS path coordinates.',
+        text1: 'GPS Route Active',
+        text2: 'Live path tracking initialized.',
       });
     } catch (err: any) {
-      Alert.alert('GPS Error', err.message || 'Unable to initialize GPS listener.');
+      Alert.alert('GPS Error', err.message || 'Could not initialize GPS listener.');
       setIsTracking(false);
     }
+  };
+
+  // Built-in Simulator (Allows testing visualization indoors/lab)
+  const startSimulation = () => {
+    if (locationSubscription.current) {
+      locationSubscription.current.remove();
+    }
+
+    setIsTracking(true);
+    setIsPaused(false);
+    setIsSimulating(true);
+
+    // Initial base coordinate (Niah Great Cave vicinity: 3.8150° N, 113.7710° E)
+    let simLat = 3.8150;
+    let simLng = 113.7710;
+    const startPoint: BreadcrumbPoint = {
+      latitude: simLat,
+      longitude: simLng,
+      timestamp: Date.now(),
+      accuracy: 3,
+    };
+
+    lastPointRef.current = startPoint;
+    setCurrentCoord(startPoint);
+    setAccuracyM(3);
+    setBreadcrumbs([startPoint]);
+    setCurrentSpeedKmh(3.8);
+
+    let stepCount = 0;
+    simulatorInterval.current = setInterval(() => {
+      stepCount++;
+      // Simulate walking a curving path
+      simLat += 0.00003 + Math.sin(stepCount / 4) * 0.000015;
+      simLng += 0.000025 + Math.cos(stepCount / 4) * 0.00002;
+
+      const simPoint: BreadcrumbPoint = {
+        latitude: Number(simLat.toFixed(6)),
+        longitude: Number(simLng.toFixed(6)),
+        timestamp: Date.now(),
+        accuracy: 3,
+      };
+
+      setCurrentCoord(simPoint);
+      if (lastPointRef.current) {
+        const delta = calculateDistance(
+          lastPointRef.current.latitude,
+          lastPointRef.current.longitude,
+          simPoint.latitude,
+          simPoint.longitude
+        );
+        setTotalDistanceM((prev) => Math.round(prev + delta));
+      }
+      lastPointRef.current = simPoint;
+      setBreadcrumbs((prev) => [...prev, simPoint]);
+    }, 1500);
+
+    Toast.show({
+      type: 'info',
+      text1: 'Simulation Mode Active',
+      text2: 'Generating test coordinates step-by-step.',
+    });
   };
 
   const togglePauseResume = () => {
     setIsPaused((prev) => !prev);
   };
 
-  // Record a botanical waypoint at current GPS fix
   const handleTagPlantWaypoint = () => {
     if (!currentCoord) {
       Toast.show({
         type: 'error',
         text1: 'No GPS Fix',
-        text2: 'Wait for GPS coordinates before attaching a waypoint.',
+        text2: 'Wait for GPS coordinates before pinning a waypoint.',
       });
       return;
     }
@@ -190,14 +293,13 @@ export default function RecordRouteScreen() {
     Toast.show({
       type: 'success',
       text1: 'Waypoint Pinned',
-      text2: `Coordinates tagged at point (${currentCoord.latitude}, ${currentCoord.longitude})`,
+      text2: `Coordinates tagged at (${currentCoord.latitude}, ${currentCoord.longitude})`,
     });
   };
 
-  // Finish and save route
   const handleFinishRoute = () => {
     Alert.alert(
-      'Finish Transect Route',
+      'Finish Route',
       `Save this ${formatDistance(totalDistanceM)} route with ${waypoints.length} pinned waypoints?`,
       [
         { text: 'Keep Recording', style: 'cancel' },
@@ -205,14 +307,13 @@ export default function RecordRouteScreen() {
           text: 'Save & Exit',
           style: 'default',
           onPress: () => {
-            if (locationSubscription.current) {
-              locationSubscription.current.remove();
-            }
+            if (locationSubscription.current) locationSubscription.current.remove();
+            if (simulatorInterval.current) clearInterval(simulatorInterval.current);
             setIsTracking(false);
             Toast.show({
               type: 'success',
-              text1: 'Route Stored',
-              text2: 'Transect route logged to local field memory.',
+              text1: 'Route Saved',
+              text2: 'Transect route stored to device.',
             });
             router.replace('/(tabs)/home');
           },
@@ -221,7 +322,6 @@ export default function RecordRouteScreen() {
     );
   };
 
-  // Formatter utilities
   const formatTime = (totalSec: number) => {
     const hrs = Math.floor(totalSec / 3600);
     const mins = Math.floor((totalSec % 3600) / 60);
@@ -232,14 +332,14 @@ export default function RecordRouteScreen() {
   };
 
   const formatDistance = (meters: number) => {
-    if (meters >= 1000) {
-      return `${(meters / 1000).toFixed(2)} km`;
-    }
+    if (meters >= 1000) return `${(meters / 1000).toFixed(2)} km`;
     return `${meters} m`;
   };
 
-  // Accuracy quality classification
   const getGpsQuality = () => {
+    if (isSimulating) {
+      return { label: 'Simulation Mode (Test)', color: '#0284C7', bg: '#E0F2FE' };
+    }
     if (accuracyM === null) {
       return { label: 'Searching...', color: '#68776D', bg: '#F0F4F1' };
     }
@@ -254,35 +354,201 @@ export default function RecordRouteScreen() {
 
   const gpsBadge = getGpsQuality();
 
+  // ==========================================
+  // REAL-TIME VECTOR MAP PROJECTION ALGORITHM
+  // ==========================================
+  const mapData = useMemo(() => {
+    if (breadcrumbs.length === 0) return null;
+
+    const lats = breadcrumbs.map((b) => b.latitude);
+    const lngs = breadcrumbs.map((b) => b.longitude);
+
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+
+    // Minimum bounding box span (ensures 10m paths don't over-scale)
+    const latSpan = Math.max(maxLat - minLat, 0.00012);
+    const lngSpan = Math.max(maxLng - minLng, 0.00012);
+
+    const pad = 28;
+    const drawW = MAP_WIDTH - pad * 2;
+    const drawH = MAP_HEIGHT - pad * 2;
+
+    const scale = Math.min(drawW / lngSpan, drawH / latSpan);
+
+    const project = (lat: number, lng: number) => {
+      const x = pad + (lng - minLng) * scale + (drawW - lngSpan * scale) / 2;
+      const y = MAP_HEIGHT - (pad + (lat - minLat) * scale + (drawH - latSpan * scale) / 2);
+      return { x, y };
+    };
+
+    // Project breadcrumb path nodes
+    const projectedPoints = breadcrumbs.map((pt) => project(pt.latitude, pt.longitude));
+
+    // Calculate vector segments between sequential points
+    const segments = [];
+    for (let i = 0; i < projectedPoints.length - 1; i++) {
+      const p1 = projectedPoints[i];
+      const p2 = projectedPoints[i + 1];
+      const dx = p2.x - p1.x;
+      const dy = p2.y - p1.y;
+      const length = Math.sqrt(dx * dx + dy * dy);
+      const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+      const midX = (p1.x + p2.x) / 2;
+      const midY = (p1.y + p2.y) / 2;
+
+      segments.push({
+        id: `seg-${i}`,
+        left: midX - length / 2,
+        top: midY - 1.5,
+        width: length,
+        angle,
+      });
+    }
+
+    // Project pinned waypoints onto the same grid
+    const projectedWaypoints = waypoints.map((wp) => ({
+      ...wp,
+      ...project(wp.latitude, wp.longitude),
+    }));
+
+    return {
+      points: projectedPoints,
+      segments,
+      waypoints: projectedWaypoints,
+      start: projectedPoints[0],
+      current: projectedPoints[projectedPoints.length - 1],
+    };
+  }, [breadcrumbs, waypoints]);
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" />
 
-      {/* Top App Bar */}
+      {/* Top Header */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.headerBackBtn} onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={22} color="#213B2A" />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
           <Text style={styles.headerTitle}>Route Tracing</Text>
-          <Text style={styles.headerSub}>Rainforest Transect Log</Text>
+          <Text style={styles.headerSub}>Real-Time GPS Transect</Text>
         </View>
         <View style={{ width: 40 }} />
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* GPS Accuracy HUD Pill */}
+        {/* GPS Accuracy Pill */}
         <View style={[styles.gpsStatusPill, { backgroundColor: gpsBadge.bg }]}>
           <View style={[styles.statusDot, { backgroundColor: gpsBadge.color }]} />
           <Text style={[styles.gpsStatusText, { color: gpsBadge.color }]}>
-            GPS Signal: {gpsBadge.label}
+            Signal: {gpsBadge.label}
           </Text>
         </View>
 
-        {/* Primary Telemetry Dashboard HUD */}
+        {/* REAL-TIME VECTOR TRAIL VISUALIZER CANVAS */}
+        <View style={styles.mapCanvasCard}>
+          <View style={styles.mapHeader}>
+            <View style={styles.mapHeaderLeft}>
+              <Ionicons name="map-outline" size={17} color="#52B788" />
+              <Text style={styles.mapHeaderTitle}>TRANSECT VISUALIZER</Text>
+            </View>
+            <View style={styles.compassBadge}>
+              <Ionicons name="compass" size={14} color="#74C69D" />
+              <Text style={styles.compassText}>N ↑</Text>
+            </View>
+          </View>
+
+          <View style={styles.canvasContainer}>
+            {/* Topographic Background Grid */}
+            <View style={styles.gridOverlay}>
+              <View style={[styles.gridLineH, { top: '25%' }]} />
+              <View style={[styles.gridLineH, { top: '50%' }]} />
+              <View style={[styles.gridLineH, { top: '75%' }]} />
+              <View style={[styles.gridLineV, { left: '25%' }]} />
+              <View style={[styles.gridLineV, { left: '50%' }]} />
+              <View style={[styles.gridLineV, { left: '75%' }]} />
+            </View>
+
+            {/* Empty State */}
+            {!mapData || mapData.points.length === 0 ? (
+              <View style={styles.emptyMapNotice}>
+                <Ionicons name="navigate-outline" size={32} color="#40634E" />
+                <Text style={styles.emptyMapTitle}>Awaiting Movement</Text>
+                <Text style={styles.emptyMapSub}>
+                  Start recording and walk forward to render your live trail path.
+                </Text>
+              </View>
+            ) : (
+              <>
+                {/* Render Connected Vector Line Segments */}
+                {mapData.segments.map((seg) => (
+                  <View
+                    key={seg.id}
+                    style={[
+                      styles.pathSegment,
+                      {
+                        left: seg.left,
+                        top: seg.top,
+                        width: seg.width,
+                        transform: [{ rotate: `${seg.angle}deg` }],
+                      },
+                    ]}
+                  />
+                ))}
+
+                {/* Start Location Marker */}
+                {mapData.start && (
+                  <View style={[styles.markerPin, { left: mapData.start.x - 10, top: mapData.start.y - 10 }]}>
+                    <View style={styles.startBeacon}>
+                      <Text style={styles.startBeaconText}>S</Text>
+                    </View>
+                  </View>
+                )}
+
+                {/* Waypoint Pins */}
+                {mapData.waypoints.map((wp, idx) => (
+                  <View
+                    key={wp.id}
+                    style={[styles.markerPin, { left: wp.x - 9, top: wp.y - 9 }]}
+                  >
+                    <View style={styles.waypointBeacon}>
+                      <Text style={styles.waypointBeaconText}>{idx + 1}</Text>
+                    </View>
+                  </View>
+                ))}
+
+                {/* Current Location (Pulsing Green Pointer) */}
+                {mapData.current && (
+                  <View
+                    style={[
+                      styles.markerPin,
+                      { left: mapData.current.x - 12, top: mapData.current.y - 12 },
+                    ]}
+                  >
+                    <View style={styles.currentPulseOuter}>
+                      <View style={styles.currentPulseInner} />
+                    </View>
+                  </View>
+                )}
+              </>
+            )}
+          </View>
+
+          {/* Scale & Coordinate Footer Strip */}
+          <View style={styles.mapFooterStrip}>
+            <Text style={styles.mapCoordText}>
+              {currentCoord ? `${currentCoord.latitude}°, ${currentCoord.longitude}°` : '0.000000°, 0.000000°'}
+            </Text>
+            <Text style={styles.mapBreadcrumbsCount}>{breadcrumbs.length} Pings Logged</Text>
+          </View>
+        </View>
+
+        {/* Telemetry Metrics HUD Card */}
         <View style={styles.hudCard}>
           <View style={styles.hudMainRow}>
-            {/* Elapsed Time */}
             <View style={styles.hudMetricCol}>
               <Text style={styles.hudMetricLabel}>DURATION</Text>
               <Text style={styles.hudMetricValBig}>{formatTime(secondsElapsed)}</Text>
@@ -290,100 +556,54 @@ export default function RecordRouteScreen() {
 
             <View style={styles.hudDivider} />
 
-            {/* Total Distance */}
             <View style={styles.hudMetricCol}>
               <Text style={styles.hudMetricLabel}>DISTANCE</Text>
               <Text style={styles.hudMetricValBig}>{formatDistance(totalDistanceM)}</Text>
             </View>
           </View>
 
-          {/* Secondary Telemetry Strip */}
           <View style={styles.hudSubStrip}>
             <View style={styles.hudSubMetric}>
-              <Ionicons name="speedometer-outline" size={16} color="#526A5A" />
+              <Ionicons name="speedometer-outline" size={16} color="#74C69D" />
               <Text style={styles.hudSubMetricText}>
                 Speed: <Text style={styles.boldText}>{currentSpeedKmh} km/h</Text>
               </Text>
             </View>
 
             <View style={styles.hudSubMetric}>
-              <Ionicons name="trail-sign-outline" size={16} color="#526A5A" />
+              <Ionicons name="trail-sign-outline" size={16} color="#74C69D" />
               <Text style={styles.hudSubMetricText}>
                 Waypoints: <Text style={styles.boldText}>{waypoints.length}</Text>
               </Text>
             </View>
-
-            <View style={styles.hudSubMetric}>
-              <Ionicons name="footsteps-outline" size={16} color="#526A5A" />
-              <Text style={styles.hudSubMetricText}>
-                Pings: <Text style={styles.boldText}>{breadcrumbs.length}</Text>
-              </Text>
-            </View>
           </View>
         </View>
 
-        {/* Live Coordinate Card */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Ionicons name="navigate-circle-outline" size={20} color="#213B2A" />
-            <Text style={styles.cardTitle}>Live Coordinates</Text>
-            {isTracking && (
-              <View style={styles.recordingLiveBadge}>
-                <View style={styles.pulsingRedDot} />
-                <Text style={styles.recordingLiveText}>
-                  {isPaused ? 'PAUSED' : 'LOGGING'}
-                </Text>
-              </View>
-            )}
-          </View>
-
-          <View style={styles.coordBox}>
-            <View style={styles.coordRow}>
-              <Text style={styles.coordKey}>Latitude</Text>
-              <Text style={styles.coordValue}>
-                {currentCoord ? `${currentCoord.latitude}° N` : 'Waiting for GPS...'}
-              </Text>
-            </View>
-            <View style={styles.coordDivider} />
-            <View style={styles.coordRow}>
-              <Text style={styles.coordKey}>Longitude</Text>
-              <Text style={styles.coordValue}>
-                {currentCoord ? `${currentCoord.longitude}° E` : 'Waiting for GPS...'}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Pinned Waypoints & Plant Inspections */}
+        {/* Pinned Plant Waypoints Section */}
         <View style={styles.card}>
           <View style={styles.cardHeaderBetween}>
             <View style={styles.cardHeader}>
-              <Ionicons name="pricetag-outline" size={20} color="#213B2A" />
+              <Ionicons name="pricetag-outline" size={19} color="#213B2A" />
               <Text style={styles.cardTitle}>Pinned Waypoints ({waypoints.length})</Text>
             </View>
             {isTracking && (
-              <TouchableOpacity
-                style={styles.addWaypointBtn}
-                onPress={handleTagPlantWaypoint}
-              >
-                <Ionicons name="add" size={16} color="#2D6A4F" />
-                <Text style={styles.addWaypointBtnText}>Pin Plant</Text>
+              <TouchableOpacity style={styles.addWaypointBtn} onPress={handleTagPlantWaypoint}>
+                <Ionicons name="add" size={15} color="#2D6A4F" />
+                <Text style={styles.addWaypointBtnText}>Pin Specimen</Text>
               </TouchableOpacity>
             )}
           </View>
 
           {waypoints.length === 0 ? (
             <View style={styles.emptyWaypointBox}>
-              <Ionicons name="location-outline" size={28} color="#A3B2A8" />
-              <Text style={styles.emptyWaypointText}>
-                No specimen waypoints pinned along this transect yet.
-              </Text>
+              <Ionicons name="location-outline" size={26} color="#A3B2A8" />
+              <Text style={styles.emptyWaypointText}>No plant waypoints pinned along this path yet.</Text>
             </View>
           ) : (
             <View style={styles.waypointList}>
               {waypoints.map((wp, idx) => (
                 <View key={wp.id} style={styles.waypointItem}>
-                  <View style={styles.waypointIconBox}>
+                  <View style={styles.waypointIndexBox}>
                     <Text style={styles.waypointIndexText}>{waypoints.length - idx}</Text>
                   </View>
                   <View style={styles.waypointMeta}>
@@ -398,46 +618,44 @@ export default function RecordRouteScreen() {
             </View>
           )}
         </View>
+
+        {/* Indoor Lab Testing Shortcut */}
+        {!isTracking && (
+          <TouchableOpacity style={styles.simBtn} onPress={startSimulation}>
+            <Ionicons name="flask-outline" size={16} color="#0284C7" />
+            <Text style={styles.simBtnText}>Test with Walk Simulator (Indoors/Lab)</Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
 
-      {/* High-Visibility Outdoor Floating Action Dock */}
+      {/* Floating Action Controls */}
       <View style={styles.actionDock}>
         {!isTracking ? (
           <TouchableOpacity style={styles.startTrackingBtn} onPress={startTracking}>
-            <Ionicons name="play" size={22} color="#FFFFFF" />
-            <Text style={styles.actionBtnText}>Start Route Recording</Text>
+            <Ionicons name="play" size={20} color="#FFFFFF" />
+            <Text style={styles.actionBtnText}>Start Live GPS Recording</Text>
           </TouchableOpacity>
         ) : (
           <View style={styles.activeControlsRow}>
-            {/* Pause / Resume */}
             <TouchableOpacity
-              style={[
-                styles.pauseBtn,
-                isPaused ? styles.resumeBtnStyle : styles.pauseBtnStyle,
-              ]}
+              style={[styles.pauseBtn, isPaused ? styles.resumeBtnStyle : styles.pauseBtnStyle]}
               onPress={togglePauseResume}
             >
               <Ionicons
                 name={isPaused ? 'play' : 'pause'}
-                size={20}
+                size={18}
                 color={isPaused ? '#FFFFFF' : '#213B2A'}
               />
-              <Text
-                style={[
-                  styles.controlBtnText,
-                  { color: isPaused ? '#FFFFFF' : '#213B2A' },
-                ]}
-              >
+              <Text style={[styles.controlBtnText, { color: isPaused ? '#FFFFFF' : '#213B2A' }]}>
                 {isPaused ? 'Resume' : 'Pause'}
               </Text>
             </TouchableOpacity>
 
-            {/* Log Observation at Current Position */}
             <TouchableOpacity
               style={styles.observeAtPinBtn}
               onPress={() => {
                 if (!currentCoord) {
-                  Alert.alert('GPS Pending', 'Acquiring location coordinates...');
+                  Alert.alert('GPS Pending', 'Acquiring GPS fix...');
                   return;
                 }
                 router.push({
@@ -449,13 +667,12 @@ export default function RecordRouteScreen() {
                 });
               }}
             >
-              <Ionicons name="leaf-outline" size={18} color="#FFFFFF" />
+              <Ionicons name="leaf-outline" size={17} color="#FFFFFF" />
               <Text style={styles.actionBtnTextSmall}>Log Tree</Text>
             </TouchableOpacity>
 
-            {/* Finish Route */}
             <TouchableOpacity style={styles.finishBtn} onPress={handleFinishRoute}>
-              <Ionicons name="stop" size={18} color="#FFFFFF" />
+              <Ionicons name="stop" size={17} color="#FFFFFF" />
               <Text style={styles.actionBtnTextSmall}>Finish</Text>
             </TouchableOpacity>
           </View>
@@ -508,10 +725,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingVertical: 7,
+    paddingHorizontal: 14,
     borderRadius: 20,
-    marginBottom: 14,
+    marginBottom: 12,
     gap: 8,
   },
   statusDot: {
@@ -520,52 +737,214 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   gpsStatusText: {
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: '700',
   },
-  hudCard: {
+  mapCanvasCard: {
+    backgroundColor: '#112217',
+    borderRadius: 20,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: '#1D3B29',
+    marginBottom: 14,
+  },
+  mapHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.25)',
+  },
+  mapHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  mapHeaderTitle: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#52B788',
+    letterSpacing: 0.8,
+  },
+  compassBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  compassText: {
+    color: '#74C69D',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  canvasContainer: {
+    width: MAP_WIDTH,
+    height: MAP_HEIGHT,
+    position: 'relative',
+    backgroundColor: '#0F2115',
+  },
+  gridOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  gridLineH: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: 'rgba(82, 183, 136, 0.1)',
+  },
+  gridLineV: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 1,
+    backgroundColor: 'rgba(82, 183, 136, 0.1)',
+  },
+  emptyMapNotice: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+    gap: 6,
+  },
+  emptyMapTitle: {
+    color: '#74C69D',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  emptyMapSub: {
+    color: '#52796F',
+    fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 16,
+  },
+  pathSegment: {
+    position: 'absolute',
+    height: 3.5,
+    backgroundColor: '#52B788',
+    borderRadius: 2,
+    shadowColor: '#52B788',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  markerPin: {
+    position: 'absolute',
+    zIndex: 10,
+  },
+  startBeacon: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     backgroundColor: '#1E3827',
-    borderRadius: 22,
-    padding: 18,
-    marginBottom: 16,
-    shadowColor: '#1E3827',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 3,
+    borderWidth: 2,
+    borderColor: '#74C69D',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  startBeaconText: {
+    color: '#D8F3DC',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  waypointBeacon: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#D97706',
+    borderWidth: 2,
+    borderColor: '#FDE68A',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  waypointBeaconText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '900',
+  },
+  currentPulseOuter: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(82, 183, 136, 0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  currentPulseInner: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#52B788',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  mapFooterStrip: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  mapCoordText: {
+    color: '#95D5B2',
+    fontSize: 11,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  mapBreadcrumbsCount: {
+    color: '#52796F',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  hudCard: {
+    backgroundColor: '#1B3B26',
+    borderRadius: 20,
+    padding: 16,
+    marginBottom: 14,
   },
   hudMainRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingBottom: 16,
+    paddingBottom: 14,
   },
   hudMetricCol: {
     flex: 1,
     alignItems: 'center',
   },
   hudMetricLabel: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '800',
-    color: '#A3CBB1',
+    color: '#95D5B2',
     letterSpacing: 0.8,
     marginBottom: 4,
   },
   hudMetricValBig: {
-    fontSize: 27,
+    fontSize: 26,
     fontWeight: '900',
     color: '#FFFFFF',
     fontVariant: ['tabular-nums'],
   },
   hudDivider: {
     width: 1,
-    height: 44,
+    height: 40,
     backgroundColor: 'rgba(255, 255, 255, 0.15)',
   },
   hudSubStrip: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    paddingTop: 14,
+    paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.12)',
   },
@@ -576,7 +955,7 @@ const styles = StyleSheet.create({
   },
   hudSubMetricText: {
     fontSize: 12,
-    color: '#CDE5D5',
+    color: '#D8F3DC',
   },
   boldText: {
     fontWeight: '800',
@@ -588,7 +967,7 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: '#E6ECE8',
-    marginBottom: 16,
+    marginBottom: 14,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -602,57 +981,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   cardTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#213B2A',
-  },
-  recordingLiveBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginLeft: 'auto',
-    backgroundColor: '#FEE2E2',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 10,
-    gap: 5,
-  },
-  pulsingRedDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#DC2626',
-  },
-  recordingLiveText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#DC2626',
-  },
-  coordBox: {
-    backgroundColor: '#F7F9F7',
-    borderRadius: 14,
-    padding: 14,
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: '#E2EAE4',
-  },
-  coordRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 4,
-  },
-  coordDivider: {
-    height: 1,
-    backgroundColor: '#E6EEE8',
-    marginVertical: 6,
-  },
-  coordKey: {
-    fontSize: 13,
-    color: '#68776D',
-    fontWeight: '600',
-  },
-  coordValue: {
-    fontSize: 14,
+    fontSize: 14.5,
     fontWeight: '800',
     color: '#213B2A',
   },
@@ -672,11 +1001,11 @@ const styles = StyleSheet.create({
   },
   emptyWaypointBox: {
     alignItems: 'center',
-    paddingVertical: 24,
-    gap: 8,
+    paddingVertical: 20,
+    gap: 6,
   },
   emptyWaypointText: {
-    fontSize: 13,
+    fontSize: 12.5,
     color: '#8A998E',
     textAlign: 'center',
   },
@@ -687,22 +1016,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F9FAF9',
-    padding: 12,
-    borderRadius: 14,
+    padding: 10,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E8EFEA',
   },
-  waypointIconBox: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+  waypointIndexBox: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     backgroundColor: '#2D6A4F',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
   },
   waypointIndexText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '800',
     color: '#FFFFFF',
   },
@@ -710,19 +1039,36 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   waypointLabel: {
-    fontSize: 13.5,
+    fontSize: 13,
     fontWeight: '700',
     color: '#213B2A',
   },
   waypointCoords: {
-    fontSize: 11.5,
+    fontSize: 11,
     color: '#68776D',
     marginTop: 2,
   },
   waypointTime: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '600',
     color: '#8A998E',
+  },
+  simBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: '#F0F9FF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    marginBottom: 10,
+  },
+  simBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0284C7',
   },
   actionDock: {
     position: 'absolute',
@@ -731,15 +1077,15 @@ const styles = StyleSheet.create({
     right: 0,
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderTopWidth: 1,
     borderTopColor: '#E6ECE8',
   },
   startTrackingBtn: {
     flexDirection: 'row',
     backgroundColor: '#2D6A4F',
-    height: 52,
-    borderRadius: 26,
+    height: 50,
+    borderRadius: 25,
     justifyContent: 'center',
     alignItems: 'center',
     gap: 8,
@@ -751,17 +1097,17 @@ const styles = StyleSheet.create({
   },
   actionBtnTextSmall: {
     color: '#FFFFFF',
-    fontSize: 13.5,
+    fontSize: 13,
     fontWeight: '800',
   },
   activeControlsRow: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
   },
   pauseBtn: {
     flex: 1.2,
-    height: 50,
-    borderRadius: 25,
+    height: 48,
+    borderRadius: 24,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -776,13 +1122,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#2D6A4F',
   },
   controlBtnText: {
-    fontSize: 13.5,
+    fontSize: 13,
     fontWeight: '800',
   },
   observeAtPinBtn: {
     flex: 1.2,
-    height: 50,
-    borderRadius: 25,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: '#1E3827',
     flexDirection: 'row',
     alignItems: 'center',
@@ -791,8 +1137,8 @@ const styles = StyleSheet.create({
   },
   finishBtn: {
     flex: 1,
-    height: 50,
-    borderRadius: 25,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: '#DC2626',
     flexDirection: 'row',
     alignItems: 'center',
