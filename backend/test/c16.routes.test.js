@@ -4,12 +4,16 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const path = require('node:path');
-// Fixture-only public origin; no real network request is made to this host.
+// Fixture-only public origin; no network request is made to this host.
 process.env.PUBLIC_PLANT_BASE_URL = 'https://example.test/p';
+process.env.PUBLIC_PLANT_BASE_URL = 'https://plants.example.test/p/';
 
 // Replace auth only within this isolated test process. Do not change auth.js.
 const authPath = require.resolve('../src/middleware/auth');
 let currentDb;
+// Role of the signed-in test user. Tests that need an officer set it and reset it
+// afterwards (see withRole).
+let currentRole = 'botanist';
 require.cache[authPath] = {
   id: authPath,
   filename: authPath,
@@ -17,7 +21,7 @@ require.cache[authPath] = {
   exports: {
     requireAuth: (req, _res, next) => {
       req.user = { id: '11111111-1111-4111-8111-111111111111' };
-      req.profile = { role: 'botanist', account_status: 'active' };
+      req.profile = { role: currentRole, account_status: 'active' };
       req.supabase = currentDb;
       next();
     },
@@ -34,25 +38,62 @@ const observationRouter = require('../src/routes/observations');
 
 function fakeSupabase(options = {}) {
   const inserts = [];
+  // Every update() and delete() call is recorded here, so a test can prove that
+  // nothing was written when access was denied.
+  const writes = [];
+
+  function plantRow() {
+    if (options.ownedPlant) {
+      return {
+        id: '22222222-2222-4222-8222-222222222222',
+        qr_code_value: 'NIAH-PLT-00001',
+        registered_by: '11111111-1111-4111-8111-111111111111'
+      };
+    }
+    if (options.otherOwnersPlant) {
+      // Registered by a different botanist than the signed-in test user.
+      return {
+        id: '22222222-2222-4222-8222-222222222222',
+        qr_code_value: 'NIAH-PLT-00002',
+        registered_by: '99999999-9999-4999-8999-999999999999'
+      };
+    }
+    return null;
+  }
+
+  // Chain returned by update()/delete(): supports .eq().select().maybeSingle().
+  // A write to an existing plant resolves with the changed row, like Supabase does;
+  // anything else resolves with no row.
+  function writeChain(table, row) {
+    const plant = table === 'plants' ? plantRow() : null;
+    return {
+      eq() { return this; },
+      select() { return this; },
+      maybeSingle: async () => ({ data: plant ? { ...plant, ...row } : null, error: null })
+    };
+  }
 
   return {
     inserts,
+    writes,
     from(table) {
       return {
         select() {
           return {
             eq() { return this; },
             maybeSingle: async () => ({
-              data: table === 'plants' && options.ownedPlant
-                ? {
-                    id: '22222222-2222-4222-8222-222222222222',
-                    qr_code_value: 'NIAH-PLT-00001',
-                    registered_by: '11111111-1111-4111-8111-111111111111'
-                  }
-                : null,
+              data: table === 'plants' ? plantRow() : null,
               error: null
             })
           };
+        },
+        update(row) {
+          writes.push({ table, op: 'update', row });
+          return writeChain(table, row);
+        },
+        delete() {
+          writes.push({ table, op: 'delete', row: null });
+          return writeChain(table, {});
         },
         insert(row) {
           inserts.push({ table, row });
@@ -92,6 +133,34 @@ async function withApp(run) {
       server.close(error => error ? reject(error) : resolve())
     );
   }
+}
+
+// Runs a test as a different role, then always switches back to botanist so the
+// next test isn't affected even if this one fails.
+async function withRole(role, run) {
+  currentRole = role;
+  try {
+    await run();
+  } finally {
+    currentRole = 'botanist';
+  }
+}
+
+// PATCH then DELETE the test plant; returns both responses with parsed bodies.
+async function updateThenDeletePlant(base) {
+  const url = `${base}/api/plants/22222222-2222-4222-8222-222222222222`;
+
+  const updateResponse = await fetch(url, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ description: 'Updated description' })
+  });
+  const deleteResponse = await fetch(url, { method: 'DELETE' });
+
+  return {
+    update: { status: updateResponse.status, body: await updateResponse.json() },
+    remove: { status: deleteResponse.status, body: await deleteResponse.json() }
+  };
 }
 
 async function post(base, endpoint, payload) {
@@ -193,28 +262,26 @@ test('C16: invalid plant coordinates return HTTP 400 without inserting', async (
   });
 });
 
-test('7.9: plant PUT is denied with HTTP 403', async () => {
-  currentDb = fakeSupabase();
+test("7.9: botanist cannot update another botanist's plant (403)", async () => {
+  currentDb = fakeSupabase({ otherOwnersPlant: true });
 
   await withApp(async base => {
     const response = await fetch(
       `${base}/api/plants/22222222-2222-4222-8222-222222222222`,
       {
-        method: 'PUT',
+        method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          scientific_name: 'Updated plant'
-        })
+        body: JSON.stringify({ description: 'Updated description' })
       }
     );
 
     assert.equal(response.status, 403);
-    assert.equal(currentDb.inserts.length, 0);
+    assert.equal(currentDb.writes.length, 0);
   });
 });
 
-test('7.9: plant DELETE is denied with HTTP 403', async () => {
-  currentDb = fakeSupabase();
+test("7.9: botanist cannot delete another botanist's plant (403)", async () => {
+  currentDb = fakeSupabase({ otherOwnersPlant: true });
 
   await withApp(async base => {
     const response = await fetch(
@@ -223,8 +290,47 @@ test('7.9: plant DELETE is denied with HTTP 403', async () => {
     );
 
     assert.equal(response.status, 403);
-    assert.equal(currentDb.inserts.length, 0);
+    assert.equal(currentDb.writes.length, 0);
   });
+});
+
+test('7.9: botanist can update and delete their own plant', async () => {
+  currentDb = fakeSupabase({ ownedPlant: true });
+
+  await withApp(async base => {
+    const { update, remove } = await updateThenDeletePlant(base);
+
+    assert.equal(update.status, 200);
+    assert.equal(update.body.plant.description, 'Updated description');
+    assert.equal(remove.status, 200);
+    assert.equal(remove.body.plant_id, '22222222-2222-4222-8222-222222222222');
+
+    // One update to the plant, then the delete removes its observations and the plant.
+    assert.deepEqual(
+      currentDb.writes.map(w => `${w.op}:${w.table}`),
+      ['update:plants', 'delete:observations', 'delete:plants']
+    );
+  });
+});
+
+test("7.9: officer can update and delete any botanist's plant", async () => {
+  currentDb = fakeSupabase({ otherOwnersPlant: true });
+
+  await withRole('officer', () =>
+    withApp(async base => {
+      const { update, remove } = await updateThenDeletePlant(base);
+
+      assert.equal(update.status, 200);
+      assert.equal(update.body.plant.description, 'Updated description');
+      assert.equal(remove.status, 200);
+      assert.equal(remove.body.plant_id, '22222222-2222-4222-8222-222222222222');
+
+      assert.deepEqual(
+        currentDb.writes.map(w => `${w.op}:${w.table}`),
+        ['update:plants', 'delete:observations', 'delete:plants']
+      );
+    })
+  );
 });
 
 test('7.9: QR lookup returns 404 for a plant not owned by the botanist', async () => {

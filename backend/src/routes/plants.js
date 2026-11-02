@@ -38,6 +38,32 @@ function visiblePlant(plant, profile) {
     return publicData;
 }
 
+// Ownership check for edits and deletes. Officers may change any plant; botanists
+// may only change plants they registered themselves. Call this before any write so
+// nothing is changed or deleted when access is denied.
+async function checkPlantWriteAccess(req, res, plantId) {
+    const { data: plant, error } = await req.supabase
+        .from("plants")
+        .select("id, registered_by")
+        .eq("id", plantId)
+        .maybeSingle();
+
+    if (error) {
+        console.error("Plant access check error:", error);
+        res.status(500).json({ message: "Could not check plant access" });
+        return false;
+    }
+    if (!plant) {
+        res.status(404).json({ message: "Plant record not found" });
+        return false;
+    }
+    if (req.profile.role !== "officer" && plant.registered_by !== req.user.id) {
+        res.status(403).json({ message: "You can only change your own plant records" });
+        return false;
+    }
+    return true;
+}
+
 // List plants visible to the signed-in staff member.
 router.get("/", requireRole("botanist", "officer", "researcher"), async (req, res) => {
     const page = req.query.page === undefined ? 1 : Number(req.query.page);
@@ -388,6 +414,8 @@ router.patch("/:id", requireRole("botanist", "officer"), async (req, res) => {
         return res.status(400).json({ message: "No valid fields provided to update" });
     }
 
+    if (!(await checkPlantWriteAccess(req, res, plantId))) return;
+
     try {
         const { data, error } = await req.supabase
             .from("plants")
@@ -416,14 +444,45 @@ router.patch("/:id", requireRole("botanist", "officer"), async (req, res) => {
 });
 
 // ── DELETE PLANT RECORD ─────────────────────────────────────────
-// Generic plant replacement and hard deletion are forbidden; use the reviewed
-// observation workflow for lifecycle changes. Never delete children here.
-router.put("/:id", (_req, res) => {
-    return res.status(403).json({ message: "Direct plant replacement is not permitted" });
-});
+router.delete("/:id", requireRole("botanist", "officer"), async (req, res) => {
+    const plantId = req.params.id;
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-router.delete("/:id", (_req, res) => {
-    return res.status(403).json({ message: "Direct plant deletion is not permitted" });
+    if (!uuidPattern.test(plantId)) {
+        return res.status(400).json({ message: "Valid plant ID is required" });
+    }
+
+    if (!(await checkPlantWriteAccess(req, res, plantId))) return;
+
+    try {
+        // Delete child observations if any exist
+        await req.supabase.from("observations").delete().eq("plant_id", plantId);
+
+        // Delete the plant record
+        const { data, error } = await req.supabase
+            .from("plants")
+            .delete()
+            .eq("id", plantId)
+            .select("id")
+            .maybeSingle();
+
+        if (error) {
+            console.error("Delete plant error:", error);
+            return res.status(500).json({ message: "Could not delete plant record" });
+        }
+
+        if (!data) {
+            return res.status(404).json({ message: "Plant record not found" });
+        }
+
+        return res.json({
+            message: "Plant deleted successfully",
+            plant_id: data.id
+        });
+    } catch (err) {
+        console.error("Server error deleting plant:", err);
+        return res.status(500).json({ message: "Internal server error" });
+    }
 });
 
 // UPLOAD a photo for a plant
