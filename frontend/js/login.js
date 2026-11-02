@@ -1,0 +1,73 @@
+// login.js - the Log in page for officers and botanists.
+
+// If someone is already logged in, skip the form and go to their home page.
+const alreadyIn = getCurrentUser();
+if (alreadyIn !== null) {
+  goToHome();
+}
+
+// Shows a red message under the form. Pass '' to hide it.
+function showAuthError(message) {
+  const box = document.getElementById('auth-error');
+  box.textContent = message;
+  box.hidden = (message === '');
+}
+
+// Tells a suspended botanist to contact the officer, with a link that opens their email program.
+function showSuspended() {
+  const box = document.getElementById('auth-error');
+  box.textContent = 'This account is suspended. Please contact the officer at ';
+  const link = document.createElement('a');
+  link.href = 'mailto:' + OFFICER_CONTACT_EMAIL;
+  link.textContent = OFFICER_CONTACT_EMAIL;
+  box.appendChild(link);
+  box.hidden = false;
+}
+
+// Checks the username, email and password with Supabase. If they are right, logs in and opens the website.
+async function doLogin() {
+  const username = document.getElementById('login-username').value.trim();
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+
+  if (username === '' || email === '' || password === '') {
+    showAuthError('Enter your username, email and password.');
+    return;
+  }
+
+  // 1. Supabase checks the email and password.
+  const result = await sb.auth.signInWithPassword({ email: email, password: password });
+  if (result.error) {
+    showAuthError('Wrong username, email or password.');
+    return;
+  }
+
+  // 2. The username saved on the account must match what was typed.
+  const savedName = result.data.user.user_metadata.username;
+  if (savedName && sameText(savedName, username) === false) {
+    await sb.auth.signOut();
+    showAuthError('Wrong username, email or password.');
+    return;
+  }
+
+  // 3. The backend says what role this person has. A suspended account is refused here.
+  let me;
+  try {
+    me = await api('/me');
+  } catch (error) {
+    await sb.auth.signOut();
+    showAuthError(error.message);
+    return;
+  }
+
+  showAuthError('');
+  startSession(me, savedName || username);
+  goToHome();
+}
+
+// Pressing Enter in the password box also logs in.
+document.getElementById('login-password').onkeydown = function (event) {
+  if (event.key === 'Enter') {
+    doLogin();
+  }
+};

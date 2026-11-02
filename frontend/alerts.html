@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>IoT alerts - Niah Biotrack</title>
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="icon" href="images/logo.png">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app">
+  <nav id="menu"></nav>
+
+  <main>
+    <section class="page on">
+      <h1>IoT <span>alerts</span></h1>
+      <p class="lead">
+        Monitor sensor threats across Niah stations. Alerts resolve automatically
+        when a valid reading returns to normal.
+      </p>
+
+      <div class="stats" aria-label="Active alert summary">
+        <div class="card"><b id="active-count">–</b>Active alerts</div>
+        <div class="card"><b id="critical-count">–</b>Critical</div>
+        <div class="card"><b id="warning-count">–</b>Warnings</div>
+      </div>
+
+      <div class="bar">
+        <select id="alert-filter" aria-label="Filter alerts by status">
+          <option value="active">Active</option>
+          <option value="resolved">Resolved</option>
+          <option value="all">All</option>
+        </select>
+        <button id="refresh-alerts" class="btn" type="button">Refresh alerts</button>
+      </div>
+
+      <p id="alert-message" class="muted" role="status" aria-live="polite"></p>
+      <div id="alert-list" class="alert-list"></div>
+
+      <p class="muted">
+        Sprint 1 prototype: alert history is held in backend memory and resets
+        when the server restarts.
+      </p>
+    </section>
+  </main>
+</div>
+
+<div id="toast" role="status"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
+<script src="js/shared.js"></script>
+<script src="js/alerts.js"></script>
+</body>
+</html>
