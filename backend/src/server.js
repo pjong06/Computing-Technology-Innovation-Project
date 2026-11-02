@@ -65,7 +65,12 @@ app.get('/api/health/supabase', async (_req, res) => {
 });
 
 // Return approved public plant information for a QR code.
-app.get('/api/public/plants/by-qr', async (req, res) => {
+const { createQrLimiter, publicQrData } = require('./middleware/publicQrProtection');
+const qrLimiter = createQrLimiter({
+  limit: Number(process.env.QR_RATE_LIMIT || 60),
+  windowMs: Number(process.env.QR_RATE_WINDOW_MS || 60000),
+});
+app.get('/api/public/plants/by-qr', qrLimiter, async (req, res) => {
   const qrCode =
     typeof req.query.code === 'string'
       ? req.query.code.trim()
@@ -90,7 +95,7 @@ app.get('/api/public/plants/by-qr', async (req, res) => {
   }
 
   res.set('Cache-Control', 'no-store');
-  return res.json({ data: data[0] });
+  return res.json({ data: publicQrData(data[0]) });
 });
 
 function currentUser(req, res) {
