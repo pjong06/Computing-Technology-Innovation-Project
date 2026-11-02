@@ -4,6 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const path = require('node:path');
+// Fixture-only public origin; no network request is made to this host.
+process.env.PUBLIC_PLANT_BASE_URL = 'https://example.test/p';
 process.env.PUBLIC_PLANT_BASE_URL = 'https://plants.example.test/p/';
 
 // Replace auth only within this isolated test process. Do not change auth.js.
@@ -395,5 +397,136 @@ test('7.9: owned plant QR image returns PNG', async () => {
       [...image.subarray(0, 8)],
       [137, 80, 78, 71, 13, 10, 26, 10]
     );
+  });
+});
+
+const SUBMIT_OBSERVATION_ID = '44444444-4444-4444-8444-444444444444';
+const SUBMIT_OWNER_ID = '11111111-1111-4111-8111-111111111111';
+
+function observationSubmitDb(status, options = {}) {
+  const state = {
+    observation: options.missing ? null : {
+      id: SUBMIT_OBSERVATION_ID,
+      observer_id: options.otherOwner
+        ? '99999999-9999-4999-8999-999999999999'
+        : SUBMIT_OWNER_ID,
+      review_status: status
+    },
+    updateCalls: 0
+  };
+
+  return {
+    state,
+    from(table) {
+      assert.equal(table, 'observations');
+
+      return {
+        select() {
+          return {
+            eq() { return this; },
+            async maybeSingle() {
+              return { data: state.observation && { ...state.observation }, error: null };
+            }
+          };
+        },
+        update(changes) {
+          state.updateCalls++;
+
+          return {
+            eq() { return this; },
+            in() { return this; },
+            select() { return this; },
+            async maybeSingle() {
+              if (!state.observation) {
+                return { data: null, error: null };
+              }
+
+              state.observation = {
+                ...state.observation,
+                ...changes
+              };
+
+              return {
+                data: { ...state.observation },
+                error: null
+              };
+            }
+          };
+        }
+      };
+    }
+  };
+}
+
+async function submitObservation(base) {
+  const response = await fetch(
+    `${base}/api/observations/${SUBMIT_OBSERVATION_ID}/submit`,
+    { method: 'PATCH' }
+  );
+
+  return {
+    status: response.status,
+    body: await response.json()
+  };
+}
+
+for (const initialStatus of ['draft', 'rejected']) {
+  test(`Observation submit: ${initialStatus} becomes pending`, async () => {
+    currentDb = observationSubmitDb(initialStatus);
+
+    await withApp(async base => {
+      const result = await submitObservation(base);
+
+      assert.equal(result.status, 200);
+      assert.equal(result.body.observation.review_status, 'pending');
+      assert.equal(currentDb.state.updateCalls, 1);
+    });
+  });
+}
+
+test('Observation submit: already pending returns 200 without updating', async () => {
+  currentDb = observationSubmitDb('pending');
+
+  await withApp(async base => {
+    const first = await submitObservation(base);
+    const retry = await submitObservation(base);
+
+    assert.equal(first.status, 200);
+    assert.equal(retry.status, 200);
+    assert.equal(retry.body.observation.review_status, 'pending');
+    assert.equal(currentDb.state.updateCalls, 0);
+  });
+});
+
+test('Observation submit: approved observation returns 400', async () => {
+  currentDb = observationSubmitDb('approved');
+
+  await withApp(async base => {
+    const result = await submitObservation(base);
+
+    assert.equal(result.status, 400);
+    assert.equal(currentDb.state.updateCalls, 0);
+  });
+});
+
+test('Observation submit: another botanist cannot submit observation', async () => {
+  currentDb = observationSubmitDb('draft', { otherOwner: true });
+
+  await withApp(async base => {
+    const result = await submitObservation(base);
+
+    assert.equal(result.status, 403);
+    assert.equal(currentDb.state.updateCalls, 0);
+  });
+});
+
+test('Observation submit: nonexistent observation returns 404', async () => {
+  currentDb = observationSubmitDb('draft', { missing: true });
+
+  await withApp(async base => {
+    const result = await submitObservation(base);
+
+    assert.equal(result.status, 404);
+    assert.equal(currentDb.state.updateCalls, 0);
   });
 });

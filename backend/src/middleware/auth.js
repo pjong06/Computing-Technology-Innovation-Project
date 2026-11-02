@@ -1,6 +1,7 @@
 // Import Supabase clients for token verification and user-specific requests
 const { verifier, forUser } = require("../config/supabase");
 const { hasExpectedClaims } = require('./verifiedJwtClaims');
+const { parseBearerToken } = require('./bearerToken');
 
 // Define the roles that are considered staff
 const STAFF_ROLES = new Set(["botanist", "officer", "researcher", "admin"]);
@@ -8,22 +9,22 @@ const STAFF_ROLES = new Set(["botanist", "officer", "researcher", "admin"]);
 // Middleware: check whether the user is authenticated
 async function requireAuth(req, res, next) {
     // Get the Bearer token from the Authorization header
-    const match = (req.get("authorization") || "").match(/^Bearer\s+(.+)$/i);
-    if (!match) return res.status(401).json({ message: "Bearer token required" });
+    const token = parseBearerToken(req.get("authorization"));
+    if (!token) return res.status(401).json({ message: "Bearer token required" });
 
     try {
         // Use the token to verify and get the logged-in user
-        const { data: { user }, error: userError } = await verifier.auth.getUser(match[1]);
+        const { data: { user }, error: userError } = await verifier.auth.getUser(token);
         if (userError || !user) {
             return res.status(401).json({ message: "Invalid or expired token" });
         }
 
-        if (!hasExpectedClaims(match[1], user.id, process.env.SUPABASE_URL)) {
+        if (!hasExpectedClaims(token, user.id, process.env.SUPABASE_URL)) {
             return res.status(401).json({ message: "Invalid or expired token" });
         }
 
         // Create a Supabase client using this user's token
-        const userClient = forUser(match[1]);
+        const userClient = forUser(token);
 
         // Get the user's role and account status from profiles
         const { data: profile, error: profileError } = await userClient
