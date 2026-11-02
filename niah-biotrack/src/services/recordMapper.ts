@@ -34,8 +34,8 @@ export interface BackendObservationPayload {
   plant_id: string; // the SERVER's id for the plant (returned by POST /api/plants)
   observed_at?: string; // ISO date; left out for old visits that only have display text
   recorded_by: string;
-  health_status: string;
-  life_stage: string;
+  health_status?: string;
+  life_stage?: string;
   measurement?: string;
   notes?: string;
 }
@@ -76,8 +76,9 @@ export function mapLocalObservationToBackend(
     // observedAt, so the field is left out and the server uses the upload time.
     observed_at: obs.observedAt,
     recorded_by: obs.recordedBy,
-    health_status: obs.health.toLowerCase(),
-    life_stage: obs.stage.toLowerCase(),
+    // Left out when missing (registration visit); the backend stores them as null.
+    health_status: obs.health?.toLowerCase(),
+    life_stage: obs.stage?.toLowerCase(),
     measurement: obs.measurement,
     notes: obs.notes,
   };

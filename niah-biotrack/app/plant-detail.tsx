@@ -254,10 +254,10 @@ export default function PlantDetailScreen() {
                 <Text style={styles.obsAuthor}>{obs.recordedBy}</Text>
                 <View style={styles.pillGroup}>
                   <View style={styles.tagPill}>
-                    <Text style={styles.tagPillText}>{obs.health}</Text>
+                    <Text style={styles.tagPillText}>{obs.health ?? 'Not recorded'}</Text>
                   </View>
                   <View style={styles.tagPill}>
-                    <Text style={styles.tagPillText}>{obs.stage}</Text>
+                    <Text style={styles.tagPillText}>{obs.stage ?? 'Not recorded'}</Text>
                   </View>
                   <View style={styles.tagPill}>
                     <Text style={styles.tagPillText}>{obs.measurement}</Text>

@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { randomUUID } from 'expo-crypto';
 import { apiFetch, ApiError } from '../api/client';
+import { useProfileStore } from './useProfileStore';
 // recordMapper imports only types from this file (import type), so there is no
 // runtime circular dependency between the two.
 import { mapLocalRecordToBackend, mapLocalObservationToBackend } from '../services/recordMapper';
@@ -28,8 +29,10 @@ export interface ObservationVisit {
   // This is what gets uploaded. Visits saved before store v6 don't have it.
   observedAt?: string;
   recordedBy: string;
-  health: 'Healthy' | 'Stressed' | 'Damaged' | 'Dead';
-  stage: 'Bud' | 'Flowering' | 'Vegetative' | 'Fruiting';
+  // Optional because the registration visit (made on submit for a record with no
+  // visits) has no health or stage to report. Screens show "Not recorded" instead.
+  health?: 'Healthy' | 'Stressed' | 'Damaged' | 'Dead';
+  stage?: 'Bud' | 'Flowering' | 'Vegetative' | 'Fruiting';
   measurement: string;
   notes: string;
   syncStatus: SyncStatus;
@@ -62,7 +65,10 @@ export interface PlantRecord {
   syncStatus: SyncStatus;
   reviewStatus: ReviewStatus;
   reviewComment?: string | null; // officer's reason when rejected
-  createdAt: string;
+  createdAt: string; // for display only, e.g. "2 Nov" (no year or time)
+  // When the record was created, as an ISO 8601 string. Records saved before store v7
+  // don't have it.
+  createdAtIso?: string;
   conservationStatus?: 'EN' | 'VU' | 'LC' | 'CR';
   routeLength?: string;
   walkingTime?: string;
@@ -108,12 +114,40 @@ interface ObservationUploadResponse {
 // anyway, thanks to client_record_id, but it saves needless requests.)
 const uploadsInProgress = new Set<string>();
 
+// The visit added on submit to a record that has none, so the officer has something
+// to review. Only real data from the record goes in: health and stage are left out
+// because registering a plant doesn't record them.
+function buildRegistrationVisit(record: PlantRecord): ObservationVisit {
+  // Old records (before store v7) only have the "2 Nov" display date. Then observedAt
+  // is left out and the server uses the upload time instead.
+  const created = record.createdAtIso ? new Date(record.createdAtIso) : null;
+  const me = useProfileStore.getState().me;
+  return {
+    id: randomUUID(),
+    // Same display format as add-observation.tsx.
+    date: created
+      ? `${created.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} · ${created.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`
+      : record.createdAt,
+    observedAt: record.createdAtIso,
+    // Same fallback as add-observation.tsx. Display only: the server records the
+    // signed-in user itself.
+    recordedBy: me?.full_name || me?.email || 'Field Staff',
+    // The height entered when registering, in the same "0.4 m" form as other visits.
+    measurement: record.height ? `${record.height} m` : 'Not recorded',
+    notes: record.description?.trim() || 'Registration visit (added on submit).',
+    syncStatus: SyncStatus.NOT_UPLOADED,
+  };
+}
+
 interface RecordState {
   records: PlantRecord[];
   routes: RecordedRoute[];
   activeDraftRoute: RecordedRoute | null;
   addRecord: (
-    record: Omit<PlantRecord, 'id' | 'tagCode' | 'createdAt' | 'observations' | 'reviewStatus' | 'reviewComment'>
+    record: Omit<
+      PlantRecord,
+      'id' | 'tagCode' | 'createdAt' | 'createdAtIso' | 'observations' | 'reviewStatus' | 'reviewComment'
+    >
   ) => PlantRecord;
   // observedAt is required for new visits (it's only optional on the type for old ones).
   addObservation: (
@@ -138,13 +172,15 @@ export const useRecordStore = create<RecordState>()(
       routes: [],
       activeDraftRoute: null,
       addRecord: (recordData) => {
+        const now = new Date();
         const newRecord: PlantRecord = {
           ...recordData,
           id: randomUUID(),
           tagCode: null, // set later from a pre-printed tag
           reviewStatus: ReviewStatus.DRAFT,
           reviewComment: null,
-          createdAt: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
+          createdAt: now.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
+          createdAtIso: now.toISOString(), // same moment, machine-readable
           observations: [],
         };
         set((state) => ({ records: [newRecord, ...state.records] }));
@@ -242,6 +278,15 @@ export const useRecordStore = create<RecordState>()(
             updateObservation(obs.id, { syncStatus: SyncStatus.UPLOADED, serverId: response.observation.id });
           }
 
+          // TODO(submit): once Gerald restores PATCH /api/observations/:id/submit (removed
+          // from main in 4efe9c5), submit the visits here. If this record is PENDING on the
+          // phone, call the route for every visit that has a serverId and is still a draft
+          // on the server, and treat "already pending" (200) as success. Doing it here,
+          // not in submitForReview, means a submit whose upload failed still reaches the
+          // officer queue later via Retry or "Sync now". Throw on any other error so the
+          // record is marked FAILED like an upload failure. Also extend SyncResult (or
+          // SubmitResult) with a flag so plant-detail can say "Submitted to officer review".
+
           // 3. Mark the record UPLOADED, but only if nothing new appeared meanwhile. A visit
           //    added while we were uploading wasn't in visitsToSend; leaving the record
           //    NOT_UPLOADED means the next sync picks it up instead of skipping it forever.
@@ -303,11 +348,20 @@ export const useRecordStore = create<RecordState>()(
         if (record.reviewStatus !== ReviewStatus.DRAFT && record.reviewStatus !== ReviewStatus.REJECTED) {
           return { ok: false, reason: 'This record has already been submitted' };
         }
+        // The backend reviews visits, not plants, so a record with no visits would give
+        // the officer nothing to review. Add a registration visit built from the record.
+        const registrationVisit = record.observations.length === 0 ? buildRegistrationVisit(record) : null;
+
         // The submission has to reach the server, so it also needs uploading again.
         set((state) => ({
           records: state.records.map((r) =>
             r.id === id
-              ? { ...r, reviewStatus: ReviewStatus.PENDING, syncStatus: SyncStatus.NOT_UPLOADED }
+              ? {
+                  ...r,
+                  reviewStatus: ReviewStatus.PENDING,
+                  syncStatus: SyncStatus.NOT_UPLOADED,
+                  observations: registrationVisit ? [registrationVisit] : r.observations,
+                }
               : r
           ),
         }));
@@ -352,7 +406,7 @@ export const useRecordStore = create<RecordState>()(
     {
       name: 'niah-ground-truth-store',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 6,
+      version: 7,
       migrate: (persistedState, version) => {
         const state = persistedState as { records?: Record<string, unknown>[] };
         if (version < 1 && Array.isArray(state.records)) {
@@ -425,6 +479,10 @@ export const useRecordStore = create<RecordState>()(
               : [],
           }));
         }
+
+        // v7: new records get createdAtIso. Nothing to convert: older records only have
+        // the "2 Nov" display date, which has no year or time to rebuild it from, so they
+        // simply go without it.
 
         return state as unknown as RecordState;
       },
