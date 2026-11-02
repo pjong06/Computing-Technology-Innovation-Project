@@ -1,4 +1,3 @@
-require('dotenv').config();
 const express = require('express');
 const { createHash } = require('node:crypto');
 
@@ -61,70 +60,12 @@ function createAuthRouter({ createRecoveryClient = defaultClient,
   const allow = createLimiter(now);
   router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
-  router.post('/temp-password', async (req, res) => {
-    const { identifier, tempPassword } = req.body || {};
-    if (!identifier || !tempPassword) {
-      return res.status(400).json({ error: 'Identifier and tempPassword are required.' });
-    }
+  // Permanently disabled: caller-selected identities/passwords must not reach admin APIs.
+  router.post('/temp-password', (_req, res) => res.status(410).json({
+    code: 'TEMP_PASSWORD_DISABLED',
+    message: 'Temporary password reset is disabled. Use verified email recovery.',
+  }));
 
-    const clean = identifier.trim().toLowerCase();
-    const serviceKey =
-      process.env.SUPABASE_SERVICE_ROLE_KEY ||
-      process.env.SUPABASE_SERVICE_KEY ||
-      process.env.SUPABASE_KEY;
-
-    if (!serviceKey) {
-      console.error('Missing service key in backend/.env');
-      return res.status(500).json({ error: 'Missing SUPABASE_KEY / SUPABASE_SERVICE_ROLE_KEY in backend/.env' });
-    }
-
-    try {
-      const { createClient } = require('@supabase/supabase-js');
-      const adminClient = createClient(
-        process.env.SUPABASE_URL,
-        serviceKey,
-        { auth: { persistSession: false, autoRefreshToken: false } }
-      );
-
-      // 1. Fetch auth users directly — ignores any missing columns in public.profiles
-      const { data, error: listErr } = await adminClient.auth.admin.listUsers({
-        perPage: 1000,
-      });
-
-      if (listErr) {
-        console.error('List users error:', listErr);
-        return res.status(500).json({ error: `Auth lookup failed: ${listErr.message}` });
-      }
-
-      const targetUser = data.users.find(
-        (u) => u.email?.toLowerCase() === clean
-      );
-
-      if (!targetUser) {
-        return res.status(404).json({ error: `No account found with email "${clean}".` });
-      }
-
-      // 2. Update password directly via Supabase Auth Admin
-      const { error: updateErr } = await adminClient.auth.admin.updateUserById(targetUser.id, {
-        password: tempPassword,
-      });
-
-      if (updateErr) {
-        console.error('Auth admin update error:', updateErr);
-        return res.status(500).json({ error: updateErr.message });
-      }
-
-      return res.status(200).json({
-        success: true,
-        message: 'Temporary password updated in database.',
-        email: targetUser.email,
-      });
-    } catch (err) {
-      console.error('Temp password exception:', err);
-      return res.status(500).json({ error: err.message || 'Server error updating password' });
-    }
-  });
-  
   router.post('/forgot-password', async (req, res) => {
     if (!allow(`request:${req.ip}`, 20)) {
       return res.status(429).json({ message: 'Too many requests. Try again later.' });
@@ -172,7 +113,6 @@ function createAuthRouter({ createRecoveryClient = defaultClient,
         !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
       return res.status(400).json({ message: 'Use 12 to 128 characters with uppercase, lowercase and a number.' });
     }
-    // A fresh client per request prevents recovery sessions leaking between users.
     let client;
     try {
       client = createRecoveryClient();
@@ -183,7 +123,6 @@ function createAuthRouter({ createRecoveryClient = defaultClient,
           session.expires_at * 1000 <= now()) {
         return res.status(401).json({ message: INVALID_RECOVERY });
       }
-      // Verify with Supabase Auth; do not trust locally decoded token claims or getSession alone.
       const verified = await client.auth.getUser(session.access_token);
       if (verified.error || verified.data?.user?.id !== data.user.id) {
         return res.status(401).json({ message: INVALID_RECOVERY });
@@ -196,13 +135,13 @@ function createAuthRouter({ createRecoveryClient = defaultClient,
     } catch {
       return res.status(503).json({ message: 'Recovery service unavailable. Try again later.' });
     } finally {
-      // Revoke the newly created recovery session; do not expose tokens in responses.
       if (client) {
         try { await client.auth.signOut({ scope: 'local' }); }
         catch { console.warn('Recovery session cleanup failed'); }
       }
     }
   });
+
   return router;
 }
 
