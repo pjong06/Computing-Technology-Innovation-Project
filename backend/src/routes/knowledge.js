@@ -3,8 +3,32 @@ const multer = require("multer");
 const sharp = require("sharp");
 const { randomUUID } = require("node:crypto");
 const { requireAuth, requireRole } = require("../middleware/auth");
-const { publicClient: supabase } = require("../config/supabase");
 
+function parsePagination(query, defaultSize = 50) {
+    const { page = "1", page_size = String(defaultSize) } = query;
+    if (typeof page !== "string" || typeof page_size !== "string" ||
+        !/^[1-9]\d*$/.test(page) || !/^[1-9]\d*$/.test(page_size)) return null;
+    const number = Number(page), size = Number(page_size);
+    if (!Number.isSafeInteger(number) || number > 100000 ||
+        !Number.isSafeInteger(size) || size > 100) return null;
+    return { page: number, page_size: size, start: (number - 1) * size, end: number * size - 1 };
+}
+
+function paginationMetadata(paging, count) {
+    return { page: paging.page, page_size: paging.page_size,
+        total: count ?? 0, total_pages: Math.ceil((count ?? 0) / paging.page_size) };
+}
+
+function textLimit(field) {
+    return ["common_name", "local_name"].includes(field) ? 200 :
+        ["species_category", "conservation_status"].includes(field) ? 100 : 10000;
+}
+function validOptionalText(field, value) {
+    return typeof value === "string" && value.trim().length > 0 && value.trim().length <= textLimit(field);
+}
+
+function createKnowledgeRouter({ supabase = require("../config/supabase").publicClient,
+    requireAuth: authenticate = requireAuth, requireRole: authorize = requireRole } = {}) {
 const router = express.Router();
 
 const photoUpload = multer({
@@ -23,22 +47,25 @@ function receivePhoto(req, res, next) {
 }
 
 // Show the classifications already available for species.
-router.get("/taxonomy", async (_req, res) => {
-    const { data, error } = await supabase
+router.get("/taxonomy", async (req, res) => {
+    const paging = parsePagination(req.query, 100);
+    if (!paging) return res.status(400).json({ message: "Invalid page or page_size" });
+    const { data, error, count } = await supabase
         .from("taxonomy")
-        .select("id, kingdom, division, class_name, order_name, family, genus")
+        .select("id, kingdom, division, class_name, order_name, family, genus", { count: "exact" })
         .order("genus")
-        .limit(100);
+        .order("id")
+        .range(paging.start, paging.end);
 
     if (error) {
         console.error("Taxonomy list error:", error);
         return res.status(500).json({ message: "Could not load taxonomy" });
     }
 
-    return res.json({ data });
+    return res.json({ data, pagination: paginationMetadata(paging, count) });
 });
 
-router.post("/taxonomy", requireAuth, requireRole("officer"), async (req, res) => {
+router.post("/taxonomy", authenticate, authorize("officer"), async (req, res) => {
     const body = req.body;
     if (!body || typeof body !== "object" || Array.isArray(body)) {
         return res.status(400).json({ message: "A taxonomy object is required" });
@@ -95,19 +122,22 @@ router.post("/taxonomy", requireAuth, requireRole("officer"), async (req, res) =
 });
 
 // Let officers find approved and archived species.
-router.get("/species/manage", requireAuth, requireRole("officer"), async (_req, res) => {
-    const { data, error } = await _req.supabase
+router.get("/species/manage", authenticate, authorize("officer"), async (req, res) => {
+    const paging = parsePagination(req.query);
+    if (!paging) return res.status(400).json({ message: "Invalid page or page_size" });
+    const { data, error, count } = await req.supabase
         .from("species")
-        .select("id, scientific_name, common_name, verification_status")
+        .select("id, scientific_name, common_name, verification_status", { count: "exact" })
         .order("scientific_name")
-        .limit(50);
+        .order("id")
+        .range(paging.start, paging.end);
 
     if (error) {
         console.error("Manage species list error:", error);
         return res.status(500).json({ message: "Could not load species" });
     }
 
-    return res.json({ data });
+    return res.json({ data, pagination: paginationMetadata(paging, count) });
 });
 
 // GET /api/knowledge/species
@@ -124,14 +154,13 @@ router.get("/species", async (req, res) => {
         return res.status(400).json({ message: "Invalid species filters" });
     }
 
-    const pageNumber = Number(page);
-    const size = Number(pageSize);
-    if (!Number.isSafeInteger(pageNumber) || pageNumber > 100000 || size > 100) {
+    const paging = parsePagination(req.query);
+    if (!paging) {
         return res.status(400).json({ message: "Invalid page or page_size" });
     }
 
     // The public catalogue contains approved species only. Family belongs to taxonomy.
-    const taxonomyJoin = family ? "taxonomy!inner(family)" : "taxonomy(family)";
+    const taxonomyJoin = family.trim() ? "taxonomy!inner(family)" : "taxonomy(family)";
     let query = supabase
         .from("species")
         .select(`id, scientific_name, common_name, local_name, species_category, conservation_status, description, ${taxonomyJoin}`, { count: "exact" })
@@ -149,7 +178,7 @@ router.get("/species", async (req, res) => {
     }
     if (category.trim()) query = query.eq("species_category", category.trim());
 
-    const start = (pageNumber - 1) * size;
+    const { page: pageNumber, page_size: size, start } = paging;
     const { data, error, count } = await query
         .order("scientific_name")
         .order("id")
@@ -231,8 +260,8 @@ router.get("/species/:id", async (req, res) => {
 // Officers can inspect a species even after it has been archived.
 router.get(
     "/species/:id/manage",
-    requireAuth,
-    requireRole("officer"),
+    authenticate,
+    authorize("officer"),
     async (req, res) => {
         const id = req.params.id;
         const uuidPattern =
@@ -258,7 +287,7 @@ router.get(
     }
 );
 
-router.post("/species", requireAuth, requireRole("officer"), async (req, res) => {
+router.post("/species", authenticate, authorize("officer"), async (req, res) => {
     const body = req.body;
 
     if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -302,10 +331,11 @@ router.post("/species", requireAuth, requireRole("officer"), async (req, res) =>
     };
 
     for (const field of optionalTextFields) {
-        if (body[field] !== undefined && body[field] !== null) {
-            if (typeof body[field] !== "string") {
+        if (Object.hasOwn(body, field)) {
+            if (body[field] === null) { species[field] = null; continue; }
+            if (!validOptionalText(field, body[field])) {
                 return res.status(400).json({
-                    message: `${field} must be text`,
+                    message: `${field} must be non-empty text of at most ${textLimit(field)} characters or null`,
                 });
             }
             species[field] = body[field].trim();
@@ -338,7 +368,7 @@ router.post("/species", requireAuth, requireRole("officer"), async (req, res) =>
     return res.status(201).json({ data });
 });
 
-router.patch("/species/:id", requireAuth, requireRole("officer"), async (req, res) => {
+router.patch("/species/:id", authenticate, authorize("officer"), async (req, res) => {
     const uuidPattern =
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -379,11 +409,11 @@ router.patch("/species/:id", requireAuth, requireRole("officer"), async (req, re
 
             if (value === null) {
                 changes[field] = null;
-            } else if (typeof value === "string" && value.trim()) {
+            } else if (validOptionalText(field, value)) {
                 changes[field] = value.trim();
             } else {
                 return res.status(400).json({
-                    message: `${field} must be non-empty text or null`,
+                    message: `${field} must be non-empty text of at most ${textLimit(field)} characters or null`,
                 });
             }
         }
@@ -437,7 +467,7 @@ router.patch("/species/:id", requireAuth, requireRole("officer"), async (req, re
     return res.json({ data });
 });
 
-router.delete("/species/:id", requireAuth, requireRole("officer"), async (req, res) => {
+router.delete("/species/:id", authenticate, authorize("officer"), async (req, res) => {
     const uuidPattern =
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -464,8 +494,8 @@ router.delete("/species/:id", requireAuth, requireRole("officer"), async (req, r
 
 router.post(
     "/species/:id/photos",
-    requireAuth,
-    requireRole("officer"),
+    authenticate,
+    authorize("officer"),
     receivePhoto,
     async (req, res) => {
         const id = req.params.id;
@@ -559,8 +589,8 @@ router.post(
 
 router.patch(
     "/species/:id/photos/:photoId/primary",
-    requireAuth,
-    requireRole("officer"),
+    authenticate,
+    authorize("officer"),
     async (req, res) => {
         const { id, photoId } = req.params;
         const uuidPattern =
@@ -597,8 +627,8 @@ router.patch(
 
 router.delete(
     "/species/:id/photos/:photoId",
-    requireAuth,
-    requireRole("officer"),
+    authenticate,
+    authorize("officer"),
     async (req, res) => {
         const { id, photoId } = req.params;
         const uuidPattern =
@@ -702,4 +732,13 @@ router.get("/species/:id/photos/:photoId", async (req, res) => {
     return res.json({ url: data.signedUrl, expires_in: 60 });
 });
 
-module.exports = router;
+router.use((error, req, res, next) => {
+    if (res.headersSent) return next(error);
+    console.error("Knowledge API error:", error);
+    return res.status(500).json({ message: "Could not process knowledge request" });
+});
+return router;
+}
+
+module.exports = createKnowledgeRouter();
+module.exports.createKnowledgeRouter = createKnowledgeRouter;

@@ -1,0 +1,85 @@
+✔ ingests a valid reading and exposes it as latest and recent (4.3346ms)
+✔ rejects telemetry outside the expected sensor ranges (0.9207ms)
+✔ marks stations offline after sixty seconds without telemetry (0.6296ms)
+✔ invalid resource IDs are rejected before database access (172.3033ms)
+✔ /species paginates with exact totals and stable ordering (18.1122ms)
+✔ /species rejects invalid pagination before database access (86.5823ms)
+✔ /species empty pages retain totals (6.6563ms)
+✔ /species/manage paginates with exact totals and stable ordering (6.2656ms)
+✔ /species/manage rejects invalid pagination before database access (111.4691ms)
+✔ /species/manage empty pages retain totals (5.0446ms)
+✔ /taxonomy paginates with exact totals and stable ordering (4.3613ms)
+✔ /taxonomy rejects invalid pagination before database access (114.4975ms)
+✔ /taxonomy empty pages retain totals (9.9003ms)
+✔ public filters use approved species, name matching and taxonomy family join (7.4145ms)
+✔ whitespace family does not exclude species without taxonomy (6.374ms)
+✔ public search rejects filter syntax and repeated parameters (38.6362ms)
+✔ create and update consistently reject empty or oversized optional text (123.5017ms)
+✔ public species detail enforces approved status and excludes sensitive notes (7.1287ms)
+✔ /species/11111111-1111-4111-8111-111111111111 missing records return 404 (6.6063ms)
+✔ /species/11111111-1111-4111-8111-111111111111/manage missing records return 404 (3.0187ms)
+Species query error: { message: 'SECRET_DATABASE_DETAILS' }
+✔ GET /species hides database failure details (4.9557ms)
+Taxonomy list error: { message: 'SECRET_DATABASE_DETAILS' }
+✔ GET /taxonomy hides database failure details (4.3971ms)
+Manage species list error: { message: 'SECRET_DATABASE_DETAILS' }
+✔ GET /species/manage hides database failure details (3.4759ms)
+Species detail error: { message: 'SECRET_DATABASE_DETAILS' }
+✔ GET /species/11111111-1111-4111-8111-111111111111 hides database failure details (2.9194ms)
+Manage species lookup error: { message: 'SECRET_DATABASE_DETAILS' }
+✔ GET /species/11111111-1111-4111-8111-111111111111/manage hides database failure details (3.0438ms)
+Create taxonomy error: { message: 'SECRET_DATABASE_DETAILS' }
+✔ POST /taxonomy hides database failure details (4.2536ms)
+Create species error: { message: 'SECRET_DATABASE_DETAILS' }
+✔ POST /species hides database failure details (4.085ms)
+Update species error: { message: 'SECRET_DATABASE_DETAILS' }
+✔ PATCH /species/11111111-1111-4111-8111-111111111111 hides database failure details (3.9642ms)
+Archive species error: { message: 'SECRET_DATABASE_DETAILS' }
+✔ DELETE /species/11111111-1111-4111-8111-111111111111 hides database failure details (3.7148ms)
+Knowledge API error: Error: PRIVATE_FAILURE
+    at TestContext.<anonymous> (C:\Users\rchin\.codex\.chatgpt-projects\g-p-6ac6396fb5188191b969326dde57acb5\biotrack\backend\test\knowledge.test.js:113:38)
+    at Test.runInAsyncScope (node:async_hooks:226:14)
+    at Test.run (node:internal/test_runner/test:1402:25)
+    at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    at Test.postRun (node:internal/test_runner/test:1542:19)
+    at Test.run (node:internal/test_runner/test:1467:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+✔ unexpected rejected database request returns JSON 500 (4.7251ms)
+✔ JSON parser reports invalid JSON as 400 and oversized JSON as 413 (10.1779ms)
+✔ protected routes reject unauthenticated requests (48.2147ms)
+✔ protected routes reject botanist requests (55.2697ms)
+✔ protected routes reject researcher requests (46.8393ms)
+✔ officer creates species with trimmed text and server-controlled fields (4.9469ms)
+✔ invalid species creation never queries the database (43.4437ms)
+✔ POST species maps database 23505 to 409 (7.4158ms)
+✔ PATCH species maps database 23505 to 409 (5.1295ms)
+✔ POST species maps database 23503 to 400 (4.7578ms)
+✔ PATCH species maps database 23503 to 400 (4.7909ms)
+✔ partial update clears nullable text without changing other fields (4.4211ms)
+✔ empty and invalid species updates never query the database (44.9618ms)
+✔ archive updates status rather than deleting the row (8.0394ms)
+✔ update and archive return 404 for missing species (6.0071ms)
+✔ taxonomy creation trims required fields and supplies nullable fields (5.3749ms)
+✔ invalid taxonomy never queries the database (40.9436ms)
+✔ duplicate taxonomy returns 409 (7.888ms)
+✔ officer photo upload requires a photo before querying (4.9557ms)
+✔ normal telemetry creates no alerts (2.8467ms)
+✔ validated telemetry ingestion automatically runs threat detection (1.2359ms)
+✔ creates alerts for every supported threat type (0.5869ms)
+✔ continuing threat updates one active alert instead of duplicating it (0.2469ms)
+✔ normal reading resolves an active alert (0.3164ms)
+✔ threat after recovery creates a new alert and preserves history (0.3812ms)
+✔ invalid DHT reading neither creates nor resolves a temperature alert (0.1945ms)
+✔ invalid distance reading neither creates nor resolves a proximity alert (0.1485ms)
+✔ the same threat at different stations creates independent alerts (0.2342ms)
+✔ prototype thresholds can be overridden with validated environment values (0.3781ms)
+✔ invalid configured threshold is rejected (0.4928ms)
+ℹ tests 59
+ℹ suites 0
+ℹ pass 59
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1707.5991

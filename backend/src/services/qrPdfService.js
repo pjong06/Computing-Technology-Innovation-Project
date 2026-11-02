@@ -1,8 +1,9 @@
 const PDFDocument = require("pdfkit");
 const QRCode = require("qrcode");
+const { buildPublicPlantUrl } = require("./qrService");
 
 // Generate an A4 PDF containing multiple plant QR tags
-async function generateQRBatchPDF(tagValues) {
+async function generateQRBatchPDF(tagValues, { publicBaseUrl } = {}) {
     if (
         !Array.isArray(tagValues) ||
         tagValues.length === 0 ||
@@ -15,6 +16,9 @@ async function generateQRBatchPDF(tagValues) {
     ) {
         throw new Error("Invalid or duplicate plant tags");
     }
+
+    // Validate the configured destination before creating a PDF stream.
+    const publicUrls = tagValues.map(tag => buildPublicPlantUrl(tag, publicBaseUrl));
 
     const doc = new PDFDocument({
         size: "A4",
@@ -49,9 +53,10 @@ async function generateQRBatchPDF(tagValues) {
         const x = startX + col * cellWidth;
         const y = startY + row * cellHeight;
 
-        const qrBuffer = await QRCode.toBuffer(tagValues[i], {
+        const qrBuffer = await QRCode.toBuffer(publicUrls[i], {
             width: 250,
-            margin: 1
+            margin: 4,
+            errorCorrectionLevel: "M"
         });
 
         doc.rect(x, y, cellWidth - 5, cellHeight - 5).stroke();

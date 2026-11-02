@@ -6,7 +6,10 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "start": "node src/server.js",
-    "test:auth": "node test-auth.js"
+    "test:auth": "node test-auth.js",
+    "test:knowledge": "node --test test/knowledge.test.js",
+    "test:coverage": "node --test --experimental-test-coverage test/*.test.js",
+    "benchmark:knowledge": "node scripts/benchmark-knowledge.js"
   },
   "keywords": [],
   "author": "",

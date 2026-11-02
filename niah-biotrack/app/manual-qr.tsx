@@ -1,22 +1,29 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, Platform, StatusBar } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, Platform, StatusBar, ActivityIndicator } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useRecordStore } from '../src/store/useRecordStore';
+import Toast from 'react-native-toast-message';
+import { useRecordStore, SyncStatus } from '../src/store/useRecordStore';
 import FormScrollView from '../src/components/FormScrollView';
 import { parseTagCode } from '../src/utils/tagCode';
+
+const API_BASE_URL = (
+  process.env.EXPO_PUBLIC_API_BASE_URL || 'http://192.168.0.167:3000'
+).trim().replace(/\/+$/, '');
 
 export default function ManualQREntryScreen() {
   const router = useRouter();
   const { initialCode, notFound } = useLocalSearchParams();
   const findByTag = useRecordStore((state) => state.findByTag);
+  const addRecord = useRecordStore((state) => state.addRecord);
+  const attachTag = useRecordStore((state) => state.attachTag);
 
   const [code, setCode] = useState((initialCode as string) || '');
-  // null = no error, 'invalid' = not a Niah tag, 'notFound' = valid tag but no record has it
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<null | 'invalid' | 'notFound'>(
     notFound === 'true' ? 'notFound' : null
   );
 
-  const handleLookup = () => {
+  const handleLookup = async () => {
     const clean = parseTagCode(code);
     if (!clean) {
       setError('invalid');
@@ -27,8 +34,50 @@ export default function ManualQREntryScreen() {
     if (matched) {
       setError(null);
       router.push({ pathname: '/plant-detail', params: { id: matched.id } } as any);
-    } else {
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/plants/tag/${encodeURIComponent(clean)}`);
+      if (response.ok) {
+        const body = await response.json();
+        const remotePlant = body.data;
+
+        if (remotePlant) {
+          const imported = addRecord({
+            scientificName: remotePlant.species?.scientific_name || remotePlant.scientific_name || 'Unknown species',
+            speciesId: remotePlant.species_id || null,
+            commonName: remotePlant.common_name || '',
+            family: remotePlant.family || '',
+            height: remotePlant.height_m ? String(remotePlant.height_m) : undefined,
+            morphology: remotePlant.morphology || undefined,
+            locationName: remotePlant.location_name || 'Niah National Park',
+            latitude: remotePlant.latitude || 3.8167,
+            longitude: remotePlant.longitude || 113.7833,
+            gpsCoordination: `${remotePlant.latitude ?? 3.8167}° N, ${remotePlant.longitude ?? 113.7833}° E`,
+            photoUris: [],
+            syncStatus: SyncStatus.UPLOADED,
+          });
+          attachTag(imported.id, clean);
+
+          Toast.show({
+            type: 'success',
+            text1: 'Record Retrieved',
+            text2: `Fetched ${clean} from server database.`,
+          });
+
+          router.push({ pathname: '/plant-detail', params: { id: imported.id } } as any);
+          return;
+        }
+      }
       setError('notFound');
+    } catch {
+      setError('notFound');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -68,13 +117,21 @@ export default function ManualQREntryScreen() {
             <Text style={styles.errorSub}>
               {error === 'invalid'
                 ? 'Tag codes look like NIAH-PLT-00001. Check the code and try again.'
-                : `No record on this device has tag ${code.trim().toUpperCase()}. Check the tag, or the record may not have synced to this phone yet.`}
+                : `No plant record with tag ${code.trim().toUpperCase()} exists on this device or the server.`}
             </Text>
           </View>
         )}
 
-        <TouchableOpacity style={styles.primaryBtn} onPress={handleLookup}>
-          <Text style={styles.primaryBtnText}>Look up record</Text>
+        <TouchableOpacity
+          style={[styles.primaryBtn, loading && { opacity: 0.7 }]}
+          onPress={handleLookup}
+          disabled={loading}
+        >
+          {loading ? (
+            <ActivityIndicator color="#FFF" />
+          ) : (
+            <Text style={styles.primaryBtnText}>Look up record</Text>
+          )}
         </TouchableOpacity>
 
         <View style={styles.dividerRow}>
