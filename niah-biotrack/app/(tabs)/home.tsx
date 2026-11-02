@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -9,18 +9,59 @@ import {
   Platform,
   StatusBar,
   Image,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import Toast from 'react-native-toast-message';
 import { useRecordStore, SyncStatus } from '../../src/store/useRecordStore';
+import { buildSyncSummary } from '../../src/services/syncSummary';
 
 export default function HomeScreen() {
   const router = useRouter();
   const records = useRecordStore((state) => state.records);
-  const retryRecord = useRecordStore((state) => state.retryRecord);
+  const syncAll = useRecordStore((state) => state.syncAll);
+  const syncRecord = useRecordStore((state) => state.syncRecord);
 
-  const pendingCount = records.filter((r) => r.syncStatus === SyncStatus.NOT_UPLOADED).length;
-  const failedCount = records.filter((r) => r.syncStatus === SyncStatus.FAILED).length;
+  const [syncingAll, setSyncingAll] = useState(false);
+  // IDs of records whose Retry is running, so each row can show its own spinner.
+  const [retryingIds, setRetryingIds] = useState<string[]>([]);
+
+  // Same counts the Profile tab uses, worked out from the records on the phone.
+  const summary = buildSyncSummary(records, syncingAll);
+  const pendingCount = summary.pendingRecordCount;
+  const failedCount = summary.failedRecordCount;
   const totalToSync = pendingCount + failedCount;
+
+  const handleSyncNow = async () => {
+    setSyncingAll(true);
+    // syncAll never throws: every problem comes back as a count.
+    const { uploaded, failed, skipped } = await syncAll();
+    setSyncingAll(false);
+
+    const parts = [`${uploaded} uploaded`];
+    if (failed > 0) parts.push(`${failed} failed`);
+    // Only mention skipped records when there are some (they were already uploading).
+    if (skipped > 0) parts.push(`${skipped} already uploading`);
+
+    Toast.show({
+      type: failed > 0 ? 'error' : 'success',
+      text1: failed > 0 ? 'Some records did not upload' : 'Sync complete',
+      text2: failed > 0 ? `${parts.join(' · ')}. Tap Retry to try again.` : parts.join(' · '),
+      position: 'bottom',
+    });
+  };
+
+  const handleRetry = async (id: string) => {
+    setRetryingIds((ids) => [...ids, id]);
+    const result = await syncRecord(id);
+    setRetryingIds((ids) => ids.filter((x) => x !== id));
+
+    Toast.show(
+      result.ok
+        ? { type: 'success', text1: 'Record uploaded', position: 'bottom' }
+        : { type: 'error', text1: 'Upload failed', text2: result.reason, position: 'bottom' }
+    );
+  };
 
   const getStatusBadge = (status: SyncStatus) => {
     switch (status) {
@@ -55,6 +96,17 @@ export default function HomeScreen() {
             <Text style={styles.syncSub}>
               {pendingCount} not uploaded{failedCount > 0 ? ` · ${failedCount} failed` : ''} · saved on this device
             </Text>
+            <TouchableOpacity
+              style={[styles.syncBtn, syncingAll && styles.syncBtnDisabled]}
+              onPress={handleSyncNow}
+              disabled={syncingAll}
+            >
+              {syncingAll ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.syncBtnText}>Sync now</Text>
+              )}
+            </TouchableOpacity>
           </View>
         ) : null}
 
@@ -146,9 +198,14 @@ export default function HomeScreen() {
                   {item.syncStatus === SyncStatus.FAILED && (
                     <View style={styles.errorSubRow}>
                       <Text style={styles.errorSubText}>Upload failed</Text>
-                      <TouchableOpacity onPress={() => retryRecord(item.id)}>
-                        <Text style={styles.retryBtn}>Retry</Text>
-                      </TouchableOpacity>
+                      {retryingIds.includes(item.id) ? (
+                        <ActivityIndicator size="small" color="#9B1C1C" />
+                      ) : (
+                        // Disabled during "Sync now", which is already retrying this record.
+                        <TouchableOpacity onPress={() => handleRetry(item.id)} disabled={syncingAll}>
+                          <Text style={styles.retryBtn}>Retry</Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   )}
                 </View>
@@ -205,6 +262,25 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#5C7163',
     marginTop: 2,
+  },
+  syncBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#213B2A',
+    minWidth: 104,
+    height: 36,
+    borderRadius: 18,
+    paddingHorizontal: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  syncBtnDisabled: {
+    opacity: 0.6,
+  },
+  syncBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
   actionGrid: {
     flexDirection: 'row',

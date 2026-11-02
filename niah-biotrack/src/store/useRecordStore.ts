@@ -154,7 +154,6 @@ interface RecordState {
     plantRecordId: string,
     observation: Omit<ObservationVisit, 'id' | 'syncStatus' | 'observedAt'> & { observedAt: string }
   ) => void;
-  retryRecord: (id: string) => void;
   syncRecord: (id: string) => Promise<SyncResult>;
   syncAll: () => Promise<SyncAllResult>;
   submitForReview: (id: string) => Promise<SubmitResult>;
@@ -206,11 +205,6 @@ export const useRecordStore = create<RecordState>()(
             }
             return r;
           }),
-        }));
-      },
-      retryRecord: (id) => {
-        set((state) => ({
-          records: state.records.map((r) => (r.id === id ? { ...r, syncStatus: SyncStatus.NOT_UPLOADED } : r)),
         }));
       },
 
@@ -380,7 +374,7 @@ export const useRecordStore = create<RecordState>()(
           return { ok: false, reason: `This tag is already attached to ${existing.scientificName}` };
         } 
 
-        // 2. Update only the record with this recordId (copy retryRecord's pattern)
+        // 2. Update only the record with this recordId (same map-and-replace pattern as the other actions)
         set((state) => ({
           records: state.records.map((r) => (r.id === recordId ? { ...r, tagCode: tagCode } : r)),
         }));
