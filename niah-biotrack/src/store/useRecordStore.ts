@@ -81,6 +81,12 @@ export interface RecordedRoute {
 // What syncRecord tells the screen: success, or a message it can show to the user.
 export type SyncResult = { ok: true } | { ok: false; reason: string };
 
+// What syncAll tells the screen: how many records went up and how many didn't.
+export interface SyncAllResult {
+  uploaded: number;
+  failed: number;
+}
+
 // Server responses we read. Both routes return the saved row, also when it was
 // already saved by an earlier attempt (200 instead of 201).
 interface PlantUploadResponse {
@@ -109,6 +115,7 @@ interface RecordState {
   ) => void;
   retryRecord: (id: string) => void;
   syncRecord: (id: string) => Promise<SyncResult>;
+  syncAll: () => Promise<SyncAllResult>;
   submitForReview: (id: string) => { ok: true } | { ok: false; reason: string };
   findByTag: (tagCode: string) => PlantRecord | undefined;
   attachTag: (recordId: string, tagCode: string) => { ok: true } | { ok: false; reason: string };
@@ -251,6 +258,27 @@ export const useRecordStore = create<RecordState>()(
         } finally {
           uploadsInProgress.delete(id);
         }
+      },
+
+      // Uploads every record that isn't fully on the server yet (Not uploaded AND
+      // Upload failed, so "Sync now" also retries failures). One record at a time, so
+      // a weak field connection isn't flooded with parallel requests. Like syncRecord,
+      // it never throws: a failed record just counts as failed and the loop moves on.
+      syncAll: async () => {
+        // Take the list of IDs up front. Records added while this runs wait for the
+        // next sync, so the loop always ends.
+        const ids = get()
+          .records.filter((r) => r.syncStatus !== SyncStatus.UPLOADED)
+          .map((r) => r.id);
+
+        let uploaded = 0;
+        let failed = 0;
+        for (const id of ids) {
+          const result = await get().syncRecord(id);
+          if (result.ok) uploaded += 1;
+          else failed += 1;
+        }
+        return { uploaded, failed };
       },
 
       submitForReview: (id) => {
