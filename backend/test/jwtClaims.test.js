@@ -25,6 +25,7 @@ function middlewareHarness() {
         module: exported,
         process: { env: { SUPABASE_URL: projectUrl } },
         require(name) {
+            if (name === './bearerToken') return require('../src/middleware/bearerToken');
             if (name === './verifiedJwtClaims') return { hasExpectedClaims };
             if (name !== '../config/supabase') throw new Error('Unexpected test dependency');
             return {

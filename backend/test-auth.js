@@ -2,6 +2,7 @@ const { createClient } = require("@supabase/supabase-js");
 const fs = require("node:fs");
 const path = require("node:path");
 const { stdin, stdout } = require("node:process");
+const { logResponseSummary, responseSummary } = require("./test-support/safeDiagnostics");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -95,7 +96,7 @@ async function main() {
                 }
             );
 
-            console.log("Assignment check:", assignError?.message ?? "Unexpected success");
+            console.log(assignError ? "Assignment check: rejected" : "Assignment check: unexpected success");
             return;
         }
 
@@ -107,19 +108,18 @@ async function main() {
         });
 
         console.log(`/api/me: HTTP ${response.status}`);
-        console.log(await response.text());
+        await logResponseSummary(response);
 
         if (process.argv.includes("--review-queue")) {
             const queueResponse = await fetch(
                 "http://127.0.0.1:3000/api/officer/reviews/pending",
                 { headers }
             );
-            const contentType = queueResponse.headers.get("content-type") || "";
-            const body = await queueResponse.text();
+
 
             console.log(`GET pending reviews: HTTP ${queueResponse.status}`);
-            console.log("Content-Type:", contentType);
-            console.log("Response preview:", body.slice(0, 150));
+
+            await logResponseSummary(queueResponse);
             return;
         }
 
@@ -139,7 +139,7 @@ async function main() {
             );
 
             console.log(`PATCH species route: HTTP ${assignmentResponse.status}`);
-            console.log(await assignmentResponse.text());
+            await logResponseSummary(assignmentResponse);
             return;
         }
 
@@ -157,7 +157,7 @@ async function main() {
             );
 
             console.log(`POST review route: HTTP ${reviewResponse.status}`);
-            console.log(await reviewResponse.text());
+            await logResponseSummary(reviewResponse);
             return;
         }
 
@@ -168,7 +168,7 @@ async function main() {
             );
 
             console.log(`GET /api/reports/inventory: HTTP ${reportResponse.status}`);
-            console.log(await reportResponse.text());
+            await logResponseSummary(reportResponse);
             return;
         }
 
@@ -179,8 +179,8 @@ async function main() {
             );
 
             console.log(`GET status CSV: HTTP ${reportResponse.status}`);
-            console.log(`Content-Type: ${reportResponse.headers.get("content-type")}`);
-            console.log(await reportResponse.text());
+            console.log("Response headers received; values omitted.");
+            await logResponseSummary(reportResponse);
             return;
         }
 
@@ -191,10 +191,10 @@ async function main() {
             );
 
             console.log(`GET status PDF: HTTP ${reportResponse.status}`);
-            console.log(`Content-Type: ${reportResponse.headers.get("content-type")}`);
+            console.log("Response headers received; values omitted.");
 
             if (!reportResponse.ok) {
-                console.log(await reportResponse.text());
+                await logResponseSummary(reportResponse);
                 return;
             }
 
@@ -203,7 +203,7 @@ async function main() {
                 "niah-status-report.pdf"
             );
             fs.writeFileSync(pdfPath, Buffer.from(await reportResponse.arrayBuffer()));
-            console.log(`Saved PDF: ${pdfPath}`);
+            console.log("Saved PDF in the local temporary directory.");
             return;
         }
 
@@ -215,9 +215,7 @@ async function main() {
 
             const result = await reportResponse.json();
             console.log(`GET botanist report: HTTP ${reportResponse.status}`);
-            console.log(`Title: ${result.data?.title || ""}`);
-            console.log(`Rows: ${result.data?.total ?? ""}`);
-            console.log(`Error: ${result.message || "none"}`);
+            console.log(JSON.stringify(responseSummary(JSON.stringify(result))));
             return;
         }
 
@@ -229,10 +227,7 @@ async function main() {
 
             const result = await reportResponse.json();
             console.log(`GET dated inventory: HTTP ${reportResponse.status}`);
-            console.log(`From: ${result.data?.from || ""}`);
-            console.log(`To: ${result.data?.to || ""}`);
-            console.log(`Rows: ${result.data?.total ?? ""}`);
-            console.log(`Error: ${result.message || "none"}`);
+            console.log(JSON.stringify(responseSummary(JSON.stringify(result))));
             return;
         }
 
@@ -248,7 +243,7 @@ async function main() {
             );
 
             console.log(`POST taxonomy: HTTP ${taxonomyResponse.status}`);
-            console.log(await taxonomyResponse.text());
+            await logResponseSummary(taxonomyResponse);
         }
 
         if (process.argv.includes("--list-manage-species")) {
@@ -258,7 +253,7 @@ async function main() {
             );
 
             console.log(`GET manage species list: HTTP ${response.status}`);
-            console.log(await response.text());
+            await logResponseSummary(response);
         }
 
         if (process.argv.includes("--manage-species")) {
@@ -269,7 +264,7 @@ async function main() {
             );
 
             console.log(`GET manage species: HTTP ${manageResponse.status}`);
-            console.log(await manageResponse.text());
+            await logResponseSummary(manageResponse);
         }
 
         if (process.argv.includes("--create-species")) {
@@ -279,7 +274,7 @@ async function main() {
                 body: JSON.stringify({ scientific_name: requiredEnv("KNOWLEDGE_SPECIES_NAME") }),
             });
             console.log(`POST /api/knowledge/species: HTTP ${speciesResponse.status}`);
-            console.log(await speciesResponse.text());
+            await logResponseSummary(speciesResponse);
         }
 
         if (process.argv.includes("--link-species-taxonomy")) {
@@ -296,7 +291,7 @@ async function main() {
             );
 
             console.log(`PATCH species taxonomy: HTTP ${linkResponse.status}`);
-            console.log(await linkResponse.text());
+            await logResponseSummary(linkResponse);
         }
 
         if (process.argv.includes("--rename-species")) {
@@ -313,7 +308,7 @@ async function main() {
             );
 
             console.log(`PATCH scientific name: HTTP ${renameResponse.status}`);
-            console.log(await renameResponse.text());
+            await logResponseSummary(renameResponse);
         }
 
         if (process.argv.includes("--clear-habitat")) {
@@ -329,7 +324,7 @@ async function main() {
             );
 
             console.log(`PATCH clear habitat: HTTP ${response.status}`);
-            console.log(await response.text());
+            await logResponseSummary(response);
         }
 
         if (process.argv.includes("--edit-species")) {
@@ -343,7 +338,7 @@ async function main() {
                 }
             );
             console.log(`PATCH /api/knowledge/species: HTTP ${editResponse.status}`);
-            console.log(await editResponse.text());
+            await logResponseSummary(editResponse);
         }
 
         if (process.argv.includes("--test-photo")) {
@@ -354,7 +349,7 @@ async function main() {
             );
 
             console.log(`POST species photo: HTTP ${photoResponse.status}`);
-            console.log(await photoResponse.text());
+            await logResponseSummary(photoResponse);
         }
 
         if (process.argv.includes("--upload-species-photo")) {
@@ -380,7 +375,7 @@ async function main() {
             );
 
             console.log(`POST species photo upload: HTTP ${uploadResponse.status}`);
-            console.log(await uploadResponse.text());
+            await logResponseSummary(uploadResponse);
         }
 
         if (process.argv.includes("--set-primary-photo")) {
@@ -393,7 +388,7 @@ async function main() {
             );
 
             console.log(`PATCH primary species photo: HTTP ${primaryResponse.status}`);
-            console.log(await primaryResponse.text());
+            await logResponseSummary(primaryResponse);
         }
 
         if (process.argv.includes("--delete-species-photo")) {
@@ -406,7 +401,7 @@ async function main() {
             );
 
             console.log(`DELETE species photo: HTTP ${deleteResponse.status}`);
-            console.log(await deleteResponse.text());
+            await logResponseSummary(deleteResponse);
         }
 
         if (process.argv.includes("--archive-species")) {
@@ -417,14 +412,14 @@ async function main() {
             );
 
             console.log(`DELETE /api/knowledge/species: HTTP ${archiveResponse.status}`);
-            console.log(await archiveResponse.text());
+            await logResponseSummary(archiveResponse);
         }
 
         const iotResponse = await fetch("http://127.0.0.1:3000/api/iot/summary", {
             headers,
         });
         console.log(`/api/iot/summary: HTTP ${iotResponse.status}`);
-        console.log(await iotResponse.text());
+        await logResponseSummary(iotResponse);
 
         if (process.argv.includes("--create-test-plant")) {
             const createResponse = await fetch("http://127.0.0.1:3000/api/plants", {
@@ -440,18 +435,21 @@ async function main() {
                 }),
             });
             console.log(`POST /api/plants: HTTP ${createResponse.status}`);
-            console.log(await createResponse.text());
+            await logResponseSummary(createResponse);
         }
 
         const plantsResponse = await fetch("http://127.0.0.1:3000/api/plants", {
             headers,
         });
         console.log(`/api/plants: HTTP ${plantsResponse.status}`);
-        console.log(await plantsResponse.text());
+        await logResponseSummary(plantsResponse);
     } catch (error) {
-        console.error(error.message || "Authentication test failed.");
+        console.error("Authentication test failed; remote details omitted.");
         process.exitCode = 1;
     }
 }
 
-main();
+void main().catch(() => {
+    console.error("Authentication test stopped unexpectedly.");
+    process.exitCode = 1;
+});
