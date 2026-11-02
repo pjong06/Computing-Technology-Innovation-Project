@@ -15,9 +15,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 
-const API_BASE_URL = (
-  process.env.EXPO_PUBLIC_API_BASE_URL || 'http://192.168.0.167:3000'
-).trim().replace(/\/+$/, '');
+import { API_BASE_URL } from '../src/config/api';
 
 const DEFAULT_RECENT_TAGS = ['TR-2026-001', 'TR-2026-089', 'SH-2026-014', 'PL-2026-052'];
 

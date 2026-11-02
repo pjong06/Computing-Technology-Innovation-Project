@@ -13,9 +13,8 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-const API_BASE_URL = (
-  process.env.EXPO_PUBLIC_API_BASE_URL || 'http://192.168.0.167:3000'
-).trim().replace(/\/+$/, '');
+
+import { API_BASE_URL } from '../../src/config/api';
 
 interface PlantPreview {
   id: string;

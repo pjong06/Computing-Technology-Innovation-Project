@@ -24,7 +24,7 @@ Alternatively set PUBLIC_PLANT_BASE_URL in the ignored backend/.env. Then open:
 http://localhost:3000/p/NIAH-PLT-90001
 ```
 
-The same-computer localhost URL does not work from a separate phone: on the phone, localhost means the phone itself. For phone testing, explicitly configure the computer's private LAN address, for example `http://192.168.1.10:3000/p/`, replacing the example with the actual address. The devices must share a reachable network. No LAN address or firewall setting was changed automatically.
+The same-computer localhost URL does not work from a separate phone: on the phone, localhost means the phone itself. For phone testing, explicitly configure the computer's private LAN address, for example `http://172.17.113.171:3000/p/`, replacing the example with the actual address. The devices must share a reachable network. No LAN address or firewall setting was changed automatically.
 
 For deployment, configure a stable HTTPS destination such as `https://your-approved-domain.example/p/`, ensure the web route and stylesheet are served at that origin, and restart the service. Production rejects HTTP. Development HTTP is allowed only for loopback/private LAN addresses. Userinfo, query strings, fragments and mismatched path prefixes are rejected. Never derive the QR origin from untrusted Host headers.
 
