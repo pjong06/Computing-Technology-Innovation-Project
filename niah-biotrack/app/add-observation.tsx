@@ -78,7 +78,7 @@ export default function AddObservationScreen() {
       </View>
 
       <FormScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.plantTitle}>{matched.scientificName}</Text>
+        <Text style={styles.plantTitle}>{matched.scientificName || 'Identification pending'}</Text>
         <Text style={styles.metaSubtitle}>
           {matched.tagCode ?? 'No tag attached'} · {matched.locationName} visit #
           {(matched.observations?.length ?? 0) + 1}

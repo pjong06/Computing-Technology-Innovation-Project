@@ -205,6 +205,13 @@ export default function ProfileScreen() {
             </Text>
           </View>
 
+          {syncSummary.localDraftCount > 0 && (
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Local identification drafts</Text>
+              <Text style={styles.infoVal}>{syncSummary.localDraftCount}</Text>
+            </View>
+          )}
+
           <Text style={styles.syncNote}>
             Counts are calculated from records currently saved on this
             device. The SQLite offline-sync engine will later provide real

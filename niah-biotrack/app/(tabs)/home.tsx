@@ -11,7 +11,11 @@ import {
   Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useRecordStore, SyncStatus } from '../../src/store/useRecordStore';
+import {
+  IdentificationStatus,
+  SyncStatus,
+  useRecordStore,
+} from '../../src/store/useRecordStore';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -21,6 +25,9 @@ export default function HomeScreen() {
   const pendingCount = records.filter((r) => r.syncStatus === SyncStatus.NOT_UPLOADED).length;
   const failedCount = records.filter((r) => r.syncStatus === SyncStatus.FAILED).length;
   const totalToSync = pendingCount + failedCount;
+  const identificationDraftCount = records.filter(
+    (record) => record.identificationStatus === IdentificationStatus.PENDING
+  ).length;
 
   const getStatusBadge = (status: SyncStatus) => {
     switch (status) {
@@ -30,6 +37,8 @@ export default function HomeScreen() {
         return { bg: '#FDF4D8', text: '#8C5E03', label: '• Not uploaded' };
       case SyncStatus.FAILED:
         return { bg: '#FDE2E2', text: '#9B1C1C', label: '• Upload failed' };
+      case SyncStatus.LOCAL_ONLY:
+        return { bg: '#E8ECE9', text: '#526158', label: '• Local draft' };
     }
   };
 
@@ -57,6 +66,22 @@ export default function HomeScreen() {
             </Text>
             <Text style={styles.syncSub}>Uploading to the server is not available yet.</Text>
           </View>
+        ) : null}
+
+        {identificationDraftCount > 0 ? (
+          <TouchableOpacity
+            style={styles.draftCard}
+            activeOpacity={0.8}
+            onPress={() => router.push('/(tabs)/records' as any)}
+          >
+            <Text style={styles.syncTitle}>
+              {identificationDraftCount}{' '}
+              {identificationDraftCount === 1 ? 'record needs' : 'records need'} identification
+            </Text>
+            <Text style={styles.syncSub}>
+              Field information is saved locally. Continue editing when you can confirm the species.
+            </Text>
+          </TouchableOpacity>
         ) : null}
 
         {/* 2x1 Action Cards Grid */}
@@ -134,13 +159,39 @@ export default function HomeScreen() {
                       <Text style={{ fontSize: 20 }}>🌿</Text>
                     </View>
                     <View style={{ flex: 1, marginHorizontal: 12 }}>
-                      <Text style={styles.speciesText}>{item.scientificName}</Text>
+                      <Text style={styles.speciesText}>
+                        {item.scientificName || 'Identification pending'}
+                      </Text>
                       <Text style={styles.locationText}>
                         {item.locationName} · {item.createdAt}
                       </Text>
                     </View>
-                    <View style={[styles.badgePill, { backgroundColor: badge.bg }]}>
-                      <Text style={[styles.badgeText, { color: badge.text }]}>{badge.label}</Text>
+                    <View
+                      style={[
+                        styles.badgePill,
+                        {
+                          backgroundColor:
+                            item.identificationStatus === IdentificationStatus.PENDING
+                              ? '#FDF4D8'
+                              : badge.bg,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.badgeText,
+                          {
+                            color:
+                              item.identificationStatus === IdentificationStatus.PENDING
+                                ? '#8C5E03'
+                                : badge.text,
+                          },
+                        ]}
+                      >
+                        {item.identificationStatus === IdentificationStatus.PENDING
+                          ? '• Identify later'
+                          : badge.label}
+                      </Text>
                     </View>
                   </TouchableOpacity>
 
@@ -191,6 +242,13 @@ const styles = StyleSheet.create({
   },
   syncCard: {
     backgroundColor: '#E6EFE9',
+    borderRadius: 22,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 16,
+  },
+  draftCard: {
+    backgroundColor: '#FDF4D8',
     borderRadius: 22,
     paddingVertical: 14,
     paddingHorizontal: 16,

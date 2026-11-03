@@ -7,6 +7,17 @@ export enum SyncStatus {
   UPLOADED = 'Uploaded',
   NOT_UPLOADED = 'Not uploaded',
   FAILED = 'Upload failed',
+  LOCAL_ONLY = 'Local only',
+}
+
+export enum RecordStatus {
+  DRAFT = 'draft',
+  COMPLETE = 'complete',
+}
+
+export enum IdentificationStatus {
+  PENDING = 'pending',
+  IDENTIFIED = 'identified',
 }
 
 // The officer's review (same values as review_status on the server).
@@ -45,6 +56,8 @@ export interface PlantRecord {
   gpsAccuracyM?: number | null; // null when the device didn't report accuracy
   gpsCoordination: string; // formatted for display only, e.g. "3.81760° N, 113.78100° E (±5 m)"
   photoUris: string[];
+  recordStatus: RecordStatus;
+  identificationStatus: IdentificationStatus;
   syncStatus: SyncStatus;
   reviewStatus: ReviewStatus;
   reviewComment?: string | null; // officer's reason when rejected
@@ -71,6 +84,28 @@ interface RecordState {
   addRecord: (
     record: Omit<PlantRecord, 'id' | 'tagCode' | 'createdAt' | 'observations' | 'reviewStatus' | 'reviewComment'>
   ) => PlantRecord;
+  updateRecord: (
+    id: string,
+    updates: Pick<
+      PlantRecord,
+      | 'scientificName'
+      | 'speciesId'
+      | 'commonName'
+      | 'family'
+      | 'height'
+      | 'morphology'
+      | 'description'
+      | 'locationName'
+      | 'latitude'
+      | 'longitude'
+      | 'gpsAccuracyM'
+      | 'gpsCoordination'
+      | 'photoUris'
+      | 'recordStatus'
+      | 'identificationStatus'
+      | 'syncStatus'
+    >
+  ) => PlantRecord | null;
   addObservation: (plantRecordId: string, observation: Omit<ObservationVisit, 'id' | 'syncStatus'>) => void;
   retryRecord: (id: string) => void;
   submitForReview: (id: string) => { ok: true } | { ok: false; reason: string };
@@ -100,6 +135,19 @@ export const useRecordStore = create<RecordState>()(
         set((state) => ({ records: [newRecord, ...state.records] }));
         return newRecord;
       },
+      updateRecord: (id, updates) => {
+        const current = get().records.find((record) => record.id === id);
+        if (!current) return null;
+        if (current.reviewStatus !== ReviewStatus.DRAFT && current.reviewStatus !== ReviewStatus.REJECTED) {
+          return null;
+        }
+
+        const updated = { ...current, ...updates };
+        set((state) => ({
+          records: state.records.map((record) => (record.id === id ? updated : record)),
+        }));
+        return updated;
+      },
       addObservation: (plantRecordId, observationData) => {
         set((state) => ({
           records: state.records.map((r) => {
@@ -119,7 +167,11 @@ export const useRecordStore = create<RecordState>()(
       // to the server (not built yet) may set that status.
       retryRecord: (id) => {
         set((state) => ({
-          records: state.records.map((r) => (r.id === id ? { ...r, syncStatus: SyncStatus.NOT_UPLOADED } : r)),
+          records: state.records.map((r) =>
+            r.id === id && r.recordStatus === RecordStatus.COMPLETE
+              ? { ...r, syncStatus: SyncStatus.NOT_UPLOADED }
+              : r
+          ),
         }));
       },
 
@@ -128,6 +180,13 @@ export const useRecordStore = create<RecordState>()(
         if (!record) return { ok: false, reason: 'Record not found' };
         if (record.reviewStatus !== ReviewStatus.DRAFT && record.reviewStatus !== ReviewStatus.REJECTED) {
           return { ok: false, reason: 'This record has already been submitted' };
+        }
+        if (
+          record.recordStatus !== RecordStatus.COMPLETE ||
+          record.identificationStatus !== IdentificationStatus.IDENTIFIED ||
+          !record.speciesId
+        ) {
+          return { ok: false, reason: 'Confirm an approved species and complete this draft before submitting it.' };
         }
         // The submission has to reach the server, so it also needs uploading again.
         set((state) => ({
@@ -145,7 +204,10 @@ export const useRecordStore = create<RecordState>()(
         // 1. Is this tag already on ANOTHER record?
         const existing = get().findByTag(tagCode);
         if (existing && existing.id !== recordId ) {
-          return { ok: false, reason: `This tag is already attached to ${existing.scientificName}` };
+          return {
+            ok: false,
+            reason: `This tag is already attached to ${existing.scientificName || 'an identification-pending record'}`,
+          };
         } 
 
         // 2. Update only the record with this recordId (copy retryRecord's pattern)
@@ -174,7 +236,7 @@ export const useRecordStore = create<RecordState>()(
     {
       name: 'niah-ground-truth-store',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 5,
+      version: 6,
       migrate: (persistedState, version) => {
         const state = persistedState as { records?: Record<string, unknown>[] };
         if (version < 1 && Array.isArray(state.records)) {
@@ -229,6 +291,22 @@ export const useRecordStore = create<RecordState>()(
                 if (version < 5 && Array.isArray(state.records)) {
           // v5: records link to a species by ID. Older records only have a name.
           state.records = state.records.map((record) => ({ ...record, speciesId: null }));
+        }
+
+        if (version < 6 && Array.isArray(state.records)) {
+          // v6 separates record completeness, identification and upload state.
+          // Existing named records remain complete even if they predate species IDs.
+          state.records = state.records.map((record) => {
+            const hasName = typeof record.scientificName === 'string' && record.scientificName.trim() !== '';
+            return {
+              ...record,
+              recordStatus: hasName ? RecordStatus.COMPLETE : RecordStatus.DRAFT,
+              identificationStatus: hasName
+                ? IdentificationStatus.IDENTIFIED
+                : IdentificationStatus.PENDING,
+              syncStatus: hasName ? record.syncStatus : SyncStatus.LOCAL_ONLY,
+            };
+          });
         }
 
         return state as unknown as RecordState;

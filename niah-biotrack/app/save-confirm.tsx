@@ -1,7 +1,11 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Platform, StatusBar } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useRecordStore, SyncStatus } from '../src/store/useRecordStore';
+import {
+  IdentificationStatus,
+  SyncStatus,
+  useRecordStore,
+} from '../src/store/useRecordStore';
 import PlantNotFound from '../src/components/PlantNotFound';
 
 export default function SaveConfirmScreen() {
@@ -15,10 +19,15 @@ export default function SaveConfirmScreen() {
     return <PlantNotFound code={id} />;
   }
 
-  // Describe the record's real local status. Nothing is uploaded yet, so a new
-  // record is always Not Uploaded here.
+  // Identification-pending drafts remain local; complete records enter the
+  // future upload queue.
+  const needsIdentification =
+    matched.identificationStatus === IdentificationStatus.PENDING ||
+    !matched.scientificName.trim();
   const statusText =
-    matched.syncStatus === SyncStatus.UPLOADED
+    matched.syncStatus === SyncStatus.LOCAL_ONLY
+      ? 'Status: Local draft – not queued for upload'
+      : matched.syncStatus === SyncStatus.UPLOADED
       ? 'Status: Synced to the server'
       : matched.syncStatus === SyncStatus.FAILED
         ? 'Status: Upload failed – saved on this device'
@@ -29,14 +38,20 @@ export default function SaveConfirmScreen() {
       <View style={styles.container}>
         <View style={styles.card}>
           <View style={styles.checkIconCircle}><Text style={{ color: '#FFF', fontSize: 24 }}>✓</Text></View>
-          <Text style={styles.title}>Record saved</Text>
+          <Text style={styles.title}>{needsIdentification ? 'Draft saved' : 'Record saved'}</Text>
           <Text style={styles.subtitle}>{statusText}</Text>
-          {matched.syncStatus !== SyncStatus.UPLOADED && (
+          {needsIdentification ? (
+            <Text style={styles.subtitle}>
+              Continue from My Records after you confirm the species.
+            </Text>
+          ) : matched.syncStatus !== SyncStatus.UPLOADED ? (
             <Text style={styles.subtitle}>Uploading to the server is not available yet.</Text>
-          )}
+          ) : null}
 
           <View style={styles.infoBox}>
-            <Text style={styles.plantTitle}>{matched.scientificName}</Text>
+            <Text style={styles.plantTitle}>
+              {matched.scientificName || 'Identification pending'}
+            </Text>
             <Text style={styles.plantTaxa}>
               {[matched.commonName, matched.family].filter(Boolean).join(' · ') || 'Common name and family not recorded'}
             </Text>
