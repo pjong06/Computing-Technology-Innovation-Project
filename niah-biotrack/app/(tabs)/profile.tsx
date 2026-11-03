@@ -30,7 +30,7 @@ interface ProfileData {
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { isVisitor, isGuest, role, logout } = useAuthRole();
+  const { isVisitor, isGuest, role, userName, logout } = useAuthRole();
   const records = useRecordStore((state) => state.records);
   // Species proposals still on the phone only; logging out would lose them too.
   const unsentProposalCount = useProposalStore(
@@ -39,6 +39,8 @@ export default function ProfileScreen() {
 
   const [loading, setLoading] = useState<boolean>(!isVisitor);
   const [profile, setProfile] = useState<ProfileData | null>(null);
+  // A signed-in visitor account's email (guests have none).
+  const [visitorEmail, setVisitorEmail] = useState<string | null>(null);
 
   // Counts worked out from the records on this phone (same as Home).
   const syncSummary = buildSyncSummary(records, false);
@@ -49,6 +51,9 @@ export default function ProfileScreen() {
   useEffect(() => {
     if (isVisitor) {
       setLoading(false);
+      if (!isGuest) {
+        void supabase.auth.getSession().then(({ data }) => setVisitorEmail(data.session?.user.email ?? null));
+      }
       return;
     }
 
@@ -102,7 +107,7 @@ export default function ProfileScreen() {
     }
 
     fetchStaffProfile();
-  }, [isVisitor]);
+  }, [isVisitor, isGuest]);
 
   // Logging out clears this phone (records, routes, photos, species proposals; see
   // AuthRoleContext.logout), so warn first when anything hasn't reached the server yet.
@@ -117,6 +122,11 @@ export default function ProfileScreen() {
     .filter(Boolean)
     .join(' and ');
   // Guests go straight to the login page; logging in there switches to the real account.
+  // Guests: create a free visitor account. The sign-up screen leaves guest mode itself.
+  const handleGuestSignUp = () => {
+    router.push('/sign-up' as any);
+  };
+
   const handleGuestLogIn = async () => {
     await logout(); // clears the guest flag (there's no session or data to lose)
     router.replace('/');
@@ -169,32 +179,26 @@ export default function ProfileScreen() {
             <View style={styles.visitorDescBox}>
               <Ionicons name="information-circle-outline" size={17} color="#0369A1" />
               <Text style={styles.visitorDescText}>
-                You can browse approved species and scan plant tags. Log in to use your account.
-                Accounts are created by Sarawak Forestry Corporation.
+                You can browse approved plants and scan plant tags. Log in, or create a free account.
               </Text>
             </View>
           </View>
         ) : isVisitor ? (
+          // A signed-in visitor account ("Create a free account").
           <View style={styles.card}>
             <View style={styles.userRow}>
               <View style={[styles.avatarCircle, { backgroundColor: '#E0F2FE' }]}>
-                <Ionicons name="compass" size={30} color="#0284C7" />
+                <Ionicons name="person" size={28} color="#0284C7" />
               </View>
               <View style={styles.userInfo}>
-                <Text style={styles.userName}>Park Visitor</Text>
-                <Text style={styles.userSub}>Guest Exploration Pass</Text>
+                <Text style={styles.userName}>{userName || visitorEmail || NOT_RECORDED}</Text>
+                <Text style={styles.userSub}>{visitorEmail || NOT_RECORDED}</Text>
               </View>
               <View style={styles.visitorBadge}>
-                <Text style={styles.visitorBadgeText}>READ-ONLY</Text>
+                <Text style={styles.visitorBadgeText}>VISITOR</Text>
               </View>
             </View>
-
-            <View style={styles.visitorDescBox}>
-              <Ionicons name="information-circle-outline" size={17} color="#0369A1" />
-              <Text style={styles.visitorDescText}>
-                You are currently exploring Niah National Park without an account. You can scan plaques and browse species records freely.
-              </Text>
-            </View>
+            <Text style={styles.visitorAccountText}>Visitor account</Text>
           </View>
         ) : loading ? (
           <View style={[styles.card, styles.centerCard]}>
@@ -276,6 +280,11 @@ export default function ProfileScreen() {
         )}
 
         {/* Action Button */}
+        {isGuest && (
+          <TouchableOpacity style={styles.signUpBtn} onPress={handleGuestSignUp}>
+            <Text style={styles.signUpBtnText}>Sign up</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity style={styles.logoutBtn} onPress={isGuest ? handleGuestLogIn : handleLogout}>
           <Text style={styles.logoutText}>{isGuest ? 'Log in' : 'Log out'}</Text>
         </TouchableOpacity>
@@ -484,6 +493,17 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     color: '#76877B',
   },
+  visitorAccountText: { fontSize: 13, color: '#526659', marginTop: 12 },
+  signUpBtn: {
+    backgroundColor: '#213B2A',
+    height: 50,
+    borderRadius: 25,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 10,
+  },
+  signUpBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
   logoutBtn: {
     paddingVertical: 16,
     alignItems: 'center',
