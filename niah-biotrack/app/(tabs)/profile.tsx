@@ -15,26 +15,31 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthRole } from '../../src/context/AuthRoleContext';
 import { supabase } from '../../src/lib/supabase';
-import { useRecordStore, SyncStatus } from '../../src/store/useRecordStore';
+import { useRecordStore } from '../../src/store/useRecordStore';
+import { buildSyncSummary } from '../../src/services/syncSummary';
+
+const NOT_RECORDED = 'Not recorded';
 
 interface ProfileData {
-  fullName: string;
-  email: string;
-  role: string;
-  staffId?: string;
+  fullName: string | null;
+  email: string | null;
+  role: string | null;
+  staffId: string | null;
 }
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { isVisitor, userName, role, logout } = useAuthRole();
+  const { isVisitor, role, logout } = useAuthRole();
   const records = useRecordStore((state) => state.records);
 
   const [loading, setLoading] = useState<boolean>(!isVisitor);
   const [profile, setProfile] = useState<ProfileData | null>(null);
 
-  const uploadedCount = records.filter((r) => r.syncStatus === SyncStatus.UPLOADED).length;
-  const pendingCount = records.filter((r) => r.syncStatus === SyncStatus.NOT_UPLOADED).length;
-  const failedCount = records.filter((r) => r.syncStatus === SyncStatus.FAILED).length;
+  // Counts worked out from the records on this phone (same as Home).
+  const syncSummary = buildSyncSummary(records, false);
+  const uploadedCount = syncSummary.uploadedRecordCount;
+  const pendingCount = syncSummary.pendingRecordCount;
+  const failedCount = syncSummary.failedRecordCount;
 
   useEffect(() => {
     if (isVisitor) {
@@ -55,10 +60,10 @@ export default function ProfileScreen() {
           return;
         }
 
-        // Establish default fallback from the session token
-        let resolvedName = user.user_metadata?.full_name || userName || 'Field Botanist';
-        let resolvedRole = user.user_metadata?.role || role || 'Botanist';
-        let resolvedStaffId = 'SFC-BOT-001';
+        // Start from what the session itself knows; no made-up defaults.
+        let resolvedName: string | null = user.user_metadata?.full_name || null;
+        let resolvedRole: string | null = user.user_metadata?.role || role || null;
+        let resolvedStaffId: string | null = null;
 
         // 2. Query the profiles table for extended details
         try {
@@ -79,17 +84,13 @@ export default function ProfileScreen() {
 
         setProfile({
           fullName: resolvedName,
-          email: user.email || 'botanist@sarawak.gov',
+          email: user.email || null,
           role: resolvedRole,
           staffId: resolvedStaffId,
         });
       } catch {
-        setProfile({
-          fullName: userName || 'Field Botanist',
-          email: 'Active Staff Session',
-          role: role || 'Botanist',
-          staffId: 'SFC-BOT',
-        });
+        // Couldn't read the session: show only the role the app already knows.
+        setProfile({ fullName: null, email: null, role: role || null, staffId: null });
       } finally {
         setLoading(false);
       }
@@ -98,16 +99,22 @@ export default function ProfileScreen() {
     fetchStaffProfile();
   }, [isVisitor]);
 
+  // Logging out clears this phone (records, routes, photos; see AuthRoleContext.logout),
+  // so warn first when anything hasn't reached the server yet.
+  const unsynced = syncSummary.unsyncedRecordCount;
   const handleLogout = async () => {
     Alert.alert(
-      isVisitor ? 'Exit Visitor Mode' : 'Log Out',
+      isVisitor ? 'Exit Visitor Mode' : unsynced > 0 ? 'Log out with unsynced records?' : 'Log Out',
       isVisitor
         ? 'Return to sign-in screen?'
-        : 'Are you sure you want to log out of your field session?',
+        : unsynced > 0
+          ? `${unsynced} ${unsynced === 1 ? 'record has' : 'records have'} not been uploaded to the server. ` +
+            `Logging out deletes ${unsynced === 1 ? 'it' : 'them'} and all photos from this device. This cannot be undone.`
+          : 'Are you sure you want to log out of your field session? Records and photos are removed from this phone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: isVisitor ? 'Exit' : 'Log Out',
+          text: isVisitor ? 'Exit' : unsynced > 0 ? 'Log out anyway' : 'Log Out',
           style: 'destructive',
           onPress: async () => {
             await logout();
@@ -161,8 +168,8 @@ export default function ProfileScreen() {
                 <Ionicons name="person" size={28} color="#2D6A4F" />
               </View>
               <View style={styles.userInfo}>
-                <Text style={styles.userName}>{profile?.fullName || userName}</Text>
-                <Text style={styles.userSub}>{profile?.email}</Text>
+                <Text style={styles.userName}>{profile?.fullName || profile?.email || NOT_RECORDED}</Text>
+                <Text style={styles.userSub}>{profile?.email || NOT_RECORDED}</Text>
               </View>
               <View style={styles.staffBadge}>
                 <Text style={styles.staffBadgeText}>STAFF</Text>
@@ -172,12 +179,12 @@ export default function ProfileScreen() {
             <View style={styles.metaRow}>
               <View style={styles.metaCol}>
                 <Text style={styles.metaLabel}>Designation</Text>
-                <Text style={styles.metaVal}>{profile?.role || 'Botanist'}</Text>
+                <Text style={styles.metaVal}>{profile?.role || NOT_RECORDED}</Text>
               </View>
               <View style={styles.metaDivider} />
               <View style={styles.metaCol}>
                 <Text style={styles.metaLabel}>Staff ID</Text>
-                <Text style={styles.metaVal}>{profile?.staffId || 'SFC-BOT'}</Text>
+                <Text style={styles.metaVal}>{profile?.staffId || NOT_RECORDED}</Text>
               </View>
             </View>
           </View>
@@ -189,7 +196,13 @@ export default function ProfileScreen() {
             <Text style={styles.cardTitle}>Database Sync</Text>
             <View style={styles.syncStatusPill}>
               <Text style={styles.syncStatusText}>
-                {pendingCount > 0 ? `${pendingCount} Queued` : 'All Synced'}
+                {failedCount > 0
+                  ? `${failedCount} Failed`
+                  : pendingCount > 0
+                    ? `${pendingCount} Queued`
+                    : records.length > 0
+                      ? 'All Synced'
+                      : 'No records'}
               </Text>
             </View>
           </View>
@@ -215,7 +228,7 @@ export default function ProfileScreen() {
           <View style={styles.syncFooterRow}>
             <Ionicons name="time-outline" size={15} color="#8A998E" />
             <Text style={styles.syncFooterText}>
-              Last successful sync: <Text style={{ fontWeight: '700' }}>Local Cache Active</Text>
+              {syncSummary.overallMessage} Observations: {syncSummary.observationSummary}.
             </Text>
           </View>
         </View>

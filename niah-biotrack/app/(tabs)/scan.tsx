@@ -12,16 +12,21 @@ import {
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { API_BASE_URL } from '../../src/config/api';
 import { useAuthRole } from '../../src/context/AuthRoleContext';
+import {
+  lookupTag,
+  describeTagLookup,
+  lookupPublicTag,
+  describePublicTagLookup,
+  type TagLookupResult,
+  type PublicTagLookupResult,
+} from '../../src/services/tagLookup';
 
-interface PlantPreview {
-  id: string;
-  tagCode: string;
-  scientificName: string;
-  commonName: string;
-  family?: string;
-}
+// Staff look tags up on the phone, then the staff API; visitors (not signed in) use
+// the public route, which only returns approved plants.
+type ScanResult =
+  | { kind: 'staff'; result: TagLookupResult }
+  | { kind: 'visitor'; result: PublicTagLookupResult };
 
 export default function ScanScreen() {
   const router = useRouter();
@@ -31,7 +36,7 @@ export default function ScanScreen() {
   const [torchEnabled, setTorchEnabled] = useState(false);
   const [scanned, setScanned] = useState(false);
   const [isLookingUp, setIsLookingUp] = useState(false);
-  const [plantData, setPlantData] = useState<PlantPreview | null>(null);
+  const [scan, setScan] = useState<ScanResult | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
 
   if (!permission) {
@@ -59,66 +64,43 @@ export default function ScanScreen() {
     setScanned(true);
     setIsLookingUp(true);
 
-    const cleanTag = data.trim();
-
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/plants/tag/${encodeURIComponent(cleanTag)}`);
-
-      if (res.ok) {
-        const item = await res.json();
-        setPlantData({
-          id: item.id || '',
-          tagCode: cleanTag,
-          scientificName: item.scientific_name || item.species?.scientific_name || 'Species Recorded',
-          commonName: item.common_name || item.species?.common_name || 'Forest Specimen',
-          family: item.family || item.species?.family || 'Sarawak Flora',
-        });
-        setModalVisible(true);
-      } else {
-        setPlantData({
-          id: '',
-          tagCode: cleanTag,
-          scientificName: 'Unregistered Specimen',
-          commonName: 'New Botanical Tag',
-          family: 'Not Cataloged',
-        });
-        setModalVisible(true);
-      }
-    } catch {
-      setPlantData({
-        id: '',
-        tagCode: cleanTag,
-        scientificName: 'Field Specimen (Offline)',
-        commonName: 'Scanned Tag',
-      });
-      setModalVisible(true);
-    } finally {
-      setIsLookingUp(false);
-    }
+    // Real results only: never filled in with made-up plant details.
+    const next: ScanResult = canEdit
+      ? { kind: 'staff', result: await lookupTag(data) }
+      : { kind: 'visitor', result: await lookupPublicTag(data) };
+    setScan(next);
+    setModalVisible(true);
+    setIsLookingUp(false);
   };
+
+  // The current result, split by who scanned, so each branch below is typed exactly.
+  const staffResult = scan?.kind === 'staff' ? scan.result : null;
+  const visitorResult = scan?.kind === 'visitor' ? scan.result : null;
 
   const handleProceedToObservation = () => {
     setModalVisible(false);
-    if (!plantData) return;
+    // Only plants saved on this phone can get a visit (it's stored with the record).
+    if (staffResult?.status !== 'on-phone') return;
+    const { record, tagCode } = staffResult;
 
     router.push({
       pathname: '/add-observation',
       params: {
-        plantId: plantData.id,
-        tagCode: plantData.tagCode,
-        scientificName: plantData.scientificName,
+        plantId: record.id, // the phone's own record id
+        tagCode,
+        scientificName: record.scientificName,
       },
     });
 
     setTimeout(() => {
       setScanned(false);
-      setPlantData(null);
+      setScan(null);
     }, 800);
   };
 
   const handleDismissSheet = () => {
     setModalVisible(false);
-    setPlantData(null);
+    setScan(null);
     setTimeout(() => {
       setScanned(false);
     }, 400);
@@ -201,22 +183,53 @@ export default function ScanScreen() {
             <View style={styles.sheetHeaderRow}>
               <View style={styles.tagPill}>
                 <Ionicons name="pricetag" size={13} color="#2D6A4F" />
-                <Text style={styles.tagPillText}>{plantData?.tagCode}</Text>
+                <Text style={styles.tagPillText}>{scan?.result.tagCode}</Text>
               </View>
               <TouchableOpacity onPress={handleDismissSheet}>
                 <Ionicons name="close-circle" size={24} color="#8A998E" />
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.sheetScientificName}>{plantData?.scientificName}</Text>
-            <Text style={styles.sheetCommonName}>{plantData?.commonName}</Text>
-
-            {plantData?.family && (
-              <View style={styles.familyRow}>
-                <Text style={styles.familyLabel}>Taxonomy Family:</Text>
-                <Text style={styles.familyVal}>{plantData.family}</Text>
-              </View>
-            )}
+            {staffResult?.status === 'on-phone' ? (
+              <>
+                <Text style={styles.sheetScientificName}>
+                  {staffResult.record.scientificName || 'Identification pending'}
+                </Text>
+                {staffResult.record.commonName ? (
+                  <Text style={styles.sheetCommonName}>{staffResult.record.commonName}</Text>
+                ) : null}
+                {staffResult.record.family ? (
+                  <View style={styles.familyRow}>
+                    <Text style={styles.familyLabel}>Taxonomy Family:</Text>
+                    <Text style={styles.familyVal}>{staffResult.record.family}</Text>
+                  </View>
+                ) : null}
+              </>
+            ) : staffResult ? (
+              <>
+                <Text style={styles.sheetScientificName}>{describeTagLookup(staffResult).title}</Text>
+                {staffResult.status === 'server-only' && staffResult.commonName ? (
+                  <Text style={styles.sheetCommonName}>{staffResult.commonName}</Text>
+                ) : null}
+                <Text style={styles.sheetCommonName}>{describeTagLookup(staffResult).message}</Text>
+              </>
+            ) : visitorResult?.status === 'found' ? (
+              <>
+                <Text style={styles.sheetScientificName}>
+                  {visitorResult.scientificName || 'Species not recorded'}
+                </Text>
+                {visitorResult.commonName || visitorResult.localName ? (
+                  <Text style={styles.sheetCommonName}>
+                    {[visitorResult.commonName, visitorResult.localName].filter(Boolean).join(' · ')}
+                  </Text>
+                ) : null}
+              </>
+            ) : visitorResult ? (
+              <>
+                <Text style={styles.sheetScientificName}>{describePublicTagLookup(visitorResult).title}</Text>
+                <Text style={styles.sheetCommonName}>{describePublicTagLookup(visitorResult).message}</Text>
+              </>
+            ) : null}
 
             {canEdit ? (
               <View style={styles.sheetActionRow}>
@@ -224,21 +237,26 @@ export default function ScanScreen() {
                   <Text style={styles.sheetCancelText}>Scan Again</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={styles.sheetConfirmBtn}
-                  onPress={handleProceedToObservation}
-                >
-                  <Text style={styles.sheetConfirmText}>Record Observation →</Text>
-                </TouchableOpacity>
+                {staffResult?.status === 'on-phone' ? (
+                  <TouchableOpacity
+                    style={styles.sheetConfirmBtn}
+                    onPress={handleProceedToObservation}
+                  >
+                    <Text style={styles.sheetConfirmText}>Record Observation →</Text>
+                  </TouchableOpacity>
+                ) : null}
               </View>
             ) : (
               <View style={styles.visitorSheetFooter}>
-                <View style={styles.visitorVerifiedBadge}>
-                  <Ionicons name="checkmark-circle" size={16} color="#059669" />
-                  <Text style={styles.visitorVerifiedText}>
-                    Sarawak Forestry Corporation Verified Specimen
-                  </Text>
-                </View>
+                {/* Only for a plant the public route actually returned (approved). */}
+                {visitorResult?.status === 'found' ? (
+                  <View style={styles.visitorVerifiedBadge}>
+                    <Ionicons name="checkmark-circle" size={16} color="#059669" />
+                    <Text style={styles.visitorVerifiedText}>
+                      Sarawak Forestry Corporation Verified Specimen
+                    </Text>
+                  </View>
+                ) : null}
                 <TouchableOpacity style={styles.visitorDoneBtn} onPress={handleDismissSheet}>
                   <Text style={styles.visitorDoneBtnText}>Done</Text>
                 </TouchableOpacity>

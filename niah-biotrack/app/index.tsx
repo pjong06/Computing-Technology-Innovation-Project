@@ -10,6 +10,7 @@ import {
   StatusBar,
   ActivityIndicator,
 } from 'react-native';
+import type { TextInputInstance } from 'react-native';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,7 +22,8 @@ import { useAuthRole } from '../src/context/AuthRoleContext';
 import { hasSavedSession } from '../src/lib/auth';
 
 export default function LoginScreen() {
-  const passwordRef = useRef<any>(null);
+  // RN 0.88: a TextInput ref holds a TextInputInstance, not the TextInput component.
+  const passwordRef = useRef<TextInputInstance>(null);
   const router = useRouter();
   const { checkUserRole, setVisitorMode } = useAuthRole();
 
@@ -138,7 +140,8 @@ export default function LoginScreen() {
             autoCapitalize="none"
             autoCorrect={false}
             returnKeyType="next"
-            onSubmitEditing={() => (passwordRef.current as any)?.focus()}
+            submitBehavior="submit"
+            onSubmitEditing={() => passwordRef.current?.focus()}
           />
 
           <Text style={styles.inputLabel}>Password</Text>

@@ -1,6 +1,9 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
+import { signOutOnThisPhone } from '../lib/auth';
+import { useRecordStore } from '../store/useRecordStore';
+import { deleteAllStoredPhotos } from '../utils/photoStorage';
 
 export type UserRole = 'botanist' | 'officer' | 'visitor';
 
@@ -73,9 +76,16 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
     setUserName('Park Visitor');
   };
 
+  // Every logout path (Profile, Home's "Staff Sign In", leaving visitor mode) comes
+  // here, so the phone is always cleared: otherwise the next person to log in would
+  // see the previous user's records and photos (and could upload them as their own).
+  // Screens must warn about unsynced data BEFORE calling this; it deletes it.
   const logout = async () => {
+    useRecordStore.getState().clearAllData(); // records, routes, draft route
+    deleteAllStoredPhotos();
     await AsyncStorage.removeItem('niah_is_guest_visitor');
-    await supabase.auth.signOut();
+    // Works offline too, and forgets the cached account details.
+    await signOutOnThisPhone();
     setRole('visitor');
     setUserName('Visitor');
   };

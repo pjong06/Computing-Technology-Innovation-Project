@@ -7,6 +7,8 @@ import { AuthRoleProvider } from '../src/context/AuthRoleContext';
 export default function RootLayout() {
   return (
     <AuthRoleProvider>
+      {/* No backgroundColor: React Native 0.88 removed it (Android is always edge-to-edge
+          now, so the screen's own #F6F8F6 background shows behind the status bar). */}
       <StatusBar barStyle="dark-content" />
       <Stack
         screenOptions={{
@@ -21,6 +23,8 @@ export default function RootLayout() {
         <Stack.Screen name="new-record" />
         <Stack.Screen name="save-confirm" />
         <Stack.Screen name="plant-detail" />
+        <Stack.Screen name="species-reference/index" />
+        <Stack.Screen name="species-reference/[id]" />
         <Stack.Screen name="attach-tag" />
         <Stack.Screen name="add-observation" />
         <Stack.Screen name="record-route" />

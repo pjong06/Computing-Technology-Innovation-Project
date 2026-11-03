@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -10,22 +10,66 @@ import {
   StatusBar,
   Image,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import { useAuthRole } from '../../src/context/AuthRoleContext';
-import { useRecordStore, SyncStatus } from '../../src/store/useRecordStore';
+import { useRecordStore, SyncStatus, IdentificationStatus } from '../../src/store/useRecordStore';
+import { buildSyncSummary } from '../../src/services/syncSummary';
 
 export default function HomeScreen() {
   const router = useRouter();
   const { isVisitor, userName, logout } = useAuthRole();
   const records = useRecordStore((state) => state.records);
-  const retryRecord = useRecordStore((state: any) => state.retryRecord);
+  const syncAll = useRecordStore((state) => state.syncAll);
+  const syncRecord = useRecordStore((state) => state.syncRecord);
 
-  const pendingCount = records.filter((r) => r.syncStatus === SyncStatus.NOT_UPLOADED).length;
-  const failedCount = records.filter((r) => r.syncStatus === SyncStatus.FAILED).length;
+  const [syncingAll, setSyncingAll] = useState(false);
+  // IDs of records whose Retry is running, so each row can show its own spinner.
+  const [retryingIds, setRetryingIds] = useState<string[]>([]);
+
+  // Same counts the Profile tab uses, worked out from the records on the phone.
+  const summary = buildSyncSummary(records, syncingAll);
+  const pendingCount = summary.pendingRecordCount;
+  const failedCount = summary.failedRecordCount;
   const totalToSync = pendingCount + failedCount;
+  const identificationDraftCount = records.filter(
+    (record) => record.identificationStatus === IdentificationStatus.PENDING
+  ).length;
+
+  const handleSyncNow = async () => {
+    setSyncingAll(true);
+    // syncAll never throws: every problem comes back as a count.
+    const { uploaded, failed, skipped } = await syncAll();
+    setSyncingAll(false);
+
+    const parts = [`${uploaded} uploaded`];
+    if (failed > 0) parts.push(`${failed} failed`);
+    // Only mention skipped records when there are some (they were already uploading).
+    if (skipped > 0) parts.push(`${skipped} already uploading`);
+
+    Toast.show({
+      type: failed > 0 ? 'error' : 'success',
+      text1: failed > 0 ? 'Some records did not upload' : 'Sync complete',
+      text2: failed > 0 ? `${parts.join(' · ')}. Tap Retry to try again.` : parts.join(' · '),
+      position: 'bottom',
+    });
+  };
+
+  // A real upload of this one record (not just a status change).
+  const handleRetry = async (id: string) => {
+    setRetryingIds((ids) => [...ids, id]);
+    const result = await syncRecord(id);
+    setRetryingIds((ids) => ids.filter((x) => x !== id));
+
+    Toast.show(
+      result.ok
+        ? { type: 'success', text1: 'Record uploaded', position: 'bottom' }
+        : { type: 'error', text1: 'Upload failed', text2: result.reason, position: 'bottom' }
+    );
+  };
 
   const getStatusBadge = (status: SyncStatus) => {
     switch (status) {
@@ -102,8 +146,35 @@ export default function HomeScreen() {
                 <Text style={styles.syncSub}>
                   {pendingCount} queued{failedCount > 0 ? ` · ${failedCount} failed` : ''} · local storage safe
                 </Text>
+                <TouchableOpacity
+                  style={[styles.syncBtn, syncingAll && styles.syncBtnDisabled]}
+                  onPress={handleSyncNow}
+                  disabled={syncingAll}
+                >
+                  {syncingAll ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.syncBtnText}>Sync now</Text>
+                  )}
+                </TouchableOpacity>
               </View>
             )}
+
+            {identificationDraftCount > 0 ? (
+              <TouchableOpacity
+                style={styles.draftCard}
+                activeOpacity={0.8}
+                onPress={() => router.push('/(tabs)/records' as any)}
+              >
+                <Text style={styles.syncTitle}>
+                  {identificationDraftCount}{' '}
+                  {identificationDraftCount === 1 ? 'record needs' : 'records need'} identification
+                </Text>
+                <Text style={styles.syncSub}>
+                  Field information is saved locally. Continue editing when you can confirm the species.
+                </Text>
+              </TouchableOpacity>
+            ) : null}
 
             <View style={styles.actionGrid}>
               <TouchableOpacity
@@ -120,12 +191,25 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={styles.newRecordCard}
                 activeOpacity={0.85}
-                onPress={() => router.push('/add-observation')}
+                onPress={() => router.push('/new-record' as any)}
               >
                 <Ionicons name="add-circle-outline" size={32} color="#FFFFFF" />
-                <Text style={styles.newRecordLabel}>Add Observation</Text>
+                <Text style={styles.newRecordLabel}>New Record</Text>
               </TouchableOpacity>
             </View>
+
+            {/* Secondary: a visit to a plant already on this phone (found by tag). */}
+            <TouchableOpacity
+              style={styles.routePill}
+              activeOpacity={0.85}
+              onPress={() => router.push('/add-observation')}
+            >
+              <View style={styles.routeLeft}>
+                <Ionicons name="clipboard-outline" size={20} color="#284632" style={{ marginRight: 8 }} />
+                <Text style={styles.routeLabel}>Add Observation</Text>
+              </View>
+              <Text style={styles.routeTag}>Existing plant</Text>
+            </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.routePill}
@@ -176,27 +260,35 @@ export default function HomeScreen() {
                           <Ionicons name="leaf" size={20} color="#2D6A4F" />
                         </View>
                         <View style={{ flex: 1, marginHorizontal: 12 }}>
-                          <Text style={styles.speciesText}>{item.scientificName}</Text>
+                          <Text style={styles.speciesText}>
+                            {item.scientificName || 'Identification pending'}
+                          </Text>
                           <Text style={styles.locationText}>
                             {item.locationName} · {item.createdAt}
                           </Text>
                         </View>
-                        <View style={[styles.badgePill, { backgroundColor: badge.bg }]}>
-                          <Text style={[styles.badgeText, { color: badge.text }]}>{badge.label}</Text>
-                        </View>
+                        {item.identificationStatus === IdentificationStatus.PENDING ? (
+                          <View style={[styles.badgePill, { backgroundColor: '#FDF4D8' }]}>
+                            <Text style={[styles.badgeText, { color: '#8C5E03' }]}>• Identify later</Text>
+                          </View>
+                        ) : (
+                          <View style={[styles.badgePill, { backgroundColor: badge.bg }]}>
+                            <Text style={[styles.badgeText, { color: badge.text }]}>{badge.label}</Text>
+                          </View>
+                        )}
                       </TouchableOpacity>
 
                       {item.syncStatus === SyncStatus.FAILED && (
                         <View style={styles.errorSubRow}>
                           <Text style={styles.errorSubText}>Upload failed</Text>
-                          <TouchableOpacity
-                            onPress={() => {
-                              if (retryRecord) retryRecord(item.id);
-                              Toast.show({ type: 'info', text1: 'Retrying sync...' });
-                            }}
-                          >
-                            <Text style={styles.retryBtn}>Retry</Text>
-                          </TouchableOpacity>
+                          {retryingIds.includes(item.id) ? (
+                            <ActivityIndicator size="small" color="#9B1C1C" />
+                          ) : (
+                            // Disabled during "Sync now", which is already retrying this record.
+                            <TouchableOpacity onPress={() => handleRetry(item.id)} disabled={syncingAll}>
+                              <Text style={styles.retryBtn}>Retry</Text>
+                            </TouchableOpacity>
+                          )}
                         </View>
                       )}
                     </View>
@@ -237,14 +329,6 @@ export default function HomeScreen() {
                 <Text style={styles.visitorNavSub}>Park species catalog</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.visitorNavCard}
-                onPress={() => router.push('/(tabs)/records')}
-              >
-                <Ionicons name="images-outline" size={26} color="#0284C7" />
-                <Text style={styles.visitorNavTitle}>Sightings</Text>
-                <Text style={styles.visitorNavSub}>Verified photos</Text>
-              </TouchableOpacity>
             </View>
 
             <View style={styles.readOnlyNoticeBox}>
@@ -298,6 +382,26 @@ const styles = StyleSheet.create({
   },
   syncTitle: { fontSize: 13.5, fontWeight: '700', color: '#213B2A' },
   syncSub: { fontSize: 11.5, color: '#5C7163', marginTop: 2 },
+  syncBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#213B2A',
+    minWidth: 104,
+    height: 36,
+    borderRadius: 18,
+    paddingHorizontal: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  syncBtnDisabled: { opacity: 0.6 },
+  syncBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+  draftCard: {
+    backgroundColor: '#FDF4D8',
+    borderRadius: 18,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 14,
+  },
   actionGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
