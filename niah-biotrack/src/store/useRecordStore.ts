@@ -6,7 +6,13 @@ import { apiFetch, ApiError } from '../api/client';
 import { useProfileStore } from './useProfileStore';
 // recordMapper imports only types from this file (import type), so there is no
 // runtime circular dependency between the two.
-import { mapLocalRecordToBackend, mapLocalObservationToBackend } from '../services/recordMapper';
+import {
+  loadOrMigrateRecords,
+  persistObservation,
+  persistRecordSnapshot,
+} from '../services/offlineRecordRepository';
+import { clearOfflineDatabase } from '../services/offlineDatabase';
+import { runOutboxSync } from '../services/syncEngine';
 
 export enum SyncStatus {
   UPLOADED = 'Uploaded',
@@ -71,6 +77,10 @@ export interface ObservationVisit {
   // The server's id for this visit (observations.id), saved after a successful upload.
   // Needed later to submit the visit for review (PATCH /api/observations/:id/submit).
   serverId?: string;
+  rowVersion?: number;
+  latitude?: number;
+  longitude?: number;
+  gpsAccuracyM?: number | null;
   // True once the server has accepted this visit for officer review (it's "pending"
   // there). Visits without it are still drafts on the server.
   submittedForReview?: boolean;
@@ -82,6 +92,7 @@ export interface PlantRecord {
   // succeeds. Observations are uploaded with it as plant_id. If it's set, the plant
   // itself is already on the server and a retry only re-sends the observations.
   serverId?: string;
+  rowVersion?: number;
   tagCode: string | null; // code of the pre-printed tag on the plant; null until one is attached
   scientificName: string;
   speciesId: string | null;
@@ -207,7 +218,7 @@ interface RecordState {
       PlantRecord,
       'id' | 'tagCode' | 'createdAt' | 'createdAtIso' | 'observations' | 'reviewStatus' | 'reviewComment'
     >
-  ) => PlantRecord;
+  ) => Promise<PlantRecord>;
   updateRecord: (
     id: string,
     updates: Pick<
@@ -229,20 +240,21 @@ interface RecordState {
       | 'identificationStatus'
       | 'syncStatus'
     >
-  ) => PlantRecord | null;
+  ) => Promise<PlantRecord | null>;
   // observedAt is required for new visits (it's only optional on the type for old ones).
   addObservation: (
     plantRecordId: string,
     observation: Omit<ObservationVisit, 'id' | 'syncStatus' | 'observedAt'> & { observedAt: string }
-  ) => void;
+  ) => Promise<ObservationVisit | null>;
   syncRecord: (id: string) => Promise<SyncResult>;
   syncAll: () => Promise<SyncAllResult>;
   submitForReview: (id: string) => Promise<SubmitResult>;
   findByTag: (tagCode: string) => PlantRecord | undefined;
-  attachTag: (recordId: string, tagCode: string) => { ok: true } | { ok: false; reason: string };
+  attachTag: (recordId: string, tagCode: string) => Promise<{ ok: true } | { ok: false; reason: string }>;
+  hydrateOfflineRecords: () => Promise<void>;
   saveRoute: (route: Omit<RecordedRoute, 'id' | 'createdAt'>) => RecordedRoute;
   clearActiveDraftRoute: () => void;
-  clearAllData: () => void;
+  clearAllData: () => Promise<void>;
 }
 
 export const useRecordStore = create<RecordState>()(
@@ -251,7 +263,7 @@ export const useRecordStore = create<RecordState>()(
       records: [],
       routes: [],
       activeDraftRoute: null,
-      addRecord: (recordData) => {
+      addRecord: async (recordData) => {
         const now = new Date();
         const newRecord: PlantRecord = {
           ...recordData,
@@ -263,10 +275,11 @@ export const useRecordStore = create<RecordState>()(
           createdAtIso: now.toISOString(), // same moment, machine-readable
           observations: [],
         };
+        await persistRecordSnapshot(newRecord, { queuePlant: true });
         set((state) => ({ records: [newRecord, ...state.records] }));
         return newRecord;
       },
-      updateRecord: (id, updates) => {
+      updateRecord: async (id, updates) => {
         const current = get().records.find((record) => record.id === id);
         if (!current) return null;
         if (current.reviewStatus !== ReviewStatus.DRAFT && current.reviewStatus !== ReviewStatus.REJECTED) {
@@ -274,147 +287,130 @@ export const useRecordStore = create<RecordState>()(
         }
 
         const updated = { ...current, ...updates };
+        await persistRecordSnapshot(updated, {
+          queuePlant: true,
+          queueObservationIds: updated.observations
+            .filter((observation) => observation.syncStatus !== SyncStatus.UPLOADED)
+            .map((observation) => observation.id),
+        });
         set((state) => ({
           records: state.records.map((record) => (record.id === id ? updated : record)),
         }));
         return updated;
       },
-      addObservation: (plantRecordId, observationData) => {
+      addObservation: async (plantRecordId, observationData) => {
+        const record = get().records.find((item) => item.id === plantRecordId);
+        if (!record) return null;
+
+        const newObs: ObservationVisit = {
+          ...observationData,
+          id: randomUUID(),
+          syncStatus: SyncStatus.NOT_UPLOADED,
+        };
+        const updatedRecord: PlantRecord = {
+          ...record,
+          observations: [newObs, ...record.observations],
+          syncStatus:
+            record.syncStatus === SyncStatus.UPLOADED
+              ? SyncStatus.NOT_UPLOADED
+              : record.syncStatus,
+        };
+
+        await persistObservation(updatedRecord, newObs, isUploadable(updatedRecord));
+        await persistRecordSnapshot(updatedRecord);
         set((state) => ({
-          records: state.records.map((r) => {
-            if (r.id === plantRecordId) {
-              const newObs: ObservationVisit = {
-                ...observationData,
-                // A real UUID: the backend rejects anything else as client_record_id.
-                id: randomUUID(),
-                syncStatus: SyncStatus.NOT_UPLOADED,
-              };
-              return {
-                ...r,
-                observations: [newObs, ...r.observations],
-                // A record that was fully uploaded now has a visit the server hasn't
-                // seen, so it needs uploading again (syncRecord skips UPLOADED records).
-                syncStatus: r.syncStatus === SyncStatus.UPLOADED ? SyncStatus.NOT_UPLOADED : r.syncStatus,
-              };
-            }
-            return r;
-          }),
+          records: state.records.map((item) =>
+            item.id === plantRecordId ? updatedRecord : item
+          ),
         }));
+        return newObs;
       },
 
-      // Uploads one record (the plant, then its visits) to the backend.
-      // This is the ONLY place that may mark a record UPLOADED: it happens only after
-      // the server has confirmed every part. It never throws; the screen gets a
-      // SyncResult it can show in a message.
+      // Synchronizes one record through the durable SQLite outbox. The same
+      // operation IDs are reused after an interrupted request, so the backend
+      // can safely return the earlier result instead of creating duplicates.
       syncRecord: async (id) => {
-        const record = get().records.find((r) => r.id === id);
+        const record = get().records.find((item) => item.id === id);
         if (!record) return { ok: false, reason: 'Record not found' };
-        // Drafts without a confirmed species stay on the phone: the backend rejects a
-        // plant without an approved species. They upload once the draft is completed.
         if (!isUploadable(record)) {
-          return { ok: false, reason: 'Confirm an approved species and complete this draft before uploading it.' };
+          return {
+            ok: false,
+            reason: 'Confirm an approved species and complete this draft before uploading it.',
+          };
         }
-        if (record.syncStatus === SyncStatus.UPLOADED) {
-          return { ok: true, submittedForReview: isFullySubmitted(record) }; // nothing new to send
+        if (uploadsInProgress.has(id)) {
+          return { ok: false, reason: 'This record is already uploading' };
         }
-        if (uploadsInProgress.has(id)) return { ok: false, reason: 'This record is already uploading' };
-
-        // Small helpers that change just this record (or one of its visits) in the store.
-        // They always start from the latest state, because uploads take time and the
-        // user may have changed something meanwhile.
-        const patchRecord = (changes: Partial<PlantRecord>) =>
-          set((state) => ({
-            records: state.records.map((r) => (r.id === id ? { ...r, ...changes } : r)),
-          }));
-        const updateObservation = (obsId: string, changes: Partial<ObservationVisit>) =>
-          set((state) => ({
-            records: state.records.map((r) =>
-              r.id === id
-                ? { ...r, observations: r.observations.map((o) => (o.id === obsId ? { ...o, ...changes } : o)) }
-                : r
-            ),
-          }));
 
         uploadsInProgress.add(id);
         try {
-          // 1. The plant. Skipped if an earlier attempt already got it onto the server.
-          let serverId = record.serverId;
-          if (!serverId) {
-            const response = await apiFetch<PlantUploadResponse>('/api/plants', {
-              method: 'POST',
-              body: mapLocalRecordToBackend(record),
-            });
-            serverId = response.plant.id;
-            // Save it straight away. If a visit fails below, the next retry sees serverId
-            // and only re-sends the visits instead of the plant.
-            patchRecord({ serverId });
+          await persistRecordSnapshot(record, {
+            queuePlant: record.syncStatus !== SyncStatus.UPLOADED,
+            queueObservationIds: record.observations
+              .filter((observation) => observation.syncStatus !== SyncStatus.UPLOADED)
+              .map((observation) => observation.id),
+          });
+
+          const run = await runOutboxSync();
+          const refreshedRecords = await loadOrMigrateRecords(get().records);
+          set({ records: refreshedRecords });
+
+          let refreshed = refreshedRecords.find((item) => item.id === id);
+          if (!refreshed) return { ok: false, reason: 'Record not found after synchronization' };
+
+          if (run.error) return { ok: false, reason: run.error };
+          if (refreshed.syncStatus === SyncStatus.FAILED) {
+            return {
+              ok: false,
+              reason: run.conflicts > 0
+                ? 'A newer server version exists. This record needs conflict review.'
+                : 'The server rejected part of this record. Review it and try again.',
+            };
           }
 
-          // TODO(photos): upload the record's photos here, once the teammate has fixed
-          // POST /api/plants/:id/photo on the backend. Use serverId in the URL, send each
-          // file in photoUris (resolve them with resolveStoredPhotoUri first), and only
-          // continue to the visits when every photo is on the server.
+          if (refreshed.reviewStatus === ReviewStatus.PENDING) {
+            const submittedIds = new Set<string>();
+            for (const observation of [...refreshed.observations].reverse()) {
+              if (!observation.serverId || observation.submittedForReview) continue;
+              await apiFetch(`/api/observations/${observation.serverId}/submit`, {
+                method: 'PATCH',
+              });
+              submittedIds.add(observation.id);
+            }
 
-          // 2. The visits, one at a time, oldest first so they arrive in the order they
-          //    happened (the list is stored newest first). Read them fresh from the store
-          //    in case one was added while the plant was uploading.
-          const latest = get().records.find((r) => r.id === id);
-          const visitsToSend = [...(latest?.observations ?? [])]
-            .reverse()
-            .filter((obs) => obs.syncStatus !== SyncStatus.UPLOADED);
-
-          for (const obs of visitsToSend) {
-            const response = await apiFetch<ObservationUploadResponse>('/api/observations', {
-              method: 'POST',
-              body: mapLocalObservationToBackend(serverId, obs),
-            });
-            // Mark each visit as soon as the server confirms it, so a later failure
-            // doesn't make us send this one again.
-            updateObservation(obs.id, { syncStatus: SyncStatus.UPLOADED, serverId: response.observation.id });
-          }
-
-          // 3. Submit for officer review, if the botanist has submitted this record on the
-          //    phone. This happens here rather than in submitForReview so that a submit
-          //    whose upload failed (no signal) still reaches the officer queue later, the
-          //    next time Retry or "Sync now" runs. The server reviews visits, not plants,
-          //    so each uploaded visit that isn't submitted yet is sent on its own.
-          const afterUpload = get().records.find((r) => r.id === id);
-          if (afterUpload?.reviewStatus === ReviewStatus.PENDING) {
-            const visitsToSubmit = [...afterUpload.observations]
-              .reverse() // oldest first, like the uploads
-              .filter((obs) => obs.serverId && !obs.submittedForReview);
-
-            for (const obs of visitsToSubmit) {
-              // The server answers 200 both when it submits the visit and when the visit
-              // was already pending (e.g. an earlier attempt got through but the phone lost
-              // the reply), so a repeat is safe. Any other answer throws an ApiError, and
-              // the record is marked FAILED below like any other upload problem.
-              await apiFetch(`/api/observations/${obs.serverId}/submit`, { method: 'PATCH' });
-              // Remember it straight away, so a later failure doesn't send this one again.
-              updateObservation(obs.id, { submittedForReview: true });
+            if (submittedIds.size > 0) {
+              refreshed = {
+                ...refreshed,
+                observations: refreshed.observations.map((observation) =>
+                  submittedIds.has(observation.id)
+                    ? { ...observation, submittedForReview: true }
+                    : observation
+                ),
+              };
+              set((state) => ({
+                records: state.records.map((item) =>
+                  item.id === id ? refreshed! : item
+                ),
+              }));
+              await persistRecordSnapshot(refreshed);
             }
           }
 
-          // 4. Mark the record UPLOADED, but only if nothing new appeared meanwhile. A visit
-          //    added while we were uploading wasn't in visitsToSend; leaving the record
-          //    NOT_UPLOADED means the next sync picks it up (and submits it) instead of
-          //    skipping it forever.
-          const finalRecord = get().records.find((r) => r.id === id);
-          const unsentLeft = finalRecord?.observations.some((obs) => obs.syncStatus !== SyncStatus.UPLOADED);
-          patchRecord({ syncStatus: unsentLeft ? SyncStatus.NOT_UPLOADED : SyncStatus.UPLOADED });
-          return { ok: true, submittedForReview: isFullySubmitted(finalRecord) };
-        } catch (error) {
-          // Whatever went wrong, the record stays on the phone and shows Retry.
-          patchRecord({ syncStatus: SyncStatus.FAILED });
+          const completelyUploaded =
+            refreshed.syncStatus === SyncStatus.UPLOADED &&
+            refreshed.observations.every(
+              (observation) => observation.syncStatus === SyncStatus.UPLOADED
+            );
 
-          if (error instanceof ApiError) {
-            // apiFetch already wrote a readable message: "Could not reach the server..."
-            // when status is 0 (no signal, timeout), otherwise the server's own message,
-            // e.g. "Valid latitude and longitude are required".
-            return { ok: false, reason: error.message };
-          }
-          // Not an ApiError (e.g. an unexpected response shape): still don't crash the screen.
-          return { ok: false, reason: 'Upload failed unexpectedly. Please try again.' };
+          return completelyUploaded
+            ? { ok: true, submittedForReview: isFullySubmitted(refreshed) }
+            : { ok: false, reason: 'Some operations are still waiting to upload.' };
+        } catch (error) {
+          const reason =
+            error instanceof ApiError
+              ? error.message
+              : 'Upload failed unexpectedly. Please try again.';
+          return { ok: false, reason };
         } finally {
           uploadsInProgress.delete(id);
         }
@@ -486,7 +482,7 @@ export const useRecordStore = create<RecordState>()(
       },
 
       findByTag: (tagCode) => get().records.find((r) => r.tagCode === tagCode),
-      attachTag: (recordId, tagCode) => {
+      attachTag: async (recordId, tagCode) => {
         // 1. Is this tag already on ANOTHER record?
         const existing = get().findByTag(tagCode);
         if (existing && existing.id !== recordId ) {
@@ -497,8 +493,12 @@ export const useRecordStore = create<RecordState>()(
         } 
 
         // 2. Update only the record with this recordId (same map-and-replace pattern as the other actions)
+        const current = get().records.find((record) => record.id === recordId);
+        if (!current) return { ok: false, reason: 'Plant record not found' };
+        const updated = { ...current, tagCode };
+        await persistRecordSnapshot(updated, { queuePlant: true });
         set((state) => ({
-          records: state.records.map((r) => (r.id === recordId ? { ...r, tagCode: tagCode } : r)),
+          records: state.records.map((r) => (r.id === recordId ? updated : r)),
         }));
 
         // 3. Tell the screen it worked
@@ -516,8 +516,15 @@ export const useRecordStore = create<RecordState>()(
         }));
         return route;
       },
+      hydrateOfflineRecords: async () => {
+        const records = await loadOrMigrateRecords(get().records);
+        set({ records });
+      },
       clearActiveDraftRoute: () => set({ activeDraftRoute: null }),
-      clearAllData: () => set({ records: [], routes: [], activeDraftRoute: null }),
+      clearAllData: async () => {
+        await clearOfflineDatabase();
+        set({ records: [], routes: [], activeDraftRoute: null });
+      },
     }),
     {
       name: 'niah-ground-truth-store',

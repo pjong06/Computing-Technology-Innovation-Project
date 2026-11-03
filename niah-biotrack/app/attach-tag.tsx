@@ -31,13 +31,13 @@ export default function AttachTagScreen() {
   const [error, setError] = useState<string | null>(null);
 
   // ── 4. The core: try to attach a code ──────────────────────────
-  const tryAttach = (raw: string) => {
+  const tryAttach = async (raw: string) => {
     const clean = parseTagCode(raw);
     if (!clean) {
       return "That isn't a Niah plant tag. Tag codes look like NIAH-PLT-00001.";
     }
 
-    const result = attachTag(recordId, clean);
+    const result = await attachTag(recordId, clean);
     if (!result.ok) {
       return result.reason;
     }
@@ -48,10 +48,10 @@ export default function AttachTagScreen() {
   };
 
   // Camera found a QR
-  const handleBarcodeScanned = ({ data }: { data: string }) => {
+  const handleBarcodeScanned = async ({ data }: { data: string }) => {
     if (scanned) return;
     setScanned(true);
-    const problem = tryAttach(data);
+    const problem = await tryAttach(data);
     if (problem) {
       Alert.alert("Couldn't attach tag", problem, [
         { text: 'OK', onPress: () => setScanned(false) }, // re-arm the camera
@@ -60,8 +60,8 @@ export default function AttachTagScreen() {
   };
 
   // "Attach" button under the text box
-  const handleManualAttach = () => {
-    setError(tryAttach(code));
+  const handleManualAttach = async () => {
+    setError(await tryAttach(code));
   };
 
   // ── 5. Safety: record doesn't exist ────────────────────────────

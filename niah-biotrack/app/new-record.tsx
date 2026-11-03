@@ -390,7 +390,7 @@ export default function NewRecordScreen() {
     clearError('locationName');
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const photoList = PHOTO_SLOTS.map((slot) => photos[slot]?.uri).filter(Boolean) as string[];
 
     const nextErrors: FieldErrors = {};
@@ -423,8 +423,8 @@ export default function NewRecordScreen() {
     };
 
     const saved = existingRecord
-      ? updateRecord(existingRecord.id, recordData)
-      : addRecord(recordData);
+      ? await updateRecord(existingRecord.id, recordData)
+      : await addRecord(recordData);
 
     if (!saved) {
       Toast.show({

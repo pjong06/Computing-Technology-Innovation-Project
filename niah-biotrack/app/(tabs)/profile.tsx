@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuthRole } from '../../src/context/AuthRoleContext';
 import { supabase } from '../../src/lib/supabase';
 import { useRecordStore, SyncStatus } from '../../src/store/useRecordStore';
+import { getLastSuccessfulSync } from '../../src/services/offlineDatabase';
 
 interface ProfileData {
   fullName: string;
@@ -28,9 +29,12 @@ export default function ProfileScreen() {
   const router = useRouter();
   const { isVisitor, userName, role, logout } = useAuthRole();
   const records = useRecordStore((state) => state.records);
+  const syncAll = useRecordStore((state) => state.syncAll);
 
   const [loading, setLoading] = useState<boolean>(!isVisitor);
   const [profile, setProfile] = useState<ProfileData | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
 
   const uploadedCount = records.filter((r) => r.syncStatus === SyncStatus.UPLOADED).length;
   const pendingCount = records.filter((r) => r.syncStatus === SyncStatus.NOT_UPLOADED).length;
@@ -97,6 +101,33 @@ export default function ProfileScreen() {
 
     fetchStaffProfile();
   }, [isVisitor]);
+
+  useEffect(() => {
+    void getLastSuccessfulSync().then(setLastSyncAt).catch(() => undefined);
+  }, []);
+
+  const handleSync = async () => {
+    if (isVisitor || isSyncing) return;
+    setIsSyncing(true);
+    try {
+      const result = await syncAll();
+      setLastSyncAt(await getLastSuccessfulSync());
+
+      if (result.failed > 0) {
+        Alert.alert(
+          'Sync needs attention',
+          `${result.failed} record(s) could not be uploaded. They remain safely stored on this phone.`
+        );
+      } else {
+        Alert.alert(
+          'Sync complete',
+          `${result.uploaded} record(s) processed successfully.`
+        );
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const handleLogout = async () => {
     Alert.alert(
@@ -189,7 +220,13 @@ export default function ProfileScreen() {
             <Text style={styles.cardTitle}>Database Sync</Text>
             <View style={styles.syncStatusPill}>
               <Text style={styles.syncStatusText}>
-                {pendingCount > 0 ? `${pendingCount} Queued` : 'All Synced'}
+                {isSyncing
+                  ? 'Syncing...'
+                  : failedCount > 0
+                    ? 'Attention needed'
+                    : pendingCount > 0
+                      ? `${pendingCount} Queued`
+                      : 'All Synced'}
               </Text>
             </View>
           </View>
@@ -215,9 +252,36 @@ export default function ProfileScreen() {
           <View style={styles.syncFooterRow}>
             <Ionicons name="time-outline" size={15} color="#8A998E" />
             <Text style={styles.syncFooterText}>
-              Last successful sync: <Text style={{ fontWeight: '700' }}>Local Cache Active</Text>
+              Last successful sync:{' '}
+              <Text style={{ fontWeight: '700' }}>
+                {lastSyncAt ? new Date(lastSyncAt).toLocaleString() : 'Not yet'}
+              </Text>
             </Text>
           </View>
+
+          {!isVisitor && (
+            <TouchableOpacity
+              style={[
+                styles.syncButton,
+                (isSyncing || pendingCount + failedCount === 0) && styles.syncButtonDisabled,
+              ]}
+              onPress={handleSync}
+              disabled={isSyncing || pendingCount + failedCount === 0}
+            >
+              {isSyncing ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Ionicons name="cloud-upload-outline" size={18} color="#FFFFFF" />
+              )}
+              <Text style={styles.syncButtonText}>
+                {isSyncing
+                  ? 'Syncing...'
+                  : pendingCount + failedCount > 0
+                    ? 'Sync now'
+                    : 'Nothing to sync'}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Action Button */}
@@ -430,6 +494,24 @@ const styles = StyleSheet.create({
   syncFooterText: {
     fontSize: 11.5,
     color: '#76877B',
+  },
+  syncButton: {
+    minHeight: 48,
+    borderRadius: 24,
+    backgroundColor: '#2D6A4F',
+    marginTop: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  syncButtonDisabled: {
+    backgroundColor: '#A8B6AC',
+  },
+  syncButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
   },
   logoutBtn: {
     paddingVertical: 16,

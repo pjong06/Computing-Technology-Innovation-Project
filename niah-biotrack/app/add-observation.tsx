@@ -17,8 +17,13 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import Toast from 'react-native-toast-message';
-import { supabase } from '../src/lib/supabase';
 import { useAuthRole } from '../src/context/AuthRoleContext';
+import {
+  type HealthStatus,
+  type LifeStage,
+  useRecordStore,
+} from '../src/store/useRecordStore';
+import { useProfileStore } from '../src/store/useProfileStore';
 
 const LIFE_STAGES = ['Seedling', 'Sapling', 'Pole', 'Mature', 'Senescent'];
 const HEALTH_STATUSES = [
@@ -33,6 +38,9 @@ export default function AddObservationScreen() {
   const router = useRouter();
   const { isVisitor } = useAuthRole();
   const params = useLocalSearchParams<{ plantId?: string; tagCode?: string; scientificName?: string }>();
+  const records = useRecordStore((state) => state.records);
+  const addObservation = useRecordStore((state) => state.addObservation);
+  const me = useProfileStore((state) => state.me);
 
   // Guard against visitor unauthorized writes
   useEffect(() => {
@@ -169,33 +177,47 @@ export default function AddObservationScreen() {
   const handleSaveObservation = async () => {
     setIsSubmitting(true);
     try {
-      const { data: authData } = await supabase.auth.getUser();
-      const observerId = authData?.user?.id || null;
-
-      const recordPayload = {
-        plant_id: plantId || null,
-        observer_id: observerId,
-        observed_at: new Date().toISOString(),
-        height_cm: parseFloat(heightCm) || null,
-        diameter_cm: parseFloat(diameterCm) || null,
-        life_stage: lifeStage,
-        health_status: healthStatus,
-        gps_accuracy_m: gpsAccuracy,
-        notes: notes.trim() || null,
-        photo: photos[0] || null,
-        location: latitude && longitude ? `POINT(${longitude} ${latitude})` : null,
-      };
-
-      const { error } = await supabase.from('observations').insert([recordPayload]);
-
-      if (error) {
-        throw error;
+      const targetRecord = records.find(
+        (record) =>
+          record.id === plantId ||
+          record.serverId === plantId ||
+          (plantTag.trim().length > 0 && record.tagCode === plantTag.trim())
+      );
+      if (!targetRecord) {
+        throw new Error('This plant is not stored on this phone yet. Open it from My Records and try again.');
       }
+
+      const observedAt = new Date();
+      const saved = await addObservation(targetRecord.id, {
+        date: `${observedAt.toLocaleDateString('en-GB', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+        })} · ${observedAt.toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+        })}`,
+        observedAt: observedAt.toISOString(),
+        recordedBy: me?.full_name || me?.email || 'Field Staff',
+        health: healthStatus as HealthStatus,
+        stage: lifeStage as LifeStage,
+        measurement: `${heightCm || 'Not recorded'} cm high · ${diameterCm || 'Not recorded'} cm diameter`,
+        heightCm: parseFloat(heightCm) || undefined,
+        diameterCm: parseFloat(diameterCm) || undefined,
+        photoUris: photos,
+        notes: notes.trim(),
+        latitude: latitude ?? undefined,
+        longitude: longitude ?? undefined,
+        gpsAccuracyM: gpsAccuracy,
+        submittedForReview: false,
+      });
+      if (!saved) throw new Error('Plant record not found on this phone.');
 
       Toast.show({
         type: 'success',
-        text1: 'Observation Logged',
-        text2: 'Record successfully synced to database.',
+        text1: 'Observation saved',
+        text2: 'Stored on this phone and queued for upload.',
       });
 
       router.replace('/(tabs)/home');
