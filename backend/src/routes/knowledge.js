@@ -140,6 +140,198 @@ router.get("/species/manage", authenticate, authorize("officer"), async (req, re
     return res.json({ data, pagination: paginationMetadata(paging, count) });
 });
 
+// ---- Species proposals ----
+// Botanists can only PROPOSE a species: the row is always "pending" and is hidden from
+// the public list and the New Record picker (both read approved rows only). Only an
+// officer can approve or reject it. These routes come before /species/:id so that
+// "proposals" is not read as a species ID.
+
+const PROPOSAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Proposal body field -> species column. "family" is free text here because botanists
+// can't create taxonomy rows; the officer links a real taxonomy row when approving.
+const PROPOSAL_FIELDS = {
+    common_name: "common_name",
+    local_name: "local_name",
+    family: "proposed_family",
+    description: "description",
+    habitat: "habitat",
+};
+const PROPOSAL_COLUMNS =
+    "id, client_record_id, scientific_name, common_name, local_name, proposed_family, " +
+    "description, habitat, verification_status, review_comment";
+
+// Escape % and _ so a name is matched literally by ILIKE (case-insensitive equality).
+function literalIlike(text) {
+    return text.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
+
+// POST /api/knowledge/species/proposals (botanist)
+router.post("/species/proposals", authenticate, authorize("botanist"), async (req, res) => {
+    const body = req.body;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return res.status(400).json({ message: "A species proposal object is required" });
+    }
+
+    const scientificName = typeof body.scientific_name === "string" ? body.scientific_name.trim() : "";
+    if (!scientificName || scientificName.length > 200) {
+        return res.status(400).json({
+            message: "scientific_name is required and must be at most 200 characters",
+        });
+    }
+    // The phone's own ID for the proposal, so a retried upload isn't saved twice.
+    if (typeof body.client_record_id !== "string" || !PROPOSAL_UUID.test(body.client_record_id)) {
+        return res.status(400).json({ message: "client_record_id must be a UUID" });
+    }
+
+    // Only these fields are read. Anything else the client sends (verification_status,
+    // proposed_by, taxonomy_id, review_comment...) is ignored, never trusted.
+    const proposal = {
+        scientific_name: scientificName,
+        client_record_id: body.client_record_id,
+        verification_status: "pending",
+        proposed_by: req.user.id,
+        created_by: req.user.id,
+    };
+    for (const [field, column] of Object.entries(PROPOSAL_FIELDS)) {
+        const value = body[field];
+        if (value === undefined || value === null) continue;
+        const limitField = field === "family" ? "common_name" : field; // family: 200 like names
+        if (!validOptionalText(limitField, value)) {
+            return res.status(400).json({
+                message: `${field} must be non-empty text of at most ${textLimit(limitField)} characters or null`,
+            });
+        }
+        proposal[column] = value.trim();
+    }
+
+    // A retry of an upload that already reached the server: return the saved row.
+    const { data: existing, error: existingError } = await req.supabase
+        .from("species")
+        .select(PROPOSAL_COLUMNS)
+        .eq("client_record_id", body.client_record_id)
+        .eq("proposed_by", req.user.id)
+        .maybeSingle();
+    if (existingError) {
+        console.error("Species proposal lookup error:", existingError);
+        return res.status(500).json({ message: "Could not check for an existing proposal" });
+    }
+    if (existing) {
+        return res.status(200).json({ message: "Species proposal already saved", data: existing });
+    }
+
+    // Friendly duplicate check (any letter case). The botanist can only see approved
+    // species and their own proposals here; the unique index on lower(scientific_name)
+    // also catches other botanists' pending proposals (23505 below).
+    const { data: sameName, error: sameNameError } = await req.supabase
+        .from("species")
+        .select("id, verification_status")
+        .ilike("scientific_name", literalIlike(scientificName))
+        .limit(1);
+    if (sameNameError) {
+        console.error("Species proposal duplicate check error:", sameNameError);
+        return res.status(500).json({ message: "Could not check for an existing species" });
+    }
+    if (Array.isArray(sameName) && sameName.length > 0) {
+        return res.status(409).json({ message: "A species with this scientific name already exists or is already proposed" });
+    }
+
+    const { data, error } = await req.supabase
+        .from("species")
+        .insert(proposal)
+        .select(PROPOSAL_COLUMNS)
+        .single();
+
+    if (error?.code === "23505") {
+        return res.status(409).json({ message: "A species with this scientific name already exists or is already proposed" });
+    }
+    if (error) {
+        console.error("Create species proposal error:", error);
+        return res.status(500).json({ message: "Could not save species proposal" });
+    }
+
+    return res.status(201).json({ data });
+});
+
+// GET /api/knowledge/species/proposals/mine (botanist): their own proposals, any status.
+router.get("/species/proposals/mine", authenticate, authorize("botanist"), async (req, res) => {
+    const paging = parsePagination(req.query, 100);
+    if (!paging) return res.status(400).json({ message: "Invalid page or page_size" });
+
+    const { data, error, count } = await req.supabase
+        .from("species")
+        .select(PROPOSAL_COLUMNS, { count: "exact" })
+        .eq("proposed_by", req.user.id)
+        .order("scientific_name")
+        .order("id")
+        .range(paging.start, paging.end);
+
+    if (error) {
+        console.error("My species proposals error:", error);
+        return res.status(500).json({ message: "Could not load your species proposals" });
+    }
+
+    return res.json({ data, pagination: paginationMetadata(paging, count) });
+});
+
+// PATCH /api/knowledge/species/proposals/:id/review (officer): approve or reject.
+router.patch("/species/proposals/:id/review", authenticate, authorize("officer"), async (req, res) => {
+    if (!PROPOSAL_UUID.test(req.params.id)) {
+        return res.status(400).json({ message: "Invalid species ID" });
+    }
+    const body = req.body;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return res.status(400).json({ message: "A review object is required" });
+    }
+    const { decision, comment, taxonomy_id: taxonomyId } = body;
+    if (decision !== "approved" && decision !== "rejected") {
+        return res.status(400).json({ message: "decision must be 'approved' or 'rejected'" });
+    }
+    if (comment != null && !validOptionalText("description", comment)) {
+        return res.status(400).json({ message: "comment must be non-empty text or null" });
+    }
+    // The botanist needs to know why, so a rejection must say it.
+    if (decision === "rejected" && comment == null) {
+        return res.status(400).json({ message: "A comment is required when rejecting a proposal" });
+    }
+    if (taxonomyId != null && (typeof taxonomyId !== "string" || !PROPOSAL_UUID.test(taxonomyId))) {
+        return res.status(400).json({ message: "Invalid taxonomy ID" });
+    }
+
+    const changes = { verification_status: decision, review_comment: comment == null ? null : comment.trim() };
+    if (decision === "approved" && taxonomyId != null) changes.taxonomy_id = taxonomyId;
+
+    // Only a pending proposal can be reviewed; the status filter makes this atomic.
+    const { data, error } = await req.supabase
+        .from("species")
+        .update(changes)
+        .eq("id", req.params.id)
+        .eq("verification_status", "pending")
+        .select(PROPOSAL_COLUMNS)
+        .maybeSingle();
+
+    if (error?.code === "23503") {
+        return res.status(400).json({ message: "taxonomy_id does not refer to an existing taxonomy row" });
+    }
+    if (error) {
+        console.error("Review species proposal error:", error);
+        return res.status(500).json({ message: "Could not review species proposal" });
+    }
+    if (data) return res.json({ data });
+
+    // Nothing updated: tell apart "no such species" from "not pending any more".
+    const { data: current, error: currentError } = await req.supabase
+        .from("species")
+        .select("id, verification_status")
+        .eq("id", req.params.id)
+        .maybeSingle();
+    if (currentError) {
+        console.error("Review species proposal lookup error:", currentError);
+        return res.status(500).json({ message: "Could not review species proposal" });
+    }
+    if (!current) return res.status(404).json({ message: "Species not found" });
+    return res.status(409).json({ message: "Only pending proposals can be reviewed" });
+});
+
 // GET /api/knowledge/species
 router.get("/species", async (req, res) => {
     const { q = "", family = "", conservation_status: status = "", category = "", page = "1", page_size: pageSize = "50" } = req.query;

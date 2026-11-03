@@ -4,6 +4,7 @@ import {
   SafeAreaView, Platform, StatusBar, Alert,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useStaffOnly } from '../src/context/AuthRoleContext';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import Toast from 'react-native-toast-message';
 import { useRecordStore } from '../src/store/useRecordStore';
@@ -12,6 +13,8 @@ import { parseTagCode } from '../src/utils/tagCode';
 
 export default function AttachTagScreen() {
   const router = useRouter();
+  // Botanist-only screen: guests and visitors are sent back to Home.
+  const blocked = useStaffOnly();
 
   // ── 1. Which plant are we tagging? ─────────────────────────────
   const { recordId } = useLocalSearchParams<{ recordId: string }>();
@@ -63,6 +66,8 @@ export default function AttachTagScreen() {
   const handleManualAttach = () => {
     setError(tryAttach(code));
   };
+
+  if (blocked) return null;
 
   // ── 5. Safety: record doesn't exist ────────────────────────────
   if (!record) {

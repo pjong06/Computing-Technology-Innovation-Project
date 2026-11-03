@@ -11,6 +11,7 @@ import {
   StatusBar,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useStaffOnly } from '../../src/context/AuthRoleContext';
 import {
   IdentificationStatus,
   SyncStatus,
@@ -21,6 +22,8 @@ type RecordFilter = 'All' | 'Needs identification' | SyncStatus;
 
 export default function RecordsScreen() {
   const router = useRouter();
+  // Botanist-only screen: guests and visitors are sent back to Home.
+  const blocked = useStaffOnly();
   const records = useRecordStore((state) => state.records);
   const [selectedTab, setSelectedTab] = useState<RecordFilter>('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -58,6 +61,8 @@ export default function RecordsScreen() {
         return { bg: '#E8ECE9', text: '#526158' };
     }
   };
+
+  if (blocked) return null;
 
   return (
     <SafeAreaView style={styles.safeArea}>
