@@ -161,9 +161,9 @@ export default function AddObservationScreen() {
     if (!plant) return; // step 1 already checked this
     setIsSubmitting(true);
     try {
-      // TODO(photos): the photos are kept on the phone only. Upload them in syncRecord
-      // once the backend's photo route is ready (see TODO(photos) in useRecordStore).
-      // Copy them out of the camera's temporary cache first, so the OS can't delete them.
+      // syncRecord uploads these after the visit itself (POST /api/observations/:id/photo),
+      // before the visit is submitted. Copy them out of the camera's temporary cache
+      // first, so the OS can't delete them while they wait for a connection.
       const storedPhotoUris = await Promise.all(photos.map((uri) => savePhotoPermanently(uri)));
 
       const now = new Date();

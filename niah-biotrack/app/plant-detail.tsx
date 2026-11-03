@@ -67,6 +67,7 @@ export default function PlantDetailScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const records = useRecordStore((state) => state.records);
   const submitForReview = useRecordStore((state) => state.submitForReview);
+  const removePhoto = useRecordStore((state) => state.removePhoto);
   const { width } = useWindowDimensions();
   const [photoIndex, setPhotoIndex] = useState(0);
   const [brokenPhotos, setBrokenPhotos] = useState<Record<string, boolean>>({});
@@ -78,6 +79,33 @@ export default function PlantDetailScreen() {
   }
 
   const photos = (matched.photoUris ?? []).map(resolveStoredPhotoUri);
+
+  // Upload state of every photo on this record: the record's own, then each visit's.
+  const PHOTO_LABELS: Record<string, string> = {
+    whole_plant: 'Whole plant', leaf: 'Leaf', flower: 'Flower', bark: 'Bark',
+  };
+  const photoStates = [
+    ...(matched.photoUris ?? []).map((uri) => {
+      const meta = matched.photoMeta?.[uri];
+      return { uri, meta, obsId: undefined as string | undefined, label: meta?.type ? PHOTO_LABELS[meta.type] : 'Photo' };
+    }),
+    ...(matched.observations ?? []).flatMap((obs) =>
+      (obs.photoUris ?? []).map((uri) => ({
+        uri, meta: obs.photoMeta?.[uri], obsId: obs.id as string | undefined, label: `Visit ${obs.date}`,
+      }))
+    ),
+  ];
+  const uploadedPhotoCount = photoStates.filter((p) => p.meta?.uploaded).length;
+  // Record photos saved before photo upload have no slot type: they stay on the phone.
+  const untypedCount = photoStates.filter((p) => !p.obsId && !p.meta?.type).length;
+  const photoProblems = photoStates.filter((p) => p.meta?.problem && !p.meta.uploaded);
+
+  const confirmRemovePhoto = (uri: string, obsId?: string) => {
+    Alert.alert('Remove this photo?', 'It is deleted from this phone. The other photos can then upload.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: () => removePhoto(matched.id, uri, obsId) },
+    ]);
+  };
 
   const coordinates =
     matched.latitude !== undefined && matched.longitude !== undefined
@@ -270,6 +298,42 @@ export default function PlantDetailScreen() {
             <DetailRow label="Coordinates" value={coordinates} />
           </View>
 
+          {photoStates.length > 0 && (
+            <>
+              <Text style={styles.heading}>PHOTOS</Text>
+              <View style={styles.detailCard}>
+                <Text style={styles.photoSummary}>
+                  {photoStates.length} on this phone · {uploadedPhotoCount} uploaded
+                </Text>
+                {untypedCount > 0 && (
+                  <Text style={styles.photoNote}>
+                    {untypedCount} older {untypedCount === 1 ? 'photo stays' : 'photos stay'} on this phone only
+                    (saved before photo upload).
+                  </Text>
+                )}
+                {photoProblems.map((p) => (
+                  <View key={p.uri} style={styles.photoProblemRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.photoProblemLabel}>{p.label}</Text>
+                      <Text style={styles.photoProblemText}>
+                        {p.meta?.problem === 'too_large'
+                          ? 'Over 5 MB, so it can\'t be uploaded. Remove it so the rest can upload.'
+                          : p.meta?.problem === 'locked'
+                            ? "Photos can't be added after submission. It stays on this phone."
+                            : 'The photo file is no longer on this phone.'}
+                      </Text>
+                    </View>
+                    {p.meta?.problem !== 'locked' && (
+                      <TouchableOpacity onPress={() => confirmRemovePhoto(p.uri, p.obsId)} hitSlop={8}>
+                        <Text style={styles.photoRemove}>Remove</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))}
+              </View>
+            </>
+          )}
+
           <View style={styles.actionRow}>
             <TouchableOpacity
               style={styles.actionBtn}
@@ -425,6 +489,12 @@ const styles = StyleSheet.create({
   },
   body: { fontSize: 13.5, color: '#2B392F', lineHeight: 20 },
   actionRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 18 },
+  photoSummary: { fontSize: 13, fontWeight: '700', color: '#1E2B22', paddingVertical: 6 },
+  photoNote: { fontSize: 12, color: '#68776D', paddingBottom: 6 },
+  photoProblemRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#EEF2EF' },
+  photoProblemLabel: { fontSize: 12.5, fontWeight: '700', color: '#1E2B22' },
+  photoProblemText: { fontSize: 12, color: '#9B1C1C', marginTop: 2 },
+  photoRemove: { fontSize: 12.5, fontWeight: '700', color: '#9B1C1C', textDecorationLine: 'underline', marginLeft: 12 },
   actionBtn: {
     flex: 1,
     backgroundColor: '#FFFFFF',

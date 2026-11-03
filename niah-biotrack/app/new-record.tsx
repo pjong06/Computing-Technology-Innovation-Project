@@ -18,11 +18,15 @@ import type * as ImagePicker from 'expo-image-picker';
 import { pickImageFromLibrary, takePhotoWithCamera, type PickImageResult } from '../src/utils/imagePicker';
 import { savePhotoPermanently, deleteStoredPhoto } from '../src/utils/photoStorage';
 import Toast from 'react-native-toast-message';
+import { randomUUID } from 'expo-crypto';
 import {
   IdentificationStatus,
   RecordStatus,
   SyncStatus,
   useRecordStore,
+  type PlantPhotoType,
+  type PlantRecord,
+  type PhotoUpload,
 } from '../src/store/useRecordStore';
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
 import SpeciesPicker, { type SpeciesChoice } from '../src/components/SpeciesPicker';
@@ -37,6 +41,34 @@ const DONE_BAR_ID = 'new-record-done';
 const PHOTO_SLOTS = ['Whole plant', 'Leaf', 'Flower', 'Bark'] as const;
 type PhotoSlot = (typeof PHOTO_SLOTS)[number];
 type SlotPhotos = Record<PhotoSlot, ImagePicker.ImagePickerAsset | null>;
+
+// The backend's photo_type for each slot (POST /api/plants/:id/photo).
+const SLOT_TYPE: Record<PhotoSlot, PlantPhotoType> = {
+  'Whole plant': 'whole_plant',
+  Leaf: 'leaf',
+  Flower: 'flower',
+  Bark: 'bark',
+};
+
+// Puts an existing record's photos back in their slots. Records with photo types use
+// them; older records only have the order, which was the slot order with empty slots
+// left out (so it may be off for those).
+function initialSlotPhotos(record: PlantRecord | undefined): SlotPhotos {
+  const slots: SlotPhotos = { 'Whole plant': null, Leaf: null, Flower: null, Bark: null };
+  const asset = (uri: string) => ({ uri, width: 0, height: 0 }) as ImagePicker.ImagePickerAsset;
+  const uris = record?.photoUris ?? [];
+  if (record?.photoMeta && uris.every((uri) => record.photoMeta?.[uri]?.type)) {
+    for (const uri of uris) {
+      const slot = PHOTO_SLOTS.find((s) => SLOT_TYPE[s] === record.photoMeta?.[uri]?.type);
+      if (slot && !slots[slot]) slots[slot] = asset(uri);
+    }
+    return slots;
+  }
+  uris.slice(0, PHOTO_SLOTS.length).forEach((uri, i) => {
+    slots[PHOTO_SLOTS[i]] = asset(uri);
+  });
+  return slots;
+}
 
 interface GpsFix {
   latitude: number;
@@ -81,20 +113,7 @@ export default function NewRecordScreen() {
   const updateRecord = useRecordStore((state) => state.updateRecord);
   const isEditing = Boolean(existingRecord);
 
-  const [photos, setPhotos] = useState<SlotPhotos>({
-    'Whole plant': existingRecord?.photoUris?.[0]
-      ? ({ uri: existingRecord.photoUris[0], width: 0, height: 0 } as ImagePicker.ImagePickerAsset)
-      : null,
-    Leaf: existingRecord?.photoUris?.[1]
-      ? ({ uri: existingRecord.photoUris[1], width: 0, height: 0 } as ImagePicker.ImagePickerAsset)
-      : null,
-    Flower: existingRecord?.photoUris?.[2]
-      ? ({ uri: existingRecord.photoUris[2], width: 0, height: 0 } as ImagePicker.ImagePickerAsset)
-      : null,
-    Bark: existingRecord?.photoUris?.[3]
-      ? ({ uri: existingRecord.photoUris[3], width: 0, height: 0 } as ImagePicker.ImagePickerAsset)
-      : null,
-  });
+  const [photos, setPhotos] = useState<SlotPhotos>(() => initialSlotPhotos(existingRecord));
 
   const [speciesChoice, setSpeciesChoice] = useState<SpeciesChoice>(null);
   const [speciesQuery, setSpeciesQuery] = useState(existingRecord?.scientificName ?? '');
@@ -369,6 +388,18 @@ export default function NewRecordScreen() {
 
   const handleSave = () => {
     const photoList = PHOTO_SLOTS.map((slot) => photos[slot]?.uri).filter(Boolean) as string[];
+    // Each photo's slot type and upload ID, so syncRecord can send it with the right
+    // photo_type. A photo kept from before keeps its ID (and "uploaded" mark).
+    const photoMeta: Record<string, PhotoUpload> = {};
+    for (const slot of PHOTO_SLOTS) {
+      const uri = photos[slot]?.uri;
+      if (!uri) continue;
+      const previous = existingRecord?.photoMeta?.[uri];
+      photoMeta[uri] =
+        previous && previous.type === SLOT_TYPE[slot]
+          ? previous
+          : { id: randomUUID(), type: SLOT_TYPE[slot], uploaded: false };
+    }
 
     const nextErrors: FieldErrors = {};
     if (photoList.length === 0) nextErrors.photos = 'Add at least one photo.';
@@ -408,6 +439,7 @@ export default function NewRecordScreen() {
       gpsAccuracyM: gpsFix.accuracyM,
       gpsCoordination: formatCoordinates(gpsFix.latitude, gpsFix.longitude, gpsFix.accuracyM),
       photoUris: photoList,
+      photoMeta,
       // Always complete: saving an older draft here (Continue Plant Record) completes it.
       recordStatus: RecordStatus.COMPLETE,
       identificationStatus: IdentificationStatus.IDENTIFIED,

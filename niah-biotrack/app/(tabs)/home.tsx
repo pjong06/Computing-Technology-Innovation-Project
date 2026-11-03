@@ -48,7 +48,7 @@ export default function HomeScreen() {
   const handleSyncNow = async () => {
     setSyncingAll(true);
     // syncAll never throws: every problem comes back as a count.
-    const { uploaded, failed: recordsFailed, skipped } = await syncAll();
+    const { uploaded, failed: recordsFailed, skipped, photosUploaded, photoProblems } = await syncAll();
     // Species proposals go up the same way, then their review status is refreshed.
     const proposalsResult = await syncAllProposals();
     await refreshProposalStatuses();
@@ -59,6 +59,11 @@ export default function HomeScreen() {
     if (failed > 0) parts.push(`${failed} failed`);
     // Only mention skipped records when there are some (they were already uploading).
     if (skipped > 0) parts.push(`${skipped} already uploading`);
+    // Photos: only mentioned when some went up, or some need the botanist (over 5 MB).
+    if (photosUploaded > 0) parts.push(`${photosUploaded} ${photosUploaded === 1 ? 'photo' : 'photos'} uploaded`);
+    if (photoProblems > 0) {
+      parts.push(`${photoProblems} ${photoProblems === 1 ? 'photo' : 'photos'} over 5 MB (see the plant page)`);
+    }
     // Only mention proposals when some were sent or failed.
     if (proposalsResult.uploaded > 0) {
       parts.push(`${proposalsResult.uploaded} species ${proposalsResult.uploaded === 1 ? 'proposal' : 'proposals'} sent`);

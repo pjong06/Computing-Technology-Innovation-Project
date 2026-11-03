@@ -273,4 +273,164 @@ router.patch("/:id/submit", async (req, res) => {
     });
 });
 
+// ---- Visit photos ----
+// Same rules as the database: a botanist adds photos only to their own visit while it is
+// still a draft or was sent back (RLS on observation_media and the observation-media
+// bucket). Upload photos BEFORE submitting the visit for review.
+const PHOTO_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PHOTOS_LOCKED_MESSAGE = "Photos can't be added after submission";
+
+function isRlsRefusal(error) {
+    return !!error && (
+        error.code === "42501" ||
+        String(error.statusCode) === "403" ||
+        /row-level security/i.test(error.message || "")
+    );
+}
+
+// UPLOAD a photo for a visit (multipart: photo, client_photo_id, optional caption)
+router.post("/:id/photo", async (req, res, next) => {
+    const observationId = req.params.id;
+    if (!PHOTO_UUID.test(observationId)) {
+        return res.status(400).json({ message: "Valid observation ID is required" });
+    }
+
+    const { data: observation, error } = await req.supabase
+        .from("observations")
+        .select("id, observer_id, review_status, deleted_at")
+        .eq("id", observationId)
+        .maybeSingle();
+
+    if (error) {
+        console.error("Observation photo lookup error:", error);
+        return res.status(500).json({ message: "Failed to check observation" });
+    }
+    if (!observation || observation.deleted_at) {
+        return res.status(404).json({ message: "Observation not found" });
+    }
+    if (observation.observer_id !== req.user.id) {
+        return res.status(403).json({ message: "Only the observer may upload photos" });
+    }
+    if (!["draft", "rejected"].includes(observation.review_status)) {
+        return res.status(409).json({ message: PHOTOS_LOCKED_MESSAGE, code: "photos_locked" });
+    }
+
+    next();
+}, upload.single("photo"), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ message: "No photo uploaded" });
+    }
+
+    // The phone's own ID for this photo, so a retried upload isn't stored twice.
+    const clientPhotoId = req.body.client_photo_id;
+    if (typeof clientPhotoId !== "string" || !PHOTO_UUID.test(clientPhotoId)) {
+        return res.status(400).json({ message: "client_photo_id must be a UUID" });
+    }
+
+    const caption = req.body.caption;
+    if (caption !== undefined && (typeof caption !== "string" || caption.length > 500)) {
+        return res.status(400).json({ message: "caption must be text of at most 500 characters" });
+    }
+
+    const extension = {
+        "image/jpeg": "jpg",
+        "image/png": "png",
+        "image/webp": "webp"
+    }[req.file.mimetype];
+    if (!extension) {
+        return res.status(400).json({ message: "Unsupported image type" });
+    }
+
+    const observationId = req.params.id;
+
+    // A retry of an upload that already reached the server: return the saved row.
+    const { data: existing, error: existingError } = await req.supabase
+        .from("observation_media")
+        .select("*")
+        .eq("observation_id", observationId)
+        .eq("client_record_id", clientPhotoId)
+        .maybeSingle();
+    if (existingError) {
+        console.error("Observation photo lookup error:", existingError);
+        return res.status(500).json({ message: "Failed to check for an existing photo" });
+    }
+    if (existing) {
+        return res.status(200).json({
+            message: "Observation photo already saved",
+            observation_id: observationId,
+            media: existing
+        });
+    }
+
+    // Storage RLS: the first folder must be the signed-in user's id.
+    const filePath = `${req.user.id}/${observationId}/${randomUUID()}.${extension}`;
+
+    try {
+        const { error: uploadError } = await req.supabase.storage
+            .from("observation-media")
+            .upload(filePath, req.file.buffer, {
+                contentType: req.file.mimetype,
+                upsert: false
+            });
+
+        if (uploadError) {
+            if (isRlsRefusal(uploadError)) {
+                return res.status(409).json({ message: PHOTOS_LOCKED_MESSAGE, code: "photos_locked" });
+            }
+            console.error("Observation photo storage error:", uploadError);
+            return res.status(500).json({ message: "Failed to upload observation photo" });
+        }
+
+        const { data: media, error: mediaError } = await req.supabase
+            .from("observation_media")
+            .insert({
+                observation_id: observationId,
+                uploaded_by: req.user.id,
+                file_path: filePath,
+                media_type: "image",
+                caption: caption ? caption.trim() || null : null,
+                client_record_id: clientPhotoId
+            })
+            .select()
+            .single();
+
+        if (mediaError) {
+            // Remove the stored file so nothing unlinked is left behind. (Needs the
+            // "botanists clean up unlinked observation image files" storage policy.)
+            await req.supabase.storage.from("observation-media").remove([filePath]);
+
+            if (mediaError.code === "23505") {
+                // Another attempt with the same client_photo_id finished first.
+                const { data: raced } = await req.supabase
+                    .from("observation_media")
+                    .select("*")
+                    .eq("observation_id", observationId)
+                    .eq("client_record_id", clientPhotoId)
+                    .maybeSingle();
+                if (raced) {
+                    return res.status(200).json({
+                        message: "Observation photo already saved",
+                        observation_id: observationId,
+                        media: raced
+                    });
+                }
+            }
+            if (isRlsRefusal(mediaError)) {
+                return res.status(409).json({ message: PHOTOS_LOCKED_MESSAGE, code: "photos_locked" });
+            }
+            console.error("Observation media insert error:", mediaError);
+            return res.status(500).json({ message: "Failed to save observation photo record" });
+        }
+
+        return res.status(201).json({
+            message: "Observation photo uploaded successfully",
+            observation_id: observationId,
+            media
+        });
+    } catch (uploadFailure) {
+        console.error("Observation photo upload error:", uploadFailure);
+        return res.status(500).json({ message: "Observation photo upload failed" });
+    }
+});
+
 module.exports = router;
