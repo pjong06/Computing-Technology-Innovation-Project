@@ -19,12 +19,15 @@ import {
   useRecordStore,
 } from '../../src/store/useRecordStore';
 import { buildSyncSummary } from '../../src/services/syncSummary';
+import { useProposalStore } from '../../src/store/useProposalStore';
 
 export default function HomeScreen() {
   const router = useRouter();
   const records = useRecordStore((state) => state.records);
   const syncAll = useRecordStore((state) => state.syncAll);
   const syncRecord = useRecordStore((state) => state.syncRecord);
+  const syncAllProposals = useProposalStore((state) => state.syncAllProposals);
+  const refreshProposalStatuses = useProposalStore((state) => state.refreshProposalStatuses);
 
   const [syncingAll, setSyncingAll] = useState(false);
   // IDs of records whose Retry is running, so each row can show its own spinner.
@@ -42,13 +45,21 @@ export default function HomeScreen() {
   const handleSyncNow = async () => {
     setSyncingAll(true);
     // syncAll never throws: every problem comes back as a count.
-    const { uploaded, failed, skipped } = await syncAll();
+    const { uploaded, failed: recordsFailed, skipped } = await syncAll();
+    // Species proposals go up the same way, then their review status is refreshed.
+    const proposalsResult = await syncAllProposals();
+    await refreshProposalStatuses();
     setSyncingAll(false);
 
+    const failed = recordsFailed + proposalsResult.failed;
     const parts = [`${uploaded} uploaded`];
     if (failed > 0) parts.push(`${failed} failed`);
     // Only mention skipped records when there are some (they were already uploading).
     if (skipped > 0) parts.push(`${skipped} already uploading`);
+    // Only mention proposals when some were sent or failed.
+    if (proposalsResult.uploaded > 0) {
+      parts.push(`${proposalsResult.uploaded} species ${proposalsResult.uploaded === 1 ? 'proposal' : 'proposals'} sent`);
+    }
 
     Toast.show({
       type: failed > 0 ? 'error' : 'success',

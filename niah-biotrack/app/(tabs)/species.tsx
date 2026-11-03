@@ -15,6 +15,18 @@ import { useRouter } from 'expo-router';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import type { Species } from '../../src/api/species';
 import OfflineReferenceCard from '../../src/components/OfflineReferenceCard';
+import { useProposalStore, type SpeciesProposal } from '../../src/store/useProposalStore';
+import { SyncStatus } from '../../src/store/useRecordStore';
+import Toast from 'react-native-toast-message';
+
+// Badge for one of my proposals: upload state first, then the officer's decision.
+function proposalBadge(p: SpeciesProposal): { label: string; bg: string; text: string } {
+  if (p.syncStatus === SyncStatus.NOT_UPLOADED) return { label: 'Not uploaded', bg: '#FDF4D8', text: '#8C5E03' };
+  if (p.syncStatus === SyncStatus.FAILED) return { label: 'Upload failed', bg: '#FDE2E2', text: '#9B1C1C' };
+  if (p.review === 'approved') return { label: 'Approved', bg: '#E4F2E7', text: '#215A36' };
+  if (p.review === 'rejected') return { label: 'Rejected', bg: '#FDE2E2', text: '#9B1C1C' };
+  return { label: 'Pending approval', bg: '#EEF1EF', text: '#5B6B60' };
+}
 
 const STATUS_LABELS: Record<string, string> = {
   CR: 'Critically Endangered',
@@ -58,9 +70,73 @@ export default function SpeciesScreen() {
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
 
+  const proposals = useProposalStore((state) => state.proposals);
+  const syncProposal = useProposalStore((state) => state.syncProposal);
+  const removeProposal = useProposalStore((state) => state.removeProposal);
+  const refreshProposalStatuses = useProposalStore((state) => state.refreshProposalStatuses);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+
   useEffect(() => {
     void loadSpecies();
-  }, [loadSpecies]);
+    // Pick up officers' decisions (does nothing when offline).
+    void refreshProposalStatuses();
+  }, [loadSpecies, refreshProposalStatuses]);
+
+  const retryProposal = async (id: string) => {
+    setRetryingId(id);
+    const result = await syncProposal(id);
+    setRetryingId(null);
+    Toast.show(
+      result.ok
+        ? { type: 'success', text1: 'Proposal uploaded', text2: 'Pending approval by an officer.', position: 'bottom' }
+        : { type: 'error', text1: 'Upload failed', text2: result.reason, position: 'bottom' }
+    );
+  };
+
+  // My proposals, shown above the approved list. They are never part of the approved
+  // list itself (or the New Record picker) until an officer approves them.
+  const renderProposals = () =>
+    proposals.length === 0 ? null : (
+      <View style={styles.proposalSection}>
+        <Text style={styles.proposalHeading}>My proposals</Text>
+        {proposals.map((p) => {
+          const badge = proposalBadge(p);
+          const notSent = p.syncStatus !== SyncStatus.UPLOADED;
+          return (
+            <View key={p.id} style={styles.proposalCard}>
+              <View style={styles.nameRow}>
+                <Text style={styles.speciesName}>{p.scientificName}</Text>
+                <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
+                  <Text style={[styles.statusText, { color: badge.text }]}>{badge.label}</Text>
+                </View>
+              </View>
+              {p.commonName || p.localName ? (
+                <Text style={styles.speciesSub}>{[p.commonName, p.localName].filter(Boolean).join(' · ')}</Text>
+              ) : null}
+              {p.review === 'rejected' && p.reviewComment ? (
+                <Text style={styles.proposalComment}>Officer: {p.reviewComment}</Text>
+              ) : null}
+              {notSent && (
+                <View style={styles.proposalActions}>
+                  {retryingId === p.id ? (
+                    <ActivityIndicator size="small" color="#213B2A" />
+                  ) : (
+                    <TouchableOpacity onPress={() => void retryProposal(p.id)} hitSlop={8}>
+                      <Text style={styles.proposalAction}>Retry</Text>
+                    </TouchableOpacity>
+                  )}
+                  {p.syncStatus === SyncStatus.FAILED && retryingId !== p.id && (
+                    <TouchableOpacity onPress={() => removeProposal(p.id)} hitSlop={8}>
+                      <Text style={[styles.proposalAction, styles.proposalRemove]}>Remove</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
+            </View>
+          );
+        })}
+      </View>
+    );
 
   const statusOptions = useMemo(() => {
     const codes = new Set(species.map(statusCode));
@@ -138,6 +214,14 @@ export default function SpeciesScreen() {
         </Text>
 
         <OfflineReferenceCard />
+
+        <TouchableOpacity
+          style={styles.proposeBtn}
+          activeOpacity={0.85}
+          onPress={() => router.push('/propose-species' as any)}
+        >
+          <Text style={styles.proposeBtnText}>+ Propose new species</Text>
+        </TouchableOpacity>
 
         <TextInput
           style={styles.searchBar}
@@ -243,7 +327,11 @@ export default function SpeciesScreen() {
           keyboardDismissMode="on-drag"
           automaticallyAdjustKeyboardInsets
           refreshing={loading && species.length > 0}
-          onRefresh={() => void loadSpecies()}
+          onRefresh={() => {
+            void loadSpecies();
+            void refreshProposalStatuses();
+          }}
+          ListHeaderComponent={renderProposals}
           ListEmptyComponent={renderEmpty}
           renderItem={({ item }) => {
             const code = statusCode(item);
@@ -409,4 +497,29 @@ const styles = StyleSheet.create({
   speciesSub: { fontSize: 12.5, color: '#5B6B60', marginTop: 4 },
   speciesSubEmpty: { fontStyle: 'italic', color: '#8C9A91' },
   chevron: { fontSize: 22, color: '#88988D', marginLeft: 8 },
+  proposeBtn: {
+    borderWidth: 1.2,
+    borderColor: '#213B2A',
+    borderRadius: 22,
+    paddingVertical: 10,
+    alignItems: 'center',
+    marginBottom: 12,
+    backgroundColor: '#FFFFFF',
+  },
+  proposeBtnText: { color: '#213B2A', fontWeight: '700', fontSize: 13.5 },
+  proposalSection: { marginBottom: 14 },
+  proposalHeading: { fontSize: 13, fontWeight: '800', color: '#4E6254', marginBottom: 8 },
+  proposalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1.2,
+    borderColor: '#E6ECE8',
+    borderStyle: 'dashed',
+    marginBottom: 8,
+  },
+  proposalComment: { fontSize: 12, color: '#9B1C1C', marginTop: 6 },
+  proposalActions: { flexDirection: 'row', gap: 18, marginTop: 8, alignItems: 'center' },
+  proposalAction: { fontSize: 12.5, fontWeight: '700', color: '#213B2A', textDecorationLine: 'underline' },
+  proposalRemove: { color: '#9B1C1C' },
 });

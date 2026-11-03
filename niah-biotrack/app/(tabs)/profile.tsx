@@ -12,9 +12,10 @@ import {
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 
-import { useRecordStore } from '../../src/store/useRecordStore';
+import { SyncStatus, useRecordStore } from '../../src/store/useRecordStore';
 import { buildSyncSummary } from '../../src/services/syncSummary';
 import { deleteAllStoredPhotos } from '../../src/utils/photoStorage';
+import { useProposalStore } from '../../src/store/useProposalStore';
 import { signOutOnThisPhone } from '../../src/lib/auth';
 import { useProfileStore } from '../../src/store/useProfileStore';
 
@@ -23,6 +24,10 @@ export default function ProfileScreen() {
 
   const records = useRecordStore((state) => state.records);
   const clearAllData = useRecordStore((state) => state.clearAllData);
+  const proposals = useProposalStore((state) => state.proposals);
+  const clearProposals = useProposalStore((state) => state.clearProposals);
+  // Species proposals still on the phone only; logging out would lose them too.
+  const unsentProposalCount = proposals.filter((p) => p.syncStatus !== SyncStatus.UPLOADED).length;
 
   const me = useProfileStore((state) => state.me);
   const profileError = useProfileStore((state) => state.error);
@@ -80,6 +85,7 @@ export default function ProfileScreen() {
    */
   const logOutAndClearDevice = async () => {
     clearAllData();
+    clearProposals();
     deleteAllStoredPhotos();
 
     setShowLogoutModal(false);
@@ -89,7 +95,7 @@ export default function ProfileScreen() {
   };
 
   const handleLogoutPress = async () => {
-    if (syncSummary.unsyncedRecordCount === 0) {
+    if (syncSummary.unsyncedRecordCount === 0 && unsentProposalCount === 0) {
       // Nothing would be lost (it's all on the server), so no warning needed.
       await logOutAndClearDevice();
       return;
@@ -249,17 +255,22 @@ export default function ProfileScreen() {
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>
-              Log out with unsynced records?
+              Log out with unsynced data?
             </Text>
 
             <Text style={styles.modalBody}>
-              {syncSummary.unsyncedRecordCount}{' '}
-              {syncSummary.unsyncedRecordCount === 1
-                ? 'record has'
-                : 'records have'}{' '}
-              not been uploaded to the server. Logging out deletes{' '}
-              {syncSummary.unsyncedRecordCount === 1 ? 'it' : 'them'} and
-              all photos from this device. This cannot be undone.
+              {[
+                syncSummary.unsyncedRecordCount > 0
+                  ? `${syncSummary.unsyncedRecordCount} ${syncSummary.unsyncedRecordCount === 1 ? 'record' : 'records'}`
+                  : null,
+                unsentProposalCount > 0
+                  ? `${unsentProposalCount} species ${unsentProposalCount === 1 ? 'proposal' : 'proposals'}`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(' and ')}{' '}
+              not uploaded to the server yet. Logging out deletes them and all photos from this
+              device. This cannot be undone.
             </Text>
 
             <TouchableOpacity
