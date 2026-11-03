@@ -20,6 +20,7 @@ import {
   ReviewStatus,
   SyncStatus,
   useRecordStore,
+  type ObservationVisit,
 } from '../src/store/useRecordStore';
 import { REVIEW_BADGE } from '../src/utils/reviewStatus';
 import PlantNotFound from '../src/components/PlantNotFound';
@@ -32,6 +33,23 @@ function formatHeight(height?: string) {
   const value = height?.trim();
   if (!value) return NOT_RECORDED;
   return /^\d+(\.\d+)?$/.test(value) ? `${value} m` : value;
+}
+
+// Labelled chips for one visit. Values that weren't recorded get no chip at all.
+function visitChips(obs: ObservationVisit): string[] {
+  const chips: string[] = [];
+  if (obs.health) chips.push(`Health: ${obs.health}`);
+  if (obs.stage) chips.push(`Stage: ${obs.stage}`);
+  if (obs.heightCm !== undefined || obs.diameterCm !== undefined) {
+    // Visits from the 3-step screen store centimetres; height reads better in metres.
+    if (obs.heightCm !== undefined) chips.push(`Height ${Number((obs.heightCm / 100).toFixed(2))} m`);
+    if (obs.diameterCm !== undefined) chips.push(`Diameter ${obs.diameterCm} cm`);
+  } else {
+    // Older visits only have the free-text "height / diameter" (e.g. "0.62 m").
+    const measurement = obs.measurement?.trim();
+    if (measurement && measurement !== NOT_RECORDED) chips.push(`Height / diameter ${measurement}`);
+  }
+  return chips;
 }
 
 function DetailRow({ label, value }: { label: string; value?: string | null }) {
@@ -248,14 +266,14 @@ export default function PlantDetailScreen() {
 
           <Text style={styles.heading}>LOCATION</Text>
           <View style={styles.detailCard}>
-            <DetailRow label="Location name" value={matched.locationName} />
+            <DetailRow label="Location landmark" value={matched.locationName} />
             <DetailRow label="Coordinates" value={coordinates} />
           </View>
 
           <View style={styles.actionRow}>
             <TouchableOpacity
               style={styles.actionBtn}
-              onPress={() => router.push('/offline-map' as any)}
+              onPress={() => router.push({ pathname: '/offline-map', params: { id: matched.id } } as any)}
             >
               <Text style={styles.actionBtnText}>🧭 Navigate</Text>
             </TouchableOpacity>
@@ -301,18 +319,24 @@ export default function PlantDetailScreen() {
                   </Text>
                 </View>
                 <Text style={styles.obsAuthor}>{obs.recordedBy}</Text>
-                <View style={styles.pillGroup}>
-                  <View style={styles.tagPill}>
-                    <Text style={styles.tagPillText}>{obs.health ?? 'Not recorded'}</Text>
-                  </View>
-                  <View style={styles.tagPill}>
-                    <Text style={styles.tagPillText}>{obs.stage ?? 'Not recorded'}</Text>
-                  </View>
-                  <View style={styles.tagPill}>
-                    <Text style={styles.tagPillText}>{obs.measurement}</Text>
-                  </View>
-                </View>
-                <Text style={styles.obsNotes}>{obs.notes}</Text>
+                {(() => {
+                  const chips = visitChips(obs);
+                  return chips.length > 0 ? (
+                    <View style={styles.pillGroup}>
+                      {chips.map((chip) => (
+                        <View key={chip} style={styles.tagPill}>
+                          <Text style={styles.tagPillText}>{chip}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null;
+                })()}
+                {obs.notes ? <Text style={styles.obsNotes}>{obs.notes}</Text> : null}
+                {obs.photoUris && obs.photoUris.length > 0 ? (
+                  <Text style={styles.obsPhotos}>
+                    📷 {obs.photoUris.length} {obs.photoUris.length === 1 ? 'photo' : 'photos'}
+                  </Text>
+                ) : null}
               </View>
             </View>
           ))}
@@ -450,16 +474,19 @@ const styles = StyleSheet.create({
   obsDate: { fontSize: 13, fontWeight: '700', color: '#1E2B22' },
   obsStatus: { fontSize: 11, fontWeight: '700', color: '#215A36' },
   obsAuthor: { fontSize: 11.5, color: '#7E8F83', marginTop: 2 },
-  pillGroup: { flexDirection: 'row', marginVertical: 8 },
+  // Wraps onto a second line instead of pushing chips past the card edge.
+  pillGroup: { flexDirection: 'row', flexWrap: 'wrap', marginVertical: 8 },
   tagPill: {
     backgroundColor: '#EDF5EF',
     paddingVertical: 3,
     paddingHorizontal: 8,
     borderRadius: 8,
     marginRight: 6,
+    marginBottom: 6,
   },
   tagPillText: { fontSize: 11, fontWeight: '700', color: '#213B2A' },
-  obsNotes: { fontSize: 12.5, color: '#3A483E', lineHeight: 18 },
+  obsNotes: { fontSize: 12.5, color: '#3A483E', lineHeight: 18, marginTop: 2 },
+  obsPhotos: { fontSize: 11.5, color: '#526659', fontWeight: '600', marginTop: 6 },
   addObsBtn: {
     backgroundColor: '#213B2A',
     height: 52,
