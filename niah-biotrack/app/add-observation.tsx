@@ -8,7 +8,6 @@ import {
   SafeAreaView,
   Platform,
   StatusBar,
-  ScrollView,
   Image,
   Alert,
   ActivityIndicator,
@@ -19,6 +18,10 @@ import { useRecordStore, type HealthStatus, type LifeStage } from '../src/store/
 import { useProfileStore } from '../src/store/useProfileStore';
 import { takePhotoWithCamera } from '../src/utils/imagePicker';
 import { savePhotoPermanently } from '../src/utils/photoStorage';
+import FormScrollView from '../src/components/FormScrollView';
+import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
+
+const DONE_BAR_ID = 'add-observation-done';
 
 const LIFE_STAGES: LifeStage[] = ['Seedling', 'Sapling', 'Pole', 'Mature', 'Senescent'];
 const HEALTH_STATUSES: { label: HealthStatus; color: string; bg: string; border: string }[] = [
@@ -224,7 +227,7 @@ export default function AddObservationScreen() {
         ))}
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+      <FormScrollView contentContainerStyle={styles.scrollContent}>
         {/* STEP 1: Plant identification */}
         {currentStep === 1 && (
           <View style={styles.stepContent}>
@@ -284,6 +287,7 @@ export default function AddObservationScreen() {
                   onChangeText={setHeightCm}
                   keyboardType="numeric"
                   textAlign="center"
+                  inputAccessoryViewID={DONE_BAR_ID}
                 />
 
                 <TouchableOpacity
@@ -326,6 +330,7 @@ export default function AddObservationScreen() {
                   onChangeText={setDiameterCm}
                   keyboardType="decimal-pad"
                   textAlign="center"
+                  inputAccessoryViewID={DONE_BAR_ID}
                 />
 
                 <TouchableOpacity
@@ -437,11 +442,12 @@ export default function AddObservationScreen() {
                 placeholderTextColor="#8C9A91"
                 value={notes}
                 onChangeText={setNotes}
+                inputAccessoryViewID={DONE_BAR_ID}
               />
             </View>
           </View>
         )}
-      </ScrollView>
+      </FormScrollView>
 
       {/* Fixed Bottom Action Bar */}
       <View style={styles.bottomBar}>
@@ -476,6 +482,7 @@ export default function AddObservationScreen() {
           </TouchableOpacity>
         )}
       </View>
+      <KeyboardDoneBar nativeID={DONE_BAR_ID} />
     </SafeAreaView>
   );
 }
