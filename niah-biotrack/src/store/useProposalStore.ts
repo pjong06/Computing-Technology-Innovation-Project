@@ -8,8 +8,9 @@ import { SyncStatus } from './useRecordStore';
 import { useSpeciesStore } from './useSpeciesStore';
 
 // The officer's decision on a proposal. Only 'approved' species reach the species list
-// and the New Record picker (those read approved species only).
-export type ProposalReview = 'pending' | 'approved' | 'rejected';
+// and the New Record picker (those read approved species only). 'archived' = an officer
+// approved it and later took it out of the list.
+export type ProposalReview = 'pending' | 'approved' | 'rejected' | 'archived';
 
 export interface SpeciesProposal {
   id: string; // UUID made on the phone; sent as client_record_id
@@ -34,7 +35,8 @@ export type ProposalSyncResult = { ok: true } | { ok: false; reason: string };
 const uploadsInProgress = new Set<string>();
 
 function reviewFromServer(status: string): ProposalReview {
-  return status === 'approved' ? 'approved' : status === 'rejected' ? 'rejected' : 'pending';
+  if (status === 'approved' || status === 'rejected' || status === 'archived') return status;
+  return 'pending';
 }
 
 interface ProposalState {

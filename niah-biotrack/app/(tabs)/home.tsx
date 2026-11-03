@@ -38,6 +38,9 @@ export default function HomeScreen() {
   const pendingCount = summary.pendingRecordCount;
   const failedCount = summary.failedRecordCount;
   const totalToSync = pendingCount + failedCount;
+  const unsentProposalCount = useProposalStore(
+    (state) => state.proposals.filter((p) => p.syncStatus !== SyncStatus.UPLOADED).length
+  );
   const identificationDraftCount = records.filter(
     (record) => record.identificationStatus === IdentificationStatus.PENDING
   ).length;
@@ -149,10 +152,18 @@ export default function HomeScreen() {
 
         {!isVisitor ? (
           <>
-            {totalToSync > 0 && (
+            {(totalToSync > 0 || unsentProposalCount > 0) && (
               <View style={styles.syncCard}>
                 <Text style={styles.syncTitle}>
-                  {totalToSync} {totalToSync === 1 ? 'record' : 'records'} pending sync
+                  {[
+                    totalToSync > 0 ? `${totalToSync} ${totalToSync === 1 ? 'record' : 'records'}` : null,
+                    unsentProposalCount > 0
+                      ? `${unsentProposalCount} species ${unsentProposalCount === 1 ? 'proposal' : 'proposals'}`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' and ')}{' '}
+                  pending sync
                 </Text>
                 <Text style={styles.syncSub}>
                   {pendingCount} queued{failedCount > 0 ? ` · ${failedCount} failed` : ''} · local storage safe
@@ -208,19 +219,6 @@ export default function HomeScreen() {
                 <Text style={styles.newRecordLabel}>New Record</Text>
               </TouchableOpacity>
             </View>
-
-            {/* Secondary: a visit to a plant already on this phone (found by tag). */}
-            <TouchableOpacity
-              style={styles.routePill}
-              activeOpacity={0.85}
-              onPress={() => router.push('/add-observation')}
-            >
-              <View style={styles.routeLeft}>
-                <Ionicons name="clipboard-outline" size={20} color="#284632" style={{ marginRight: 8 }} />
-                <Text style={styles.routeLabel}>Add Observation</Text>
-              </View>
-              <Text style={styles.routeTag}>Existing plant</Text>
-            </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.routePill}

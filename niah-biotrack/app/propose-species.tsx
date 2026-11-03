@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   Platform,
   StatusBar,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import Toast from 'react-native-toast-message';
@@ -17,6 +18,7 @@ import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
 import { useProposalStore } from '../src/store/useProposalStore';
 import type { Species } from '../src/api/species';
+import { useAuthRole } from '../src/context/AuthRoleContext';
 
 const DONE_BAR_ID = 'propose-species-done';
 const MAX_MATCHES = 5;
@@ -42,6 +44,18 @@ function findSimilarSpecies(species: Species[], scientific: string, common: stri
 // and only appears in the species list and New Record picker after an officer approves it.
 export default function ProposeSpeciesScreen() {
   const router = useRouter();
+  const { role } = useAuthRole();
+  const canPropose = role === 'botanist';
+
+  // Only botanists can propose; everyone else is sent back (the server would refuse anyway).
+  useEffect(() => {
+    if (!canPropose) {
+      Alert.alert('Botanist Access Required', 'Only botanists can propose a new species.', [
+        { text: 'OK', onPress: () => router.back() },
+      ]);
+    }
+  }, [canPropose]);
+
   const approvedSpecies = useSpeciesStore((state) => state.species);
   const proposals = useProposalStore((state) => state.proposals);
   const addProposal = useProposalStore((state) => state.addProposal);
@@ -114,6 +128,8 @@ export default function ProposeSpeciesScreen() {
     );
     router.back();
   };
+
+  if (!canPropose) return null;
 
   return (
     <SafeAreaView style={styles.safeArea}>

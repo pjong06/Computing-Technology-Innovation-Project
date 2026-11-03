@@ -18,6 +18,7 @@ import OfflineReferenceCard from '../../src/components/OfflineReferenceCard';
 import { useProposalStore, type SpeciesProposal } from '../../src/store/useProposalStore';
 import { SyncStatus } from '../../src/store/useRecordStore';
 import Toast from 'react-native-toast-message';
+import { useAuthRole } from '../../src/context/AuthRoleContext';
 
 // Badge for one of my proposals: upload state first, then the officer's decision.
 function proposalBadge(p: SpeciesProposal): { label: string; bg: string; text: string } {
@@ -25,6 +26,7 @@ function proposalBadge(p: SpeciesProposal): { label: string; bg: string; text: s
   if (p.syncStatus === SyncStatus.FAILED) return { label: 'Upload failed', bg: '#FDE2E2', text: '#9B1C1C' };
   if (p.review === 'approved') return { label: 'Approved', bg: '#E4F2E7', text: '#215A36' };
   if (p.review === 'rejected') return { label: 'Rejected', bg: '#FDE2E2', text: '#9B1C1C' };
+  if (p.review === 'archived') return { label: 'Archived', bg: '#EEF1EF', text: '#5B6B60' };
   return { label: 'Pending approval', bg: '#EEF1EF', text: '#5B6B60' };
 }
 
@@ -60,6 +62,9 @@ const getStatusColor = (code: string) => {
 
 export default function SpeciesScreen() {
   const router = useRouter();
+  // Proposing is botanist-only (POST /species/proposals refuses other roles).
+  const { role } = useAuthRole();
+  const canPropose = role === 'botanist';
   const species = useSpeciesStore((state) => state.species);
   const loading = useSpeciesStore((state) => state.loading);
   const error = useSpeciesStore((state) => state.error);
@@ -79,8 +84,8 @@ export default function SpeciesScreen() {
   useEffect(() => {
     void loadSpecies();
     // Pick up officers' decisions (does nothing when offline).
-    void refreshProposalStatuses();
-  }, [loadSpecies, refreshProposalStatuses]);
+    if (canPropose) void refreshProposalStatuses();
+  }, [loadSpecies, refreshProposalStatuses, canPropose]);
 
   const retryProposal = async (id: string) => {
     setRetryingId(id);
@@ -215,13 +220,15 @@ export default function SpeciesScreen() {
 
         <OfflineReferenceCard />
 
-        <TouchableOpacity
-          style={styles.proposeBtn}
-          activeOpacity={0.85}
-          onPress={() => router.push('/propose-species' as any)}
-        >
-          <Text style={styles.proposeBtnText}>+ Propose new species</Text>
-        </TouchableOpacity>
+        {canPropose && (
+          <TouchableOpacity
+            style={styles.proposeBtn}
+            activeOpacity={0.85}
+            onPress={() => router.push('/propose-species' as any)}
+          >
+            <Text style={styles.proposeBtnText}>+ Propose new species</Text>
+          </TouchableOpacity>
+        )}
 
         <TextInput
           style={styles.searchBar}
@@ -329,9 +336,9 @@ export default function SpeciesScreen() {
           refreshing={loading && species.length > 0}
           onRefresh={() => {
             void loadSpecies();
-            void refreshProposalStatuses();
+            if (canPropose) void refreshProposalStatuses();
           }}
-          ListHeaderComponent={renderProposals}
+          ListHeaderComponent={canPropose ? renderProposals : undefined}
           ListEmptyComponent={renderEmpty}
           renderItem={({ item }) => {
             const code = statusCode(item);
