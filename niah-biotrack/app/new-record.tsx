@@ -372,7 +372,7 @@ export default function NewRecordScreen() {
     // A record always observes an existing approved species; this screen no longer
     // saves "identify later" drafts.
     if (!speciesChoice) nextErrors.scientificName = 'Choose a species from the approved list.';
-    if (!locationName.trim()) nextErrors.locationName = 'Enter a location name.';
+    if (!locationName.trim()) nextErrors.locationName = 'Enter a location landmark.';
     if (!gpsFix) nextErrors.gps = 'A GPS fix is required. Wait for it, or tap the GPS card to retry.';
 
     setErrors(nextErrors);
@@ -611,10 +611,10 @@ export default function NewRecordScreen() {
           inputAccessoryViewID={DONE_BAR_ID}
         />
 
-        <Text style={styles.fieldLabel}>Morphological characteristics</Text>
+        <Text style={styles.fieldLabel}>Field notes</Text>
         <TextInput
           style={[styles.input, { height: 76, textAlignVertical: 'top' }]}
-          placeholder="Squat, round lower pitchers in a ground carpet..."
+          placeholder="e.g. 3 pitchers, lower leaves damaged, growing on limestone"
           placeholderTextColor="#8C9A91"
           multiline
           value={morphology}
@@ -623,10 +623,10 @@ export default function NewRecordScreen() {
         />
 
         <Text style={styles.sectionLabel}>LOCATION</Text>
-        <Text style={styles.fieldLabel}>Location name *</Text>
+        <Text style={styles.fieldLabel}>Location landmark *</Text>
         <TextInput
           style={[styles.input, errors.locationName && styles.inputError]}
-          placeholder="e.g. Cave entrance area"
+          placeholder="e.g. left of boardwalk, 50 m past cave entrance"
           placeholderTextColor="#8C9A91"
           value={locationName}
           onChangeText={handleLocationNameChange}
