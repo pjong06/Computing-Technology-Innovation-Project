@@ -11,7 +11,6 @@ import {
   Image,
   ActivityIndicator,
 } from 'react-native';
-import type { TextInputInstance } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Location from 'expo-location';
 import type * as ImagePicker from 'expo-image-picker';
@@ -28,6 +27,7 @@ import { useSpeciesStore } from '../src/store/useSpeciesStore';
 import SpeciesPicker, { type SpeciesChoice } from '../src/components/SpeciesPicker';
 import { identifyPlant, IdentifyNetworkError, type SpeciesSuggestion } from '../src/services/identifyPlant';
 import { formatCoordinates, describeAccuracy } from '../src/utils/formatCoordinates';
+import { conservationStatusCode, conservationStatusLabel } from '../src/utils/conservationStatus';
 import FormScrollView from '../src/components/FormScrollView';
 import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
 
@@ -97,8 +97,6 @@ export default function NewRecordScreen() {
   const [speciesQuery, setSpeciesQuery] = useState(existingRecord?.scientificName ?? '');
   const [speciesNotice, setSpeciesNotice] = useState('');
   const allSpecies = useSpeciesStore((state) => state.species);
-  const [commonName, setCommonName] = useState(existingRecord?.commonName ?? '');
-  const [family, setFamily] = useState(existingRecord?.family ?? '');
   const [height, setHeight] = useState(existingRecord?.height ?? '');
   const [morphology, setMorphology] = useState(existingRecord?.morphology ?? '');
   const [locationName, setLocationName] = useState(existingRecord?.locationName ?? '');
@@ -119,12 +117,6 @@ export default function NewRecordScreen() {
   const [gpsError, setGpsError] = useState('');
   const screenActive = useRef(true);
   const gpsRequestId = useRef(0);
-
-  // Lets the keyboard's "next" key move through the form in order.
-  // RN 0.88: a TextInput ref holds a TextInputInstance, not the TextInput component.
-  const commonNameRef = useRef<TextInputInstance>(null);
-  const familyRef = useRef<TextInputInstance>(null);
-  const heightRef = useRef<TextInputInstance>(null);
 
   const [errors, setErrors] = useState<FieldErrors>({});
   const clearError = (field: keyof FieldErrors) =>
@@ -226,16 +218,14 @@ export default function NewRecordScreen() {
     }
   };
 
-  // Drop the AI fields a suggestion filled in, unless the user has since edited them.
+  // Drop the species an AI suggestion chose, unless the user has since picked another.
   const clearSuggestionFields = () => {
     if (!selectedSpecies) return;
-    const { scientificName: name, commonName: common, family: fam } = selectedSpecies;
+    const name = selectedSpecies.scientificName;
     setSpeciesChoice((choice) =>
       choice?.kind === 'species' && choice.species.scientific_name === name ? null : choice
     );
     setSpeciesNotice('');
-    if (common) setCommonName((value) => (value === common ? '' : value));
-    if (fam) setFamily((value) => (value === fam ? '' : value));
   };
 
   // Setting or removing any photo invalidates the AI suggestions for the old one.
@@ -347,10 +337,9 @@ export default function NewRecordScreen() {
     const wanted = suggestion.scientificName.trim().toLowerCase();
     const match = allSpecies.find((s) => s.scientific_name.trim().toLowerCase() === wanted);
     if (match) {
+      // Common name and family then come from the approved list, not from the AI.
       setSpeciesChoice({ kind: 'species', species: match });
       setSpeciesNotice('');
-      if (suggestion.commonName) setCommonName(suggestion.commonName);
-      if (suggestion.family) setFamily(suggestion.family);
     } else {
       setSpeciesChoice(null);
       setSpeciesQuery(suggestion.scientificName);
@@ -363,25 +352,10 @@ export default function NewRecordScreen() {
   };
 
   const handleSpeciesChange = (choice: SpeciesChoice) => {
-    if (!choice && speciesChoice?.kind === 'species') {
-      const previous = speciesChoice.species;
-      if (previous.common_name) {
-        setCommonName((value) => (value === previous.common_name ? '' : value));
-      }
-      if (previous.taxonomy?.family) {
-        setFamily((value) => (value === previous.taxonomy?.family ? '' : value));
-      }
-      setSpeciesQuery('');
-    }
+    if (!choice) setSpeciesQuery(''); // "Change" starts a fresh search
     setSpeciesChoice(choice);
     setSelectedSpecies(null); // a manual choice replaces the AI pick
     setSpeciesNotice('');
-    if (choice?.kind === 'species' && choice.species.common_name) {
-      setCommonName(choice.species.common_name);
-    }
-    if (choice?.kind === 'species' && choice.species.taxonomy?.family) {
-      setFamily(choice.species.taxonomy.family);
-    }
     clearError('scientificName');
   };
 
@@ -395,18 +369,34 @@ export default function NewRecordScreen() {
 
     const nextErrors: FieldErrors = {};
     if (photoList.length === 0) nextErrors.photos = 'Add at least one photo.';
-    if (!locationName.trim()) nextErrors.locationName = 'Enter a location name.';
+    // A record always observes an existing approved species; this screen no longer
+    // saves "identify later" drafts.
+    if (!speciesChoice) nextErrors.scientificName = 'Choose a species from the approved list.';
+    if (!locationName.trim()) nextErrors.locationName = 'Enter a location landmark.';
     if (!gpsFix) nextErrors.gps = 'A GPS fix is required. Wait for it, or tap the GPS card to retry.';
 
     setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0 || !gpsFix) return;
+    if (Object.keys(nextErrors).length > 0 || !gpsFix || !speciesChoice) {
+      // The field errors may be off screen, so also say it at the bottom.
+      if (!speciesChoice) {
+        Toast.show({
+          type: 'error',
+          text1: 'Species required',
+          text2: 'Search for and select the approved species before saving.',
+          position: 'bottom',
+        });
+      }
+      return;
+    }
 
-    const identified = Boolean(speciesChoice);
+    const species = speciesChoice.species;
     const recordData = {
-      scientificName: speciesChoice?.species.scientific_name ?? '',
-      speciesId: speciesChoice?.species.id ?? null,
-      commonName: commonName.trim(),
-      family: family.trim(),
+      scientificName: species.scientific_name,
+      speciesId: species.id,
+      // Copied from the approved list (read-only on this screen), so lists and plant
+      // detail can show them without looking the species up again.
+      commonName: species.common_name ?? '',
+      family: species.taxonomy?.family ?? '',
       height: height.trim() || undefined,
       morphology: morphology.trim() || undefined,
       locationName: locationName.trim(),
@@ -415,11 +405,10 @@ export default function NewRecordScreen() {
       gpsAccuracyM: gpsFix.accuracyM,
       gpsCoordination: formatCoordinates(gpsFix.latitude, gpsFix.longitude, gpsFix.accuracyM),
       photoUris: photoList,
-      recordStatus: identified ? RecordStatus.COMPLETE : RecordStatus.DRAFT,
-      identificationStatus: identified
-        ? IdentificationStatus.IDENTIFIED
-        : IdentificationStatus.PENDING,
-      syncStatus: identified ? SyncStatus.NOT_UPLOADED : SyncStatus.LOCAL_ONLY,
+      // Always complete: saving an older draft here (Continue Plant Record) completes it.
+      recordStatus: RecordStatus.COMPLETE,
+      identificationStatus: IdentificationStatus.IDENTIFIED,
+      syncStatus: SyncStatus.NOT_UPLOADED,
     };
 
     const saved = existingRecord
@@ -569,31 +558,9 @@ export default function NewRecordScreen() {
 
         <Text style={styles.sectionLabel}>SPECIES DETAILS</Text>
 
-        <View style={styles.referenceCard}>
-          <Text style={styles.referenceCardTitle}>
-            Not sure about the species?
-          </Text>
+        <Text style={styles.fieldLabel}>Species *</Text>
 
-          <Text style={styles.referenceCardText}>
-            Open the Species Reference to browse scientific, common and
-            local names. Viewing the reference will not change this record.
-          </Text>
-
-          <TouchableOpacity
-            style={styles.referenceButton}
-            activeOpacity={0.8}
-            onPress={() => router.push('/species-reference' as any)}
-          >
-            <Text style={styles.referenceButtonText}>
-              Open Species Reference
-            </Text>
-
-            <Text style={styles.referenceButtonArrow}>›</Text>
-          </TouchableOpacity>
-        </View>
-
-        <Text style={styles.fieldLabel}>Confirmed species</Text>
-
+        {/* Searches the approved list cached on this phone, so it works offline. */}
         <SpeciesPicker
           value={speciesChoice}
           onChange={handleSpeciesChange}
@@ -602,10 +569,26 @@ export default function NewRecordScreen() {
           hasError={!!errors.scientificName}
         />
 
-        <Text style={styles.confirmedSpeciesHint}>
-          Select an approved species when you are confident. If you cannot identify it in the field,
-          save the photos and field information as a draft and continue later.
-        </Text>
+        {/* Read-only: these come from the approved species list, not from the botanist. */}
+        {speciesChoice && (
+          <View style={styles.speciesInfo}>
+            <Text style={styles.speciesInfoRow}>
+              <Text style={styles.speciesInfoLabel}>Common name: </Text>
+              {speciesChoice.species.common_name || 'Not recorded'}
+            </Text>
+            <Text style={styles.speciesInfoRow}>
+              <Text style={styles.speciesInfoLabel}>Family: </Text>
+              {speciesChoice.species.taxonomy?.family || 'Not recorded'}
+            </Text>
+            <Text style={styles.speciesInfoRow}>
+              <Text style={styles.speciesInfoLabel}>Conservation status: </Text>
+              {(() => {
+                const code = conservationStatusCode(speciesChoice.species.conservation_status);
+                return `${code} (${conservationStatusLabel(code)})`;
+              })()}
+            </Text>
+          </View>
+        )}
 
         {speciesNotice !== '' && (
           <Text style={styles.identifyMessage}>{speciesNotice}</Text>
@@ -617,36 +600,8 @@ export default function NewRecordScreen() {
           </Text>
         )}
 
-        <Text style={styles.fieldLabel}>Common name</Text>
-        <TextInput
-          ref={commonNameRef}
-          style={styles.input}
-          placeholder="e.g. Pitcher plant"
-          placeholderTextColor="#8C9A91"
-          value={commonName}
-          onChangeText={setCommonName}
-          returnKeyType="next"
-          submitBehavior="submit"
-          onSubmitEditing={() => familyRef.current?.focus()}
-        />
-
-        <Text style={styles.fieldLabel}>Family</Text>
-        <TextInput
-          ref={familyRef}
-          style={styles.input}
-          placeholder="e.g. Nepenthaceae"
-          placeholderTextColor="#8C9A91"
-          value={family}
-          onChangeText={setFamily}
-          autoCorrect={false}
-          returnKeyType="next"
-          submitBehavior="submit"
-          onSubmitEditing={() => heightRef.current?.focus()}
-        />
-
         <Text style={styles.fieldLabel}>Height / diameter (m)</Text>
         <TextInput
-          ref={heightRef}
           style={styles.input}
           placeholder="e.g. 0.4"
           placeholderTextColor="#8C9A91"
@@ -656,10 +611,10 @@ export default function NewRecordScreen() {
           inputAccessoryViewID={DONE_BAR_ID}
         />
 
-        <Text style={styles.fieldLabel}>Morphological characteristics</Text>
+        <Text style={styles.fieldLabel}>Field notes</Text>
         <TextInput
           style={[styles.input, { height: 76, textAlignVertical: 'top' }]}
-          placeholder="Squat, round lower pitchers in a ground carpet..."
+          placeholder="e.g. 3 pitchers, lower leaves damaged, growing on limestone"
           placeholderTextColor="#8C9A91"
           multiline
           value={morphology}
@@ -668,10 +623,10 @@ export default function NewRecordScreen() {
         />
 
         <Text style={styles.sectionLabel}>LOCATION</Text>
-        <Text style={styles.fieldLabel}>Location name *</Text>
+        <Text style={styles.fieldLabel}>Location landmark *</Text>
         <TextInput
           style={[styles.input, errors.locationName && styles.inputError]}
-          placeholder="e.g. Cave entrance area"
+          placeholder="e.g. left of boardwalk, 50 m past cave entrance"
           placeholderTextColor="#8C9A91"
           value={locationName}
           onChangeText={handleLocationNameChange}
@@ -732,7 +687,7 @@ export default function NewRecordScreen() {
 
         <TouchableOpacity style={styles.saveBtn} activeOpacity={0.85} onPress={handleSave}>
           <Text style={styles.saveBtnText}>
-            {speciesChoice ? (isEditing ? 'Save completed record' : 'Save record') : 'Save for later'}
+            {isEditing ? 'Save completed record' : 'Save record'}
           </Text>
         </TouchableOpacity>
       </FormScrollView>
@@ -866,55 +821,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   saveBtnText: { color: '#FFF', fontWeight: '700', fontSize: 15 },
-
-  referenceCard: {
-    backgroundColor: '#EEF5F0',
-    borderWidth: 1,
-    borderColor: '#D5E3D9',
-    borderRadius: 18,
-    padding: 15,
-    marginTop: 10,
-    marginBottom: 12,
-  },
-  referenceCardTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#213B2A',
-    marginBottom: 4,
-  },
-  referenceCardText: {
-    fontSize: 12.5,
-    color: '#5B6B60',
-    lineHeight: 18,
-    marginBottom: 12,
-  },
-  referenceButton: {
-    minHeight: 46,
-    borderRadius: 23,
+  speciesInfo: {
     backgroundColor: '#FFFFFF',
+    borderRadius: 16,
     borderWidth: 1.2,
-    borderColor: '#213B2A',
-    paddingHorizontal: 17,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    borderColor: '#E6ECE8',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 12,
   },
-  referenceButtonText: {
-    color: '#213B2A',
-    fontSize: 13.5,
-    fontWeight: '800',
-  },
-  referenceButtonArrow: {
-    color: '#213B2A',
-    fontSize: 24,
-    lineHeight: 24,
-  },
-  confirmedSpeciesHint: {
-    fontSize: 11.5,
-    color: '#68776D',
-    lineHeight: 17,
-    marginTop: 2,
-    marginBottom: 10,
-    paddingHorizontal: 3,
-  },
+  speciesInfoRow: { fontSize: 13, color: '#1E2B22', marginVertical: 2 },
+  speciesInfoLabel: { fontWeight: '700', color: '#4E6254' },
 });

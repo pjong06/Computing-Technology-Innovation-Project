@@ -47,12 +47,20 @@ export default function AddObservationScreen() {
 
   const params = useLocalSearchParams<{ plantId?: string; tagCode?: string; scientificName?: string }>();
 
-  const [currentStep, setCurrentStep] = useState<number>(1);
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-
   const records = useRecordStore((state) => state.records);
   const addObservation = useRecordStore((state) => state.addObservation);
   const me = useProfileStore((state) => state.me);
+
+  // The plant passed in by the screen that opened this one. plantId is the phone's own
+  // record id from plant detail; scan and manual QR may pass the server's id, so match
+  // serverId too. When it's known, step 1 (finding the plant) is skipped.
+  const passedPlant = params.plantId
+    ? records.find((r) => r.id === params.plantId || r.serverId === params.plantId)
+    : undefined;
+  const firstStep = passedPlant ? 2 : 1;
+
+  const [currentStep, setCurrentStep] = useState<number>(firstStep);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   const [plantTag, setPlantTag] = useState<string>(params.tagCode || '');
 
@@ -62,14 +70,10 @@ export default function AddObservationScreen() {
   const [lifeStage, setLifeStage] = useState<LifeStage>('Mature');
   const [healthStatus, setHealthStatus] = useState<HealthStatus>('Healthy');
 
-  // The visit is saved on the phone, so it needs the plant's record on this phone.
-  // plantId is the phone's own record id when coming from plant detail. Scan and
-  // manual QR pass the server's plant id (or nothing when offline), so match that
-  // against serverId too, and fall back to the tag code typed or scanned in step 1.
+  // The visit is saved on the phone, so it needs the plant's record on this phone:
+  // the one passed in, or else the one matching the tag code typed in step 1.
   const cleanTag = plantTag.trim().toUpperCase();
-  const plant =
-    records.find((r) => !!params.plantId && (r.id === params.plantId || r.serverId === params.plantId)) ??
-    (cleanTag ? records.find((r) => r.tagCode === cleanTag) : undefined);
+  const plant = passedPlant ?? (cleanTag ? records.find((r) => r.tagCode === cleanTag) : undefined);
   const scientificName = plant?.scientificName || params.scientificName || '';
 
   const [photos, setPhotos] = useState<string[]>([]);
@@ -207,7 +211,7 @@ export default function AddObservationScreen() {
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.headerBackBtn}
-          onPress={() => (currentStep > 1 ? setCurrentStep(currentStep - 1) : router.back())}
+          onPress={() => (currentStep > firstStep ? setCurrentStep(currentStep - 1) : router.back())}
         >
           <Text style={styles.headerBackText}>←</Text>
         </TouchableOpacity>
@@ -241,8 +245,29 @@ export default function AddObservationScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-        {/* STEP 1: Plant identification */}
-        {currentStep === 1 && (
+        {/* Plant passed in (e.g. from plant detail): shown read-only on every step,
+            so the botanist always sees which plant this visit belongs to. */}
+        {passedPlant && (
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardIcon}>🌿</Text>
+              <Text style={[styles.cardTitle, styles.plantName]}>
+                {passedPlant.scientificName || 'Identification pending'}
+              </Text>
+            </View>
+            <Text style={styles.plantInfo}>
+              <Text style={styles.plantInfoLabel}>Tag: </Text>
+              {passedPlant.tagCode ?? 'No tag attached'}
+            </Text>
+            <Text style={styles.plantInfo}>
+              <Text style={styles.plantInfoLabel}>Location landmark: </Text>
+              {passedPlant.locationName || 'Not recorded'}
+            </Text>
+          </View>
+        )}
+
+        {/* STEP 1: Plant identification (only when no plant was passed in) */}
+        {currentStep === 1 && !passedPlant && (
           <View style={styles.stepContent}>
             <View style={styles.card}>
               <View style={styles.cardHeader}>
@@ -461,7 +486,7 @@ export default function AddObservationScreen() {
 
       {/* Fixed Bottom Action Bar */}
       <View style={styles.bottomBar}>
-        {currentStep > 1 && (
+        {currentStep > firstStep && (
           <TouchableOpacity
             style={styles.secondaryBtn}
             onPress={() => setCurrentStep(currentStep - 1)}
@@ -473,7 +498,7 @@ export default function AddObservationScreen() {
 
         {currentStep < 3 ? (
           <TouchableOpacity
-            style={[styles.primaryBtn, { flex: 1, marginLeft: currentStep > 1 ? 12 : 0 }]}
+            style={[styles.primaryBtn, { flex: 1, marginLeft: currentStep > firstStep ? 12 : 0 }]}
             onPress={handleNextStep}
           >
             <Text style={styles.primaryBtnText}>Continue →</Text>
@@ -629,6 +654,9 @@ const styles = StyleSheet.create({
     borderWidth: 1.2,
     borderColor: '#E2E8E4',
   },
+  plantName: { flex: 1, fontStyle: 'italic' },
+  plantInfo: { fontSize: 13, color: '#1E2B22', marginTop: 4 },
+  plantInfoLabel: { fontWeight: '700', color: '#415447' },
   speciesBadge: {
     flexDirection: 'row',
     alignItems: 'center',
