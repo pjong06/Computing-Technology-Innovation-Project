@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { recentIotQuery } = require('../services/recentIotQuery');
 
 const {
   getLatestReadings,
@@ -13,42 +14,10 @@ const {
 } = require('../services/iotAlertService');
 
 // GET sensor readings directly from Supabase
-router.get('/readings/history', async (req, res) => {
-  try {
-    const { data, error } = await req.supabase
-      .from('sensor_readings')
-      .select(`
-        id,
-        station_id,
-        recorded_at,
-        received_at,
-        temperature_c,
-        humidity_percent,
-        movement_detected,
-        vibration_level,
-        battery_percent
-      `)
-      .order('recorded_at', { ascending: false })
-      .limit(100);
-
-    if (error) {
-      console.error('IoT readings error:', error);
-      return res.status(500).json({
-        message: 'Failed to retrieve sensor readings',
-      });
-    }
-
-    return res.json({
-      message: 'Sensor readings retrieved successfully',
-      data,
-    });
-  } catch (error) {
-    console.error('IoT backend error:', error);
-    return res.status(500).json({
-      message: 'Internal server error',
-    });
-  }
-});
+router.get('/readings/history', recentIotQuery({
+  table: 'sensor_readings', columns: 'id,station_id,recorded_at,received_at,temperature_c,humidity_percent,movement_detected,soil_raw,soil_moisture_pct,distance_cm,distance_valid,rain_raw,rain_intensity_pct,dht_valid,sequence,uptime_ms,vibration_level,battery_percent',
+  orderBy: 'recorded_at', message: 'Sensor readings retrieved successfully', failure: 'Failed to retrieve sensor readings',
+}));
 
 // GET recent readings from in-memory MQTT telemetry
 router.get('/readings', (req, res) => {
@@ -108,44 +77,10 @@ router.get('/summary/live', (_req, res) => {
 });
 
 // GET recent IoT alerts from Supabase (group member's endpoint)
-router.get('/alerts', async (req, res) => {
-  try {
-    const { data, error } = await req.supabase
-      .from('alerts')
-      .select(`
-        id,
-        station_id,
-        reading_id,
-        alert_message,
-        severity,
-        alert_status,
-        triggered_at,
-        acknowledged_by,
-        acknowledged_at,
-        resolved_by,
-        resolved_at
-      `)
-      .order('triggered_at', { ascending: false })
-      .limit(100);
-
-    if (error) {
-      console.error('IoT alerts error:', error);
-      return res.status(500).json({
-        message: 'Failed to retrieve IoT alerts',
-      });
-    }
-
-    return res.json({
-      message: 'IoT alerts retrieved successfully',
-      data,
-    });
-  } catch (error) {
-    console.error('IoT alerts error:', error);
-    return res.status(500).json({
-      message: 'Internal server error',
-    });
-  }
-});
+router.get('/alerts', recentIotQuery({
+  table: 'alerts', columns: 'id,station_id,reading_id,alert_message,severity,alert_status,triggered_at,acknowledged_by,acknowledged_at,resolved_by,resolved_at',
+  orderBy: 'triggered_at', message: 'IoT alerts retrieved successfully', failure: 'Failed to retrieve IoT alerts',
+}));
 
 // GET Task 5.4 live alerts from backend memory (your 5.6 panel)
 router.get('/alerts/live', (req, res) => {
