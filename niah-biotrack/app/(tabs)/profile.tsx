@@ -30,7 +30,7 @@ interface ProfileData {
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { isVisitor, role, logout } = useAuthRole();
+  const { isVisitor, isGuest, role, logout } = useAuthRole();
   const records = useRecordStore((state) => state.records);
   // Species proposals still on the phone only; logging out would lose them too.
   const unsentProposalCount = useProposalStore(
@@ -116,6 +116,12 @@ export default function ProfileScreen() {
   ]
     .filter(Boolean)
     .join(' and ');
+  // Guests go straight to the login page; logging in there switches to the real account.
+  const handleGuestLogIn = async () => {
+    await logout(); // clears the guest flag (there's no session or data to lose)
+    router.replace('/');
+  };
+
   const handleLogout = async () => {
     Alert.alert(
       isVisitor ? 'Exit Visitor Mode' : hasUnsent ? 'Log out with unsynced data?' : 'Log Out',
@@ -148,7 +154,27 @@ export default function ProfileScreen() {
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {/* User Card */}
-        {isVisitor ? (
+        {isGuest ? (
+          <View style={styles.card}>
+            <View style={styles.userRow}>
+              <View style={[styles.avatarCircle, { backgroundColor: '#E0F2FE' }]}>
+                <Ionicons name="compass" size={30} color="#0284C7" />
+              </View>
+              <View style={styles.userInfo}>
+                <Text style={styles.userName}>You're exploring as a guest</Text>
+                <Text style={styles.userSub}>No account · nothing is saved to the server</Text>
+              </View>
+            </View>
+
+            <View style={styles.visitorDescBox}>
+              <Ionicons name="information-circle-outline" size={17} color="#0369A1" />
+              <Text style={styles.visitorDescText}>
+                You can browse approved species and scan plant tags. Log in to use your account.
+                Accounts are created by Sarawak Forestry Corporation.
+              </Text>
+            </View>
+          </View>
+        ) : isVisitor ? (
           <View style={styles.card}>
             <View style={styles.userRow}>
               <View style={[styles.avatarCircle, { backgroundColor: '#E0F2FE' }]}>
@@ -204,7 +230,8 @@ export default function ProfileScreen() {
           </View>
         )}
 
-        {/* Database Sync Overview */}
+        {/* Database Sync Overview (staff only: guests and visitors have no records) */}
+        {!isVisitor && (
         <View style={styles.card}>
           <View style={styles.cardHeaderBetween}>
             <Text style={styles.cardTitle}>Database Sync</Text>
@@ -246,12 +273,11 @@ export default function ProfileScreen() {
             </Text>
           </View>
         </View>
+        )}
 
         {/* Action Button */}
-        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
-          <Text style={styles.logoutText}>
-            {isVisitor ? 'Switch to Staff Sign In' : 'Log out'}
-          </Text>
+        <TouchableOpacity style={styles.logoutBtn} onPress={isGuest ? handleGuestLogIn : handleLogout}>
+          <Text style={styles.logoutText}>{isGuest ? 'Log in' : 'Log out'}</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>

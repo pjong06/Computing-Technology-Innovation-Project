@@ -100,10 +100,10 @@ export default function HomeScreen() {
 
   const handleProfilePress = () => {
     if (isVisitor) {
-      Alert.alert('Visitor Mode', 'You are browsing as a guest. Switch to Staff Login?', [
+      Alert.alert('Exploring as a guest', 'Log in to use your account?', [
         { text: 'Keep Exploring', style: 'cancel' },
         {
-          text: 'Staff Sign In',
+          text: 'Log in',
           onPress: async () => {
             await logout();
             router.replace('/');

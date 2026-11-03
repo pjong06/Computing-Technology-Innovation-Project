@@ -52,7 +52,7 @@ export default function LoginScreen() {
 
     const cleanId = identifier.trim();
     if (!cleanId || !password) {
-      setErrorMessage('Enter your staff email/ID and password.');
+      setErrorMessage('Enter your email or ID and your password.');
       return;
     }
 
@@ -85,7 +85,7 @@ export default function LoginScreen() {
         if (error.name === 'AuthRetryableFetchError' || error.status === 0) {
           setErrorMessage("Cannot reach server. Check connection.");
         } else if (error.code === 'invalid_credentials' || error.status === 400) {
-          setErrorMessage('Incorrect email/ID or password.');
+          setErrorMessage('Incorrect email, ID or password.');
         } else {
           setErrorMessage(error.message || 'Sign-in failed.');
         }
@@ -108,7 +108,7 @@ export default function LoginScreen() {
     Toast.show({
       type: 'info',
       text1: 'Welcome to Niah National Park',
-      text2: 'Exploring in Visitor Mode (Read-Only).',
+      text2: "You're exploring without an account.",
     });
     router.replace('/(tabs)/home');
   };
@@ -130,10 +130,10 @@ export default function LoginScreen() {
         <Text style={styles.brandSubtitle}>Biodiversity documentation system</Text>
 
         <View style={styles.form}>
-          <Text style={styles.inputLabel}>Staff Email or Staff ID</Text>
+          <Text style={styles.inputLabel}>Email or ID</Text>
           <TextInput
             style={styles.input}
-            placeholder="e.g. botanist@sarawak.gov or SFC-BOT-002"
+            placeholder="Your email or ID"
             placeholderTextColor="#8C9A91"
             value={identifier}
             onChangeText={setIdentifier}
@@ -177,7 +177,7 @@ export default function LoginScreen() {
             {loading ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Text style={styles.loginBtnText}>Staff Sign In</Text>
+              <Text style={styles.loginBtnText}>Log in</Text>
             )}
           </TouchableOpacity>
 
@@ -192,27 +192,26 @@ export default function LoginScreen() {
         {/* Divider */}
         <View style={styles.dividerRow}>
           <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>OR EXPLORE PARK</Text>
+          <Text style={styles.dividerText}>OR</Text>
           <View style={styles.dividerLine} />
         </View>
 
-        {/* Visitor Access */}
+        {/* Guest: no account, no login token; read-only, public data only. */}
         <TouchableOpacity
           style={styles.visitorBtn}
           activeOpacity={0.85}
           onPress={handleEnterAsVisitor}
         >
           <Ionicons name="compass-outline" size={20} color="#2D6A4F" />
-          <Text style={styles.visitorBtnText}>Continue as Park Visitor</Text>
+          <Text style={styles.visitorBtnText}>Explore without an account</Text>
         </TouchableOpacity>
         <Text style={styles.visitorSubtext}>
-          No account needed • Browse species, trails, and scan QR plaques
+          Browse species and scan plant tags. Nothing is saved to an account.
         </Text>
 
         <View style={styles.footer}>
-          <Text style={styles.offlineNotice}>✓ Offline field logging available for staff</Text>
           <Text style={styles.helpText}>
-            Protected Sarawak Forestry Corporation Research Portal
+            Accounts are created by Sarawak Forestry Corporation.
           </Text>
         </View>
       </FormScrollView>

@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useStaffOnly } from '../src/context/AuthRoleContext';
 import * as Location from 'expo-location';
 import type * as ImagePicker from 'expo-image-picker';
 import { pickImageFromLibrary, takePhotoWithCamera, type PickImageResult } from '../src/utils/imagePicker';
@@ -70,6 +71,8 @@ type FieldErrors = Partial<Record<'photos' | 'scientificName' | 'locationName' |
 
 export default function NewRecordScreen() {
   const router = useRouter();
+  // Botanist-only screen: guests and visitors are sent back to Home.
+  const blocked = useStaffOnly();
   const { editId } = useLocalSearchParams<{ editId?: string }>();
   const existingRecord = useRecordStore((state) =>
     editId ? state.records.find((record) => record.id === editId) : undefined
@@ -433,6 +436,8 @@ export default function NewRecordScreen() {
     recordSaved.current = true; // the record now owns the stored photos
     router.replace({ pathname: '/save-confirm', params: { id: saved.id } } as any);
   };
+
+  if (blocked) return null;
 
   return (
     <SafeAreaView style={styles.safeArea}>

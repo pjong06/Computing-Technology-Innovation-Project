@@ -1,8 +1,12 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
 import { Text, Platform, StyleSheet } from 'react-native';
+import { useAuthRole } from '../../src/context/AuthRoleContext';
 
 export default function TabLayout() {
+  // Guests and visitors have no field records, so the Records tab is hidden for them.
+  const { isVisitor } = useAuthRole();
+
   return (
     <Tabs
       screenOptions={{
@@ -16,7 +20,14 @@ export default function TabLayout() {
       <Tabs.Screen name="home" options={{ title: 'Home', tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 18 }}>🏠</Text> }} />
       <Tabs.Screen name="species" options={{ title: 'Species', tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 18 }}>🌿</Text> }} />
       <Tabs.Screen name="scan" options={{ title: 'Scan', tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 18 }}>📷</Text> }} />
-      <Tabs.Screen name="records" options={{ title: 'Records', tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 18 }}>📋</Text> }} />
+      <Tabs.Screen
+        name="records"
+        options={{
+          title: 'Records',
+          href: isVisitor ? null : undefined, // null hides the tab (Expo Router)
+          tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 18 }}>📋</Text>,
+        }}
+      />
       <Tabs.Screen name="profile" options={{ title: 'Profile', tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 18 }}>👤</Text> }} />
     </Tabs>
   );
