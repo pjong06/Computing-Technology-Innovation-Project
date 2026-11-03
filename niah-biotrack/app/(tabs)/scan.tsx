@@ -137,9 +137,7 @@ export default function ScanScreen() {
         onBarcodeScanned={scanned ? undefined : handleBarcodeScanned}
       />
 
-      {/* Dark Ambient Mask with Transparent Viewfinder */}
       <View style={styles.overlay}>
-        {/* Top Header */}
         <View style={styles.topBar}>
           <TouchableOpacity
             style={styles.circleUtilityBtn}
@@ -162,7 +160,6 @@ export default function ScanScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Viewfinder Reticle Frame */}
         <View style={styles.scannerCenterSection}>
           <View style={styles.viewfinder}>
             <View style={[styles.corner, styles.cornerTL]} />
@@ -180,7 +177,6 @@ export default function ScanScreen() {
           <Text style={styles.alignHint}>Align QR code or tree tag within target frame</Text>
         </View>
 
-        {/* Bottom Utility Bar */}
         <View style={styles.bottomBar}>
           <TouchableOpacity
             style={styles.manualEntryBtn}
@@ -192,7 +188,6 @@ export default function ScanScreen() {
         </View>
       </View>
 
-      {/* Slide-Up Tag Preview Bottom Sheet */}
       <Modal
         animationType="slide"
         transparent
@@ -213,9 +208,7 @@ export default function ScanScreen() {
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.sheetScientificName}>
-              {plantData?.scientificName}
-            </Text>
+            <Text style={styles.sheetScientificName}>{plantData?.scientificName}</Text>
             <Text style={styles.sheetCommonName}>{plantData?.commonName}</Text>
 
             {plantData?.family && (
@@ -225,13 +218,9 @@ export default function ScanScreen() {
               </View>
             )}
 
-            {/* Role Conditional Action Button */}
             {canEdit ? (
               <View style={styles.sheetActionRow}>
-                <TouchableOpacity
-                  style={styles.sheetCancelBtn}
-                  onPress={handleDismissSheet}
-                >
+                <TouchableOpacity style={styles.sheetCancelBtn} onPress={handleDismissSheet}>
                   <Text style={styles.sheetCancelText}>Scan Again</Text>
                 </TouchableOpacity>
 
@@ -250,10 +239,7 @@ export default function ScanScreen() {
                     Sarawak Forestry Corporation Verified Specimen
                   </Text>
                 </View>
-                <TouchableOpacity
-                  style={styles.visitorDoneBtn}
-                  onPress={handleDismissSheet}
-                >
+                <TouchableOpacity style={styles.visitorDoneBtn} onPress={handleDismissSheet}>
                   <Text style={styles.visitorDoneBtnText}>Done</Text>
                 </TouchableOpacity>
               </View>

@@ -23,6 +23,7 @@ const authRoutes = require('./routes/auth');
 const officerReviewRoutes = require('./routes/officerReviews');
 const publicPlantRoutes = require('./routes/publicPlants');
 const webDataRoutes = require('./routes/webData');
+const syncRoutes = require('./routes/sync');
 
 const { publicClient } = require('./config/supabase');
 const { requireAuth, requireRole } = require('./middleware/auth');
@@ -57,6 +58,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/officer/reviews', officerReviewRoutes);
 
 app.use('/api/web-data', webDataRoutes);
+
+app.use('/api/sync', requireAuth, requireRole('botanist'), syncRoutes);
 
 // Public plant routes
 app.use(publicPlantRoutes);

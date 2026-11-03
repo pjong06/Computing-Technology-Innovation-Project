@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import Toast from 'react-native-toast-message';
 import { useAuthRole } from '../../src/context/AuthRoleContext';
 import { useRecordStore, SyncStatus } from '../../src/store/useRecordStore';
 
@@ -20,7 +21,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const { isVisitor, userName, logout } = useAuthRole();
   const records = useRecordStore((state) => state.records);
-  const retryRecord = useRecordStore((state) => state.retryRecord);
+  const retryRecord = useRecordStore((state: any) => state.retryRecord);
 
   const pendingCount = records.filter((r) => r.syncStatus === SyncStatus.NOT_UPLOADED).length;
   const failedCount = records.filter((r) => r.syncStatus === SyncStatus.FAILED).length;
@@ -34,6 +35,8 @@ export default function HomeScreen() {
         return { bg: '#FDF4D8', text: '#8C5E03', label: '• Not uploaded' };
       case SyncStatus.FAILED:
         return { bg: '#FDE2E2', text: '#9B1C1C', label: '• Upload failed' };
+      default:
+        return { bg: '#FDF4D8', text: '#8C5E03', label: '• Pending' };
     }
   };
 
@@ -56,7 +59,6 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      {/* Role Access Indicator */}
       <View style={[styles.roleBanner, isVisitor ? styles.roleBannerVisitor : styles.roleBannerBotanist]}>
         <Ionicons
           name={isVisitor ? 'eye-outline' : 'shield-checkmark-outline'}
@@ -69,7 +71,6 @@ export default function HomeScreen() {
       </View>
 
       <View style={styles.container}>
-        {/* Header */}
         <View style={styles.headerRow}>
           <View style={styles.headerLeft}>
             <Image
@@ -91,9 +92,6 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* ========================================================= */}
-        {/* BOTANIST CONTROLS                                         */}
-        {/* ========================================================= */}
         {!isVisitor ? (
           <>
             {totalToSync > 0 && (
@@ -107,7 +105,6 @@ export default function HomeScreen() {
               </View>
             )}
 
-            {/* Field Actions 2x1 */}
             <View style={styles.actionGrid}>
               <TouchableOpacity
                 style={styles.scanCard}
@@ -130,7 +127,6 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* GPS Transect Button */}
             <TouchableOpacity
               style={styles.routePill}
               activeOpacity={0.85}
@@ -143,7 +139,6 @@ export default function HomeScreen() {
               <Text style={styles.routeTag}>GPS Canvas</Text>
             </TouchableOpacity>
 
-            {/* Recent records Header */}
             <View style={styles.sectionRow}>
               <Text style={styles.sectionHeading}>Recent Field Records</Text>
               <TouchableOpacity onPress={() => router.push('/(tabs)/records')}>
@@ -151,7 +146,6 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Records list */}
             {records.length === 0 ? (
               <View style={styles.emptyContainer}>
                 <Text style={styles.emptyTitle}>No records logged yet</Text>
@@ -195,7 +189,12 @@ export default function HomeScreen() {
                       {item.syncStatus === SyncStatus.FAILED && (
                         <View style={styles.errorSubRow}>
                           <Text style={styles.errorSubText}>Upload failed</Text>
-                          <TouchableOpacity onPress={() => retryRecord(item.id)}>
+                          <TouchableOpacity
+                            onPress={() => {
+                              if (retryRecord) retryRecord(item.id);
+                              Toast.show({ type: 'info', text1: 'Retrying sync...' });
+                            }}
+                          >
                             <Text style={styles.retryBtn}>Retry</Text>
                           </TouchableOpacity>
                         </View>
@@ -207,9 +206,6 @@ export default function HomeScreen() {
             )}
           </>
         ) : (
-          /* ========================================================= */
-          /* VISITOR CONTROLS                                          */
-          /* ========================================================= */
           <View style={styles.visitorSection}>
             <TouchableOpacity
               style={styles.visitorHeroCard}

@@ -11,13 +11,19 @@ import {
   Image,
   ActivityIndicator,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import type { TextInputInstance } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Location from 'expo-location';
 import type * as ImagePicker from 'expo-image-picker';
 import { pickImageFromLibrary, takePhotoWithCamera, type PickImageResult } from '../src/utils/imagePicker';
 import { savePhotoPermanently, deleteStoredPhoto } from '../src/utils/photoStorage';
 import Toast from 'react-native-toast-message';
-import { useRecordStore, SyncStatus } from '../src/store/useRecordStore';
+import {
+  IdentificationStatus,
+  RecordStatus,
+  SyncStatus,
+  useRecordStore,
+} from '../src/store/useRecordStore';
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
 import SpeciesPicker, { type SpeciesChoice } from '../src/components/SpeciesPicker';
 import { identifyPlant, IdentifyNetworkError, type SpeciesSuggestion } from '../src/services/identifyPlant';
@@ -64,34 +70,61 @@ type FieldErrors = Partial<Record<'photos' | 'scientificName' | 'locationName' |
 
 export default function NewRecordScreen() {
   const router = useRouter();
+  const { editId } = useLocalSearchParams<{ editId?: string }>();
+  const existingRecord = useRecordStore((state) =>
+    editId ? state.records.find((record) => record.id === editId) : undefined
+  );
   const addRecord = useRecordStore((state) => state.addRecord);
+  const updateRecord = useRecordStore((state) => state.updateRecord);
+  const isEditing = Boolean(existingRecord);
 
   const [photos, setPhotos] = useState<SlotPhotos>({
-    'Whole plant': null,
-    Leaf: null,
-    Flower: null,
-    Bark: null,
+    'Whole plant': existingRecord?.photoUris?.[0]
+      ? ({ uri: existingRecord.photoUris[0], width: 0, height: 0 } as ImagePicker.ImagePickerAsset)
+      : null,
+    Leaf: existingRecord?.photoUris?.[1]
+      ? ({ uri: existingRecord.photoUris[1], width: 0, height: 0 } as ImagePicker.ImagePickerAsset)
+      : null,
+    Flower: existingRecord?.photoUris?.[2]
+      ? ({ uri: existingRecord.photoUris[2], width: 0, height: 0 } as ImagePicker.ImagePickerAsset)
+      : null,
+    Bark: existingRecord?.photoUris?.[3]
+      ? ({ uri: existingRecord.photoUris[3], width: 0, height: 0 } as ImagePicker.ImagePickerAsset)
+      : null,
   });
 
   const [speciesChoice, setSpeciesChoice] = useState<SpeciesChoice>(null);
-  const [speciesQuery, setSpeciesQuery] = useState('');
+  const [speciesQuery, setSpeciesQuery] = useState(existingRecord?.scientificName ?? '');
   const [speciesNotice, setSpeciesNotice] = useState('');
   const allSpecies = useSpeciesStore((state) => state.species);
-  const [commonName, setCommonName] = useState('');
-  const [family, setFamily] = useState('');
-  const [height, setHeight] = useState('');
-  const [morphology, setMorphology] = useState('');
-  const [locationName, setLocationName] = useState('');
-  const [gpsFix, setGpsFix] = useState<GpsFix | null>(null);
-  const [gpsStatus, setGpsStatus] = useState<GpsStatus>('acquiring');
+  const [commonName, setCommonName] = useState(existingRecord?.commonName ?? '');
+  const [family, setFamily] = useState(existingRecord?.family ?? '');
+  const [height, setHeight] = useState(existingRecord?.height ?? '');
+  const [morphology, setMorphology] = useState(existingRecord?.morphology ?? '');
+  const [locationName, setLocationName] = useState(existingRecord?.locationName ?? '');
+  const [gpsFix, setGpsFix] = useState<GpsFix | null>(
+    existingRecord?.latitude !== undefined && existingRecord?.longitude !== undefined
+      ? {
+          latitude: existingRecord.latitude,
+          longitude: existingRecord.longitude,
+          accuracyM: existingRecord.gpsAccuracyM ?? null,
+        }
+      : null
+  );
+  const [gpsStatus, setGpsStatus] = useState<GpsStatus>(
+    existingRecord?.latitude !== undefined && existingRecord?.longitude !== undefined
+      ? 'ready'
+      : 'acquiring'
+  );
   const [gpsError, setGpsError] = useState('');
   const screenActive = useRef(true);
   const gpsRequestId = useRef(0);
 
   // Lets the keyboard's "next" key move through the form in order.
-  const commonNameRef = useRef<TextInput>(null);
-  const familyRef = useRef<TextInput>(null);
-  const heightRef = useRef<TextInput>(null);
+  // RN 0.88: a TextInput ref holds a TextInputInstance, not the TextInput component.
+  const commonNameRef = useRef<TextInputInstance>(null);
+  const familyRef = useRef<TextInputInstance>(null);
+  const heightRef = useRef<TextInputInstance>(null);
 
   const [errors, setErrors] = useState<FieldErrors>({});
   const clearError = (field: keyof FieldErrors) =>
@@ -112,17 +145,32 @@ export default function NewRecordScreen() {
   const photosRef = useRef(photos);
   photosRef.current = photos;
   const recordSaved = useRef(false);
+  const originalPhotoUris = useRef(new Set(existingRecord?.photoUris ?? []));
+
+  useEffect(() => {
+    if (!existingRecord || speciesChoice) return;
+    const match = allSpecies.find(
+      (species) =>
+        species.id === existingRecord.speciesId ||
+        species.scientific_name.trim().toLowerCase() ===
+          existingRecord.scientificName.trim().toLowerCase()
+    );
+    if (match) setSpeciesChoice({ kind: 'species', species: match });
+  }, [allSpecies, existingRecord, speciesChoice]);
 
   useEffect(() => {
     screenActive.current = true;
-    fetchLocation();
+    if (!gpsFix) fetchLocation();
 
     return () => {
       screenActive.current = false;
       identifyRequest.current?.abort();
       identifyRequest.current = null;
       if (!recordSaved.current) {
-        PHOTO_SLOTS.forEach((slot) => deleteStoredPhoto(photosRef.current[slot]?.uri));
+        PHOTO_SLOTS.forEach((slot) => {
+          const uri = photosRef.current[slot]?.uri;
+          if (uri && !originalPhotoUris.current.has(uri)) deleteStoredPhoto(uri);
+        });
       }
     };
   }, []);
@@ -198,7 +246,13 @@ export default function NewRecordScreen() {
 
     // Replacing or removing a photo deletes the permanent copy of the old one.
     const previous = photosRef.current[slot];
-    if (previous && previous.uri !== asset?.uri) deleteStoredPhoto(previous.uri);
+    if (
+      previous &&
+      previous.uri !== asset?.uri &&
+      !originalPhotoUris.current.has(previous.uri)
+    ) {
+      deleteStoredPhoto(previous.uri);
+    }
 
     setPhotos((prev) => ({ ...prev, [slot]: asset }));
     if (asset) clearError('photos');
@@ -265,14 +319,14 @@ export default function NewRecordScreen() {
 
       setSuggestions(nextSuggestions);
       if (nextSuggestions.length === 0) {
-        setIdentifyMessage('No match found. Enter the scientific name manually or try another photo.');
+        setIdentifyMessage('No match found. Open the Species Reference to research the plant, or try another photo.');
       }
     } catch (error) {
       if (request.signal.aborted) return;
 
       if (error instanceof IdentifyNetworkError) {
         setIdentifyMessage(
-          "Can't reach the server - you may be offline. Enter the scientific name manually, or try again when connected."
+          "Can't reach the AI server. You can still open the offline Species Reference, or try again when connected."
         );
       } else {
         setIdentifyMessage(error instanceof Error ? error.message : 'Identification failed. Please try again.');
@@ -295,6 +349,8 @@ export default function NewRecordScreen() {
     if (match) {
       setSpeciesChoice({ kind: 'species', species: match });
       setSpeciesNotice('');
+      if (suggestion.commonName) setCommonName(suggestion.commonName);
+      if (suggestion.family) setFamily(suggestion.family);
     } else {
       setSpeciesChoice(null);
       setSpeciesQuery(suggestion.scientificName);
@@ -303,18 +359,28 @@ export default function NewRecordScreen() {
       );
     }
 
-    // Only overwrite what the suggestion actually knows; keep anything the user typed otherwise.
-    if (suggestion.commonName) setCommonName(suggestion.commonName);
-    if (suggestion.family) setFamily(suggestion.family);
     clearError('scientificName');
   };
 
   const handleSpeciesChange = (choice: SpeciesChoice) => {
+    if (!choice && speciesChoice?.kind === 'species') {
+      const previous = speciesChoice.species;
+      if (previous.common_name) {
+        setCommonName((value) => (value === previous.common_name ? '' : value));
+      }
+      if (previous.taxonomy?.family) {
+        setFamily((value) => (value === previous.taxonomy?.family ? '' : value));
+      }
+      setSpeciesQuery('');
+    }
     setSpeciesChoice(choice);
     setSelectedSpecies(null); // a manual choice replaces the AI pick
     setSpeciesNotice('');
     if (choice?.kind === 'species' && choice.species.common_name) {
       setCommonName(choice.species.common_name);
+    }
+    if (choice?.kind === 'species' && choice.species.taxonomy?.family) {
+      setFamily(choice.species.taxonomy.family);
     }
     clearError('scientificName');
   };
@@ -329,16 +395,16 @@ export default function NewRecordScreen() {
 
     const nextErrors: FieldErrors = {};
     if (photoList.length === 0) nextErrors.photos = 'Add at least one photo.';
-    if (!speciesChoice) nextErrors.scientificName = 'Choose a species from the approved list.';
     if (!locationName.trim()) nextErrors.locationName = 'Enter a location name.';
     if (!gpsFix) nextErrors.gps = 'A GPS fix is required. Wait for it, or tap the GPS card to retry.';
 
     setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0 || !gpsFix || !speciesChoice) return;
+    if (Object.keys(nextErrors).length > 0 || !gpsFix) return;
 
-    const saved = addRecord({
-      scientificName: speciesChoice.species.scientific_name,
-      speciesId: speciesChoice.species.id,
+    const identified = Boolean(speciesChoice);
+    const recordData = {
+      scientificName: speciesChoice?.species.scientific_name ?? '',
+      speciesId: speciesChoice?.species.id ?? null,
       commonName: commonName.trim(),
       family: family.trim(),
       height: height.trim() || undefined,
@@ -349,8 +415,31 @@ export default function NewRecordScreen() {
       gpsAccuracyM: gpsFix.accuracyM,
       gpsCoordination: formatCoordinates(gpsFix.latitude, gpsFix.longitude, gpsFix.accuracyM),
       photoUris: photoList,
-      syncStatus: SyncStatus.NOT_UPLOADED,
-    });
+      recordStatus: identified ? RecordStatus.COMPLETE : RecordStatus.DRAFT,
+      identificationStatus: identified
+        ? IdentificationStatus.IDENTIFIED
+        : IdentificationStatus.PENDING,
+      syncStatus: identified ? SyncStatus.NOT_UPLOADED : SyncStatus.LOCAL_ONLY,
+    };
+
+    const saved = existingRecord
+      ? updateRecord(existingRecord.id, recordData)
+      : addRecord(recordData);
+
+    if (!saved) {
+      Toast.show({
+        type: 'error',
+        text1: 'Record not updated',
+        text2: 'Only local drafts and returned records can be edited.',
+      });
+      return;
+    }
+
+    if (existingRecord) {
+      originalPhotoUris.current.forEach((uri) => {
+        if (!photoList.includes(uri)) deleteStoredPhoto(uri);
+      });
+    }
 
     recordSaved.current = true; // the record now owns the stored photos
     router.replace({ pathname: '/save-confirm', params: { id: saved.id } } as any);
@@ -362,7 +451,7 @@ export default function NewRecordScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.navSide}>
           <Text style={styles.backChevron}>‹</Text>
         </TouchableOpacity>
-        <Text style={styles.navTitle}>New Plant Record</Text>
+        <Text style={styles.navTitle}>{isEditing ? 'Continue Plant Record' : 'New Plant Record'}</Text>
         <View style={styles.navSide} />
       </View>
 
@@ -433,17 +522,17 @@ export default function NewRecordScreen() {
                   <Text style={styles.identifyBtnText}>Analysing photo...</Text>
                 </View>
               ) : (
-                <Text style={styles.identifyBtnText}>Get AI species suggestions</Text>
+                <Text style={styles.identifyBtnText}>Identify species with AI</Text>
               )}
             </TouchableOpacity>
-            <Text style={styles.aiHint}>Uses your {identifySlot?.toLowerCase()} photo</Text>
+            <Text style={styles.aiHint}>Uses your {identifySlot?.toLowerCase()} photo · internet required </Text>
 
             {identifyMessage !== '' && <Text style={styles.identifyMessage}>{identifyMessage}</Text>}
 
             {suggestions.length > 0 && (
               <View style={styles.suggestionsBlock}>
                 <Text style={styles.suggestionsTitle}>AI species suggestions</Text>
-                <Text style={styles.suggestionsHelp}>Tap one to fill in the details, or enter the name manually.</Text>
+                <Text style={styles.suggestionsHelp}>Select an approved AI suggestion, or use the Species Reference to research the plant yourself.</Text>
 
                 {suggestions.map((suggestion) => {
                   const selected =
@@ -479,7 +568,32 @@ export default function NewRecordScreen() {
         )}
 
         <Text style={styles.sectionLabel}>SPECIES DETAILS</Text>
-          <Text style={styles.fieldLabel}>Species *</Text>
+
+        <View style={styles.referenceCard}>
+          <Text style={styles.referenceCardTitle}>
+            Not sure about the species?
+          </Text>
+
+          <Text style={styles.referenceCardText}>
+            Open the Species Reference to browse scientific, common and
+            local names. Viewing the reference will not change this record.
+          </Text>
+
+          <TouchableOpacity
+            style={styles.referenceButton}
+            activeOpacity={0.8}
+            onPress={() => router.push('/species-reference' as any)}
+          >
+            <Text style={styles.referenceButtonText}>
+              Open Species Reference
+            </Text>
+
+            <Text style={styles.referenceButtonArrow}>›</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.fieldLabel}>Confirmed species</Text>
+
         <SpeciesPicker
           value={speciesChoice}
           onChange={handleSpeciesChange}
@@ -487,8 +601,21 @@ export default function NewRecordScreen() {
           onQueryChange={setSpeciesQuery}
           hasError={!!errors.scientificName}
         />
-        {speciesNotice !== '' && <Text style={styles.identifyMessage}>{speciesNotice}</Text>}
-        {errors.scientificName && <Text style={styles.errorText}>{errors.scientificName}</Text>}
+
+        <Text style={styles.confirmedSpeciesHint}>
+          Select an approved species when you are confident. If you cannot identify it in the field,
+          save the photos and field information as a draft and continue later.
+        </Text>
+
+        {speciesNotice !== '' && (
+          <Text style={styles.identifyMessage}>{speciesNotice}</Text>
+        )}
+
+        {errors.scientificName && (
+          <Text style={styles.errorText}>
+            {errors.scientificName}
+          </Text>
+        )}
 
         <Text style={styles.fieldLabel}>Common name</Text>
         <TextInput
@@ -604,7 +731,9 @@ export default function NewRecordScreen() {
         )}
 
         <TouchableOpacity style={styles.saveBtn} activeOpacity={0.85} onPress={handleSave}>
-          <Text style={styles.saveBtnText}>Save record</Text>
+          <Text style={styles.saveBtnText}>
+            {speciesChoice ? (isEditing ? 'Save completed record' : 'Save record') : 'Save for later'}
+          </Text>
         </TouchableOpacity>
       </FormScrollView>
       <KeyboardDoneBar nativeID={DONE_BAR_ID} />
@@ -737,4 +866,55 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   saveBtnText: { color: '#FFF', fontWeight: '700', fontSize: 15 },
+
+  referenceCard: {
+    backgroundColor: '#EEF5F0',
+    borderWidth: 1,
+    borderColor: '#D5E3D9',
+    borderRadius: 18,
+    padding: 15,
+    marginTop: 10,
+    marginBottom: 12,
+  },
+  referenceCardTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#213B2A',
+    marginBottom: 4,
+  },
+  referenceCardText: {
+    fontSize: 12.5,
+    color: '#5B6B60',
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  referenceButton: {
+    minHeight: 46,
+    borderRadius: 23,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.2,
+    borderColor: '#213B2A',
+    paddingHorizontal: 17,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  referenceButtonText: {
+    color: '#213B2A',
+    fontSize: 13.5,
+    fontWeight: '800',
+  },
+  referenceButtonArrow: {
+    color: '#213B2A',
+    fontSize: 24,
+    lineHeight: 24,
+  },
+  confirmedSpeciesHint: {
+    fontSize: 11.5,
+    color: '#68776D',
+    lineHeight: 17,
+    marginTop: 2,
+    marginBottom: 10,
+    paddingHorizontal: 3,
+  },
 });

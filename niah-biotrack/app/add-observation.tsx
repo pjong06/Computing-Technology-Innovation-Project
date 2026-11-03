@@ -34,7 +34,7 @@ export default function AddObservationScreen() {
   const { isVisitor } = useAuthRole();
   const params = useLocalSearchParams<{ plantId?: string; tagCode?: string; scientificName?: string }>();
 
-  // Guard against visitor write attempts
+  // Guard against visitor unauthorized writes
   useEffect(() => {
     if (isVisitor) {
       Alert.alert(
@@ -63,12 +63,6 @@ export default function AddObservationScreen() {
 
   const [photos, setPhotos] = useState<string[]>([]);
   const [notes, setNotes] = useState<string>('');
-
-  useEffect(() => {
-    if (!isVisitor) {
-      fetchCurrentLocation();
-    }
-  }, [isVisitor]);
 
   const fetchCurrentLocation = async () => {
     setIsLocating(true);
@@ -101,6 +95,12 @@ export default function AddObservationScreen() {
       setIsLocating(false);
     }
   };
+
+  useEffect(() => {
+    if (!isVisitor) {
+      fetchCurrentLocation();
+    }
+  }, [isVisitor]);
 
   const adjustValue = (
     setter: React.Dispatch<React.SetStateAction<string>>,
@@ -509,7 +509,7 @@ export default function AddObservationScreen() {
         )}
       </ScrollView>
 
-      {/* Fixed Bottom Action Bar */}
+      {/* Bottom Bar */}
       <View style={styles.bottomBar}>
         {currentStep > 1 && (
           <TouchableOpacity
@@ -573,20 +573,9 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#213B2A',
   },
-  headerCenter: {
-    alignItems: 'center',
-  },
-  headerTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#213B2A',
-  },
-  headerSub: {
-    fontSize: 12,
-    color: '#68776D',
-    marginTop: 2,
-    fontWeight: '600',
-  },
+  headerCenter: { alignItems: 'center' },
+  headerTitle: { fontSize: 17, fontWeight: '800', color: '#213B2A' },
+  headerSub: { fontSize: 12, color: '#68776D', marginTop: 2, fontWeight: '600' },
   stepperContainer: {
     flexDirection: 'row',
     paddingHorizontal: 20,
@@ -594,39 +583,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     justifyContent: 'space-between',
   },
-  stepTrackWrapper: {
-    flex: 1,
-    alignItems: 'center',
-    marginHorizontal: 4,
-  },
-  stepTrack: {
-    width: '100%',
-    height: 4,
-    borderRadius: 2,
-    marginBottom: 6,
-  },
-  stepTrackActive: {
-    backgroundColor: '#213B2A',
-  },
-  stepTrackInactive: {
-    backgroundColor: '#E0E7E2',
-  },
-  stepTrackLabel: {
-    fontSize: 11,
-    color: '#8A998E',
-    fontWeight: '600',
-  },
-  stepTrackLabelActive: {
-    color: '#213B2A',
-    fontWeight: '800',
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 40,
-  },
-  stepContent: {
-    gap: 14,
-  },
+  stepTrackWrapper: { flex: 1, alignItems: 'center', marginHorizontal: 4 },
+  stepTrack: { width: '100%', height: 4, borderRadius: 2, marginBottom: 6 },
+  stepTrackActive: { backgroundColor: '#213B2A' },
+  stepTrackInactive: { backgroundColor: '#E0E7E2' },
+  stepTrackLabel: { fontSize: 11, color: '#8A998E', fontWeight: '600' },
+  stepTrackLabelActive: { color: '#213B2A', fontWeight: '800' },
+  scrollContent: { padding: 16, paddingBottom: 40 },
+  stepContent: { gap: 14 },
   card: {
     backgroundColor: '#FFFFFF',
     borderRadius: 18,
@@ -634,26 +598,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E6ECE8',
   },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
+  cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
   cardHeaderBetween: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 12,
   },
-  cardIcon: {
-    fontSize: 18,
-  },
-  cardTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#213B2A',
-  },
+  cardIcon: { fontSize: 18 },
+  cardTitle: { fontSize: 15, fontWeight: '700', color: '#213B2A' },
   unitBadge: {
     fontSize: 11,
     fontWeight: '700',
@@ -663,12 +616,7 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 10,
   },
-  fieldLabel: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#415447',
-    marginBottom: 6,
-  },
+  fieldLabel: { fontSize: 12.5, fontWeight: '700', color: '#415447', marginBottom: 6 },
   textInput: {
     backgroundColor: '#F9FAF9',
     height: 48,
@@ -689,26 +637,15 @@ const styles = StyleSheet.create({
     marginTop: 10,
     gap: 6,
   },
-  speciesBadgeIcon: {
-    fontSize: 15,
-  },
-  speciesBadgeText: {
-    fontSize: 13,
-    fontStyle: 'italic',
-    fontWeight: '700',
-    color: '#2D6A4F',
-  },
+  speciesBadgeIcon: { fontSize: 15 },
+  speciesBadgeText: { fontSize: 13, fontStyle: 'italic', fontWeight: '700', color: '#2D6A4F' },
   refreshLocBtn: {
     paddingHorizontal: 10,
     paddingVertical: 5,
     backgroundColor: '#EAF3EC',
     borderRadius: 12,
   },
-  refreshLocText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#2D6A4F',
-  },
+  refreshLocText: { fontSize: 12, fontWeight: '700', color: '#2D6A4F' },
   geoGrid: {
     flexDirection: 'row',
     backgroundColor: '#F7F9F7',
@@ -717,40 +654,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E8EFEA',
   },
-  geoCol: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  geoDivider: {
-    width: 1,
-    backgroundColor: '#DDE5E0',
-  },
-  geoLabel: {
-    fontSize: 11,
-    color: '#76877B',
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  geoVal: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#213B2A',
-  },
-  accuracyPill: {
-    marginTop: 10,
-    alignSelf: 'center',
-  },
-  accuracyText: {
-    fontSize: 12,
-    color: '#5C6E61',
-    fontWeight: '600',
-  },
-  stepperRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 6,
-  },
+  geoCol: { flex: 1, alignItems: 'center' },
+  geoDivider: { width: 1, backgroundColor: '#DDE5E0' },
+  geoLabel: { fontSize: 11, color: '#76877B', fontWeight: '600', marginBottom: 2 },
+  geoVal: { fontSize: 14, fontWeight: '800', color: '#213B2A' },
+  accuracyPill: { marginTop: 10, alignSelf: 'center' },
+  accuracyText: { fontSize: 12, color: '#5C6E61', fontWeight: '600' },
+  stepperRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6 },
   stepperActionBtn: {
     backgroundColor: '#EDF3EE',
     paddingVertical: 10,
@@ -759,11 +669,7 @@ const styles = StyleSheet.create({
     minWidth: 44,
     alignItems: 'center',
   },
-  stepperActionText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#213B2A',
-  },
+  stepperActionText: { fontSize: 13, fontWeight: '800', color: '#213B2A' },
   stepperInput: {
     flex: 1,
     backgroundColor: '#F9FAF9',
@@ -776,12 +682,7 @@ const styles = StyleSheet.create({
     borderColor: '#D4DDD6',
     textAlign: 'center',
   },
-  chipGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 10,
-  },
+  chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   chip: {
     paddingVertical: 8,
     paddingHorizontal: 14,
@@ -790,19 +691,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#DFE7E1',
   },
-  chipSelected: {
-    backgroundColor: '#213B2A',
-    borderColor: '#213B2A',
-  },
-  chipText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#49594D',
-  },
-  chipTextSelected: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
+  chipSelected: { backgroundColor: '#213B2A', borderColor: '#213B2A' },
+  chipText: { fontSize: 13, fontWeight: '600', color: '#49594D' },
+  chipTextSelected: { color: '#FFFFFF', fontWeight: '700' },
   healthChip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -811,27 +702,10 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     borderWidth: 1,
   },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  healthChipText: {
-    fontSize: 12.5,
-    fontWeight: '700',
-  },
-  photoCountText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#76877B',
-  },
-  photoGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginTop: 6,
-  },
+  statusDot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
+  healthChipText: { fontSize: 12.5, fontWeight: '700' },
+  photoCountText: { fontSize: 12, fontWeight: '700', color: '#76877B' },
+  photoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 6 },
   photoTile: {
     width: 82,
     height: 82,
@@ -841,10 +715,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#D7DFD9',
   },
-  photoThumb: {
-    width: '100%',
-    height: '100%',
-  },
+  photoThumb: { width: '100%', height: '100%' },
   photoRemoveBtn: {
     position: 'absolute',
     top: 4,
@@ -856,11 +727,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  photoRemoveText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '800',
-  },
+  photoRemoveText: { color: '#FFFFFF', fontSize: 11, fontWeight: '800' },
   addPhotoCard: {
     width: 82,
     height: 82,
@@ -872,12 +739,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#F6F8F6',
   },
-  addPhotoText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#4A5C50',
-    marginTop: 4,
-  },
+  addPhotoText: { fontSize: 10, fontWeight: '700', color: '#4A5C50', marginTop: 4 },
   textArea: {
     backgroundColor: '#F9FAF9',
     borderRadius: 12,
@@ -904,11 +766,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  secondaryBtnText: {
-    fontSize: 14.5,
-    fontWeight: '700',
-    color: '#213B2A',
-  },
+  secondaryBtnText: { fontSize: 14.5, fontWeight: '700', color: '#213B2A' },
   primaryBtn: {
     flexDirection: 'row',
     paddingVertical: 14,
@@ -927,9 +785,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  primaryBtnText: {
-    color: '#FFFFFF',
-    fontSize: 14.5,
-    fontWeight: '700',
-  },
+  primaryBtnText: { color: '#FFFFFF', fontSize: 14.5, fontWeight: '700' },
 });

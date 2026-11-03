@@ -88,7 +88,9 @@ export default function AttachTagScreen() {
 
         <Text style={styles.title}>Attach tag</Text>
         <Text style={styles.subtitle}>
-          Tie a pre-printed tag to <Text style={styles.plantName}>{record.scientificName}</Text>, then scan it.
+          Tie a pre-printed tag to{' '}
+          <Text style={styles.plantName}>{record.scientificName || 'this identification-pending record'}</Text>,
+          then scan it.
         </Text>
 
         {/* Camera, only if permission granted */}
