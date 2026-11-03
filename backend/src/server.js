@@ -33,6 +33,7 @@ const { startMqttIngestion } = require('./services/mqttIngestionService');
 
 app.disable('x-powered-by');
 
+app.use('/api/ingestion/telemetry', express.json({ limit: '16kb' }), require('./routes/iotIngestion').createIngestionRouter());
 app.use(express.json({ limit: '25mb' }));
 
 app.use(require('./middleware/jsonErrorHandler'));
