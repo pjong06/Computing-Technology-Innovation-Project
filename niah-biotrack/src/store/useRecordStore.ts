@@ -106,6 +106,13 @@ export interface PlantRecord {
   // itself is already on the server and a retry only re-sends the observations.
   serverId?: string;
   tagCode: string | null; // code of the pre-printed tag on the plant; null until one is attached
+  // A tag attached AFTER the plant was uploaded: syncRecord sends it (PATCH /api/plants/:id)
+  // and clears this once the server confirms. (A tag attached before upload goes with the
+  // plant itself.)
+  tagPendingUpload?: boolean;
+  // Why the server refused that tag; it is then not retried until a tag is attached again.
+  // in_use = another plant already has it; locked = the plant can't be changed any more.
+  tagProblem?: 'in_use' | 'locked' | null;
   scientificName: string;
   speciesId: string | null;
   commonName: string;
@@ -439,7 +446,31 @@ export const useRecordStore = create<RecordState>()(
             serverId = response.plant.id;
             // Save it straight away. If a visit fails below, the next retry sees serverId
             // and only re-sends the visits instead of the plant.
-            patchRecord({ serverId });
+            // The tag (if any) went with the plant, so there is nothing left to send.
+            patchRecord({ serverId, tagPendingUpload: false, tagProblem: null });
+          }
+
+          // 1a. A tag attached on the phone after the plant was uploaded. Show QR needs the
+          //     server to know it. Refusals (tag in use, plant locked) are kept on the record
+          //     and shown on plant detail; they are not retried. Network errors throw as usual.
+          const withTag = get().records.find((r) => r.id === id);
+          if (withTag?.tagPendingUpload && withTag.tagCode) {
+            try {
+              await apiFetch(`/api/plants/${serverId}`, {
+                method: 'PATCH',
+                body: { qr_code_value: withTag.tagCode },
+              });
+              patchRecord({ tagPendingUpload: false, tagProblem: null });
+            } catch (error) {
+              if (error instanceof ApiError && (error.code === 'tag_in_use' || error.code === 'plant_locked')) {
+                patchRecord({
+                  tagPendingUpload: false,
+                  tagProblem: error.code === 'tag_in_use' ? 'in_use' : 'locked',
+                });
+              } else {
+                throw error;
+              }
+            }
           }
 
           // 1b. The record's photos (needs the plant's serverId). Photos from records saved
@@ -764,9 +795,25 @@ export const useRecordStore = create<RecordState>()(
           };
         } 
 
-        // 2. Update only the record with this recordId (same map-and-replace pattern as the other actions)
+        // 2. Update only the record with this recordId (same map-and-replace pattern as the other actions).
+        //    A plant already on the server gets the tag sent on the next sync, so it needs
+        //    uploading again (syncRecord skips Uploaded records).
         set((state) => ({
-          records: state.records.map((r) => (r.id === recordId ? { ...r, tagCode: tagCode } : r)),
+          records: state.records.map((r) =>
+            r.id === recordId
+              ? {
+                  ...r,
+                  tagCode: tagCode,
+                  ...(r.serverId
+                    ? {
+                        tagPendingUpload: true,
+                        tagProblem: null,
+                        syncStatus: r.syncStatus === SyncStatus.UPLOADED ? SyncStatus.NOT_UPLOADED : r.syncStatus,
+                      }
+                    : {}),
+                }
+              : r
+          ),
         }));
 
         // 3. Tell the screen it worked

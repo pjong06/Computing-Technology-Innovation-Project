@@ -35,6 +35,12 @@ import { ApiError } from '../src/api/client';
 
 const NOT_RECORDED = 'Not recorded';
 
+// Why the server refused a tag attached after upload (record.tagProblem).
+const TAG_PROBLEM_TEXT: Record<'in_use' | 'locked', string> = {
+  in_use: 'This tag is already attached to another plant. Check the tag, then attach the right one.',
+  locked: "This plant can't be changed after submission, so the tag was not saved on the server. It stays on this phone.",
+};
+
 function formatHeight(height?: string) {
   const value = height?.trim();
   if (!value) return NOT_RECORDED;
@@ -113,11 +119,17 @@ export default function PlantDetailScreen() {
 
   // The QR comes from the server (GET /api/plants/:id/qr), so the plant must be uploaded.
   const openQr = async () => {
-    if (!matched.serverId) {
+    if (!matched.serverId || matched.tagPendingUpload) {
       Alert.alert(
         'Sync this plant first',
-        'The QR code is made by the server, so this plant has to be uploaded first. Use Sync now on Home, then try again.'
+        matched.serverId
+          ? "The tag hasn't reached the server yet. Use Sync now on Home, then try again."
+          : 'The QR code is made by the server, so this plant has to be uploaded first. Use Sync now on Home, then try again.'
       );
+      return;
+    }
+    if (matched.tagProblem) {
+      Alert.alert('No QR code for this tag', TAG_PROBLEM_TEXT[matched.tagProblem]);
       return;
     }
     setQrVisible(true);
@@ -332,6 +344,22 @@ export default function PlantDetailScreen() {
             <DetailRow label="Family" value={matched.family} />
             <DetailRow label="Height / diameter" value={formatHeight(matched.height)} />
             <DetailRow label="Plant tag" value={matched.tagCode ?? 'No tag attached'} />
+            {matched.tagPendingUpload ? (
+              <Text style={styles.tagNote}>New tag, not on the server yet. It is sent with the next Sync now.</Text>
+            ) : null}
+            {matched.tagProblem ? (
+              <View style={styles.tagProblemBox}>
+                <Text style={styles.tagProblemText}>{TAG_PROBLEM_TEXT[matched.tagProblem]}</Text>
+                {matched.tagProblem === 'in_use' ? (
+                  <TouchableOpacity
+                    onPress={() => router.push({ pathname: '/attach-tag', params: { recordId: matched.id } } as any)}
+                    hitSlop={8}
+                  >
+                    <Text style={styles.tagProblemAction}>Attach a different tag</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ) : null}
           </View>
 
           <Text style={styles.heading}>MORPHOLOGICAL CHARACTERISTICS</Text>
@@ -519,6 +547,10 @@ export default function PlantDetailScreen() {
 }
 
 const styles = StyleSheet.create({
+  tagNote: { fontSize: 12, color: '#8C5E03', paddingVertical: 6 },
+  tagProblemBox: { paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#EEF2EF' },
+  tagProblemText: { fontSize: 12, color: '#9B1C1C', lineHeight: 17 },
+  tagProblemAction: { fontSize: 12.5, fontWeight: '700', color: '#213B2A', textDecorationLine: 'underline', marginTop: 6 },
   qrBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 24 },
   qrCard: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 24, alignItems: 'center' },
   qrTag: { fontSize: 22, fontWeight: '800', color: '#1E2B22', marginTop: 14, letterSpacing: 1 },

@@ -403,6 +403,9 @@ router.patch("/:id", requireRole("botanist", "officer"), async (req, res) => {
 
     const newTag = qr_code_value ?? tag_code;
     if (newTag !== undefined) {
+        if (typeof newTag !== "string") {
+            return res.status(400).json({ message: "Tag code must look like NIAH-PLT-00001" });
+        }
         const cleaned = newTag.trim().toUpperCase();
         if (!/^NIAH-PLT-\d{5}$/.test(cleaned)) {
             return res.status(400).json({ message: "Tag code must look like NIAH-PLT-00001" });
@@ -424,13 +427,35 @@ router.patch("/:id", requireRole("botanist", "officer"), async (req, res) => {
             .select()
             .maybeSingle();
 
+        // The tag is unique: another plant already has it. The phone shows this and
+        // does not retry until the botanist attaches a different tag.
+        if (error?.code === "23505") {
+            return res.status(409).json({
+                message: "This tag is already attached to another plant",
+                code: "tag_in_use"
+            });
+        }
+
+        // RLS refused the edit (the plant can no longer be changed, e.g. after submission).
+        if (error?.code === "42501") {
+            return res.status(409).json({
+                message: "This plant can't be changed any more",
+                code: "plant_locked"
+            });
+        }
+
         if (error) {
             console.error("Update plant error:", error);
             return res.status(500).json({ message: "Could not update plant record" });
         }
 
+        // The access check above just found this plant, so "no row updated" means RLS hid
+        // it from the update: the plant is locked, not missing.
         if (!data) {
-            return res.status(404).json({ message: "Plant record not found" });
+            return res.status(409).json({
+                message: "This plant can't be changed any more",
+                code: "plant_locked"
+            });
         }
 
         return res.json({
