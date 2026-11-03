@@ -13,7 +13,7 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const passwordRef = useRef<TextInput>(null);
+  const passwordRef = useRef<React.ElementRef<typeof TextInput>>(null);
 
   const [checkingSession, setCheckingSession] = useState(true);
 

@@ -16,7 +16,7 @@
     <p class="lead">Create a botanist account. The conservation officer account already exists.</p>
 
     <div class="form one">
-      <label>Username (3-20 letters, numbers or _)<input id="su-username" autocomplete="username" autocapitalize="none"></label>
+      <label>Username (3-20 letters or numbers)<input id="su-username" autocomplete="username" autocapitalize="none"></label>
       <label>Email<input id="su-email" type="email" autocomplete="email"></label>
       <label>Password (8+ characters with a letter, a number and a symbol)<input id="su-password" type="password" autocomplete="new-password"></label>
       <label>Confirm password<input id="su-confirm" type="password" autocomplete="new-password"></label>
@@ -29,7 +29,7 @@
 </div>
 
 <div id="toast" role="status"></div>
-
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
 <script src="js/shared.js"></script>
 <script src="js/signup.js"></script>
 </body>

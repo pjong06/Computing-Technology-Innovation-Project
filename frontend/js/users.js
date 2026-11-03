@@ -1,4 +1,6 @@
 // users.js - the User & role admin page.
+// The users are the real login accounts, saved in the table website_users.
+// Changing a role or suspending someone also changes what they are allowed to do.
 
 drawMenu('users.html');
 
@@ -112,7 +114,7 @@ function drawUsers() {
   }
 }
 
-// Adds the user typed in the boxes, with the Botanist role and the temporary password.
+// Adds the user typed in the boxes. This makes a real login account with the Botanist role.
 async function addUser() {
   const username = document.getElementById('new-username').value.trim();
   const email = document.getElementById('new-email').value.trim();
@@ -130,22 +132,29 @@ async function addUser() {
     showToast('Username: 3-20 letters, numbers or _');
     return;
   }
-  if (findUserByUsername(username) !== null) {
+
+  const check = await sb.rpc('website_username_taken', { wanted: username });
+  if (check.error) {
+    showToast('Could not check the username');
+    return;
+  }
+  if (check.data === true) {
     showToast('That username is taken');
     return;
   }
-  if (findUserByEmail(email) !== null) {
-    showToast('That email already has an account');
+
+  // A separate connection, so the officer stays logged in.
+  const otherClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false, storageKey: 'niah_new_user' }
+  });
+  const result = await createAccount(otherClient, username, email, password);
+  if (result.error) {
+    showToast(result.error.message);
     return;
   }
 
-  const list = getUsers();
-  list.push({
-    name: username, username: username, email: email, role: 'Botanist', active: true,
-    passwordHash: await hashPassword(email, password)
-  });
-  writeStorage(USERS_KEY, list);
-
+  // The database added the new user. Load the list again to show it.
+  reloadFromDatabase(USERS_KEY);
   document.getElementById('new-username').value = '';
   document.getElementById('new-email').value = '';
   document.getElementById('new-password').value = '';
@@ -174,7 +183,7 @@ function deleteUser(index) {
     return;
   }
 
-  const sure = confirm('Delete ' + user.name + '? This cannot be undone.');
+  const sure = confirm('Delete ' + user.name + '? They will no longer be able to log in.');
   if (sure === false) {
     return;
   }

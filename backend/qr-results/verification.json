@@ -1,0 +1,26 @@
+{
+  "demo_tag": "NIAH-PLT-90001",
+  "url": "http://localhost:3417/p/NIAH-PLT-90001",
+  "live_page_status": 200,
+  "anonymous": true,
+  "demo_warning": true,
+  "location_fields_in_html": false,
+  "missing_tag_status": 404,
+  "qr_payload": "http://localhost:3417/p/NIAH-PLT-90001",
+  "scope": "Local demo with public data; not deployed and not phone-camera verified",
+  "checked_at": "2026-10-31T08:05:46.992Z",
+  "backend_tests": {
+    "passed": 113,
+    "failed": 0,
+    "qr_visitor_tests": 28,
+    "previous_tests": 85
+  },
+  "actual_png_decoded": true,
+  "actual_pdf_decoded": true,
+  "mobile_parser_legacy_and_url": true,
+  "browser_mobile_width": 390,
+  "horizontal_overflow": false,
+  "deployment": "Not deployed",
+  "database_writes": 0,
+  "demo_approval": "Demonstration only; not officer review"
+}

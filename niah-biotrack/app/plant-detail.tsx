@@ -306,7 +306,14 @@ export default function PlantDetailScreen() {
           <TouchableOpacity
             style={styles.addObsBtn}
             onPress={() =>
-              router.push({ pathname: '/add-observation', params: { id: matched.id } } as any)
+              router.push({
+                pathname: '/add-observation',
+                params: {
+                  plantId: matched.id,
+                  tagCode: matched.tagCode ?? '',
+                  scientificName: matched.scientificName,
+                },
+              } as any)
             }
           >
             <Text style={styles.addObsBtnText}>+ Add observation</Text>

@@ -120,9 +120,9 @@ export default function NewRecordScreen() {
   const gpsRequestId = useRef(0);
 
   // Lets the keyboard's "next" key move through the form in order.
-  const commonNameRef = useRef<TextInput>(null);
-  const familyRef = useRef<TextInput>(null);
-  const heightRef = useRef<TextInput>(null);
+  const commonNameRef = useRef<React.ElementRef<typeof TextInput>>(null);
+  const familyRef = useRef<React.ElementRef<typeof TextInput>>(null);
+  const heightRef = useRef<React.ElementRef<typeof TextInput>>(null);
 
   const [errors, setErrors] = useState<FieldErrors>({});
   const clearError = (field: keyof FieldErrors) =>
@@ -864,7 +864,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   saveBtnText: { color: '#FFF', fontWeight: '700', fontSize: 15 },
-  
+
   referenceCard: {
     backgroundColor: '#EEF5F0',
     borderWidth: 1,

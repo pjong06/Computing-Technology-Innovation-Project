@@ -8,7 +8,6 @@ export default function RootLayout() {
     <>
       <StatusBar
         barStyle="dark-content"
-        backgroundColor="#F6F8F6"
       />
 
       <Stack
