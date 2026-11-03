@@ -152,17 +152,10 @@ app.get('/api/public/plants/by-qr', qrLimiter, async (req, res) => {
 
 // CURRENT USER INFORMATION
 
-function currentUser(req, res) {
-  res.json({
-    id: req.user.id,
-    email: req.user.email,
-    role: req.profile.role,
-  });
-}
-
-app.get('/api/me', requireAuth, currentUser);
-
-app.get('/api/auth/me', requireAuth, currentUser);
+// Staff and visitor accounts (see routes/me.js); every other route stays staff-only.
+const meRoutes = require('./routes/me');
+app.use('/api/me', meRoutes);
+app.use('/api/auth/me', meRoutes);
 
 // ERROR HANDLING
 
