@@ -73,28 +73,30 @@ export default function ProfileScreen() {
           ? styles.statusSyncedText
           : styles.statusNeutralText;
 
-  const handleLogoutPress = async () => {
-    if (syncSummary.unsyncedRecordCount === 0) {
-      await signOutOnThisPhone();
-      router.replace('/' as never);
-      return;
-    }
-
-    setShowLogoutModal(true);
-  };
-
-  const handleLogoutAnyway = async () => {
-    /*
-     * Clear records, routes and stored photos together so logout does not
-     * leave field data behind on the device.
-     */
+  /*
+   * Every logout clears records, routes and stored photos, also when everything
+   * is uploaded. Otherwise the next person to log in on this phone would see the
+   * previous user's records (and could upload them under their own account).
+   */
+  const logOutAndClearDevice = async () => {
     clearAllData();
-    void deleteAllStoredPhotos();
+    deleteAllStoredPhotos();
 
     setShowLogoutModal(false);
 
     await signOutOnThisPhone();
     router.replace('/' as never);
+  };
+
+  const handleLogoutPress = async () => {
+    if (syncSummary.unsyncedRecordCount === 0) {
+      // Nothing would be lost (it's all on the server), so no warning needed.
+      await logOutAndClearDevice();
+      return;
+    }
+
+    // Unsynced records would be lost for good, so ask first.
+    setShowLogoutModal(true);
   };
 
   return (
@@ -271,7 +273,7 @@ export default function ProfileScreen() {
 
             <TouchableOpacity
               style={styles.modalSecondary}
-              onPress={handleLogoutAnyway}
+              onPress={logOutAndClearDevice}
             >
               <Text style={styles.modalSecondaryText}>
                 Log out anyway

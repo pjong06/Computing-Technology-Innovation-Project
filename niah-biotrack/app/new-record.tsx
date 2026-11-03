@@ -11,6 +11,7 @@ import {
   Image,
   ActivityIndicator,
 } from 'react-native';
+import type { TextInputInstance } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Location from 'expo-location';
 import type * as ImagePicker from 'expo-image-picker';
@@ -120,9 +121,10 @@ export default function NewRecordScreen() {
   const gpsRequestId = useRef(0);
 
   // Lets the keyboard's "next" key move through the form in order.
-  const commonNameRef = useRef<React.ElementRef<typeof TextInput>>(null);
-  const familyRef = useRef<React.ElementRef<typeof TextInput>>(null);
-  const heightRef = useRef<React.ElementRef<typeof TextInput>>(null);
+  // RN 0.88: a TextInput ref holds a TextInputInstance, not the TextInput component.
+  const commonNameRef = useRef<TextInputInstance>(null);
+  const familyRef = useRef<TextInputInstance>(null);
+  const heightRef = useRef<TextInputInstance>(null);
 
   const [errors, setErrors] = useState<FieldErrors>({});
   const clearError = (field: keyof FieldErrors) =>

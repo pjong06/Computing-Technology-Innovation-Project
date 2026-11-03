@@ -93,9 +93,23 @@ export default function PlantDetailScreen() {
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Submit',
-          onPress: () => {
-            const result = submitForReview(matched.id);
-            if (!result.ok) Alert.alert('Could not submit', result.reason);
+          onPress: async () => {
+            const result = await submitForReview(matched.id);
+            if (!result.ok) {
+              Alert.alert('Could not submit', result.reason);
+            } else if (result.sync.ok && result.sync.submittedForReview) {
+              Alert.alert('Submitted to officer review', 'A Conservation Officer can now review this record.');
+            } else {
+              // Submitted on the phone, but it didn't fully reach the officer queue.
+              // Nothing is lost: the next Sync now or Retry finishes the job.
+              const reason = result.sync.ok
+                ? 'A visit was added while uploading and still needs to be sent.' // rare
+                : result.sync.reason;
+              Alert.alert(
+                'Saved, not uploaded yet',
+                `${reason}\n\nThe record is kept on this phone. Use Sync now or Retry when you have a connection.`
+              );
+            }
           },
         },
       ]
@@ -289,10 +303,10 @@ export default function PlantDetailScreen() {
                 <Text style={styles.obsAuthor}>{obs.recordedBy}</Text>
                 <View style={styles.pillGroup}>
                   <View style={styles.tagPill}>
-                    <Text style={styles.tagPillText}>{obs.health}</Text>
+                    <Text style={styles.tagPillText}>{obs.health ?? 'Not recorded'}</Text>
                   </View>
                   <View style={styles.tagPill}>
-                    <Text style={styles.tagPillText}>{obs.stage}</Text>
+                    <Text style={styles.tagPillText}>{obs.stage ?? 'Not recorded'}</Text>
                   </View>
                   <View style={styles.tagPill}>
                     <Text style={styles.tagPillText}>{obs.measurement}</Text>

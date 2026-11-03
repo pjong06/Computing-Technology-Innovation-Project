@@ -13,16 +13,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-
-import { API_BASE_URL } from '../../src/config/api';
-
-interface PlantPreview {
-  id: string;
-  tagCode: string;
-  scientificName: string;
-  commonName: string;
-  family?: string;
-}
+import { lookupTag, describeTagLookup, type TagLookupResult } from '../../src/services/tagLookup';
 
 export default function ScanScreen() {
   const router = useRouter();
@@ -30,7 +21,7 @@ export default function ScanScreen() {
   const [torchEnabled, setTorchEnabled] = useState(false);
   const [scanned, setScanned] = useState(false);
   const [isLookingUp, setIsLookingUp] = useState(false);
-  const [plantData, setPlantData] = useState<PlantPreview | null>(null);
+  const [lookup, setLookup] = useState<TagLookupResult | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
 
   if (!permission) {
@@ -58,66 +49,36 @@ export default function ScanScreen() {
     setScanned(true);
     setIsLookingUp(true);
 
-    const cleanTag = data.trim();
-
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/plants/tag/${encodeURIComponent(cleanTag)}`);
-
-      if (res.ok) {
-        const item = await res.json();
-        setPlantData({
-          id: item.id || '',
-          tagCode: cleanTag,
-          scientificName: item.scientific_name || item.species?.scientific_name || 'Species Recorded',
-          commonName: item.common_name || item.species?.common_name || 'Forest Specimen',
-          family: item.family || item.species?.family || 'Sarawak Flora',
-        });
-        setModalVisible(true);
-      } else {
-        setPlantData({
-          id: '',
-          tagCode: cleanTag,
-          scientificName: 'Unregistered Specimen',
-          commonName: 'New Botanical Tag',
-          family: 'Not Cataloged',
-        });
-        setModalVisible(true);
-      }
-    } catch {
-      setPlantData({
-        id: '',
-        tagCode: cleanTag,
-        scientificName: 'Field Specimen (Offline)',
-        commonName: 'Scanned Tag',
-      });
-      setModalVisible(true);
-    } finally {
-      setIsLookingUp(false);
-    }
+    // Phone first, then the server; never filled in with made-up plant details.
+    const result = await lookupTag(data);
+    setLookup(result);
+    setModalVisible(true);
+    setIsLookingUp(false);
   };
 
   const handleProceedToObservation = () => {
     setModalVisible(false);
-    if (!plantData) return;
+    // Only plants saved on this phone can get a visit (it's stored with the record).
+    if (lookup?.status !== 'on-phone') return;
 
     router.push({
       pathname: '/add-observation',
       params: {
-        plantId: plantData.id,
-        tagCode: plantData.tagCode,
-        scientificName: plantData.scientificName,
+        plantId: lookup.record.id, // the phone's own record id
+        tagCode: lookup.tagCode,
+        scientificName: lookup.record.scientificName,
       },
     });
 
     setTimeout(() => {
       setScanned(false);
-      setPlantData(null);
+      setLookup(null);
     }, 800);
   };
 
   const handleDismissSheet = () => {
     setModalVisible(false);
-    setPlantData(null);
+    setLookup(null);
     setTimeout(() => {
       setScanned(false);
     }, 400);
@@ -206,24 +167,37 @@ export default function ScanScreen() {
             <View style={styles.sheetHeaderRow}>
               <View style={styles.tagPill}>
                 <Ionicons name="pricetag" size={13} color="#2D6A4F" />
-                <Text style={styles.tagPillText}>{plantData?.tagCode}</Text>
+                <Text style={styles.tagPillText}>{lookup?.tagCode}</Text>
               </View>
               <TouchableOpacity onPress={handleDismissSheet}>
                 <Ionicons name="close-circle" size={24} color="#8A998E" />
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.sheetScientificName}>
-              {plantData?.scientificName}
-            </Text>
-            <Text style={styles.sheetCommonName}>{plantData?.commonName}</Text>
-
-            {plantData?.family && (
-              <View style={styles.familyRow}>
-                <Text style={styles.familyLabel}>Taxonomy Family:</Text>
-                <Text style={styles.familyVal}>{plantData.family}</Text>
-              </View>
-            )}
+            {lookup?.status === 'on-phone' ? (
+              <>
+                <Text style={styles.sheetScientificName}>
+                  {lookup.record.scientificName || 'Identification pending'}
+                </Text>
+                {lookup.record.commonName ? (
+                  <Text style={styles.sheetCommonName}>{lookup.record.commonName}</Text>
+                ) : null}
+                {lookup.record.family ? (
+                  <View style={styles.familyRow}>
+                    <Text style={styles.familyLabel}>Taxonomy Family:</Text>
+                    <Text style={styles.familyVal}>{lookup.record.family}</Text>
+                  </View>
+                ) : null}
+              </>
+            ) : lookup ? (
+              <>
+                <Text style={styles.sheetScientificName}>{describeTagLookup(lookup).title}</Text>
+                {lookup.status === 'server-only' && lookup.commonName ? (
+                  <Text style={styles.sheetCommonName}>{lookup.commonName}</Text>
+                ) : null}
+                <Text style={styles.sheetCommonName}>{describeTagLookup(lookup).message}</Text>
+              </>
+            ) : null}
 
             <View style={styles.sheetActionRow}>
               <TouchableOpacity
@@ -233,12 +207,14 @@ export default function ScanScreen() {
                 <Text style={styles.sheetCancelText}>Scan Again</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.sheetConfirmBtn}
-                onPress={handleProceedToObservation}
-              >
-                <Text style={styles.sheetConfirmText}>Record Observation →</Text>
-              </TouchableOpacity>
+              {lookup?.status === 'on-phone' ? (
+                <TouchableOpacity
+                  style={styles.sheetConfirmBtn}
+                  onPress={handleProceedToObservation}
+                >
+                  <Text style={styles.sheetConfirmText}>Record Observation →</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           </View>
         </View>
