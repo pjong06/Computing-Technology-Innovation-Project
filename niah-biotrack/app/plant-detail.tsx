@@ -9,6 +9,10 @@ import {
   SafeAreaView,
   FlatList,
   Image,
+  Modal,
+  Share,
+  Platform,
+  ActivityIndicator,
   useWindowDimensions,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
@@ -26,6 +30,8 @@ import { REVIEW_BADGE } from '../src/utils/reviewStatus';
 import PlantNotFound from '../src/components/PlantNotFound';
 import { resolveStoredPhotoUri } from '../src/utils/photoStorage';
 import { formatCoordinates } from '../src/utils/formatCoordinates';
+import { fetchPlantQr, saveQrImage, type PlantQr } from '../src/api/plantQr';
+import { ApiError } from '../src/api/client';
 
 const NOT_RECORDED = 'Not recorded';
 
@@ -67,9 +73,15 @@ export default function PlantDetailScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const records = useRecordStore((state) => state.records);
   const submitForReview = useRecordStore((state) => state.submitForReview);
+  const removePhoto = useRecordStore((state) => state.removePhoto);
   const { width } = useWindowDimensions();
   const [photoIndex, setPhotoIndex] = useState(0);
   const [brokenPhotos, setBrokenPhotos] = useState<Record<string, boolean>>({});
+  // "Show QR": the QR the server makes for this plant's tag (shown in a modal).
+  const [qrVisible, setQrVisible] = useState(false);
+  const [qr, setQr] = useState<PlantQr | null>(null);
+  const [qrLoading, setQrLoading] = useState(false);
+  const [qrError, setQrError] = useState('');
 
   const matched = records.find((r) => r.id === id);
 
@@ -78,6 +90,74 @@ export default function PlantDetailScreen() {
   }
 
   const photos = (matched.photoUris ?? []).map(resolveStoredPhotoUri);
+
+  // Upload state of every photo on this record: the record's own, then each visit's.
+  const PHOTO_LABELS: Record<string, string> = {
+    whole_plant: 'Whole plant', leaf: 'Leaf', flower: 'Flower', bark: 'Bark',
+  };
+  const photoStates = [
+    ...(matched.photoUris ?? []).map((uri) => {
+      const meta = matched.photoMeta?.[uri];
+      return { uri, meta, obsId: undefined as string | undefined, label: meta?.type ? PHOTO_LABELS[meta.type] : 'Photo' };
+    }),
+    ...(matched.observations ?? []).flatMap((obs) =>
+      (obs.photoUris ?? []).map((uri) => ({
+        uri, meta: obs.photoMeta?.[uri], obsId: obs.id as string | undefined, label: `Visit ${obs.date}`,
+      }))
+    ),
+  ];
+  const uploadedPhotoCount = photoStates.filter((p) => p.meta?.uploaded).length;
+  // Record photos saved before photo upload have no slot type: they stay on the phone.
+  const untypedCount = photoStates.filter((p) => !p.obsId && !p.meta?.type).length;
+  const photoProblems = photoStates.filter((p) => p.meta?.problem && !p.meta.uploaded);
+
+  // The QR comes from the server (GET /api/plants/:id/qr), so the plant must be uploaded.
+  const openQr = async () => {
+    if (!matched.serverId) {
+      Alert.alert(
+        'Sync this plant first',
+        'The QR code is made by the server, so this plant has to be uploaded first. Use Sync now on Home, then try again.'
+      );
+      return;
+    }
+    setQrVisible(true);
+    if (qr) return; // already loaded
+    setQrLoading(true);
+    setQrError('');
+    try {
+      setQr(await fetchPlantQr(matched.serverId));
+    } catch (error) {
+      // e.g. 409 "Attach a NIAH-PLT tag before generating its QR code" (tag added on the
+      // phone after the plant was uploaded), 0 = no connection.
+      setQrError(error instanceof ApiError ? error.message : 'Could not load the QR code. Please try again.');
+    } finally {
+      setQrLoading(false);
+    }
+  };
+
+  // OS share sheet. iOS gets the QR image (Print, Save Image, AirDrop...). Android's
+  // built-in share can only send text, so it shares the tag code and link (expo-sharing
+  // would be needed to share the image file there; it isn't installed).
+  const shareQr = async () => {
+    if (!qr) return;
+    try {
+      if (Platform.OS === 'ios') {
+        const fileUri = await saveQrImage(qr);
+        await Share.share({ url: fileUri, message: qr.qrValue });
+      } else {
+        await Share.share({ title: qr.qrValue, message: `${qr.qrValue}\n${qr.publicUrl}` });
+      }
+    } catch {
+      Alert.alert('Could not share', 'The QR code could not be shared. Please try again.');
+    }
+  };
+
+  const confirmRemovePhoto = (uri: string, obsId?: string) => {
+    Alert.alert('Remove this photo?', 'It is deleted from this phone. The other photos can then upload.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: () => removePhoto(matched.id, uri, obsId) },
+    ]);
+  };
 
   const coordinates =
     matched.latitude !== undefined && matched.longitude !== undefined
@@ -270,6 +350,42 @@ export default function PlantDetailScreen() {
             <DetailRow label="Coordinates" value={coordinates} />
           </View>
 
+          {photoStates.length > 0 && (
+            <>
+              <Text style={styles.heading}>PHOTOS</Text>
+              <View style={styles.detailCard}>
+                <Text style={styles.photoSummary}>
+                  {photoStates.length} on this phone · {uploadedPhotoCount} uploaded
+                </Text>
+                {untypedCount > 0 && (
+                  <Text style={styles.photoNote}>
+                    {untypedCount} older {untypedCount === 1 ? 'photo stays' : 'photos stay'} on this phone only
+                    (saved before photo upload).
+                  </Text>
+                )}
+                {photoProblems.map((p) => (
+                  <View key={p.uri} style={styles.photoProblemRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.photoProblemLabel}>{p.label}</Text>
+                      <Text style={styles.photoProblemText}>
+                        {p.meta?.problem === 'too_large'
+                          ? 'Over 5 MB, so it can\'t be uploaded. Remove it so the rest can upload.'
+                          : p.meta?.problem === 'locked'
+                            ? "Photos can't be added after submission. It stays on this phone."
+                            : 'The photo file is no longer on this phone.'}
+                      </Text>
+                    </View>
+                    {p.meta?.problem !== 'locked' && (
+                      <TouchableOpacity onPress={() => confirmRemovePhoto(p.uri, p.obsId)} hitSlop={8}>
+                        <Text style={styles.photoRemove}>Remove</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))}
+              </View>
+            </>
+          )}
+
           <View style={styles.actionRow}>
             <TouchableOpacity
               style={styles.actionBtn}
@@ -278,9 +394,9 @@ export default function PlantDetailScreen() {
               <Text style={styles.actionBtnText}>🧭 Navigate</Text>
             </TouchableOpacity>
             {matched.tagCode ? (
-              <View style={styles.actionBtn}>
-                <Text style={styles.actionBtnText}>🏷️ {matched.tagCode}</Text>
-              </View>
+              <TouchableOpacity style={styles.actionBtn} onPress={() => void openQr()}>
+                <Text style={styles.actionBtnText}>🔳 Show QR</Text>
+              </TouchableOpacity>
             ) : (
               <TouchableOpacity
                 style={styles.actionBtn}
@@ -358,11 +474,60 @@ export default function PlantDetailScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      <Modal visible={qrVisible} transparent animationType="fade" onRequestClose={() => setQrVisible(false)}>
+        <View style={styles.qrBackdrop}>
+          <View style={styles.qrCard}>
+            {qrLoading ? (
+              <ActivityIndicator size="large" color="#213B2A" style={{ marginVertical: 80 }} />
+            ) : qr ? (
+              <>
+                <Image
+                  source={{ uri: qr.imageDataUri }}
+                  style={{ width: Math.min(width - 96, 320), height: Math.min(width - 96, 320) }}
+                  resizeMode="contain"
+                  accessibilityLabel={`QR code for ${qr.qrValue}`}
+                />
+                <Text style={styles.qrTag}>{qr.qrValue}</Text>
+                <Text style={styles.qrHint}>Scanning it opens the plant's public page.</Text>
+                <TouchableOpacity style={styles.qrPrimary} onPress={() => void shareQr()}>
+                  <Text style={styles.qrPrimaryText}>Share</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <Text style={styles.qrError}>{qrError || 'Could not load the QR code.'}</Text>
+            )}
+            {!qrLoading && !qr && (
+              <TouchableOpacity
+                style={styles.qrPrimary}
+                onPress={() => {
+                  setQrVisible(false);
+                  void openQr();
+                }}
+              >
+                <Text style={styles.qrPrimaryText}>Try again</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={styles.qrSecondary} onPress={() => setQrVisible(false)}>
+              <Text style={styles.qrSecondaryText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  qrBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 24 },
+  qrCard: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 24, alignItems: 'center' },
+  qrTag: { fontSize: 22, fontWeight: '800', color: '#1E2B22', marginTop: 14, letterSpacing: 1 },
+  qrHint: { fontSize: 12.5, color: '#68776D', marginTop: 4, textAlign: 'center' },
+  qrError: { fontSize: 14, color: '#9B1C1C', textAlign: 'center', marginVertical: 24 },
+  qrPrimary: { backgroundColor: '#213B2A', height: 48, borderRadius: 24, alignSelf: 'stretch', justifyContent: 'center', alignItems: 'center', marginTop: 18 },
+  qrPrimaryText: { color: '#FFFFFF', fontWeight: '700', fontSize: 15 },
+  qrSecondary: { height: 44, alignSelf: 'stretch', justifyContent: 'center', alignItems: 'center', marginTop: 8 },
+  qrSecondaryText: { color: '#213B2A', fontWeight: '700', fontSize: 14 },
   safeArea: { flex: 1, backgroundColor: '#F6F8F6' },
   heroBox: { height: 260, backgroundColor: '#2B3A30', position: 'relative' },
   heroPhoto: { height: 260 },
@@ -425,6 +590,12 @@ const styles = StyleSheet.create({
   },
   body: { fontSize: 13.5, color: '#2B392F', lineHeight: 20 },
   actionRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 18 },
+  photoSummary: { fontSize: 13, fontWeight: '700', color: '#1E2B22', paddingVertical: 6 },
+  photoNote: { fontSize: 12, color: '#68776D', paddingBottom: 6 },
+  photoProblemRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#EEF2EF' },
+  photoProblemLabel: { fontSize: 12.5, fontWeight: '700', color: '#1E2B22' },
+  photoProblemText: { fontSize: 12, color: '#9B1C1C', marginTop: 2 },
+  photoRemove: { fontSize: 12.5, fontWeight: '700', color: '#9B1C1C', textDecorationLine: 'underline', marginLeft: 12 },
   actionBtn: {
     flex: 1,
     backgroundColor: '#FFFFFF',

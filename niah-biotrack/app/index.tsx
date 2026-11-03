@@ -187,6 +187,13 @@ export default function LoginScreen() {
           >
             <Text style={styles.forgotBtnText}>Forgot password?</Text>
           </TouchableOpacity>
+
+          <View style={styles.signUpRow}>
+            <Text style={styles.signUpText}>Don't have an account? </Text>
+            <TouchableOpacity onPress={() => router.push('/sign-up' as any)} hitSlop={8}>
+              <Text style={styles.signUpLink}>Sign up</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Divider */}
@@ -202,7 +209,6 @@ export default function LoginScreen() {
           activeOpacity={0.85}
           onPress={handleEnterAsVisitor}
         >
-          <Ionicons name="compass-outline" size={20} color="#2D6A4F" />
           <Text style={styles.visitorBtnText}>Explore without an account</Text>
         </TouchableOpacity>
         <Text style={styles.visitorSubtext}>
@@ -302,6 +308,9 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#A3D9A5',
   },
+  signUpRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 12 },
+  signUpText: { fontSize: 13, color: '#68776D' },
+  signUpLink: { fontSize: 13, fontWeight: '700', color: '#213B2A', textDecorationLine: 'underline' },
   visitorBtnText: {
     fontSize: 14.5,
     fontWeight: '800',

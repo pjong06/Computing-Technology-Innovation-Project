@@ -79,6 +79,11 @@ export type PublicTagLookupResult =
       scientificName: string | null;
       commonName: string | null;
       localName: string | null;
+      // Public plant facts for the visitor plant page. Location is never used there.
+      description: string | null;
+      habitat: string | null;
+      conservationStatus: string | null;
+      culturalSignificance: string | null;
     }
   | { status: 'not-found'; tagCode: string }
   | { status: 'offline'; tagCode: string }
@@ -86,7 +91,15 @@ export type PublicTagLookupResult =
 
 // GET /api/public/plants/by-qr answers { data: {...public plant fields} }.
 interface PublicPlantResponse {
-  data: { scientific_name: string | null; common_name: string | null; local_name: string | null };
+  data: {
+    scientific_name: string | null;
+    common_name: string | null;
+    local_name: string | null;
+    description: string | null;
+    habitat: string | null;
+    conservation_status: string | null;
+    cultural_significance: string | null;
+  };
 }
 
 export async function lookupPublicTag(rawTag: string): Promise<PublicTagLookupResult> {
@@ -103,6 +116,10 @@ export async function lookupPublicTag(rawTag: string): Promise<PublicTagLookupRe
       scientificName: response.data?.scientific_name || null,
       commonName: response.data?.common_name || null,
       localName: response.data?.local_name || null,
+      description: response.data?.description || null,
+      habitat: response.data?.habitat || null,
+      conservationStatus: response.data?.conservation_status || null,
+      culturalSignificance: response.data?.cultural_significance || null,
     };
   } catch (error) {
     if (error instanceof ApiError) {

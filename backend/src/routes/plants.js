@@ -485,6 +485,22 @@ router.delete("/:id", requireRole("botanist", "officer"), async (req, res) => {
     }
 });
 
+const PHOTO_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Photos can only be added while the plant is still editable (RLS on plant_media and
+// the plant-media bucket: plant pending, no submitted observation). The phone shows
+// this message and stops retrying.
+const PHOTOS_LOCKED_MESSAGE = "Photos can't be added after submission";
+
+// A storage or insert refusal from RLS (the plant or visit is no longer editable).
+function isRlsRefusal(error) {
+    return !!error && (
+        error.code === "42501" ||
+        String(error.statusCode) === "403" ||
+        /row-level security/i.test(error.message || "")
+    );
+}
+
 // UPLOAD a photo for a plant
 router.post("/:id/photo", requireRole("botanist"), async (req, res, next) => {
     const plantId = req.params.id;
@@ -500,7 +516,7 @@ router.post("/:id/photo", requireRole("botanist"), async (req, res, next) => {
 
     const { data: plant, error } = await req.supabase
         .from("plants")
-        .select("id, registered_by")
+        .select("id, registered_by, plant_status")
         .eq("id", plantId)
         .maybeSingle();
 
@@ -521,6 +537,11 @@ router.post("/:id/photo", requireRole("botanist"), async (req, res, next) => {
         return res.status(403).json({
             message: "Only the plant owner may upload photos"
         });
+    }
+
+    // Answer before receiving the file when the plant is clearly locked.
+    if (plant.plant_status && plant.plant_status !== "pending") {
+        return res.status(409).json({ message: PHOTOS_LOCKED_MESSAGE, code: "photos_locked" });
     }
 
     next();
@@ -559,6 +580,32 @@ router.post("/:id/photo", requireRole("botanist"), async (req, res, next) => {
     }
 
     const plantId = req.params.id;
+
+    // The phone's own ID for this photo, so a retried upload isn't stored twice.
+    const clientPhotoId = req.body.client_photo_id;
+    if (clientPhotoId !== undefined && !PHOTO_UUID.test(clientPhotoId)) {
+        return res.status(400).json({ message: "client_photo_id must be a UUID" });
+    }
+    if (clientPhotoId) {
+        const { data: existing, error: existingError } = await req.supabase
+            .from("plant_media")
+            .select("*")
+            .eq("plant_id", plantId)
+            .eq("client_record_id", clientPhotoId)
+            .maybeSingle();
+        if (existingError) {
+            console.error("Plant photo lookup error:", existingError);
+            return res.status(500).json({ message: "Failed to check for an existing photo" });
+        }
+        if (existing) {
+            return res.status(200).json({
+                message: "Plant photo already saved",
+                plant_id: plantId,
+                media: existing
+            });
+        }
+    }
+
     const filePath =
         `${req.user.id}/${plantId}/${randomUUID()}.${extension}`;
 
@@ -571,6 +618,9 @@ router.post("/:id/photo", requireRole("botanist"), async (req, res, next) => {
             });
 
         if (uploadError) {
+            if (isRlsRefusal(uploadError)) {
+                return res.status(409).json({ message: PHOTOS_LOCKED_MESSAGE, code: "photos_locked" });
+            }
             console.error("Plant photo storage error:", uploadError);
             return res.status(500).json({
                 message: "Failed to upload plant photo"
@@ -585,7 +635,8 @@ router.post("/:id/photo", requireRole("botanist"), async (req, res, next) => {
                 file_path: filePath,
                 media_type: "image",
                 photo_type: photoType,
-                is_primary: photoType === "whole_plant"
+                is_primary: photoType === "whole_plant",
+                ...(clientPhotoId ? { client_record_id: clientPhotoId } : {})
             })
             .select()
             .single();
@@ -595,6 +646,9 @@ router.post("/:id/photo", requireRole("botanist"), async (req, res, next) => {
                 .from("plant-media")
                 .remove([filePath]);
 
+            if (isRlsRefusal(mediaError)) {
+                return res.status(409).json({ message: PHOTOS_LOCKED_MESSAGE, code: "photos_locked" });
+            }
             console.error("Plant media insert error:", mediaError);
             return res.status(500).json({
                 message: "Failed to save plant photo record"

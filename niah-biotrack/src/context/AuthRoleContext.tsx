@@ -74,6 +74,10 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
         if (profile && profile.account_status === 'active' && STAFF_ROLES.has(profile.role)) {
           setRole(profile.role as UserRole);
           setUserName(profile.full_name || authData.user.email || '');
+        } else if (profile && profile.account_status === 'active' && profile.role === 'visitor') {
+          // A visitor account ("Create a free account"): the visitor experience, signed in.
+          setRole('visitor');
+          setUserName(profile.full_name || authData.user.email || '');
         } else {
           // Never default to botanist: a pending, suspended or role-less account gets
           // the "Account awaiting approval" screen (the server refuses it anyway).

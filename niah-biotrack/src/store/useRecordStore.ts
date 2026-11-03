@@ -2,7 +2,9 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { randomUUID } from 'expo-crypto';
-import { apiFetch, ApiError } from '../api/client';
+import { File } from 'expo-file-system';
+import { apiFetch, apiUpload, ApiError } from '../api/client';
+import { deleteStoredPhoto, resolveStoredPhotoUri } from '../utils/photoStorage';
 import { useProfileStore } from './useProfileStore';
 // recordMapper imports only types from this file (import type), so there is no
 // runtime circular dependency between the two.
@@ -45,6 +47,23 @@ export type LifeStage =
   | 'Mature'
   | 'Senescent';
 
+// The four photo slots on New Record, as the backend names them (plant_media.photo_type).
+export type PlantPhotoType = 'whole_plant' | 'leaf' | 'flower' | 'bark';
+
+// Upload state of one stored photo (a record photo or a visit photo), kept in
+// photoMeta under the photo's stored URI.
+export interface PhotoUpload {
+  id: string; // UUID made on the phone; sent as client_photo_id so a retry isn't saved twice
+  type?: PlantPhotoType; // record photos only. Missing on older records: not uploaded
+  uploaded: boolean; // true once the server has confirmed it
+  // Why it can't go up: over the 5 MB limit (the botanist removes it), or the plant/visit
+  // was already submitted ("Photos can't be added after submission").
+  problem?: 'too_large' | 'locked' | 'missing';
+}
+
+// The backend's limit for one photo (backend/src/services/storageService.js).
+export const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
+
 export interface ObservationVisit {
   id: string; // UUID generated on the phone; sent as client_record_id
   date: string; // for display only, e.g. "22 Oct 2026 · 3:15 PM"
@@ -63,9 +82,10 @@ export interface ObservationVisit {
   // Sent as height_cm / diameter_cm. Older visits only have the free-text measurement.
   heightCm?: number;
   diameterCm?: number;
-  // Evidence photos for this visit, stored on the phone. Not uploaded yet: see
-  // TODO(photos) in syncRecord. Cleared with every other photo on logout.
+  // Evidence photos for this visit, stored on the phone. Uploaded by syncRecord after the
+  // visit itself and before it is submitted. Cleared with every other photo on logout.
   photoUris?: string[];
+  photoMeta?: Record<string, PhotoUpload>; // upload state, by URI (filled in on first sync)
   notes: string;
   syncStatus: SyncStatus;
   // The server's id for this visit (observations.id), saved after a successful upload.
@@ -97,6 +117,9 @@ export interface PlantRecord {
   gpsAccuracyM?: number | null; // null when the device didn't report accuracy
   gpsCoordination: string; // formatted for display only, e.g. "3.81760° N, 113.78100° E (±5 m)"
   photoUris: string[];
+  // Upload state of each photo, by URI, with its slot type. Records saved before photo
+  // upload have no entry: their photos stay on the phone (the slot can't be recovered).
+  photoMeta?: Record<string, PhotoUpload>;
   recordStatus: RecordStatus;
   identificationStatus: IdentificationStatus;
   syncStatus: SyncStatus;
@@ -124,7 +147,12 @@ export interface RecordedRoute {
 // What syncRecord tells the screen: success, or a message it can show to the user.
 // submittedForReview is true when the record is pending on the phone and every one of
 // its visits is now in the officer's review queue on the server.
-export type SyncResult = { ok: true; submittedForReview: boolean } | { ok: false; reason: string };
+// photosUploaded / photoProblems count this record's photos sent now, and photos that
+// can't be sent (over 5 MB, or added after submission).
+export type SyncResult = ({ ok: true; submittedForReview: boolean } | { ok: false; reason: string }) & {
+  photosUploaded?: number;
+  photoProblems?: number;
+};
 
 // True when a record may go to the server: a completed record with a confirmed,
 // approved species. Drafts (Local only) are kept on the phone until then.
@@ -152,6 +180,20 @@ export interface SyncAllResult {
   uploaded: number;
   failed: number;
   skipped: number;
+  photosUploaded: number;
+  photoProblems: number;
+}
+
+// Thrown when photos block a record (over 5 MB): the record is marked FAILED with this
+// message, after everything else has been uploaded.
+class PhotoProblemError extends Error {}
+
+// Reads one stored photo for upload, or says why it can't be sent.
+function photoFileFor(uri: string): { file: File } | { problem: 'too_large' | 'missing' } {
+  const file = new File(resolveStoredPhotoUri(uri));
+  if (!file.exists) return { problem: 'missing' };
+  if (file.size > MAX_PHOTO_BYTES) return { problem: 'too_large' };
+  return { file };
 }
 
 // What submitForReview tells the screen. ok: false means the record was NOT submitted
@@ -225,6 +267,7 @@ interface RecordState {
       | 'gpsAccuracyM'
       | 'gpsCoordination'
       | 'photoUris'
+      | 'photoMeta'
       | 'recordStatus'
       | 'identificationStatus'
       | 'syncStatus'
@@ -236,6 +279,9 @@ interface RecordState {
     observation: Omit<ObservationVisit, 'id' | 'syncStatus' | 'observedAt'> & { observedAt: string }
   ) => void;
   syncRecord: (id: string) => Promise<SyncResult>;
+  // Deletes a photo that hasn't been uploaded (e.g. over 5 MB) so the rest can go up.
+  // obsId = a visit photo; otherwise a record photo.
+  removePhoto: (recordId: string, uri: string, obsId?: string) => void;
   syncAll: () => Promise<SyncAllResult>;
   submitForReview: (id: string) => Promise<SubmitResult>;
   findByTag: (tagCode: string) => PlantRecord | undefined;
@@ -335,6 +381,46 @@ export const useRecordStore = create<RecordState>()(
             ),
           }));
 
+        // Photos sent in this run, and photos that can't be sent (shown on plant detail).
+        let photosUploaded = 0;
+        let tooLarge = 0;
+
+        // Uploads one photo unless it's already up or can't go. Saves the result at once,
+        // so a later failure never resends it. Network and server errors throw (the
+        // record is then marked FAILED and Retry tries again).
+        const sendPhoto = async (
+          uri: string,
+          meta: PhotoUpload,
+          path: string,
+          fields: Record<string, string>,
+          save: (meta: PhotoUpload) => void
+        ) => {
+          if (meta.uploaded || meta.problem === 'locked') return;
+          const read = photoFileFor(uri);
+          if ('problem' in read) {
+            save({ ...meta, problem: read.problem });
+            if (read.problem === 'too_large') tooLarge += 1;
+            return;
+          }
+          try {
+            await apiUpload(path, { ...fields, client_photo_id: meta.id }, read.file);
+            save({ ...meta, uploaded: true, problem: undefined });
+            photosUploaded += 1;
+          } catch (error) {
+            if (error instanceof ApiError && error.code === 'photos_locked') {
+              // Submitted already: keep it on the phone, don't retry forever.
+              save({ ...meta, problem: 'locked' });
+              return;
+            }
+            if (error instanceof ApiError && error.status === 413) {
+              save({ ...meta, problem: 'too_large' });
+              tooLarge += 1;
+              return;
+            }
+            throw error;
+          }
+        };
+
         uploadsInProgress.add(id);
         try {
           // 1. The plant. Skipped if an earlier attempt already got it onto the server.
@@ -350,10 +436,20 @@ export const useRecordStore = create<RecordState>()(
             patchRecord({ serverId });
           }
 
-          // TODO(photos): upload the record's photos here, once the teammate has fixed
-          // POST /api/plants/:id/photo on the backend. Use serverId in the URL, send each
-          // file in photoUris (resolve them with resolveStoredPhotoUri first), and only
-          // continue to the visits when every photo is on the server.
+          // 1b. The record's photos (needs the plant's serverId). Photos from records saved
+          //     before photo upload have no slot type, so they stay on the phone.
+          const withPhotos = get().records.find((r) => r.id === id);
+          for (const uri of withPhotos?.photoUris ?? []) {
+            const meta = withPhotos?.photoMeta?.[uri];
+            if (!meta?.type) continue;
+            await sendPhoto(uri, meta, `/api/plants/${serverId}/photo`, { photo_type: meta.type }, (next) =>
+              set((state) => ({
+                records: state.records.map((r) =>
+                  r.id === id ? { ...r, photoMeta: { ...r.photoMeta, [uri]: next } } : r
+                ),
+              }))
+            );
+          }
 
           // 2. The visits, one at a time, oldest first so they arrive in the order they
           //    happened (the list is stored newest first). Read them fresh from the store
@@ -371,6 +467,48 @@ export const useRecordStore = create<RecordState>()(
             // Mark each visit as soon as the server confirms it, so a later failure
             // doesn't make us send this one again.
             updateObservation(obs.id, { syncStatus: SyncStatus.UPLOADED, serverId: response.observation.id });
+          }
+
+          // 2b. Visit photos, for every uploaded visit (needs its serverId). Sent BEFORE the
+          //     visit is submitted: the server refuses photos on submitted visits.
+          const withVisits = get().records.find((r) => r.id === id);
+          for (const obs of [...(withVisits?.observations ?? [])].reverse()) {
+            if (!obs.serverId || !obs.photoUris?.length) continue;
+            for (const uri of obs.photoUris) {
+              // Visit photos need no type, so older ones get their upload ID here. It is
+              // saved before the upload, so a retry reuses it.
+              // Merge into the CURRENT stored state (not the `obs` snapshot), so earlier
+              // photos' upload results in this loop aren't overwritten.
+              const saveVisitPhoto = (next: PhotoUpload) =>
+                set((state) => ({
+                  records: state.records.map((r) =>
+                    r.id === id
+                      ? {
+                          ...r,
+                          observations: r.observations.map((o) =>
+                            o.id === obs.id ? { ...o, photoMeta: { ...o.photoMeta, [uri]: next } } : o
+                          ),
+                        }
+                      : r
+                  ),
+                }));
+              let meta = obs.photoMeta?.[uri];
+              if (!meta) {
+                meta = { id: randomUUID(), uploaded: false };
+                saveVisitPhoto(meta);
+              }
+              await sendPhoto(uri, meta, `/api/observations/${obs.serverId}/photo`, {}, saveVisitPhoto);
+            }
+          }
+
+          // 2c. Photos over 5 MB block submission (an officer shouldn't review a visit
+          //     without its evidence). Everything else is already up; the botanist removes
+          //     those photos on plant detail and taps Retry.
+          if (tooLarge > 0) {
+            throw new PhotoProblemError(
+              `${tooLarge} ${tooLarge === 1 ? 'photo is' : 'photos are'} over 5 MB and can't be uploaded. ` +
+                'Remove them on the plant page, then tap Retry.'
+            );
           }
 
           // 3. Submit for officer review, if the botanist has submitted this record on the
@@ -402,22 +540,58 @@ export const useRecordStore = create<RecordState>()(
           const finalRecord = get().records.find((r) => r.id === id);
           const unsentLeft = finalRecord?.observations.some((obs) => obs.syncStatus !== SyncStatus.UPLOADED);
           patchRecord({ syncStatus: unsentLeft ? SyncStatus.NOT_UPLOADED : SyncStatus.UPLOADED });
-          return { ok: true, submittedForReview: isFullySubmitted(finalRecord) };
+          return {
+            ok: true,
+            submittedForReview: isFullySubmitted(finalRecord),
+            photosUploaded,
+            photoProblems: tooLarge,
+          };
         } catch (error) {
           // Whatever went wrong, the record stays on the phone and shows Retry.
           patchRecord({ syncStatus: SyncStatus.FAILED });
 
-          if (error instanceof ApiError) {
+          if (error instanceof ApiError || error instanceof PhotoProblemError) {
             // apiFetch already wrote a readable message: "Could not reach the server..."
             // when status is 0 (no signal, timeout), otherwise the server's own message,
             // e.g. "Valid latitude and longitude are required".
-            return { ok: false, reason: error.message };
+            return { ok: false, reason: error.message, photosUploaded, photoProblems: tooLarge };
           }
           // Not an ApiError (e.g. an unexpected response shape): still don't crash the screen.
-          return { ok: false, reason: 'Upload failed unexpectedly. Please try again.' };
+          return { ok: false, reason: 'Upload failed unexpectedly. Please try again.', photosUploaded, photoProblems: tooLarge };
         } finally {
           uploadsInProgress.delete(id);
         }
+      },
+
+      removePhoto: (recordId, uri, obsId) => {
+        const record = get().records.find((r) => r.id === recordId);
+        if (!record) return;
+        const owner = obsId ? record.observations.find((o) => o.id === obsId) : record;
+        // Never delete a photo the server already has: it belongs to the record now.
+        if (!owner || owner.photoMeta?.[uri]?.uploaded) return;
+
+        const without = (meta: Record<string, PhotoUpload> | undefined) => {
+          if (!meta) return meta;
+          const { [uri]: _removed, ...rest } = meta;
+          return rest;
+        };
+        set((state) => ({
+          records: state.records.map((r) => {
+            if (r.id !== recordId) return r;
+            if (!obsId) {
+              return { ...r, photoUris: r.photoUris.filter((u) => u !== uri), photoMeta: without(r.photoMeta) };
+            }
+            return {
+              ...r,
+              observations: r.observations.map((o) =>
+                o.id === obsId
+                  ? { ...o, photoUris: (o.photoUris ?? []).filter((u) => u !== uri), photoMeta: without(o.photoMeta) }
+                  : o
+              ),
+            };
+          }),
+        }));
+        deleteStoredPhoto(uri);
       },
 
       // Uploads every record that isn't fully on the server yet (Not uploaded AND
@@ -436,6 +610,8 @@ export const useRecordStore = create<RecordState>()(
         let uploaded = 0;
         let failed = 0;
         let skipped = 0;
+        let photosUploaded = 0;
+        let photoProblems = 0;
         for (const id of ids) {
           // Already uploading (from Retry or a submit)? That upload will finish on its
           // own, so don't count it as a failure. Checking here is safe: syncRecord adds
@@ -448,8 +624,10 @@ export const useRecordStore = create<RecordState>()(
           const result = await get().syncRecord(id);
           if (result.ok) uploaded += 1;
           else failed += 1;
+          photosUploaded += result.photosUploaded ?? 0;
+          photoProblems += result.photoProblems ?? 0;
         }
-        return { uploaded, failed, skipped };
+        return { uploaded, failed, skipped, photosUploaded, photoProblems };
       },
 
       submitForReview: async (id) => {

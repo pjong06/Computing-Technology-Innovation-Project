@@ -33,3 +33,25 @@ export function conservationStatusColors(code: string): { bg: string; text: stri
       return { bg: '#EEF1EF', text: '#5B6B60' };
   }
 }
+
+// Plain-language status for visitors: a short badge label and a one-line meaning.
+// A missing status is "Not assessed", never guessed.
+const PLAIN_STATUS: Record<string, { label: string; meaning: string }> = {
+  LC: { label: 'Not at risk', meaning: 'This plant is common enough that it is not considered at risk.' },
+  NT: { label: 'Near threatened', meaning: 'This plant could become threatened in the near future.' },
+  VU: { label: 'Vulnerable', meaning: 'This plant is at high risk of disappearing from the wild.' },
+  EN: { label: 'Endangered', meaning: 'This plant is at very high risk of disappearing from the wild.' },
+  CR: { label: 'Critically endangered', meaning: 'This plant is at extremely high risk of disappearing from the wild.' },
+  DD: { label: 'Not enough data', meaning: 'There is not enough information yet to judge how at risk it is.' },
+  NA: { label: 'Not assessed', meaning: 'Its risk has not been assessed yet.' },
+};
+
+export function plainConservationStatus(status: string | null | undefined): {
+  code: string;
+  label: string;
+  meaning: string;
+} {
+  const code = conservationStatusCode(status);
+  const plain = PLAIN_STATUS[code] ?? PLAIN_STATUS.NA;
+  return { code, ...plain };
+}

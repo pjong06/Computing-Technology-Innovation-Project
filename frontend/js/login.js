@@ -57,11 +57,20 @@ async function doLogin() {
   } catch (error) {
     await sb.auth.signOut();
     localStorage.removeItem(SESSION_KEY);
-    if (/active staff profile required/i.test(error.message)) {
+    if (/active staff profile required|active account required/i.test(error.message)) {
       showAuthError('This account is waiting for an officer to activate it, or has been suspended. Contact the officer.');
     } else {
       showAuthError(error.message);
     }
+    return;
+  }
+
+  // Visitor accounts (from the mobile app) can sign in, but the portal is for staff only:
+  // every page's data is staff-only on the server, so don't let them in here.
+  if (['botanist', 'officer', 'researcher', 'admin'].indexOf(me.role) === -1) {
+    await sb.auth.signOut();
+    localStorage.removeItem(SESSION_KEY);
+    showAuthError('This account is for the Niah mobile app. The web portal is for Sarawak Forestry staff.');
     return;
   }
 

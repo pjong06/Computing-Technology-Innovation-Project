@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -19,10 +19,36 @@ import { useAuthRole } from '../../src/context/AuthRoleContext';
 import { useRecordStore, SyncStatus, IdentificationStatus } from '../../src/store/useRecordStore';
 import { buildSyncSummary } from '../../src/services/syncSummary';
 import { useProposalStore } from '../../src/store/useProposalStore';
+import { useSpeciesStore } from '../../src/store/useSpeciesStore';
+import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
+
+// How many approved species the visitor Home shows under "Featured plants".
+const FEATURED_COUNT = 4;
 
 export default function HomeScreen() {
   const router = useRouter();
   const { isVisitor, userName, logout } = useAuthRole();
+
+  // Visitor Home: the first approved species (public list, cached on the phone). Their
+  // details are loaded so the photos appear.
+  const species = useSpeciesStore((state) => state.species);
+  const imageUrisBySpeciesId = useSpeciesStore((state) => state.imageUrisBySpeciesId);
+  const loadSpecies = useSpeciesStore((state) => state.loadSpecies);
+  const loadSpeciesDetail = useSpeciesStore((state) => state.loadSpeciesDetail);
+  const featured = species.slice(0, FEATURED_COUNT);
+  const featuredKey = featured.map((s) => s.id).join(',');
+
+  useEffect(() => {
+    if (isVisitor) void loadSpecies();
+  }, [isVisitor, loadSpecies]);
+
+  useEffect(() => {
+    if (!isVisitor) return;
+    for (const item of featured) {
+      if (!imageUrisBySpeciesId[item.id]) void loadSpeciesDetail(item.id);
+    }
+    // featuredKey: run again only when the featured species change.
+  }, [isVisitor, featuredKey]);
   const records = useRecordStore((state) => state.records);
   const syncAll = useRecordStore((state) => state.syncAll);
   const syncRecord = useRecordStore((state) => state.syncRecord);
@@ -48,7 +74,7 @@ export default function HomeScreen() {
   const handleSyncNow = async () => {
     setSyncingAll(true);
     // syncAll never throws: every problem comes back as a count.
-    const { uploaded, failed: recordsFailed, skipped } = await syncAll();
+    const { uploaded, failed: recordsFailed, skipped, photosUploaded, photoProblems } = await syncAll();
     // Species proposals go up the same way, then their review status is refreshed.
     const proposalsResult = await syncAllProposals();
     await refreshProposalStatuses();
@@ -59,6 +85,11 @@ export default function HomeScreen() {
     if (failed > 0) parts.push(`${failed} failed`);
     // Only mention skipped records when there are some (they were already uploading).
     if (skipped > 0) parts.push(`${skipped} already uploading`);
+    // Photos: only mentioned when some went up, or some need the botanist (over 5 MB).
+    if (photosUploaded > 0) parts.push(`${photosUploaded} ${photosUploaded === 1 ? 'photo' : 'photos'} uploaded`);
+    if (photoProblems > 0) {
+      parts.push(`${photoProblems} ${photoProblems === 1 ? 'photo' : 'photos'} over 5 MB (see the plant page)`);
+    }
     // Only mention proposals when some were sent or failed.
     if (proposalsResult.uploaded > 0) {
       parts.push(`${proposalsResult.uploaded} species ${proposalsResult.uploaded === 1 ? 'proposal' : 'proposals'} sent`);
@@ -314,13 +345,9 @@ export default function HomeScreen() {
               onPress={() => router.push('/(tabs)/scan')}
             >
               <View style={styles.visitorHeroInfo}>
-                <View style={styles.visitorBadge}>
-                  <Ionicons name="scan" size={12} color="#CCFBF1" />
-                  <Text style={styles.visitorBadgeText}>TREE IDENTIFIER</Text>
-                </View>
-                <Text style={styles.visitorHeroTitle}>Scan Tree Plaques</Text>
+                <Text style={styles.visitorHeroTitle}>Scan a plant tag</Text>
                 <Text style={styles.visitorHeroSub}>
-                  Scan QR codes affixed to trees along Niah Park trails to read botanical data and historical facts.
+                  Point your camera at the QR tag next to a plant to learn about it.
                 </Text>
               </View>
               <View style={styles.visitorHeroIconCircle}>
@@ -328,23 +355,48 @@ export default function HomeScreen() {
               </View>
             </TouchableOpacity>
 
-            <View style={styles.actionGrid}>
-              <TouchableOpacity
-                style={styles.visitorNavCard}
-                onPress={() => router.push('/(tabs)/species')}
-              >
-                <Ionicons name="book-outline" size={26} color="#059669" />
-                <Text style={styles.visitorNavTitle}>Flora Guide</Text>
-                <Text style={styles.visitorNavSub}>Park species catalog</Text>
-              </TouchableOpacity>
+            {featured.length > 0 && (
+              <>
+                <View style={styles.sectionRow}>
+                  <Text style={styles.sectionHeading}>Featured plants</Text>
+                  <TouchableOpacity onPress={() => router.push('/(tabs)/plants' as any)}>
+                    <Text style={styles.seeAll}>See all</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.featuredGrid}>
+                  {featured.map((item) => {
+                    const status = plainConservationStatus(item.conservation_status);
+                    const colors = conservationStatusColors(status.code);
+                    const photo = imageUrisBySpeciesId[item.id];
+                    return (
+                      <TouchableOpacity
+                        key={item.id}
+                        style={styles.featuredCard}
+                        activeOpacity={0.8}
+                        onPress={() => router.push({ pathname: '/plant-info', params: { speciesId: item.id } } as any)}
+                      >
+                        {photo ? (
+                          <Image source={{ uri: photo }} style={styles.featuredPhoto} resizeMode="cover" />
+                        ) : (
+                          <View style={[styles.featuredPhoto, styles.featuredPlaceholder]}>
+                            <Text style={{ fontSize: 26 }}>🌿</Text>
+                          </View>
+                        )}
+                        <Text style={styles.featuredName} numberOfLines={1}>
+                          {item.common_name || item.scientific_name}
+                        </Text>
+                        <View style={[styles.featuredBadge, { backgroundColor: colors.bg }]}>
+                          <Text style={[styles.featuredBadgeText, { color: colors.text }]}>{status.label}</Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </>
+            )}
 
-            </View>
-
-            <View style={styles.readOnlyNoticeBox}>
-              <Ionicons name="information-circle-outline" size={20} color="#0369A1" />
-              <Text style={styles.readOnlyNoticeText}>
-                You are currently in <Text style={{ fontWeight: '800' }}>Visitor Mode</Text>. You have full view access. Submitting observations and GPS paths is restricted to Forestry staff.
-              </Text>
+            <View style={styles.respectBox}>
+              <Text style={styles.respectText}>Please don't pick or touch plants. Many here are protected.</Text>
             </View>
           </View>
         )}
@@ -497,6 +549,23 @@ const styles = StyleSheet.create({
   emptyContainer: { alignItems: 'center', paddingVertical: 30 },
   emptyTitle: { fontSize: 15, fontWeight: '700', color: '#1E2B22', marginBottom: 4 },
   emptySub: { fontSize: 12.5, color: '#68776D', textAlign: 'center', lineHeight: 17 },
+  featuredGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  featuredCard: {
+    width: '48%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    borderWidth: 1.2,
+    borderColor: '#E6ECE8',
+    padding: 10,
+    marginBottom: 12,
+  },
+  featuredPhoto: { width: '100%', aspectRatio: 4 / 3, borderRadius: 12, backgroundColor: '#E7EFEA' },
+  featuredPlaceholder: { justifyContent: 'center', alignItems: 'center' },
+  featuredName: { fontSize: 13.5, fontWeight: '700', color: '#1E2B22', marginTop: 8 },
+  featuredBadge: { alignSelf: 'flex-start', paddingVertical: 2, paddingHorizontal: 8, borderRadius: 10, marginTop: 4 },
+  featuredBadgeText: { fontSize: 10.5, fontWeight: '700' },
+  respectBox: { backgroundColor: '#E8F5E9', borderRadius: 14, padding: 14, marginTop: 4 },
+  respectText: { fontSize: 13, color: '#215A36', fontWeight: '600', textAlign: 'center' },
   visitorSection: { marginTop: 6 },
   visitorHeroCard: {
     flexDirection: 'row',
@@ -508,18 +577,6 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   visitorHeroInfo: { flex: 1, paddingRight: 10 },
-  visitorBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    gap: 4,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  visitorBadgeText: { fontSize: 10, fontWeight: '800', color: '#CCFBF1' },
   visitorHeroTitle: { fontSize: 17, fontWeight: '800', color: '#FFFFFF' },
   visitorHeroSub: { fontSize: 12, color: '#CCFBF1', marginTop: 4, lineHeight: 16 },
   visitorHeroIconCircle: {
@@ -530,27 +587,4 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  visitorNavCard: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1.2,
-    borderColor: '#E6ECE8',
-    gap: 4,
-  },
-  visitorNavTitle: { fontSize: 14, fontWeight: '800', color: '#213B2A' },
-  visitorNavSub: { fontSize: 11, color: '#76877B' },
-  readOnlyNoticeBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#F0F9FF',
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
-    borderRadius: 14,
-    padding: 14,
-    marginTop: 8,
-  },
-  readOnlyNoticeText: { flex: 1, fontSize: 12, color: '#0369A1', lineHeight: 17 },
 });

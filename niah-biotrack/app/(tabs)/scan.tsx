@@ -257,8 +257,27 @@ export default function ScanScreen() {
                     </Text>
                   </View>
                 ) : null}
-                <TouchableOpacity style={styles.visitorDoneBtn} onPress={handleDismissSheet}>
-                  <Text style={styles.visitorDoneBtnText}>Done</Text>
+                {visitorResult?.status === 'found' ? (
+                  <TouchableOpacity
+                    style={styles.visitorDoneBtn}
+                    onPress={() => {
+                      const tagCode = visitorResult.tagCode;
+                      handleDismissSheet();
+                      router.push({ pathname: '/plant-info', params: { tag: tagCode } } as any);
+                    }}
+                  >
+                    <Text style={styles.visitorDoneBtnText}>View plant info</Text>
+                  </TouchableOpacity>
+                ) : null}
+                <TouchableOpacity
+                  style={visitorResult?.status === 'found' ? styles.visitorSecondaryBtn : styles.visitorDoneBtn}
+                  onPress={handleDismissSheet}
+                >
+                  <Text
+                    style={visitorResult?.status === 'found' ? styles.visitorSecondaryBtnText : styles.visitorDoneBtnText}
+                  >
+                    Done
+                  </Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -535,6 +554,18 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 22,
     alignItems: 'center',
+  },
+  visitorSecondaryBtn: {
+    paddingVertical: 12,
+    borderRadius: 22,
+    alignItems: 'center',
+    borderWidth: 1.2,
+    borderColor: '#213B2A',
+  },
+  visitorSecondaryBtnText: {
+    color: '#213B2A',
+    fontSize: 14.5,
+    fontWeight: '700',
   },
   visitorDoneBtnText: {
     color: '#FFFFFF',

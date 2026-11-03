@@ -18,7 +18,9 @@ const PICKER_OPTIONS: ImagePicker.ImagePickerOptions = {
   mediaTypes: ['images'],
   allowsEditing: false,
   allowsMultipleSelection: false,
-  quality: 0.8,
+  // 0.5 keeps most phone photos well under the backend's 5 MB limit per photo, without
+  // an extra image-resizing package. Larger photos are caught before upload.
+  quality: 0.5,
   presentationStyle: ImagePicker.UIImagePickerPresentationStyle.FULL_SCREEN,
 };
 
