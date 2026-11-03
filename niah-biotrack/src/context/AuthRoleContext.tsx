@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { signOutOnThisPhone } from '../lib/auth';
 import { useRecordStore } from '../store/useRecordStore';
+import { useProposalStore } from '../store/useProposalStore';
 import { deleteAllStoredPhotos } from '../utils/photoStorage';
 
 export type UserRole = 'botanist' | 'officer' | 'visitor';
@@ -82,6 +83,7 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
   // Screens must warn about unsynced data BEFORE calling this; it deletes it.
   const logout = async () => {
     useRecordStore.getState().clearAllData(); // records, routes, draft route
+    useProposalStore.getState().clearProposals(); // species proposals
     deleteAllStoredPhotos();
     await AsyncStorage.removeItem('niah_is_guest_visitor');
     // Works offline too, and forgets the cached account details.

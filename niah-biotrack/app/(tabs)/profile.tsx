@@ -15,7 +15,8 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthRole } from '../../src/context/AuthRoleContext';
 import { supabase } from '../../src/lib/supabase';
-import { useRecordStore } from '../../src/store/useRecordStore';
+import { SyncStatus, useRecordStore } from '../../src/store/useRecordStore';
+import { useProposalStore } from '../../src/store/useProposalStore';
 import { buildSyncSummary } from '../../src/services/syncSummary';
 
 const NOT_RECORDED = 'Not recorded';
@@ -31,6 +32,10 @@ export default function ProfileScreen() {
   const router = useRouter();
   const { isVisitor, role, logout } = useAuthRole();
   const records = useRecordStore((state) => state.records);
+  // Species proposals still on the phone only; logging out would lose them too.
+  const unsentProposalCount = useProposalStore(
+    (state) => state.proposals.filter((p) => p.syncStatus !== SyncStatus.UPLOADED).length
+  );
 
   const [loading, setLoading] = useState<boolean>(!isVisitor);
   const [profile, setProfile] = useState<ProfileData | null>(null);
@@ -99,22 +104,31 @@ export default function ProfileScreen() {
     fetchStaffProfile();
   }, [isVisitor]);
 
-  // Logging out clears this phone (records, routes, photos; see AuthRoleContext.logout),
-  // so warn first when anything hasn't reached the server yet.
+  // Logging out clears this phone (records, routes, photos, species proposals; see
+  // AuthRoleContext.logout), so warn first when anything hasn't reached the server yet.
   const unsynced = syncSummary.unsyncedRecordCount;
+  const hasUnsent = unsynced > 0 || unsentProposalCount > 0;
+  const unsentText = [
+    unsynced > 0 ? `${unsynced} ${unsynced === 1 ? 'record' : 'records'}` : null,
+    unsentProposalCount > 0
+      ? `${unsentProposalCount} species ${unsentProposalCount === 1 ? 'proposal' : 'proposals'}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(' and ');
   const handleLogout = async () => {
     Alert.alert(
-      isVisitor ? 'Exit Visitor Mode' : unsynced > 0 ? 'Log out with unsynced records?' : 'Log Out',
+      isVisitor ? 'Exit Visitor Mode' : hasUnsent ? 'Log out with unsynced data?' : 'Log Out',
       isVisitor
         ? 'Return to sign-in screen?'
-        : unsynced > 0
-          ? `${unsynced} ${unsynced === 1 ? 'record has' : 'records have'} not been uploaded to the server. ` +
-            `Logging out deletes ${unsynced === 1 ? 'it' : 'them'} and all photos from this device. This cannot be undone.`
+        : hasUnsent
+          ? `${unsentText} not uploaded to the server yet. ` +
+            'Logging out deletes them and all photos from this device. This cannot be undone.'
           : 'Are you sure you want to log out of your field session? Records and photos are removed from this phone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: isVisitor ? 'Exit' : unsynced > 0 ? 'Log out anyway' : 'Log Out',
+          text: isVisitor ? 'Exit' : hasUnsent ? 'Log out anyway' : 'Log Out',
           style: 'destructive',
           onPress: async () => {
             await logout();

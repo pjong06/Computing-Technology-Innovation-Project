@@ -31,6 +31,7 @@ export default function RootLayout() {
         <Stack.Screen name="link-route" />
         <Stack.Screen name="offline-map" />
         <Stack.Screen name="manual-qr" />
+        <Stack.Screen name="propose-species" />
       </Stack>
       <Toast />
     </AuthRoleProvider>
