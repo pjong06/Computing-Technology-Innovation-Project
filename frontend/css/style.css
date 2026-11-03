@@ -926,3 +926,18 @@ table.big .btn {
   color: inherit;
   font-weight: 700;
 }
+
+/* Password reset success message */
+.auth-success {
+  margin: 12px 0 8px;
+  padding: 10px 12px;
+  background: var(--ok);
+  color: var(--okt);
+  border-radius: 10px;
+  font-size: 14px;
+}
+
+.auth-card button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}

@@ -24,7 +24,7 @@ function showSuspended() {
   box.hidden = false;
 }
 
-// Checks the email and password. If they are right, logs in and opens the right page.
+// Checks the username, email and password with Supabase. If they are right, logs in and opens the website.
 async function doLogin() {
   const username = document.getElementById('login-username').value.trim();
   const email = document.getElementById('login-email').value.trim();
@@ -35,28 +35,33 @@ async function doLogin() {
     return;
   }
 
-  // The username, the email and the password must all belong to the same account.
-  const user = findUserByUsername(username);
-  if (user === null || user.passwordHash === '' || sameText(user.email, email) === false) {
+  // 1. Supabase checks the email and password.
+  const result = await sb.auth.signInWithPassword({ email: email, password: password });
+  if (result.error) {
     showAuthError('Wrong username, email or password.');
     return;
   }
 
-  // The password is scrambled together with the user's email (see hashPassword).
-  const hash = await hashPassword(user.email, password);
-
-  // The same message for every mistake, so it does not reveal which usernames or emails exist.
-  if (user.passwordHash !== hash) {
+  // 2. The username saved on the account must match what was typed.
+  const savedName = result.data.user.user_metadata.username;
+  if (savedName && sameText(savedName, username) === false) {
+    await sb.auth.signOut();
     showAuthError('Wrong username, email or password.');
     return;
   }
-  if (user.active === false) {
-    showSuspended();
+
+  // 3. The backend says what role this person has. A suspended account is refused here.
+  let me;
+  try {
+    me = await api('/me');
+  } catch (error) {
+    await sb.auth.signOut();
+    showAuthError(error.message);
     return;
   }
 
   showAuthError('');
-  startSession(user);
+  startSession(me, savedName || username);
   goToHome();
 }
 

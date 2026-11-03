@@ -1,4 +1,5 @@
 // signup.js - the Create account page. It only makes Botanist accounts.
+// The account is a real Supabase login. The database then saves the new user in the table website_users.
 
 // Shows a red message under the form. Pass '' to hide it.
 function showAuthError(message) {
@@ -15,14 +16,8 @@ function checkSignup(username, email, password, confirm) {
   if (/^[A-Za-z0-9_]{3,20}$/.test(username) === false) {
     return 'The username must be 3-20 letters, numbers or underscores.';
   }
-  if (findUserByUsername(username) !== null) {
-    return 'That username is already taken. Choose another one.';
-  }
   if (email.indexOf('@') < 1 || email.indexOf('.') === -1) {
     return 'Enter a valid email address.';
-  }
-  if (findUserByEmail(email) !== null) {
-    return 'An account with this email already exists. Try logging in.';
   }
   const passwordIssue = passwordProblem(password);
   if (passwordIssue !== '') {
@@ -47,25 +42,37 @@ async function doSignup() {
     return;
   }
 
-  // There is no separate full name, so the username is also the display name.
-  const user = {
-    name: username,
-    username: username,
-    email: email,
-    role: 'Botanist',
-    active: true,
-    passwordHash: await hashPassword(email, password)
-  };
-
-  const list = getUsers();
-  list.push(user);
-  if (writeStorage(USERS_KEY, list) === false) {
-    showAuthError('The account could not be saved. The browser storage is full.');
+  // 1. Is the username free?
+  const check = await sb.rpc('website_username_taken', { wanted: username });
+  if (check.error) {
+    showAuthError('Could not check the username. Has the database setup been run?');
+    return;
+  }
+  if (check.data === true) {
+    showAuthError('That username is already taken. Choose another one.');
     return;
   }
 
-  showAuthError('');
-  startSession(user);
-  rememberToast('Account created. Welcome, ' + username + '!');
-  goToHome();
+  // 2. Make the account. The database adds the profile and the row in website_users.
+  const result = await createAccount(sb, username, email, password);
+  if (result.error) {
+    if (/already/i.test(result.error.message)) {
+      showAuthError('An account with this email already exists. Try logging in.');
+    } else {
+      showAuthError(result.error.message);
+    }
+    return;
+  }
+
+  // 3. Sign out again, so the person logs in themselves on the login page.
+  await sb.auth.signOut();
+  localStorage.removeItem(SESSION_KEY);
+
+  if (result.data.session) {
+    rememberToast('Account created. Please log in.');
+  } else {
+    // Supabase wants the email confirmed first.
+    rememberToast('Account created. Check your email to confirm it, then log in.');
+  }
+  location.href = 'login.html';
 }

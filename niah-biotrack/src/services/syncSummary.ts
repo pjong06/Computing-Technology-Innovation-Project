@@ -6,6 +6,7 @@ export interface SyncSummary {
   uploadedRecordCount: number;
   pendingRecordCount: number;
   failedRecordCount: number;
+  localDraftCount: number;
 
   uploadedObservationCount: number;
   pendingObservationCount: number;
@@ -35,6 +36,10 @@ export function buildSyncSummary(
 
   const failedRecordCount = records.filter(
     (record) => record.syncStatus === SyncStatus.FAILED
+  ).length;
+
+  const localDraftCount = records.filter(
+    (record) => record.syncStatus === SyncStatus.LOCAL_ONLY
   ).length;
 
   const observations = records.flatMap((record) => record.observations);
@@ -87,6 +92,11 @@ export function buildSyncSummary(
     overallMessage =
       'Pending data is saved on this device and waiting for server upload.';
     overallTone = 'pending';
+  } else if (localDraftCount > 0) {
+    overallStatus = `${localDraftCount} local ${localDraftCount === 1 ? 'draft' : 'drafts'}`;
+    overallMessage =
+      'Draft field records remain on this device until their species identification is completed.';
+    overallTone = 'neutral';
   } else if (records.length > 0) {
     overallStatus = 'Up to date';
     overallMessage =
@@ -112,6 +122,7 @@ export function buildSyncSummary(
     uploadedRecordCount,
     pendingRecordCount,
     failedRecordCount,
+    localDraftCount,
 
     uploadedObservationCount,
     pendingObservationCount,

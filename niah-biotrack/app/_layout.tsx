@@ -6,7 +6,9 @@ import Toast from 'react-native-toast-message';
 export default function RootLayout() {
   return (
     <>
-      <StatusBar barStyle="dark-content" backgroundColor="#F6F8F6" />
+      {/* No backgroundColor: React Native 0.88 removed it (Android is always edge-to-edge
+          now, so the screen's own #F6F8F6 background shows behind the status bar). */}
+      <StatusBar barStyle="dark-content" />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#F6F8F6' } }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="forgot-password" />
@@ -15,6 +17,10 @@ export default function RootLayout() {
         <Stack.Screen name="new-record" />
         <Stack.Screen name="save-confirm" />
         <Stack.Screen name="plant-detail" />
+
+        <Stack.Screen name="species-reference/index" />
+        <Stack.Screen name="species-reference/[id]" />
+
         <Stack.Screen name="attach-tag" />
         <Stack.Screen name="add-observation" />
         <Stack.Screen name="record-route" />
@@ -22,6 +28,7 @@ export default function RootLayout() {
         <Stack.Screen name="offline-map" />
         <Stack.Screen name="manual-qr" />
       </Stack>
+
       <Toast />
     </>
   );

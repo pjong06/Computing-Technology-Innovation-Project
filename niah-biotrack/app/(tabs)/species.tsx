@@ -12,10 +12,9 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import Toast from 'react-native-toast-message';
-import { useRecordStore } from '../../src/store/useRecordStore';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import type { Species } from '../../src/api/species';
+import OfflineReferenceCard from '../../src/components/OfflineReferenceCard';
 
 const STATUS_LABELS: Record<string, string> = {
   CR: 'Critically Endangered',
@@ -26,9 +25,10 @@ const STATUS_LABELS: Record<string, string> = {
   DD: 'Data Deficient',
   NA: 'Not assessed',
 };
-const STATUS_ORDER = ['CR', 'EN', 'VU', 'NT', 'LC', 'DD', 'NA'];
 
-const statusCode = (s: Species) => s.conservation_status?.trim() || 'NA';
+const STATUS_ORDER = ['CR', 'EN', 'VU', 'NT', 'LC', 'DD', 'NA'];
+const statusCode = (species: Species) =>
+  species.conservation_status?.trim() || 'NA';
 const statusLabel = (code: string) => STATUS_LABELS[code] ?? code;
 
 const getStatusColor = (code: string) => {
@@ -48,44 +48,42 @@ const getStatusColor = (code: string) => {
 
 export default function SpeciesScreen() {
   const router = useRouter();
-
-  const species = useSpeciesStore((s) => s.species);
-  const loading = useSpeciesStore((s) => s.loading);
-  const error = useSpeciesStore((s) => s.error);
-  const lastUpdated = useSpeciesStore((s) => s.lastUpdated);
-  const loadSpecies = useSpeciesStore((s) => s.loadSpecies);
-  const records = useRecordStore((s) => s.records);
+  const species = useSpeciesStore((state) => state.species);
+  const loading = useSpeciesStore((state) => state.loading);
+  const error = useSpeciesStore((state) => state.error);
+  const lastUpdated = useSpeciesStore((state) => state.lastUpdated);
+  const loadSpecies = useSpeciesStore((state) => state.loadSpecies);
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
 
   useEffect(() => {
-    loadSpecies();
+    void loadSpecies();
   }, [loadSpecies]);
 
   const statusOptions = useMemo(() => {
     const codes = new Set(species.map(statusCode));
-    const known = STATUS_ORDER.filter((c) => codes.has(c));
-    const other = [...codes].filter((c) => !STATUS_ORDER.includes(c));
+    const known = STATUS_ORDER.filter((code) => codes.has(code));
+    const other = [...codes].filter((code) => !STATUS_ORDER.includes(code));
     return [...known, ...other];
   }, [species]);
 
-  const query = search.trim().toLowerCase();
-  const filtered = species.filter((s) => {
-    const matchesSearch =
-      query === '' ||
-      [s.scientific_name, s.common_name, s.local_name].some((name) =>
-        name?.toLowerCase().includes(query)
-      );
-    const matchesStatus = statusFilter === null || statusCode(s) === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
 
-  const chooseStatus = (value: string | null) => {
-    setStatusFilter(value);
-    setFilterOpen(false);
-  };
+    return species.filter((item) => {
+      const matchesSearch =
+        query === '' ||
+        [item.scientific_name, item.common_name, item.local_name].some((name) =>
+          name?.toLowerCase().includes(query)
+        );
+      const matchesStatus =
+        statusFilter === null || statusCode(item) === statusFilter;
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [search, species, statusFilter]);
 
   const updatedText = lastUpdated
     ? new Date(lastUpdated).toLocaleString('en-GB', {
@@ -96,6 +94,11 @@ export default function SpeciesScreen() {
       })
     : null;
 
+  const chooseStatus = (value: string | null) => {
+    setStatusFilter(value);
+    setFilterOpen(false);
+  };
+
   const renderEmpty = () => {
     if (species.length === 0 && loading) {
       return (
@@ -104,19 +107,27 @@ export default function SpeciesScreen() {
         </View>
       );
     }
+
     if (species.length === 0 && error) {
       return (
         <View style={styles.centerBox}>
           <Text style={styles.emptyTitle}>Couldn't load the species list</Text>
-          <Text style={styles.emptyText}>Check your connection. Once loaded, the list works offline.</Text>
+          <Text style={styles.emptyText}>
+            Connect once to download the catalogue for offline use.
+          </Text>
           <Text style={styles.emptyText}>{error}</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={loadSpecies}>
+          <TouchableOpacity style={styles.retryBtn} onPress={() => void loadSpecies()}>
             <Text style={styles.retryText}>Retry</Text>
           </TouchableOpacity>
         </View>
       );
     }
-    return <Text style={styles.emptyText}>No species match your search or filter.</Text>;
+
+    return (
+      <Text style={styles.emptyText}>
+        No species match your search or filter.
+      </Text>
+    );
   };
 
   return (
@@ -126,13 +137,16 @@ export default function SpeciesScreen() {
           Species <Text style={styles.titleAccent}>Reference</Text>
         </Text>
 
+        <OfflineReferenceCard />
+
         <TextInput
           style={styles.searchBar}
-          placeholder="Search scientific or common name"
+          placeholder="Search scientific, common or local name"
           placeholderTextColor="#8C9A91"
           value={search}
           onChangeText={setSearch}
           autoCorrect={false}
+          autoCapitalize="none"
           returnKeyType="search"
           clearButtonMode="while-editing"
         />
@@ -140,7 +154,7 @@ export default function SpeciesScreen() {
         {error && species.length > 0 && (
           <View style={styles.offlineBanner}>
             <Text style={styles.offlineText}>
-              Couldn't refresh - showing the list saved on this phone
+              Couldn't refresh — showing the catalogue saved on this phone
               {updatedText ? ` (updated ${updatedText})` : ''}.
             </Text>
           </View>
@@ -148,11 +162,17 @@ export default function SpeciesScreen() {
 
         <View style={styles.filterRow}>
           <TouchableOpacity
-            style={[styles.filterPill, (statusFilter !== null || filterOpen) && styles.filterPillActive]}
+            style={[
+              styles.filterPill,
+              (statusFilter !== null || filterOpen) && styles.filterPillActive,
+            ]}
             onPress={() => setFilterOpen((open) => !open)}
           >
             <Text
-              style={[styles.filterText, statusFilter !== null && styles.filterTextActive]}
+              style={[
+                styles.filterText,
+                statusFilter !== null && styles.filterTextActive,
+              ]}
               numberOfLines={1}
             >
               {statusFilter ? statusLabel(statusFilter) : 'Conservation status'}{' '}
@@ -163,20 +183,36 @@ export default function SpeciesScreen() {
 
         {filterOpen && (
           <View style={styles.optionPanel}>
-            <TouchableOpacity style={styles.optionRow} onPress={() => chooseStatus(null)}>
-              <Text style={[styles.optionText, statusFilter === null && styles.optionTextSelected]}>
+            <TouchableOpacity
+              style={styles.optionRow}
+              onPress={() => chooseStatus(null)}
+            >
+              <Text
+                style={[
+                  styles.optionText,
+                  statusFilter === null && styles.optionTextSelected,
+                ]}
+              >
                 All statuses
               </Text>
               {statusFilter === null && <Text style={styles.optionCheck}>✓</Text>}
             </TouchableOpacity>
+
             {statusOptions.map((code) => (
               <TouchableOpacity
                 key={code}
                 style={styles.optionRow}
                 onPress={() => chooseStatus(code)}
               >
-                <Text style={[styles.optionText, statusFilter === code && styles.optionTextSelected]}>
-                  {code === 'NA' ? statusLabel(code) : `${statusLabel(code)} (${code})`}
+                <Text
+                  style={[
+                    styles.optionText,
+                    statusFilter === code && styles.optionTextSelected,
+                  ]}
+                >
+                  {code === 'NA'
+                    ? statusLabel(code)
+                    : `${statusLabel(code)} (${code})`}
                 </Text>
                 {statusFilter === code && <Text style={styles.optionCheck}>✓</Text>}
               </TouchableOpacity>
@@ -188,7 +224,7 @@ export default function SpeciesScreen() {
           <View style={styles.countRow}>
             <Text style={styles.countBanner}>
               {filtered.length === species.length
-                ? `${species.length} species · available offline`
+                ? `${species.length} species · catalogue available offline`
                 : `Showing ${filtered.length} of ${species.length} species`}
             </Text>
             {statusFilter !== null && (
@@ -207,33 +243,24 @@ export default function SpeciesScreen() {
           keyboardDismissMode="on-drag"
           automaticallyAdjustKeyboardInsets
           refreshing={loading && species.length > 0}
-          onRefresh={loadSpecies}
+          onRefresh={() => void loadSpecies()}
           ListEmptyComponent={renderEmpty}
           renderItem={({ item }) => {
             const code = statusCode(item);
             const badge = getStatusColor(code);
-            const subtitle = item.common_name || item.local_name || 'No common name recorded';
-
-            const matchedRecord = records.find(
-              (r) => r.scientificName.toLowerCase() === item.scientific_name.toLowerCase()
-            );
+            const subtitle =
+              item.common_name || item.local_name || 'No common name recorded';
 
             return (
               <TouchableOpacity
                 style={styles.speciesCard}
                 activeOpacity={0.7}
-                onPress={() => {
-                  if (matchedRecord) {
-                    router.push({ pathname: '/plant-detail', params: { id: matchedRecord.id } } as any);
-                  } else {
-                    Toast.show({
-                      type: 'info',
-                      text1: item.scientific_name,
-                      text2: 'No field specimens logged for this species yet.',
-                      position: 'bottom',
-                    });
-                  }
-                }}
+                onPress={() =>
+                  router.push({
+                    pathname: '/species-reference/[id]',
+                    params: { id: item.id },
+                  } as any)
+                }
               >
                 <View style={{ flex: 1 }}>
                   <View style={styles.nameRow}>
@@ -247,13 +274,15 @@ export default function SpeciesScreen() {
                   <Text
                     style={[
                       styles.speciesSub,
-                      !item.common_name && !item.local_name && styles.speciesSubEmpty,
+                      !item.common_name &&
+                        !item.local_name &&
+                        styles.speciesSubEmpty,
                     ]}
                   >
                     {subtitle}
                   </Text>
                 </View>
-                {matchedRecord && <Text style={styles.chevron}>›</Text>}
+                <Text style={styles.chevron}>›</Text>
               </TouchableOpacity>
             );
           }}
@@ -331,8 +360,20 @@ const styles = StyleSheet.create({
   countBanner: { fontSize: 12.5, color: '#5B6B60', fontWeight: '500' },
   clearText: { fontSize: 12.5, color: '#213B2A', fontWeight: '700' },
   centerBox: { alignItems: 'center', marginTop: 40, paddingHorizontal: 20 },
-  emptyTitle: { fontSize: 15, fontWeight: '700', color: '#1E2B22', marginBottom: 6, textAlign: 'center' },
-  emptyText: { fontSize: 13, color: '#5B6B60', textAlign: 'center', marginTop: 10, lineHeight: 18 },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1E2B22',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  emptyText: {
+    fontSize: 13,
+    color: '#5B6B60',
+    textAlign: 'center',
+    marginTop: 10,
+    lineHeight: 18,
+  },
   retryBtn: {
     marginTop: 16,
     backgroundColor: '#213B2A',
@@ -352,8 +393,18 @@ const styles = StyleSheet.create({
     borderColor: '#E6ECE8',
   },
   nameRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
-  speciesName: { fontSize: 15, fontWeight: '700', fontStyle: 'italic', color: '#1E2B22' },
-  statusBadge: { marginLeft: 8, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  speciesName: {
+    fontSize: 15,
+    fontWeight: '700',
+    fontStyle: 'italic',
+    color: '#1E2B22',
+  },
+  statusBadge: {
+    marginLeft: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
   statusText: { fontSize: 10.5, fontWeight: '800' },
   speciesSub: { fontSize: 12.5, color: '#5B6B60', marginTop: 4 },
   speciesSubEmpty: { fontStyle: 'italic', color: '#8C9A91' },

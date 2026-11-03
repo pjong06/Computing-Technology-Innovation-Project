@@ -11,22 +11,38 @@ import {
   StatusBar,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useRecordStore, SyncStatus } from '../../src/store/useRecordStore';
+import {
+  IdentificationStatus,
+  SyncStatus,
+  useRecordStore,
+} from '../../src/store/useRecordStore';
+
+type RecordFilter = 'All' | 'Needs identification' | SyncStatus;
 
 export default function RecordsScreen() {
   const router = useRouter();
   const records = useRecordStore((state) => state.records);
-  const [selectedTab, setSelectedTab] = useState<string | SyncStatus>('All');
+  const [selectedTab, setSelectedTab] = useState<RecordFilter>('All');
   const [searchQuery, setSearchQuery] = useState('');
 
   const countAll = records.length;
   const countSynced = records.filter((r) => r.syncStatus === SyncStatus.UPLOADED).length;
   const countPending = records.filter((r) => r.syncStatus === SyncStatus.NOT_UPLOADED).length;
   const countFailed = records.filter((r) => r.syncStatus === SyncStatus.FAILED).length;
+  const countNeedsIdentification = records.filter(
+    (record) => record.identificationStatus === IdentificationStatus.PENDING
+  ).length;
 
   const filtered = records.filter((r) => {
-    const matchesTab = selectedTab === 'All' ? true : r.syncStatus === selectedTab;
-    const matchesQuery = r.scientificName.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesTab =
+      selectedTab === 'All'
+        ? true
+        : selectedTab === 'Needs identification'
+          ? r.identificationStatus === IdentificationStatus.PENDING
+          : r.syncStatus === selectedTab;
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    const matchesQuery = [r.scientificName, r.commonName, r.family, r.locationName]
+      .some((value) => value?.toLowerCase().includes(normalizedQuery));
     return matchesTab && matchesQuery;
   });
 
@@ -38,6 +54,8 @@ export default function RecordsScreen() {
         return { bg: '#FDF4D8', text: '#8C5E03' };
       case SyncStatus.FAILED:
         return { bg: '#FDE2E2', text: '#9B1C1C' };
+      case SyncStatus.LOCAL_ONLY:
+        return { bg: '#E8ECE9', text: '#526158' };
     }
   };
 
@@ -57,14 +75,15 @@ export default function RecordsScreen() {
           clearButtonMode="while-editing"
         />
 
-        {/* Clean 4-tab filter bar */}
+        {/* Record workflow and upload-state filters */}
         <View style={styles.tabBar}>
-          {[
+          {([
             { label: 'All', value: 'All', count: countAll },
+            { label: 'Identify', value: 'Needs identification', count: countNeedsIdentification },
             { label: 'Synced', value: SyncStatus.UPLOADED, count: countSynced },
             { label: 'Pending', value: SyncStatus.NOT_UPLOADED, count: countPending },
             { label: 'Failed', value: SyncStatus.FAILED, count: countFailed },
-          ].map((tab) => {
+          ] as { label: string; value: RecordFilter; count: number }[]).map((tab) => {
             const isActive = selectedTab === tab.value;
             return (
               <TouchableOpacity
@@ -118,14 +137,36 @@ export default function RecordsScreen() {
                   }
                 >
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.recordSpecies}>{item.scientificName}</Text>
+                    <Text style={styles.recordSpecies}>
+                      {item.scientificName || 'Identification pending'}
+                    </Text>
                     <Text style={styles.recordMeta}>
                       {item.locationName} · {item.createdAt}
                     </Text>
                   </View>
-                  <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
-                    <Text style={[styles.statusBadgeText, { color: badge.text }]}>
-                      • {item.syncStatus}
+                  <View
+                    style={[
+                      styles.statusBadge,
+                      {
+                        backgroundColor:
+                          item.identificationStatus === IdentificationStatus.PENDING
+                            ? '#FDF4D8'
+                            : badge.bg,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.statusBadgeText,
+                        {
+                          color:
+                            item.identificationStatus === IdentificationStatus.PENDING
+                              ? '#8C5E03'
+                              : badge.text,
+                        },
+                      ]}
+                    >
+                      • {item.identificationStatus === IdentificationStatus.PENDING ? 'Identify later' : item.syncStatus}
                     </Text>
                   </View>
                 </TouchableOpacity>
