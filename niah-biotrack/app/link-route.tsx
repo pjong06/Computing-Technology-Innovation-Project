@@ -1,12 +1,17 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Platform, StatusBar } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useStaffOnly } from '../src/context/AuthRoleContext';
 import { useRecordStore } from '../src/store/useRecordStore';
 
 export default function LinkRouteScreen() {
   const router = useRouter();
+  // Botanist-only screen: guests and visitors are sent back to Home.
+  const blocked = useStaffOnly();
   const draft = useRecordStore((state) => state.activeDraftRoute);
   const clearDraft = useRecordStore((state) => state.clearActiveDraftRoute);
+
+  if (blocked) return null;
 
   return (
     <SafeAreaView style={styles.safeArea}>

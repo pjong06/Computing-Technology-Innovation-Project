@@ -58,7 +58,7 @@ async function doLogin() {
     await sb.auth.signOut();
     localStorage.removeItem(SESSION_KEY);
     if (/active staff profile required/i.test(error.message)) {
-      showAuthError('This account is not available or is not registered yet. Create an account, or contact the officer.');
+      showAuthError('This account is waiting for an officer to activate it, or has been suspended. Contact the officer.');
     } else {
       showAuthError(error.message);
     }

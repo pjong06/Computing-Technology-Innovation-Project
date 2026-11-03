@@ -6,6 +6,28 @@ drawMenu('users.html');
 
 const ROLES = ['Botanist', 'Conservation Officer'];
 
+// The real account status of each user (profiles.account_status), by user id. Accounts
+// that signed themselves up are 'pending' until the officer activates them here.
+// Officers may read every profile (RLS policy "officers read profiles").
+let profileStatus = {};
+
+async function loadProfileStatuses() {
+  const result = await sb.from('profiles').select('id, account_status');
+  if (result.error) {
+    showToast('Could not load account statuses');
+    return;
+  }
+  profileStatus = {};
+  for (let i = 0; i < result.data.length; i++) {
+    profileStatus[result.data[i].id] = result.data[i].account_status;
+  }
+}
+
+// Not active and never activated by the officer.
+function isPending(user) {
+  return !user.active && profileStatus[user.id] === 'pending';
+}
+
 // Counts the users who have the Conservation Officer role.
 function countOfficers(list) {
   let count = 0;
@@ -66,8 +88,11 @@ function makeUserRow(user, index) {
   if (user.active) {
     pill.className = 'pill';
     pill.textContent = 'Active';
-  } else {
+  } else if (isPending(user)) {
     pill.className = 'pill w';
+    pill.textContent = 'Pending approval';
+  } else {
+    pill.className = 'pill e';
     pill.textContent = 'Suspended';
   }
   const statusCell = document.createElement('td');
@@ -78,6 +103,8 @@ function makeUserRow(user, index) {
   button.className = 'btn ghost';
   if (user.active) {
     button.textContent = 'Suspend';
+  } else if (isPending(user)) {
+    button.textContent = 'Activate';
   } else {
     button.textContent = 'Reactivate';
   }
@@ -153,12 +180,30 @@ async function addUser() {
     return;
   }
 
-  // The database added the new user. Load the list again to show it.
+  // The database added the new user (pending, inactive). Load the list again, then
+  // activate the new row: the sync trigger copies that to the profile.
   reloadFromDatabase(USERS_KEY);
+  const newId = result.data && result.data.user ? result.data.user.id : null;
+  const list = getUsers();
+  let added = -1;
+  for (let i = 0; i < list.length; i++) {
+    if ((newId && list[i].id === newId) || sameText(list[i].email, email)) {
+      added = i;
+      break;
+    }
+  }
   document.getElementById('new-username').value = '';
   document.getElementById('new-email').value = '';
   document.getElementById('new-password').value = '';
-  showToast('User added');
+  if (added === -1) {
+    showToast('Account created. Activate it in the list once it appears.');
+  } else {
+    list[added].active = true;
+    if (writeStorage(USERS_KEY, list)) {
+      showToast('User added and activated');
+    }
+  }
+  await loadProfileStatuses();
   drawUsers();
 }
 
@@ -170,7 +215,10 @@ function toggleUser(index) {
     return;
   }
   list[index].active = !list[index].active;
-  writeStorage(USERS_KEY, list);
+  if (writeStorage(USERS_KEY, list)) {
+    // The sync trigger has changed the profile; show its new status.
+    profileStatus[list[index].id] = list[index].active ? 'active' : 'suspended';
+  }
   drawUsers();
 }
 
@@ -195,3 +243,4 @@ function deleteUser(index) {
 }
 
 drawUsers();
+loadProfileStatuses().then(drawUsers);

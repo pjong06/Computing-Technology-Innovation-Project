@@ -14,6 +14,7 @@ import {
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
+import FormScrollView from '../src/components/FormScrollView';
 
 import { lookupTag, describeTagLookup, type TagLookupResult } from '../src/services/tagLookup';
 
@@ -72,7 +73,7 @@ export default function ManualQRScreen() {
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <FormScrollView contentContainerStyle={styles.content}>
         {/* Search Input Card */}
         <View style={styles.card}>
           <Text style={styles.cardLabel}>Enter Botanical Tag Code</Text>
@@ -174,7 +175,7 @@ export default function ManualQRScreen() {
             <Text style={styles.resultCommon}>{describeTagLookup(lookupResult).message}</Text>
           </View>
         )}
-      </ScrollView>
+      </FormScrollView>
     </SafeAreaView>
   );
 }

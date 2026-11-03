@@ -67,3 +67,67 @@ export function describeTagLookup(result: Exclude<TagLookupResult, { status: 'on
       return { title: 'Could not look up tag', message: result.message };
   }
 }
+
+// ---- Visitors (not signed in) ----
+
+// What a visitor's scan found. Uses the public route, which only returns approved
+// plants, so a plant that exists but isn't approved yet looks the same as "not found".
+export type PublicTagLookupResult =
+  | {
+      status: 'found';
+      tagCode: string;
+      scientificName: string | null;
+      commonName: string | null;
+      localName: string | null;
+    }
+  | { status: 'not-found'; tagCode: string }
+  | { status: 'offline'; tagCode: string }
+  | { status: 'error'; tagCode: string; message: string };
+
+// GET /api/public/plants/by-qr answers { data: {...public plant fields} }.
+interface PublicPlantResponse {
+  data: { scientific_name: string | null; common_name: string | null; local_name: string | null };
+}
+
+export async function lookupPublicTag(rawTag: string): Promise<PublicTagLookupResult> {
+  const tagCode = rawTag.trim();
+  try {
+    // auth: false — visitors have no login; the route is public and rate-limited.
+    const response = await apiFetch<PublicPlantResponse>(
+      `/api/public/plants/by-qr?code=${encodeURIComponent(tagCode)}`,
+      { auth: false }
+    );
+    return {
+      status: 'found',
+      tagCode,
+      scientificName: response.data?.scientific_name || null,
+      commonName: response.data?.common_name || null,
+      localName: response.data?.local_name || null,
+    };
+  } catch (error) {
+    if (error instanceof ApiError) {
+      if (error.status === 404) return { status: 'not-found', tagCode };
+      if (error.status === 0) return { status: 'offline', tagCode };
+      return { status: 'error', tagCode, message: error.message };
+    }
+    return { status: 'error', tagCode, message: 'Could not look up this tag. Please try again.' };
+  }
+}
+
+// Heading and explanation for a visitor result that isn't a found plant.
+export function describePublicTagLookup(result: Exclude<PublicTagLookupResult, { status: 'found' }>): {
+  title: string;
+  message: string;
+} {
+  switch (result.status) {
+    case 'not-found':
+      return {
+        title: 'Tag not found',
+        message: "This plant's information isn't available yet.",
+      };
+    case 'offline':
+      return { title: 'No connection', message: 'Connect to the internet to look up this tag.' };
+    case 'error':
+      return { title: 'Could not look up tag', message: result.message };
+  }
+}
