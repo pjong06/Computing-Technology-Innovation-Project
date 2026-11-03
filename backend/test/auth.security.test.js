@@ -9,6 +9,38 @@ const PASSWORD = 'TestOnlyAa1'.repeat(2);
 const NOW = 1800000000000;
 const CONFIG = { PASSWORD_RECOVERY_ENABLED: 'true', PASSWORD_RESET_REDIRECT_URL: 'https://example.test/recovery' };
 
+test('OTP endpoint verifies recovery proof and updates only verified session', async t => {
+  const s = await setup(t);
+  const result = await s.request('/verify-and-change-password', { email:'user@example.test',code:'123456',newPassword:PASSWORD });
+  assert.equal(result.status,200);
+  assert.equal(result.body.success,true);
+  assert.deepEqual(s.calls[0],['verify',{email:'user@example.test',token:'123456',type:'recovery'}]);
+  assert.deepEqual(s.calls.map(c=>c[0]),['verify','user','update','logout']);
+});
+
+test('OTP endpoint rejects invalid/expired proof and overposted identity', async t => {
+  const s = await setup(t,{recovery:{data:{user:null,session:null},error:{code:'otp_expired'}}});
+  assert.equal((await s.request('/verify-and-change-password',{email:'user@example.test',code:'123456',newPassword:PASSWORD})).status,401);
+  assert.equal((await s.request('/verify-and-change-password',{email:'user@example.test',code:'abc',newPassword:PASSWORD})).status,401);
+  assert.equal((await s.request('/verify-and-change-password',{email:'user@example.test',code:'123456',newPassword:PASSWORD,user_id:ID})).status,400);
+  assert.ok(!s.calls.some(c=>c[0]==='update'));
+});
+
+test('staff OTP adapters preserve identifier without exposing resolved email', async t => {
+  const s=await setup(t,{staffEmail:'user@example.test'});
+  const sent=await s.request('/send-reset-code',{identifier:'STAFF-001'});
+  assert.equal(sent.status,202); assert.equal(sent.body.email,'STAFF-001');
+  assert.doesNotMatch(JSON.stringify(sent.body),/user@example/);
+  assert.equal((await s.request('/verify-and-change-password',{email:sent.body.email,code:'123456',newPassword:PASSWORD})).status,200);
+});
+
+test('new OTP mail endpoint keeps unknown staff generic and throttles', async t => {
+  const s=await setup(t);
+  for(let i=0;i<3;i++)assert.equal((await s.request('/send-reset-code',{identifier:'UNKNOWN-1'})).status,202);
+  assert.equal((await s.request('/send-reset-code',{identifier:'UNKNOWN-1'})).status,429);
+  assert.equal(s.created(),0);
+});
+
 async function setup(t, options = {}) {
   const calls = [];
   const client = { auth: {
@@ -29,6 +61,7 @@ async function setup(t, options = {}) {
   app.disable('x-powered-by');
   app.use(express.json());
   app.use('/api/auth', createAuthRouter({ createRecoveryClient: () => { created++; return client; },
+    resolveStaffEmail: async () => options.staffEmail || null,
     now: () => NOW, config: options.config || CONFIG }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
