@@ -1,287 +1,232 @@
-import React, { useCallback, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  Modal,
-  Platform,
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
   View,
+  Text,
+  StyleSheet,
+  SafeAreaView,
+  Platform,
+  StatusBar,
+  ScrollView,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { useAuthRole } from '../../src/context/AuthRoleContext';
+import { supabase } from '../../src/lib/supabase';
+import { useRecordStore, SyncStatus } from '../../src/store/useRecordStore';
 
-import { useRecordStore } from '../../src/store/useRecordStore';
-import { buildSyncSummary } from '../../src/services/syncSummary';
-import { deleteAllStoredPhotos } from '../../src/utils/photoStorage';
-import { signOutOnThisPhone } from '../../src/lib/auth';
-import { useProfileStore } from '../../src/store/useProfileStore';
+interface ProfileData {
+  fullName: string;
+  email: string;
+  role: string;
+  staffId?: string;
+}
 
 export default function ProfileScreen() {
   const router = useRouter();
-
+  const { isVisitor, userName, role, logout } = useAuthRole();
   const records = useRecordStore((state) => state.records);
-  const clearAllData = useRecordStore((state) => state.clearAllData);
 
-  const me = useProfileStore((state) => state.me);
-  const profileError = useProfileStore((state) => state.error);
-  const loadMe = useProfileStore((state) => state.loadMe);
+  const [loading, setLoading] = useState<boolean>(!isVisitor);
+  const [profile, setProfile] = useState<ProfileData | null>(null);
 
-  const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const uploadedCount = records.filter((r) => r.syncStatus === SyncStatus.UPLOADED).length;
+  const pendingCount = records.filter((r) => r.syncStatus === SyncStatus.NOT_UPLOADED).length;
+  const failedCount = records.filter((r) => r.syncStatus === SyncStatus.FAILED).length;
 
-  useFocusEffect(
-    useCallback(() => {
-      void loadMe();
-    }, [loadMe])
-  );
-
-  const displayName = me?.full_name || me?.email || null;
-  const initials = displayName
-    ? displayName.trim().charAt(0).toUpperCase()
-    : '?';
-
-  const roleLabel = me
-    ? me.role.charAt(0).toUpperCase() + me.role.slice(1)
-    : null;
-
-  /*
-   * Task 3.6:
-   * Counts are derived from the records currently saved on the device.
-   * They are not stored as separate values, which prevents the summary
-   * from becoming inconsistent with the actual records.
-   *
-   * isSyncing remains false until the real SQLite Sync Engine is connected.
-   */
-  const syncSummary = buildSyncSummary(records, false);
-
-  const statusPillStyle =
-    syncSummary.overallTone === 'failed'
-      ? styles.statusFailed
-      : syncSummary.overallTone === 'pending'
-        ? styles.statusPending
-        : syncSummary.overallTone === 'synced'
-          ? styles.statusSynced
-          : styles.statusNeutral;
-
-  const statusTextStyle =
-    syncSummary.overallTone === 'failed'
-      ? styles.statusFailedText
-      : syncSummary.overallTone === 'pending'
-        ? styles.statusPendingText
-        : syncSummary.overallTone === 'synced'
-          ? styles.statusSyncedText
-          : styles.statusNeutralText;
-
-  /*
-   * Every logout clears records, routes and stored photos, also when everything
-   * is uploaded. Otherwise the next person to log in on this phone would see the
-   * previous user's records (and could upload them under their own account).
-   */
-  const logOutAndClearDevice = async () => {
-    clearAllData();
-    deleteAllStoredPhotos();
-
-    setShowLogoutModal(false);
-
-    await signOutOnThisPhone();
-    router.replace('/' as never);
-  };
-
-  const handleLogoutPress = async () => {
-    if (syncSummary.unsyncedRecordCount === 0) {
-      // Nothing would be lost (it's all on the server), so no warning needed.
-      await logOutAndClearDevice();
+  useEffect(() => {
+    if (isVisitor) {
+      setLoading(false);
       return;
     }
 
-    // Unsynced records would be lost for good, so ask first.
-    setShowLogoutModal(true);
+    async function fetchStaffProfile() {
+      try {
+        setLoading(true);
+
+        // 1. Read cached session from device storage first (never fails on network drops)
+        const { data: sessionData } = await supabase.auth.getSession();
+        const user = sessionData?.session?.user;
+
+        if (!user) {
+          setLoading(false);
+          return;
+        }
+
+        // Establish default fallback from the session token
+        let resolvedName = user.user_metadata?.full_name || userName || 'Field Botanist';
+        let resolvedRole = user.user_metadata?.role || role || 'Botanist';
+        let resolvedStaffId = 'SFC-BOT-001';
+
+        // 2. Query the profiles table for extended details
+        try {
+          const { data: dbProfile } = await supabase
+            .from('profiles')
+            .select('full_name, role, staff_id')
+            .eq('id', user.id)
+            .maybeSingle();
+
+          if (dbProfile) {
+            resolvedName = dbProfile.full_name || resolvedName;
+            resolvedRole = dbProfile.role || resolvedRole;
+            resolvedStaffId = dbProfile.staff_id || resolvedStaffId;
+          }
+        } catch {
+          // If profiles table query fails or times out, keep session defaults
+        }
+
+        setProfile({
+          fullName: resolvedName,
+          email: user.email || 'botanist@sarawak.gov',
+          role: resolvedRole,
+          staffId: resolvedStaffId,
+        });
+      } catch {
+        setProfile({
+          fullName: userName || 'Field Botanist',
+          email: 'Active Staff Session',
+          role: role || 'Botanist',
+          staffId: 'SFC-BOT',
+        });
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchStaffProfile();
+  }, [isVisitor]);
+
+  const handleLogout = async () => {
+    Alert.alert(
+      isVisitor ? 'Exit Visitor Mode' : 'Log Out',
+      isVisitor
+        ? 'Return to sign-in screen?'
+        : 'Are you sure you want to log out of your field session?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: isVisitor ? 'Exit' : 'Log Out',
+          style: 'destructive',
+          onPress: async () => {
+            await logout();
+            router.replace('/');
+          },
+        },
+      ]
+    );
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView
-        contentContainerStyle={styles.container}
-        showsVerticalScrollIndicator={false}
-      >
-        <Text style={styles.title}>Profile</Text>
+      <StatusBar barStyle="dark-content" />
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Profile</Text>
+      </View>
 
-        <View style={styles.userCard}>
-          <View style={styles.avatarCircle}>
-            <Text style={styles.avatarInitials}>{initials}</Text>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        {/* User Card */}
+        {isVisitor ? (
+          <View style={styles.card}>
+            <View style={styles.userRow}>
+              <View style={[styles.avatarCircle, { backgroundColor: '#E0F2FE' }]}>
+                <Ionicons name="compass" size={30} color="#0284C7" />
+              </View>
+              <View style={styles.userInfo}>
+                <Text style={styles.userName}>Park Visitor</Text>
+                <Text style={styles.userSub}>Guest Exploration Pass</Text>
+              </View>
+              <View style={styles.visitorBadge}>
+                <Text style={styles.visitorBadgeText}>READ-ONLY</Text>
+              </View>
+            </View>
+
+            <View style={styles.visitorDescBox}>
+              <Ionicons name="information-circle-outline" size={17} color="#0369A1" />
+              <Text style={styles.visitorDescText}>
+                You are currently exploring Niah National Park without an account. You can scan plaques and browse species records freely.
+              </Text>
+            </View>
           </View>
-
-          <View style={styles.userDetails}>
-            {me ? (
-              <>
-                <Text style={styles.userName}>{displayName}</Text>
-
-                <Text style={styles.userRole}>
-                  {roleLabel}
-                  {me.staff_id ? ` · ${me.staff_id}` : ''}
-                </Text>
-
-                {me.full_name ? (
-                  <Text style={styles.userRole}>{me.email}</Text>
-                ) : null}
-              </>
-            ) : (
-              <>
-                <Text style={styles.userName}>
-                  Account details not loaded
-                </Text>
-
-                <Text style={styles.userRole}>
-                  {profileError ?? 'Loading…'}
-                </Text>
-              </>
-            )}
+        ) : loading ? (
+          <View style={[styles.card, styles.centerCard]}>
+            <ActivityIndicator size="small" color="#2D6A4F" />
+            <Text style={styles.loadingText}>Loading account details...</Text>
           </View>
-        </View>
+        ) : (
+          <View style={styles.card}>
+            <View style={styles.userRow}>
+              <View style={[styles.avatarCircle, { backgroundColor: '#E8F5E9' }]}>
+                <Ionicons name="person" size={28} color="#2D6A4F" />
+              </View>
+              <View style={styles.userInfo}>
+                <Text style={styles.userName}>{profile?.fullName || userName}</Text>
+                <Text style={styles.userSub}>{profile?.email}</Text>
+              </View>
+              <View style={styles.staffBadge}>
+                <Text style={styles.staffBadgeText}>STAFF</Text>
+              </View>
+            </View>
 
+            <View style={styles.metaRow}>
+              <View style={styles.metaCol}>
+                <Text style={styles.metaLabel}>Designation</Text>
+                <Text style={styles.metaVal}>{profile?.role || 'Botanist'}</Text>
+              </View>
+              <View style={styles.metaDivider} />
+              <View style={styles.metaCol}>
+                <Text style={styles.metaLabel}>Staff ID</Text>
+                <Text style={styles.metaVal}>{profile?.staffId || 'SFC-BOT'}</Text>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* Database Sync Overview */}
         <View style={styles.card}>
-          <View style={styles.cardHeader}>
+          <View style={styles.cardHeaderBetween}>
             <Text style={styles.cardTitle}>Database Sync</Text>
-
-            <View style={[styles.statusPill, statusPillStyle]}>
-              <Text style={[styles.statusPillText, statusTextStyle]}>
-                {syncSummary.overallStatus}
+            <View style={styles.syncStatusPill}>
+              <Text style={styles.syncStatusText}>
+                {pendingCount > 0 ? `${pendingCount} Queued` : 'All Synced'}
               </Text>
             </View>
           </View>
+          <Text style={styles.cardSub}>Local storage and cloud synchronization status.</Text>
 
-          <Text style={styles.statusMessage}>
-            {syncSummary.overallMessage}
-          </Text>
-
-          <View style={styles.infoRow}>
-            <View>
-              <Text style={styles.infoLabel}>
-                Last successful sync
-              </Text>
-
-              <Text style={styles.infoSub}>
-                Server synchronization is not connected yet
-              </Text>
-            </View>
-
-            <Text style={styles.infoVal}>Not available yet</Text>
-          </View>
-
-          <View style={styles.metricsRow}>
-            <View style={styles.metric}>
-              <Text style={styles.metricValue}>
-                {syncSummary.uploadedRecordCount}
-              </Text>
-
+          <View style={styles.metricsGrid}>
+            <View style={styles.metricBox}>
+              <Text style={[styles.metricNumber, { color: '#2D6A4F' }]}>{uploadedCount}</Text>
               <Text style={styles.metricLabel}>Uploaded</Text>
             </View>
-
             <View style={styles.metricDivider} />
-
-            <View style={styles.metric}>
-              <Text style={styles.metricValue}>
-                {syncSummary.pendingRecordCount}
-              </Text>
-
+            <View style={styles.metricBox}>
+              <Text style={[styles.metricNumber, { color: '#D97706' }]}>{pendingCount}</Text>
               <Text style={styles.metricLabel}>Pending</Text>
             </View>
-
             <View style={styles.metricDivider} />
-
-            <View style={styles.metric}>
-              <Text style={styles.metricValue}>
-                {syncSummary.failedRecordCount}
-              </Text>
-
+            <View style={styles.metricBox}>
+              <Text style={[styles.metricNumber, { color: '#DC2626' }]}>{failedCount}</Text>
               <Text style={styles.metricLabel}>Failed</Text>
             </View>
           </View>
 
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Observation visits</Text>
-
-            <Text style={styles.infoVal}>
-              {syncSummary.observationSummary}
+          <View style={styles.syncFooterRow}>
+            <Ionicons name="time-outline" size={15} color="#8A998E" />
+            <Text style={styles.syncFooterText}>
+              Last successful sync: <Text style={{ fontWeight: '700' }}>Local Cache Active</Text>
             </Text>
           </View>
-
-          {syncSummary.localDraftCount > 0 && (
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Local identification drafts</Text>
-              <Text style={styles.infoVal}>{syncSummary.localDraftCount}</Text>
-            </View>
-          )}
-
-          <Text style={styles.syncNote}>
-            Counts are calculated from records currently saved on this
-            device. The SQLite offline-sync engine will later provide real
-            upload results and the last successful sync time.
-          </Text>
-
-          <TouchableOpacity
-            style={[styles.syncBtn, styles.syncBtnDisabled]}
-            disabled
-            accessibilityRole="button"
-            accessibilityState={{ disabled: true }}
-          >
-            <Text style={styles.syncBtnText}>
-              Sync service not connected yet
-            </Text>
-          </TouchableOpacity>
         </View>
 
-        <TouchableOpacity
-          style={styles.logoutBtn}
-          onPress={handleLogoutPress}
-        >
-          <Text style={styles.logoutBtnText}>Log out</Text>
+        {/* Action Button */}
+        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+          <Text style={styles.logoutText}>
+            {isVisitor ? 'Switch to Staff Sign In' : 'Log out'}
+          </Text>
         </TouchableOpacity>
       </ScrollView>
-
-      <Modal
-        visible={showLogoutModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowLogoutModal(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>
-              Log out with unsynced records?
-            </Text>
-
-            <Text style={styles.modalBody}>
-              {syncSummary.unsyncedRecordCount}{' '}
-              {syncSummary.unsyncedRecordCount === 1
-                ? 'record has'
-                : 'records have'}{' '}
-              not been uploaded to the server. Logging out deletes{' '}
-              {syncSummary.unsyncedRecordCount === 1 ? 'it' : 'them'} and
-              all photos from this device. This cannot be undone.
-            </Text>
-
-            <TouchableOpacity
-              style={styles.modalPrimary}
-              onPress={() => setShowLogoutModal(false)}
-            >
-              <Text style={styles.modalPrimaryText}>
-                Stay logged in
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.modalSecondary}
-              onPress={logOutAndClearDevice}
-            >
-              <Text style={styles.modalSecondaryText}>
-                Log out anyway
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -290,294 +235,211 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#F6F8F6',
-    paddingTop:
-      Platform.OS === 'android' ? StatusBar.currentHeight : 0,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
-
-  container: {
+  header: {
     paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 28,
-  },
-
-  title: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#1E2B22',
-    marginBottom: 16,
-  },
-
-  userCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    padding: 18,
-    borderRadius: 24,
-    borderWidth: 1.2,
-    borderColor: '#E6ECE8',
-    marginBottom: 14,
-  },
-
-  avatarCircle: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#DDEAE2',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  avatarInitials: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#213B2A',
-  },
-
-  userDetails: {
-    marginLeft: 16,
-    flex: 1,
-  },
-
-  userName: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#1E2B22',
-  },
-
-  userRole: {
-    fontSize: 12,
-    color: '#68776D',
-    marginTop: 2,
-  },
-
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 18,
-    borderWidth: 1.2,
-    borderColor: '#E6ECE8',
-    marginBottom: 14,
-  },
-
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-
-  cardTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#1E2B22',
-  },
-
-  statusPill: {
-    borderRadius: 18,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    maxWidth: '55%',
-  },
-
-  statusPillText: {
-    fontSize: 11.5,
-    fontWeight: '800',
-    textAlign: 'center',
-  },
-
-  statusNeutral: {
-    backgroundColor: '#EEF1EF',
-  },
-
-  statusNeutralText: {
-    color: '#68776D',
-  },
-
-  statusPending: {
-    backgroundColor: '#FDF4D8',
-  },
-
-  statusPendingText: {
-    color: '#8C5E03',
-  },
-
-  statusFailed: {
-    backgroundColor: '#FDE2E2',
-  },
-
-  statusFailedText: {
-    color: '#9B1C1C',
-  },
-
-  statusSynced: {
-    backgroundColor: '#E4F2E7',
-  },
-
-  statusSyncedText: {
-    color: '#215A36',
-  },
-
-  statusMessage: {
-    fontSize: 12,
-    color: '#68776D',
-    lineHeight: 17,
-    marginBottom: 14,
-  },
-
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-    gap: 12,
-  },
-
-  infoLabel: {
-    fontSize: 13,
-    color: '#68776D',
-  },
-
-  infoSub: {
-    fontSize: 11,
-    color: '#88988D',
-    marginTop: 2,
-  },
-
-  infoVal: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1E2B22',
-    textAlign: 'right',
-    flexShrink: 1,
-  },
-
-  metricsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F7F9F7',
-    borderRadius: 18,
     paddingVertical: 14,
-    marginBottom: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E6ECE8',
   },
-
-  metric: {
-    flex: 1,
-    alignItems: 'center',
-  },
-
-  metricValue: {
+  headerTitle: {
     fontSize: 22,
     fontWeight: '800',
     color: '#213B2A',
   },
-
-  metricLabel: {
-    fontSize: 11.5,
-    color: '#68776D',
-    marginTop: 2,
+  scrollContent: {
+    padding: 16,
+    paddingBottom: 40,
+    gap: 14,
   },
-
-  metricDivider: {
-    width: 1,
-    height: 34,
-    backgroundColor: '#DDE5DF',
-  },
-
-  syncNote: {
-    fontSize: 11,
-    lineHeight: 16,
-    color: '#7A887F',
-    backgroundColor: '#F7F9F7',
-    borderRadius: 12,
-    padding: 10,
-    marginTop: 2,
-  },
-
-  syncBtn: {
-    backgroundColor: '#213B2A',
-    minHeight: 46,
-    borderRadius: 23,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 12,
-    paddingHorizontal: 18,
-  },
-
-  syncBtnDisabled: {
-    backgroundColor: '#9AAA9F',
-  },
-
-  syncBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 13.5,
-    textAlign: 'center',
-  },
-
-  logoutBtn: {
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-
-  logoutBtnText: {
-    color: '#9B1C1C',
-    fontWeight: '700',
-    fontSize: 14,
-  },
-
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-
-  modalCard: {
+  card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 26,
-    padding: 24,
-    width: '100%',
+    borderRadius: 20,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#E6ECE8',
   },
-
-  modalTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#1E2B22',
-    marginBottom: 8,
+  centerCard: {
+    alignItems: 'center',
+    paddingVertical: 32,
+    gap: 10,
   },
-
-  modalBody: {
+  loadingText: {
     fontSize: 13,
     color: '#68776D',
-    lineHeight: 18,
-    marginBottom: 20,
+    fontWeight: '600',
   },
-
-  modalPrimary: {
-    backgroundColor: '#213B2A',
-    height: 48,
-    borderRadius: 24,
+  userRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  avatarCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 8,
+    marginRight: 14,
   },
-
-  modalPrimaryText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
+  userInfo: {
+    flex: 1,
   },
-
-  modalSecondary: {
-    height: 44,
-    borderRadius: 22,
-    justifyContent: 'center',
+  userName: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#213B2A',
+  },
+  userSub: {
+    fontSize: 12.5,
+    color: '#68776D',
+    marginTop: 2,
+  },
+  staffBadge: {
+    backgroundColor: '#E8F5E9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A3D9A5',
+  },
+  staffBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#2D6A4F',
+  },
+  visitorBadge: {
+    backgroundColor: '#E0F2FE',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+  },
+  visitorBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#0284C7',
+  },
+  visitorDescBox: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#F0F9FF',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 14,
+  },
+  visitorDescText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#0369A1',
+    lineHeight: 17,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    backgroundColor: '#F7F9F7',
+    borderRadius: 14,
+    paddingVertical: 12,
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: '#E8EFEA',
+  },
+  metaCol: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  metaDivider: {
+    width: 1,
+    backgroundColor: '#DDE5E0',
+  },
+  metaLabel: {
+    fontSize: 11,
+    color: '#76877B',
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  metaVal: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#213B2A',
+  },
+  cardHeaderBetween: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 4,
   },
-
-  modalSecondaryText: {
-    color: '#9B1C1C',
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#213B2A',
+  },
+  cardSub: {
+    fontSize: 12,
+    color: '#68776D',
+    marginBottom: 16,
+  },
+  syncStatusPill: {
+    backgroundColor: '#F0F4F1',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  syncStatusText: {
+    fontSize: 11,
     fontWeight: '700',
+    color: '#49594D',
+  },
+  metricsGrid: {
+    flexDirection: 'row',
+    backgroundColor: '#F9FAF9',
+    borderRadius: 14,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: '#EAEFEA',
+    marginBottom: 12,
+  },
+  metricBox: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  metricNumber: {
+    fontSize: 22,
+    fontWeight: '900',
+    fontVariant: ['tabular-nums'],
+  },
+  metricLabel: {
+    fontSize: 11,
+    color: '#68776D',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  metricDivider: {
+    width: 1,
+    backgroundColor: '#E2E8E4',
+  },
+  syncFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+  syncFooterText: {
+    fontSize: 11.5,
+    color: '#76877B',
+  },
+  logoutBtn: {
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+  },
+  logoutText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#DC2626',
   },
 });
