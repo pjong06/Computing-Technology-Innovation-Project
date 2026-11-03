@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -14,7 +14,6 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import * as Location from 'expo-location';
 import Toast from 'react-native-toast-message';
 import { useRecordStore, type HealthStatus, type LifeStage } from '../src/store/useRecordStore';
 import { useProfileStore } from '../src/store/useProfileStore';
@@ -36,16 +35,12 @@ export default function AddObservationScreen() {
 
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [isLocating, setIsLocating] = useState<boolean>(false);
 
   const records = useRecordStore((state) => state.records);
   const addObservation = useRecordStore((state) => state.addObservation);
   const me = useProfileStore((state) => state.me);
 
   const [plantTag, setPlantTag] = useState<string>(params.tagCode || '');
-  const [latitude, setLatitude] = useState<number | null>(null);
-  const [longitude, setLongitude] = useState<number | null>(null);
-  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
 
   // Start empty: the botanist types the real measurements (no made-up defaults).
   const [heightCm, setHeightCm] = useState<string>('');
@@ -65,42 +60,6 @@ export default function AddObservationScreen() {
 
   const [photos, setPhotos] = useState<string[]>([]);
   const [notes, setNotes] = useState<string>('');
-
-  useEffect(() => {
-    fetchCurrentLocation();
-  }, []);
-
-  const fetchCurrentLocation = async () => {
-    setIsLocating(true);
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        Toast.show({
-          type: 'error',
-          text1: 'GPS Permission Denied',
-          text2: 'Enable location services to register field coordinates.',
-        });
-        setIsLocating(false);
-        return;
-      }
-
-      const loc = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Highest,
-      });
-
-      setLatitude(Number(loc.coords.latitude.toFixed(6)));
-      setLongitude(Number(loc.coords.longitude.toFixed(6)));
-      setGpsAccuracy(Math.round(loc.coords.accuracy || 0));
-    } catch (err: any) {
-      Toast.show({
-        type: 'error',
-        text1: 'GPS Fix Failed',
-        text2: err.message || 'Unable to retrieve location.',
-      });
-    } finally {
-      setIsLocating(false);
-    }
-  };
 
   const adjustValue = (
     setter: React.Dispatch<React.SetStateAction<string>>,
@@ -259,14 +218,14 @@ export default function AddObservationScreen() {
                 step === currentStep && styles.stepTrackLabelActive,
               ]}
             >
-              {step === 1 ? 'Location' : step === 2 ? 'Metrics' : 'Evidence'}
+              {step === 1 ? 'Plant' : step === 2 ? 'Metrics' : 'Evidence'}
             </Text>
           </View>
         ))}
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-        {/* STEP 1: Identification & GPS */}
+        {/* STEP 1: Plant identification */}
         {currentStep === 1 && (
           <View style={styles.stepContent}>
             <View style={styles.card}>
@@ -292,45 +251,8 @@ export default function AddObservationScreen() {
                 </View>
               ) : null}
             </View>
-
-            <View style={styles.card}>
-              <View style={styles.cardHeaderBetween}>
-                <View style={styles.cardHeader}>
-                  <Text style={styles.cardIcon}>📍</Text>
-                  <Text style={styles.cardTitle}>GPS Position</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.refreshLocBtn}
-                  onPress={fetchCurrentLocation}
-                  disabled={isLocating}
-                >
-                  {isLocating ? (
-                    <ActivityIndicator size="small" color="#2D6A4F" />
-                  ) : (
-                    <Text style={styles.refreshLocText}>🔄 Refresh</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.geoGrid}>
-                <View style={styles.geoCol}>
-                  <Text style={styles.geoLabel}>Latitude</Text>
-                  <Text style={styles.geoVal}>{latitude !== null ? `${latitude}°` : 'Acquiring...'}</Text>
-                </View>
-                <View style={styles.geoDivider} />
-                <View style={styles.geoCol}>
-                  <Text style={styles.geoLabel}>Longitude</Text>
-                  <Text style={styles.geoVal}>{longitude !== null ? `${longitude}°` : 'Acquiring...'}</Text>
-                </View>
-              </View>
-
-              <View style={styles.accuracyPill}>
-                <Text style={styles.accuracyText}>
-                  {gpsAccuracy !== null && gpsAccuracy <= 10 ? '🟢 ' : '🟠 '}
-                  {gpsAccuracy !== null ? `Estimated Accuracy: ±${gpsAccuracy}m` : 'Calculating accuracy...'}
-                </Text>
-              </View>
-            </View>
+            {/* No GPS card: a visit's position isn't stored (the backend has no field for
+                it); the plant's own coordinates come from New Record. */}
           </View>
         )}
 
@@ -709,53 +631,6 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     fontWeight: '700',
     color: '#2D6A4F',
-  },
-  refreshLocBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    backgroundColor: '#EAF3EC',
-    borderRadius: 12,
-  },
-  refreshLocText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#2D6A4F',
-  },
-  geoGrid: {
-    flexDirection: 'row',
-    backgroundColor: '#F7F9F7',
-    borderRadius: 12,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: '#E8EFEA',
-  },
-  geoCol: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  geoDivider: {
-    width: 1,
-    backgroundColor: '#DDE5E0',
-  },
-  geoLabel: {
-    fontSize: 11,
-    color: '#76877B',
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  geoVal: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#213B2A',
-  },
-  accuracyPill: {
-    marginTop: 10,
-    alignSelf: 'center',
-  },
-  accuracyText: {
-    fontSize: 12,
-    color: '#5C6E61',
-    fontWeight: '600',
   },
   stepperRow: {
     flexDirection: 'row',
