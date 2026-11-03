@@ -1,22 +1,13 @@
 // rejected.js - the Rejected observations page.
-// It collects every observation rejected in the Observation approval queue,
-// so an officer can send a wrongly rejected one back for evaluation.
+// Shows the field observations an officer sent back (real data, from
+// GET /api/officer/reviews/rejected), with the reason given. It is read-only: the
+// botanist fixes the observation and resubmits it from the mobile app, and it then
+// returns to the Observation approval queue.
 
 drawMenu('rejected.html');
 
+let rejected = [];
 let selectedId = null;
-
-// Returns only the observations that were rejected.
-function getRejected() {
-  const all = getObservations();
-  const rejected = [];
-  for (let i = 0; i < all.length; i++) {
-    if (all[i].state === 'Rejected') {
-      rejected.push(all[i]);
-    }
-  }
-  return rejected;
-}
 
 // Returns the observation with this id from the list, or null if there is none.
 function findObservation(list, id) {
@@ -28,17 +19,20 @@ function findObservation(list, id) {
   return null;
 }
 
-// Returns the photo of an observation.
-// If it has none, the photo of the same species in the catalogue is used, or the blank picture.
-function observationPhoto(observation) {
-  if (observation.photo) {
-    return observation.photo;
+// The name to show: the plant's scientific name, or a plain fallback.
+function observationName(observation) {
+  if (observation.plant && observation.plant.scientific_name) {
+    return observation.plant.scientific_name;
   }
-  const species = findByScientificName(getSpecies(), observation.sci);
-  if (species !== null) {
-    return species.photo;
+  return 'Species not recorded';
+}
+
+// "2 Nov 2026, 11:00 AM" for an ISO date, or '' when there is none.
+function visitTime(iso) {
+  if (!iso) {
+    return '';
   }
-  return PICTURE_BLANK;
+  return whenText(new Date(iso));
 }
 
 // Adds a bold title with a line of text under it to the card.
@@ -67,12 +61,12 @@ function makeListCard(observation) {
   const bold = document.createElement('b');
   const name = document.createElement('i');
   name.className = 'sci';
-  name.textContent = observation.sci;
+  name.textContent = observationName(observation);
   bold.appendChild(name);
 
   const small = document.createElement('span');
   small.className = 'muted';
-  small.textContent = observation.by + ' · ' + observation.when;
+  small.textContent = (observation.observer_name || 'Botanist') + ' · ' + visitTime(observation.observed_at);
 
   const text = document.createElement('div');
   text.appendChild(bold);
@@ -80,14 +74,13 @@ function makeListCard(observation) {
 
   const row = document.createElement('div');
   row.className = 'sp';
-  row.appendChild(makeThumb(observationPhoto(observation), observation.sci, 'md'));
+  row.appendChild(makeThumb(PICTURE_BLANK, observationName(observation), 'md'));
   row.appendChild(text);
   card.appendChild(row);
-
   return card;
 }
 
-// Makes the big card on the right with the photo, the details, the reject reason and the Evaluate again button.
+// Makes the big card on the right with the details and the reason.
 function makeDetailCard(observation) {
   const card = document.createElement('div');
   card.className = 'card detail';
@@ -96,59 +89,33 @@ function makeDetailCard(observation) {
   title.style.marginTop = '0';
   const name = document.createElement('i');
   name.className = 'sci';
-  name.textContent = observation.sci;
+  name.textContent = observationName(observation);
   title.appendChild(name);
   card.appendChild(title);
 
+  const plant = observation.plant || {};
   const record = document.createElement('p');
   record.className = 'muted';
-  record.textContent = 'Record ' + observation.id;
+  record.textContent = plant.tag_code ? 'Tag ' + plant.tag_code : 'No tag attached';
   card.appendChild(record);
 
-  const picture = document.createElement('img');
-  picture.className = 'obs-photo';
-  picture.src = observationPhoto(observation);
-  picture.alt = 'Photo of ' + observation.sci;
-  card.appendChild(picture);
-
-  const status = document.createElement('p');
-  const pill = document.createElement('span');
-  pill.className = 'pill e';
-  pill.textContent = 'Rejected';
-  status.appendChild(pill);
-  card.appendChild(status);
-
-  addInfo(card, 'Reason for rejection', observation.reason || 'No reason saved');
-
-  if (observation.com) {
-    addInfo(card, 'Common name', observation.com);
+  addInfo(card, 'Reason for rejection', observation.rejection_comment || 'No reason recorded');
+  if (observation.rejected_at) {
+    addInfo(card, 'Rejected on', visitTime(observation.rejected_at));
   }
-  if (observation.fam) {
-    addInfo(card, 'Family', observation.fam);
+  if (plant.common_name) {
+    addInfo(card, 'Common name', plant.common_name);
   }
-  addInfo(card, 'Location', observation.loc + ' · ' + prettyGps(observation.gps));
-  addInfo(card, 'Recorded by', observation.by + ', ' + observation.when);
-  addInfo(card, 'Notes', observation.notes);
-
-  const againButton = document.createElement('button');
-  againButton.className = 'btn';
-  againButton.textContent = 'Evaluate again';
-  againButton.onclick = function () {
-    evaluateAgain(observation.id);
-  };
-
-  const buttons = document.createElement('div');
-  buttons.className = 'acts';
-  buttons.appendChild(againButton);
-  card.appendChild(buttons);
+  addInfo(card, 'Location', plant.location_description || 'Not recorded');
+  addInfo(card, 'Recorded by', (observation.observer_name || 'Botanist') + ', ' + visitTime(observation.observed_at));
+  addInfo(card, 'Notes', observation.notes || 'No notes');
+  addInfo(card, 'What happens next', 'The botanist needs to fix the observation and submit it again. It then comes back to the Observation approval queue.');
 
   return card;
 }
 
 // Draws the whole page: the count, the list on the left and the details on the right.
 function drawRejected() {
-  const rejected = getRejected();
-
   if (rejected.length === 0) {
     document.getElementById('rejected-area').hidden = true;
     document.getElementById('rejected-empty').hidden = false;
@@ -163,7 +130,7 @@ function drawRejected() {
     word = 'observation';
   }
   document.getElementById('rejected-count').textContent =
-    rejected.length + ' rejected ' + word + '. Rejected by mistake? Send it back for evaluation.';
+    rejected.length + ' rejected ' + word + ', waiting for the botanist to fix and resubmit.';
 
   let selected = findObservation(rejected, selectedId);
   if (selected === null) {
@@ -182,22 +149,20 @@ function drawRejected() {
   detailBox.appendChild(makeDetailCard(selected));
 }
 
-// Sends a rejected observation back to the Observation approval queue as "Pending".
-// The old reject reason is cleared. The catalogue is not changed, because a rejected observation never touched it.
-function evaluateAgain(id) {
-  const observations = getObservations();
-  const observation = findObservation(observations, id);
-  if (observation === null) {
+// Loads the rejected observations from the backend.
+async function loadRejected() {
+  document.getElementById('rejected-count').textContent = 'Loading rejected observations...';
+  try {
+    const result = await api('/officer/reviews/rejected');
+    rejected = result.data || [];
+  } catch (error) {
+    rejected = [];
+    document.getElementById('rejected-area').hidden = true;
+    document.getElementById('rejected-empty').hidden = true;
+    document.getElementById('rejected-count').textContent = 'Could not load rejected observations: ' + error.message;
     return;
   }
-
-  observation.state = 'Pending';
-  observation.reason = '';
-  writeStorage(OBSERVATIONS_KEY, observations);
-
-  selectedId = null;
-  showToast('Sent back to the Observation approval queue');
   drawRejected();
 }
 
-drawRejected();
+loadRejected();
