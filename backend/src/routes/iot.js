@@ -25,6 +25,15 @@ router.get('/readings/history', async (req, res) => {
         temperature_c,
         humidity_percent,
         movement_detected,
+        soil_raw,
+        soil_moisture_pct,
+        distance_cm,
+        distance_valid,
+        rain_raw,
+        rain_intensity_pct,
+        dht_valid,
+        sequence,
+        uptime_ms,
         vibration_level,
         battery_percent
       `)

@@ -39,6 +39,13 @@ test('HTTP auth/validation/station boundary, persistence mapping and sanitized e
     assert.equal((await response.json()).reading_id,'reading-uuid');
     assert.equal(inserts[0].station_id,'station-uuid'); assert.equal(inserts[0].temperature_c,40);
     assert.equal(inserts[0].humidity_percent,70); assert.equal(inserts[0].movement_detected,false);
+    for (const key of ['soil_raw','soil_moisture_pct','distance_cm','distance_valid',
+      'rain_raw','rain_intensity_pct','dht_valid','sequence','uptime_ms']) {
+      assert.equal(inserts[0][key],payload[key]);
+    }
+    assert.equal((await send({...payload,dht_valid:false,distance_valid:false})).status,201);
+    assert.equal(inserts[1].temperature_c,null); assert.equal(inserts[1].humidity_percent,null);
+    assert.equal(inserts[1].distance_cm,null); assert.equal(inserts[1].distance_valid,false);
     mode='error'; const error=await send(payload); assert.equal(error.status,503);
     assert.doesNotMatch(await error.text(),/sensitive/);
     mode='ok';
