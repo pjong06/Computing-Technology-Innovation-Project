@@ -12,9 +12,8 @@ import {
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-
-
 import { API_BASE_URL } from '../../src/config/api';
+import { useAuthRole } from '../../src/context/AuthRoleContext';
 
 interface PlantPreview {
   id: string;
@@ -26,6 +25,8 @@ interface PlantPreview {
 
 export default function ScanScreen() {
   const router = useRouter();
+  const { canEdit } = useAuthRole();
+
   const [permission, requestPermission] = useCameraPermissions();
   const [torchEnabled, setTorchEnabled] = useState(false);
   const [scanned, setScanned] = useState(false);
@@ -164,7 +165,6 @@ export default function ScanScreen() {
         {/* Viewfinder Reticle Frame */}
         <View style={styles.scannerCenterSection}>
           <View style={styles.viewfinder}>
-            {/* 4 Corner Targeting Borders */}
             <View style={[styles.corner, styles.cornerTL]} />
             <View style={[styles.corner, styles.cornerTR]} />
             <View style={[styles.corner, styles.cornerBL]} />
@@ -225,21 +225,39 @@ export default function ScanScreen() {
               </View>
             )}
 
-            <View style={styles.sheetActionRow}>
-              <TouchableOpacity
-                style={styles.sheetCancelBtn}
-                onPress={handleDismissSheet}
-              >
-                <Text style={styles.sheetCancelText}>Scan Again</Text>
-              </TouchableOpacity>
+            {/* Role Conditional Action Button */}
+            {canEdit ? (
+              <View style={styles.sheetActionRow}>
+                <TouchableOpacity
+                  style={styles.sheetCancelBtn}
+                  onPress={handleDismissSheet}
+                >
+                  <Text style={styles.sheetCancelText}>Scan Again</Text>
+                </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.sheetConfirmBtn}
-                onPress={handleProceedToObservation}
-              >
-                <Text style={styles.sheetConfirmText}>Record Observation →</Text>
-              </TouchableOpacity>
-            </View>
+                <TouchableOpacity
+                  style={styles.sheetConfirmBtn}
+                  onPress={handleProceedToObservation}
+                >
+                  <Text style={styles.sheetConfirmText}>Record Observation →</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.visitorSheetFooter}>
+                <View style={styles.visitorVerifiedBadge}>
+                  <Ionicons name="checkmark-circle" size={16} color="#059669" />
+                  <Text style={styles.visitorVerifiedText}>
+                    Sarawak Forestry Corporation Verified Specimen
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.visitorDoneBtn}
+                  onPress={handleDismissSheet}
+                >
+                  <Text style={styles.visitorDoneBtnText}>Done</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         </View>
       </Modal>
@@ -489,5 +507,34 @@ const styles = StyleSheet.create({
     fontSize: 14.5,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  visitorSheetFooter: {
+    gap: 12,
+  },
+  visitorVerifiedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#ECFDF5',
+    padding: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  visitorVerifiedText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  visitorDoneBtn: {
+    backgroundColor: '#213B2A',
+    paddingVertical: 14,
+    borderRadius: 22,
+    alignItems: 'center',
+  },
+  visitorDoneBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14.5,
+    fontWeight: '700',
   },
 });

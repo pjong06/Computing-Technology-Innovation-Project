@@ -2,12 +2,18 @@ import React from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'react-native';
 import Toast from 'react-native-toast-message';
+import { AuthRoleProvider } from '../src/context/AuthRoleContext';
 
 export default function RootLayout() {
   return (
-    <>
-      <StatusBar barStyle="dark-content" backgroundColor="#F6F8F6" />
-      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#F6F8F6' } }}>
+    <AuthRoleProvider>
+      <StatusBar barStyle="dark-content" />
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: '#F6F8F6' },
+        }}
+      >
         <Stack.Screen name="index" />
         <Stack.Screen name="forgot-password" />
         <Stack.Screen name="change-password" />
@@ -23,6 +29,6 @@ export default function RootLayout() {
         <Stack.Screen name="manual-qr" />
       </Stack>
       <Toast />
-    </>
+    </AuthRoleProvider>
   );
 }

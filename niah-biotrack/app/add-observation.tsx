@@ -18,6 +18,7 @@ import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import Toast from 'react-native-toast-message';
 import { supabase } from '../src/lib/supabase';
+import { useAuthRole } from '../src/context/AuthRoleContext';
 
 const LIFE_STAGES = ['Seedling', 'Sapling', 'Pole', 'Mature', 'Senescent'];
 const HEALTH_STATUSES = [
@@ -30,7 +31,19 @@ const HEALTH_STATUSES = [
 
 export default function AddObservationScreen() {
   const router = useRouter();
+  const { isVisitor } = useAuthRole();
   const params = useLocalSearchParams<{ plantId?: string; tagCode?: string; scientificName?: string }>();
+
+  // Guard against visitor write attempts
+  useEffect(() => {
+    if (isVisitor) {
+      Alert.alert(
+        'Botanist Access Required',
+        'Visitor accounts are read-only. Logging observations requires staff credentials.',
+        [{ text: 'OK', onPress: () => router.replace('/(tabs)/home') }]
+      );
+    }
+  }, [isVisitor]);
 
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -52,8 +65,10 @@ export default function AddObservationScreen() {
   const [notes, setNotes] = useState<string>('');
 
   useEffect(() => {
-    fetchCurrentLocation();
-  }, []);
+    if (!isVisitor) {
+      fetchCurrentLocation();
+    }
+  }, [isVisitor]);
 
   const fetchCurrentLocation = async () => {
     setIsLocating(true);
@@ -194,6 +209,8 @@ export default function AddObservationScreen() {
       setIsSubmitting(false);
     }
   };
+
+  if (isVisitor) return null;
 
   return (
     <SafeAreaView style={styles.safeArea}>
