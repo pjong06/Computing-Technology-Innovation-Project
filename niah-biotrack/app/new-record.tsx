@@ -78,6 +78,7 @@ export default function NewRecordScreen() {
   const updateRecord = useRecordStore((state) => state.updateRecord);
   const isEditing = Boolean(existingRecord);
 
+  const syncRecord = useRecordStore((state) => state.syncRecord);
   const [photos, setPhotos] = useState<SlotPhotos>({
     'Whole plant': existingRecord?.photoUris?.[0]
       ? ({ uri: existingRecord.photoUris[0], width: 0, height: 0 } as ImagePicker.ImagePickerAsset)
@@ -442,7 +443,14 @@ export default function NewRecordScreen() {
     }
 
     recordSaved.current = true; // the record now owns the stored photos
-    router.replace({ pathname: '/save-confirm', params: { id: saved.id } } as any);
+    router.replace({
+      pathname: '/save-confirm',
+      params: { id: saved.id },
+    } as any);
+    
+    if (saved.syncStatus === SyncStatus.NOT_UPLOADED) {
+      void syncRecord(saved.id);
+    }
   };
 
   return (

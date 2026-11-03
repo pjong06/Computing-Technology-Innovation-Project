@@ -120,10 +120,10 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={styles.newRecordCard}
                 activeOpacity={0.85}
-                onPress={() => router.push('/add-observation')}
+                onPress={() => router.push('/new-record')}
               >
                 <Ionicons name="add-circle-outline" size={32} color="#FFFFFF" />
-                <Text style={styles.newRecordLabel}>Add Observation</Text>
+                <Text style={styles.newRecordLabel}>New Record</Text>
               </TouchableOpacity>
             </View>
 

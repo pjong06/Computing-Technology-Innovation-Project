@@ -42,10 +42,20 @@ export default function SaveConfirmScreen() {
           <Text style={styles.subtitle}>{statusText}</Text>
           {needsIdentification ? (
             <Text style={styles.subtitle}>
-              Continue from My Records after you confirm the species.
+              This draft is stored safely on this device. Confirm an approved species before it can be uploaded.
             </Text>
-          ) : matched.syncStatus !== SyncStatus.UPLOADED ? (
-            <Text style={styles.subtitle}>Uploading to the server is not available yet.</Text>
+          ) : matched.syncStatus === SyncStatus.NOT_UPLOADED ? (
+            <Text style={styles.subtitle}>
+              Saved safely on this device. The app will try to upload it in the background. If the connection is unavailable, it will remain queued for later sync.
+            </Text>
+          ) : matched.syncStatus === SyncStatus.FAILED ? (
+            <Text style={styles.subtitle}>
+              The record is still safe on this device. You can retry the upload from Database Sync in your Profile.
+            </Text>
+          ) : matched.syncStatus === SyncStatus.UPLOADED ? (
+            <Text style={styles.subtitle}>
+              This record has been successfully uploaded to the server.
+            </Text>
           ) : null}
 
           <View style={styles.infoBox}>
