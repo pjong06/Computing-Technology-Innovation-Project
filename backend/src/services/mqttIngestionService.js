@@ -1,5 +1,6 @@
 const mqtt = require('mqtt');
 const { ingestTelemetry } = require('./iotTelemetryService');
+const { createTelemetryPersistence } = require('./telemetryPersistence');
 
 const DEFAULT_TOPIC = 'niah/telemetry/+';
 
@@ -11,6 +12,7 @@ function startMqttIngestion() {
   }
 
   const topic = process.env.MQTT_TOPIC_FILTER || DEFAULT_TOPIC;
+  const persistTelemetry = createTelemetryPersistence();
   const client = mqtt.connect(brokerUrl, {
     username: process.env.MQTT_USERNAME || undefined,
     password: process.env.MQTT_PASSWORD || undefined,
@@ -26,17 +28,14 @@ function startMqttIngestion() {
     });
   });
 
-  client.on('message', (messageTopic, bytes) => {
+  client.on('message', async (_messageTopic, bytes) => {
     try {
       const payload = JSON.parse(bytes.toString('utf8'));
-      const reading = ingestTelemetry(payload);
-      console.log(
-        `MQTT telemetry received at ${reading.received_at}` +
-        ` from ${reading.station_id} sequence=${reading.sequence}` +
-        ` on ${messageTopic}`,
-      );
-    } catch (error) {
-      console.error(`MQTT telemetry rejected on ${messageTopic}: ${error.message}`);
+      if (persistTelemetry) await persistTelemetry(payload);
+      ingestTelemetry(payload);
+      console.log(persistTelemetry ? 'MQTT telemetry persisted' : 'MQTT telemetry received in memory');
+    } catch {
+      console.error('MQTT telemetry rejected or persistence unavailable');
     }
   });
 
