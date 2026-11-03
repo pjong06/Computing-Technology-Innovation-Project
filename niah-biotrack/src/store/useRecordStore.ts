@@ -94,6 +94,9 @@ export interface ObservationVisit {
   // True once the server has accepted this visit for officer review (it's "pending"
   // there). Visits without it are still drafts on the server.
   submittedForReview?: boolean;
+  // The officer's decision on this visit, read back from the server (refreshReviewStatuses).
+  reviewStatus?: ReviewStatus;
+  reviewComment?: string | null; // the reason, when rejected
 }
 
 export interface PlantRecord {
@@ -283,6 +286,9 @@ interface RecordState {
   // obsId = a visit photo; otherwise a record photo.
   removePhoto: (recordId: string, uri: string, obsId?: string) => void;
   syncAll: () => Promise<SyncAllResult>;
+  // Reads the officer's decisions on submitted visits and updates the phone. Never
+  // uploads or resubmits anything; quietly does nothing when offline.
+  refreshReviewStatuses: () => Promise<void>;
   submitForReview: (id: string) => Promise<SubmitResult>;
   findByTag: (tagCode: string) => PlantRecord | undefined;
   attachTag: (recordId: string, tagCode: string) => { ok: true } | { ok: false; reason: string };
@@ -563,6 +569,88 @@ export const useRecordStore = create<RecordState>()(
         }
       },
 
+      refreshReviewStatuses: async () => {
+        // Visits the server has and the officer may have reviewed.
+        const ids = get()
+          .records.flatMap((r) => r.observations)
+          .filter((obs) => obs.serverId && (obs.submittedForReview || obs.reviewStatus))
+          .map((obs) => obs.serverId as string);
+        if (ids.length === 0) return;
+
+        type ReviewRow = { id: string; review_status: string; rejection_comment: string | null };
+        const byServerId = new Map<string, ReviewRow>();
+        try {
+          // The route takes at most 100 IDs per request.
+          for (let i = 0; i < ids.length; i += 100) {
+            const response = await apiFetch<{ data: ReviewRow[] }>(
+              `/api/observations/review-status?ids=${ids.slice(i, i + 100).join(',')}`
+            );
+            for (const row of response.data) byServerId.set(row.id, row);
+          }
+        } catch {
+          return; // offline or server error: keep what the phone shows
+        }
+
+        const toStatus = (value: string): ReviewStatus | null =>
+          value === 'approved'
+            ? ReviewStatus.APPROVED
+            : value === 'rejected'
+              ? ReviewStatus.REJECTED
+              : value === 'pending'
+                ? ReviewStatus.PENDING
+                : null; // e.g. still 'draft' on the server: not reviewed
+
+        set((state) => ({
+          records: state.records.map((record) => {
+            let changed = false;
+            const observations = record.observations.map((obs) => {
+              const row = obs.serverId ? byServerId.get(obs.serverId) : undefined;
+              const status = row ? toStatus(row.review_status) : null;
+              if (!row || !status) return obs;
+              // A visit resubmitted on the phone but not uploaded yet keeps its new state
+              // until the next sync (the server still shows the old decision).
+              if (!obs.submittedForReview && obs.reviewStatus === ReviewStatus.REJECTED && status === ReviewStatus.REJECTED) {
+                return obs;
+              }
+              const comment = status === ReviewStatus.REJECTED ? row.rejection_comment : null;
+              if (obs.reviewStatus === status && (obs.reviewComment ?? null) === comment) return obs;
+              changed = true;
+              return {
+                ...obs,
+                reviewStatus: status,
+                reviewComment: comment,
+                // Rejected: the botanist fixes it and submits again, which must send it again.
+                submittedForReview: status === ReviewStatus.REJECTED ? false : obs.submittedForReview,
+              };
+            });
+            if (!changed) return record;
+
+            // The record's status follows its visits. Records not submitted on the phone
+            // (drafts) are left alone, and so is a resubmission that hasn't uploaded yet.
+            let reviewStatus = record.reviewStatus;
+            let reviewComment = record.reviewComment ?? null;
+            const reviewed = observations.filter((o) => o.serverId && o.reviewStatus);
+            const resubmitting =
+              record.reviewStatus === ReviewStatus.PENDING &&
+              observations.some((o) => o.serverId && !o.submittedForReview);
+            if (record.reviewStatus !== ReviewStatus.DRAFT && !resubmitting && reviewed.length > 0) {
+              const rejected = reviewed.find((o) => o.reviewStatus === ReviewStatus.REJECTED);
+              if (rejected) {
+                reviewStatus = ReviewStatus.REJECTED;
+                reviewComment = rejected.reviewComment ?? null;
+              } else if (reviewed.every((o) => o.reviewStatus === ReviewStatus.APPROVED)) {
+                reviewStatus = ReviewStatus.APPROVED;
+                reviewComment = null;
+              } else {
+                reviewStatus = ReviewStatus.PENDING;
+                reviewComment = null;
+              }
+            }
+            return { ...record, observations, reviewStatus, reviewComment };
+          }),
+        }));
+      },
+
       removePhoto: (recordId, uri, obsId) => {
         const record = get().records.find((r) => r.id === recordId);
         if (!record) return;
@@ -627,6 +715,8 @@ export const useRecordStore = create<RecordState>()(
           photosUploaded += result.photosUploaded ?? 0;
           photoProblems += result.photoProblems ?? 0;
         }
+        // Then pick up the officer's decisions (read-only).
+        await get().refreshReviewStatuses();
         return { uploaded, failed, skipped, photosUploaded, photoProblems };
       },
 
