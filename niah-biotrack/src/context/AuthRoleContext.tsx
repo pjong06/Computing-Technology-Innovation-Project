@@ -8,7 +8,12 @@ import { useRecordStore } from '../store/useRecordStore';
 import { useProposalStore } from '../store/useProposalStore';
 import { deleteAllStoredPhotos } from '../utils/photoStorage';
 
-export type UserRole = 'botanist' | 'officer' | 'visitor';
+// 'pending': signed in, but the account isn't active (waiting for an officer to
+// activate it, or suspended) or has no staff role. Such accounts can't use anything.
+export type UserRole = 'botanist' | 'officer' | 'researcher' | 'visitor' | 'pending';
+
+// Roles the server accepts (backend STAFF_ROLES, minus admin which the app doesn't use).
+const STAFF_ROLES = new Set(['botanist', 'officer', 'researcher']);
 
 interface AuthRoleContextType {
   role: UserRole;
@@ -16,6 +21,8 @@ interface AuthRoleContextType {
   // Exploring without an account: no login, no token, nothing sent to the server as
   // any role. (isVisitor is also true for a signed-in account whose role is visitor.)
   isGuest: boolean;
+  // Signed in, but not an active staff account: show "Account awaiting approval".
+  isPending: boolean;
   canEdit: boolean;
   userName: string;
   setVisitorMode: () => Promise<void>;
@@ -27,6 +34,7 @@ const AuthRoleContext = createContext<AuthRoleContextType>({
   role: 'visitor',
   isVisitor: true,
   isGuest: false,
+  isPending: false,
   canEdit: false,
   userName: 'Visitor',
   setVisitorMode: async () => {},
@@ -53,18 +61,24 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
 
       const { data: authData } = await supabase.auth.getUser();
       if (authData?.user) {
-        const { data: profile } = await supabase
+        const { data: profile, error: profileError } = await supabase
           .from('profiles')
-          .select('full_name, role')
+          .select('full_name, role, account_status')
           .eq('id', authData.user.id)
           .maybeSingle();
 
-        if (profile?.role === 'visitor') {
-          setRole('visitor');
-          setUserName(profile.full_name || 'Park Visitor');
+        // Couldn't read the profile (e.g. no signal): keep the role we already have
+        // rather than guessing, so offline staff aren't locked out or promoted.
+        if (profileError) return;
+
+        if (profile && profile.account_status === 'active' && STAFF_ROLES.has(profile.role)) {
+          setRole(profile.role as UserRole);
+          setUserName(profile.full_name || authData.user.email || '');
         } else {
-          setRole((profile?.role as UserRole) || 'botanist');
-          setUserName(profile?.full_name || 'Botanist');
+          // Never default to botanist: a pending, suspended or role-less account gets
+          // the "Account awaiting approval" screen (the server refuses it anyway).
+          setRole('pending');
+          setUserName(profile?.full_name || authData.user.email || '');
         }
       } else {
         setRole('visitor');
@@ -108,7 +122,8 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
 
   // Required context computed properties
   const isVisitor = role === 'visitor';
-  const canEdit = !isVisitor;
+  const isPending = role === 'pending';
+  const canEdit = !isVisitor && !isPending;
 
   return (
     <AuthRoleContext.Provider
@@ -116,6 +131,7 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
         role,
         isVisitor,
         isGuest,
+        isPending,
         canEdit,
         userName,
         setVisitorMode,
@@ -134,16 +150,17 @@ export const useAuthRole = () => useContext(AuthRoleContext);
 // visitors are sent back to Home. Returns true while blocked: the screen should call
 // this before any early return and render nothing when it's true.
 export function useStaffOnly(): boolean {
-  const { isVisitor } = useAuthRole();
+  const { canEdit } = useAuthRole();
+  const blocked = !canEdit;
   const router = useRouter();
 
   useEffect(() => {
-    if (isVisitor) {
+    if (blocked) {
       Alert.alert('Account required', 'Log in with a botanist account to use this part of the app.', [
         { text: 'OK', onPress: () => router.replace('/(tabs)/home') },
       ]);
     }
-  }, [isVisitor]);
+  }, [blocked]);
 
-  return isVisitor;
+  return blocked;
 }

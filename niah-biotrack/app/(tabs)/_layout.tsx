@@ -2,10 +2,14 @@ import React from 'react';
 import { Tabs } from 'expo-router';
 import { Text, Platform, StyleSheet } from 'react-native';
 import { useAuthRole } from '../../src/context/AuthRoleContext';
+import AwaitingApproval from '../../src/components/AwaitingApproval';
 
 export default function TabLayout() {
   // Guests and visitors have no field records, so the Records tab is hidden for them.
-  const { isVisitor } = useAuthRole();
+  const { isVisitor, isPending } = useAuthRole();
+
+  // Signed in but not an active staff account: nothing in the app is usable yet.
+  if (isPending) return <AwaitingApproval />;
 
   return (
     <Tabs

@@ -59,7 +59,7 @@ const PICTURE_BLANK = svgPicture('<svg xmlns="http://www.w3.org/2000/svg" viewBo
 // Each page has its own table with one column for each detail:
 //   Species catalogue and editor -> website_species
 //   Observation queue and rejected -> website_observations
-//   User & role admin and sign up -> website_users (one row for each real login account)
+//   User & role admin -> website_users (one row for each real login account)
 // Only the data version is kept in the table web_data.
 // Everything else (the login copy, the editor shortcut, the pop-up message) stays in this browser.
 const DATABASE_KEYS = [SPECIES_KEY, OBSERVATIONS_KEY, USERS_KEY, VERSION_KEY];
@@ -426,7 +426,7 @@ function writeStorage(key, value) {
 
   databaseCache[key] = JSON.stringify(value);
   if (databaseReady === false) {
-    // The login and sign up pages have no database data. Anywhere else this is a problem.
+    // The login and password pages have no database data. Anywhere else this is a problem.
     return OPEN_PAGES.indexOf(thisPageName()) !== -1;
   }
 
@@ -888,7 +888,6 @@ function goToHome() {
 // Pages that need no login
 const OPEN_PAGES = [
   'login.html',
-  'signup.html',
   'forgot-password.html',
   'reset-password.html'
 ];
