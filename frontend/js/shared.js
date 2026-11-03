@@ -70,6 +70,7 @@ let databaseReady = false;  // true when the values were loaded from the databas
 let databaseProblem = '';   // the reason the database could not be used, if any
 let databaseSaved = {};     // what each list looked like when it was last loaded or saved
 let databaseIds = {};       // the ids each list had when it was last loaded or saved
+let databasePrints = {};    // a fingerprint of each record (by id) when its list was last loaded or saved
 
 // Turns text like "14 Sep 2026, 3:42 PM" into a date and time the database understands.
 // Returns null when the text is empty or not in that form.
@@ -226,6 +227,19 @@ function idsOf(items) {
   return ids;
 }
 
+// Makes a fingerprint of each record that has an id, so a save can send only the records that changed.
+// Sending every record would also try to rewrite the records that belong to other people,
+// and the database refuses that for a botanist.
+function rowPrints(items, table) {
+  const prints = {};
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].id) {
+      prints[items[i].id] = JSON.stringify(itemToRow(items[i], table));
+    }
+  }
+  return prints;
+}
+
 // Makes a short fingerprint of a list, to tell whether it changed since it was loaded or saved.
 function listFingerprint(items, table) {
   return JSON.stringify(items.map(function (item) {
@@ -356,6 +370,7 @@ function loadFromDatabase() {
       databaseCache[table.key] = JSON.stringify(items);
       databaseSaved[table.key] = listFingerprint(items, table);
       databaseIds[table.key] = idsOf(items);
+      databasePrints[table.key] = rowPrints(items, table);
     }
   }
   databaseReady = true;
@@ -378,6 +393,7 @@ function reloadFromDatabase(key) {
   databaseCache[key] = JSON.stringify(items);
   databaseSaved[key] = listFingerprint(items, table);
   databaseIds[key] = idsOf(items);
+  databasePrints[key] = rowPrints(items, table);
   return true;
 }
 
@@ -420,9 +436,20 @@ function writeStorage(key, value) {
     if (listFingerprint(value, table) === databaseSaved[key]) {
       return true;
     }
-    const rows = value.map(function (item) {
-      return itemToRow(item, table);
-    });
+    // Send only the records that are new or changed since the list was loaded or saved.
+    // position keeps the order of the full list.
+    const known = databasePrints[key] || {};
+    const rows = [];
+    const sentAt = [];
+    for (let i = 0; i < value.length; i++) {
+      const row = itemToRow(value[i], table);
+      if (value[i].id && known[value[i].id] === JSON.stringify(row)) {
+        continue;
+      }
+      row.position = i;
+      rows.push(row);
+      sentAt.push(i);
+    }
     // Only the records this page really deleted are removed from the database.
     const nowIds = idsOf(value);
     const removed = (databaseIds[key] || []).filter(function (id) {
@@ -433,13 +460,15 @@ function writeStorage(key, value) {
       showToast('Could not save to the database: ' + saved.message);
       return false;
     }
-    // The database gives every new species and user its id. Keep the list with the ids.
-    const savedItems = saved.data.map(function (row) {
-      return rowToItem(row, table);
-    });
+    // The database gives every new species and user its id. Put the saved records back in the list.
+    const savedItems = value.slice();
+    for (let k = 0; k < sentAt.length; k++) {
+      savedItems[sentAt[k]] = rowToItem(saved.data[k], table);
+    }
     databaseCache[key] = JSON.stringify(savedItems);
     databaseSaved[key] = listFingerprint(savedItems, table);
     databaseIds[key] = idsOf(savedItems);
+    databasePrints[key] = rowPrints(savedItems, table);
     return true;
   }
 

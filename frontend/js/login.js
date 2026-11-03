@@ -56,7 +56,12 @@ async function doLogin() {
     me = await api('/me');
   } catch (error) {
     await sb.auth.signOut();
-    showAuthError(error.message);
+    localStorage.removeItem(SESSION_KEY);
+    if (/active staff profile required/i.test(error.message)) {
+      showAuthError('This account is not available or is not registered yet. Create an account, or contact the officer.');
+    } else {
+      showAuthError(error.message);
+    }
     return;
   }
 
