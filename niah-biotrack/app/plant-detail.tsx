@@ -9,6 +9,10 @@ import {
   SafeAreaView,
   FlatList,
   Image,
+  Modal,
+  Share,
+  Platform,
+  ActivityIndicator,
   useWindowDimensions,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
@@ -26,6 +30,8 @@ import { REVIEW_BADGE } from '../src/utils/reviewStatus';
 import PlantNotFound from '../src/components/PlantNotFound';
 import { resolveStoredPhotoUri } from '../src/utils/photoStorage';
 import { formatCoordinates } from '../src/utils/formatCoordinates';
+import { fetchPlantQr, saveQrImage, type PlantQr } from '../src/api/plantQr';
+import { ApiError } from '../src/api/client';
 
 const NOT_RECORDED = 'Not recorded';
 
@@ -71,6 +77,11 @@ export default function PlantDetailScreen() {
   const { width } = useWindowDimensions();
   const [photoIndex, setPhotoIndex] = useState(0);
   const [brokenPhotos, setBrokenPhotos] = useState<Record<string, boolean>>({});
+  // "Show QR": the QR the server makes for this plant's tag (shown in a modal).
+  const [qrVisible, setQrVisible] = useState(false);
+  const [qr, setQr] = useState<PlantQr | null>(null);
+  const [qrLoading, setQrLoading] = useState(false);
+  const [qrError, setQrError] = useState('');
 
   const matched = records.find((r) => r.id === id);
 
@@ -99,6 +110,47 @@ export default function PlantDetailScreen() {
   // Record photos saved before photo upload have no slot type: they stay on the phone.
   const untypedCount = photoStates.filter((p) => !p.obsId && !p.meta?.type).length;
   const photoProblems = photoStates.filter((p) => p.meta?.problem && !p.meta.uploaded);
+
+  // The QR comes from the server (GET /api/plants/:id/qr), so the plant must be uploaded.
+  const openQr = async () => {
+    if (!matched.serverId) {
+      Alert.alert(
+        'Sync this plant first',
+        'The QR code is made by the server, so this plant has to be uploaded first. Use Sync now on Home, then try again.'
+      );
+      return;
+    }
+    setQrVisible(true);
+    if (qr) return; // already loaded
+    setQrLoading(true);
+    setQrError('');
+    try {
+      setQr(await fetchPlantQr(matched.serverId));
+    } catch (error) {
+      // e.g. 409 "Attach a NIAH-PLT tag before generating its QR code" (tag added on the
+      // phone after the plant was uploaded), 0 = no connection.
+      setQrError(error instanceof ApiError ? error.message : 'Could not load the QR code. Please try again.');
+    } finally {
+      setQrLoading(false);
+    }
+  };
+
+  // OS share sheet. iOS gets the QR image (Print, Save Image, AirDrop...). Android's
+  // built-in share can only send text, so it shares the tag code and link (expo-sharing
+  // would be needed to share the image file there; it isn't installed).
+  const shareQr = async () => {
+    if (!qr) return;
+    try {
+      if (Platform.OS === 'ios') {
+        const fileUri = await saveQrImage(qr);
+        await Share.share({ url: fileUri, message: qr.qrValue });
+      } else {
+        await Share.share({ title: qr.qrValue, message: `${qr.qrValue}\n${qr.publicUrl}` });
+      }
+    } catch {
+      Alert.alert('Could not share', 'The QR code could not be shared. Please try again.');
+    }
+  };
 
   const confirmRemovePhoto = (uri: string, obsId?: string) => {
     Alert.alert('Remove this photo?', 'It is deleted from this phone. The other photos can then upload.', [
@@ -342,9 +394,9 @@ export default function PlantDetailScreen() {
               <Text style={styles.actionBtnText}>🧭 Navigate</Text>
             </TouchableOpacity>
             {matched.tagCode ? (
-              <View style={styles.actionBtn}>
-                <Text style={styles.actionBtnText}>🏷️ {matched.tagCode}</Text>
-              </View>
+              <TouchableOpacity style={styles.actionBtn} onPress={() => void openQr()}>
+                <Text style={styles.actionBtnText}>🔳 Show QR</Text>
+              </TouchableOpacity>
             ) : (
               <TouchableOpacity
                 style={styles.actionBtn}
@@ -422,11 +474,60 @@ export default function PlantDetailScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      <Modal visible={qrVisible} transparent animationType="fade" onRequestClose={() => setQrVisible(false)}>
+        <View style={styles.qrBackdrop}>
+          <View style={styles.qrCard}>
+            {qrLoading ? (
+              <ActivityIndicator size="large" color="#213B2A" style={{ marginVertical: 80 }} />
+            ) : qr ? (
+              <>
+                <Image
+                  source={{ uri: qr.imageDataUri }}
+                  style={{ width: Math.min(width - 96, 320), height: Math.min(width - 96, 320) }}
+                  resizeMode="contain"
+                  accessibilityLabel={`QR code for ${qr.qrValue}`}
+                />
+                <Text style={styles.qrTag}>{qr.qrValue}</Text>
+                <Text style={styles.qrHint}>Scanning it opens the plant's public page.</Text>
+                <TouchableOpacity style={styles.qrPrimary} onPress={() => void shareQr()}>
+                  <Text style={styles.qrPrimaryText}>Share</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <Text style={styles.qrError}>{qrError || 'Could not load the QR code.'}</Text>
+            )}
+            {!qrLoading && !qr && (
+              <TouchableOpacity
+                style={styles.qrPrimary}
+                onPress={() => {
+                  setQrVisible(false);
+                  void openQr();
+                }}
+              >
+                <Text style={styles.qrPrimaryText}>Try again</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={styles.qrSecondary} onPress={() => setQrVisible(false)}>
+              <Text style={styles.qrSecondaryText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  qrBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 24 },
+  qrCard: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 24, alignItems: 'center' },
+  qrTag: { fontSize: 22, fontWeight: '800', color: '#1E2B22', marginTop: 14, letterSpacing: 1 },
+  qrHint: { fontSize: 12.5, color: '#68776D', marginTop: 4, textAlign: 'center' },
+  qrError: { fontSize: 14, color: '#9B1C1C', textAlign: 'center', marginVertical: 24 },
+  qrPrimary: { backgroundColor: '#213B2A', height: 48, borderRadius: 24, alignSelf: 'stretch', justifyContent: 'center', alignItems: 'center', marginTop: 18 },
+  qrPrimaryText: { color: '#FFFFFF', fontWeight: '700', fontSize: 15 },
+  qrSecondary: { height: 44, alignSelf: 'stretch', justifyContent: 'center', alignItems: 'center', marginTop: 8 },
+  qrSecondaryText: { color: '#213B2A', fontWeight: '700', fontSize: 14 },
   safeArea: { flex: 1, backgroundColor: '#F6F8F6' },
   heroBox: { height: 260, backgroundColor: '#2B3A30', position: 'relative' },
   heroPhoto: { height: 260 },
