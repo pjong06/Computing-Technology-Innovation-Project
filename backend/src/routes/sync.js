@@ -191,6 +191,9 @@ async function applyOperation(req, operation) {
   if (error) {
     console.error('Sync push operation error:', {
       code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
       operation_id: operation.operation_id,
     });
 
