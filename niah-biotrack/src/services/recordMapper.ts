@@ -37,6 +37,8 @@ export interface BackendObservationPayload {
   health_status?: string;
   life_stage?: string;
   measurement?: string;
+  height_cm?: number;
+  diameter_cm?: number;
   notes?: string;
 }
 
@@ -85,6 +87,10 @@ export function mapLocalObservationToBackend(
       obs.measurement && obs.measurement.trim() && obs.measurement.trim() !== 'Not recorded'
         ? obs.measurement
         : undefined,
+    // Numbers in centimetres; the backend rejects anything negative or non-numeric,
+    // so they're only sent when present (older visits don't have them).
+    height_cm: obs.heightCm,
+    diameter_cm: obs.diameterCm,
     notes: obs.notes,
   };
 }

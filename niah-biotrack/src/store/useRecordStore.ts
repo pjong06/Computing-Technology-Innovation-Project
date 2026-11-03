@@ -12,6 +12,17 @@ export enum SyncStatus {
   UPLOADED = 'Uploaded',
   NOT_UPLOADED = 'Not uploaded',
   FAILED = 'Upload failed',
+  LOCAL_ONLY = 'Local only',
+}
+
+export enum RecordStatus {
+  DRAFT = 'draft',
+  COMPLETE = 'complete',
+}
+
+export enum IdentificationStatus {
+  PENDING = 'pending',
+  IDENTIFIED = 'identified',
 }
 
 // The officer's review (same values as review_status on the server).
@@ -22,6 +33,18 @@ export enum ReviewStatus {
   REJECTED = 'rejected', // officer sent it back with a comment
 }
 
+export type HealthStatus = 'Healthy' | 'Stressed' | 'Diseased' | 'Damaged' | 'Dead';
+export type LifeStage =
+  | 'Bud'
+  | 'Flowering'
+  | 'Vegetative'
+  | 'Fruiting'
+  | 'Seedling'
+  | 'Sapling'
+  | 'Pole'
+  | 'Mature'
+  | 'Senescent';
+
 export interface ObservationVisit {
   id: string; // UUID generated on the phone; sent as client_record_id
   date: string; // for display only, e.g. "22 Oct 2026 · 3:15 PM"
@@ -31,9 +54,18 @@ export interface ObservationVisit {
   recordedBy: string;
   // Optional because the registration visit (made on submit for a record with no
   // visits) has no health or stage to report. Screens show "Not recorded" instead.
-  health?: 'Healthy' | 'Stressed' | 'Damaged' | 'Dead';
-  stage?: 'Bud' | 'Flowering' | 'Vegetative' | 'Fruiting';
+  health?: HealthStatus;
+  // The first four are the older phenology stages; the rest are the growth stages
+  // from the 3-step Add Observation screen. Old visits keep their values.
+  stage?: LifeStage;
   measurement: string;
+  // Height and stem diameter in centimetres, from the 3-step Add Observation screen.
+  // Sent as height_cm / diameter_cm. Older visits only have the free-text measurement.
+  heightCm?: number;
+  diameterCm?: number;
+  // Evidence photos for this visit, stored on the phone. Not uploaded yet: see
+  // TODO(photos) in syncRecord. Cleared with every other photo on logout.
+  photoUris?: string[];
   notes: string;
   syncStatus: SyncStatus;
   // The server's id for this visit (observations.id), saved after a successful upload.
@@ -65,6 +97,8 @@ export interface PlantRecord {
   gpsAccuracyM?: number | null; // null when the device didn't report accuracy
   gpsCoordination: string; // formatted for display only, e.g. "3.81760° N, 113.78100° E (±5 m)"
   photoUris: string[];
+  recordStatus: RecordStatus;
+  identificationStatus: IdentificationStatus;
   syncStatus: SyncStatus;
   reviewStatus: ReviewStatus;
   reviewComment?: string | null; // officer's reason when rejected
@@ -91,6 +125,17 @@ export interface RecordedRoute {
 // submittedForReview is true when the record is pending on the phone and every one of
 // its visits is now in the officer's review queue on the server.
 export type SyncResult = { ok: true; submittedForReview: boolean } | { ok: false; reason: string };
+
+// True when a record may go to the server: a completed record with a confirmed,
+// approved species. Drafts (Local only) are kept on the phone until then.
+function isUploadable(record: PlantRecord): boolean {
+  return (
+    record.syncStatus !== SyncStatus.LOCAL_ONLY &&
+    record.recordStatus === RecordStatus.COMPLETE &&
+    record.identificationStatus === IdentificationStatus.IDENTIFIED &&
+    !!record.speciesId
+  );
+}
 
 // True when a record pending on the phone has every visit submitted on the server.
 function isFullySubmitted(record: PlantRecord | undefined): boolean {
@@ -163,6 +208,28 @@ interface RecordState {
       'id' | 'tagCode' | 'createdAt' | 'createdAtIso' | 'observations' | 'reviewStatus' | 'reviewComment'
     >
   ) => PlantRecord;
+  updateRecord: (
+    id: string,
+    updates: Pick<
+      PlantRecord,
+      | 'scientificName'
+      | 'speciesId'
+      | 'commonName'
+      | 'family'
+      | 'height'
+      | 'morphology'
+      | 'description'
+      | 'locationName'
+      | 'latitude'
+      | 'longitude'
+      | 'gpsAccuracyM'
+      | 'gpsCoordination'
+      | 'photoUris'
+      | 'recordStatus'
+      | 'identificationStatus'
+      | 'syncStatus'
+    >
+  ) => PlantRecord | null;
   // observedAt is required for new visits (it's only optional on the type for old ones).
   addObservation: (
     plantRecordId: string,
@@ -199,6 +266,19 @@ export const useRecordStore = create<RecordState>()(
         set((state) => ({ records: [newRecord, ...state.records] }));
         return newRecord;
       },
+      updateRecord: (id, updates) => {
+        const current = get().records.find((record) => record.id === id);
+        if (!current) return null;
+        if (current.reviewStatus !== ReviewStatus.DRAFT && current.reviewStatus !== ReviewStatus.REJECTED) {
+          return null;
+        }
+
+        const updated = { ...current, ...updates };
+        set((state) => ({
+          records: state.records.map((record) => (record.id === id ? updated : record)),
+        }));
+        return updated;
+      },
       addObservation: (plantRecordId, observationData) => {
         set((state) => ({
           records: state.records.map((r) => {
@@ -229,6 +309,11 @@ export const useRecordStore = create<RecordState>()(
       syncRecord: async (id) => {
         const record = get().records.find((r) => r.id === id);
         if (!record) return { ok: false, reason: 'Record not found' };
+        // Drafts without a confirmed species stay on the phone: the backend rejects a
+        // plant without an approved species. They upload once the draft is completed.
+        if (!isUploadable(record)) {
+          return { ok: false, reason: 'Confirm an approved species and complete this draft before uploading it.' };
+        }
         if (record.syncStatus === SyncStatus.UPLOADED) {
           return { ok: true, submittedForReview: isFullySubmitted(record) }; // nothing new to send
         }
@@ -237,7 +322,7 @@ export const useRecordStore = create<RecordState>()(
         // Small helpers that change just this record (or one of its visits) in the store.
         // They always start from the latest state, because uploads take time and the
         // user may have changed something meanwhile.
-        const updateRecord = (changes: Partial<PlantRecord>) =>
+        const patchRecord = (changes: Partial<PlantRecord>) =>
           set((state) => ({
             records: state.records.map((r) => (r.id === id ? { ...r, ...changes } : r)),
           }));
@@ -262,7 +347,7 @@ export const useRecordStore = create<RecordState>()(
             serverId = response.plant.id;
             // Save it straight away. If a visit fails below, the next retry sees serverId
             // and only re-sends the visits instead of the plant.
-            updateRecord({ serverId });
+            patchRecord({ serverId });
           }
 
           // TODO(photos): upload the record's photos here, once the teammate has fixed
@@ -316,11 +401,11 @@ export const useRecordStore = create<RecordState>()(
           //    skipping it forever.
           const finalRecord = get().records.find((r) => r.id === id);
           const unsentLeft = finalRecord?.observations.some((obs) => obs.syncStatus !== SyncStatus.UPLOADED);
-          updateRecord({ syncStatus: unsentLeft ? SyncStatus.NOT_UPLOADED : SyncStatus.UPLOADED });
+          patchRecord({ syncStatus: unsentLeft ? SyncStatus.NOT_UPLOADED : SyncStatus.UPLOADED });
           return { ok: true, submittedForReview: isFullySubmitted(finalRecord) };
         } catch (error) {
           // Whatever went wrong, the record stays on the phone and shows Retry.
-          updateRecord({ syncStatus: SyncStatus.FAILED });
+          patchRecord({ syncStatus: SyncStatus.FAILED });
 
           if (error instanceof ApiError) {
             // apiFetch already wrote a readable message: "Could not reach the server..."
@@ -342,8 +427,10 @@ export const useRecordStore = create<RecordState>()(
       syncAll: async () => {
         // Take the list of IDs up front. Records added while this runs wait for the
         // next sync, so the loop always ends.
+        // Unfinished drafts (Local only) are left out: they aren't failures, they just
+        // can't be uploaded until the botanist confirms a species.
         const ids = get()
-          .records.filter((r) => r.syncStatus !== SyncStatus.UPLOADED)
+          .records.filter((r) => r.syncStatus !== SyncStatus.UPLOADED && isUploadable(r))
           .map((r) => r.id);
 
         let uploaded = 0;
@@ -370,6 +457,9 @@ export const useRecordStore = create<RecordState>()(
         if (!record) return { ok: false, reason: 'Record not found' };
         if (record.reviewStatus !== ReviewStatus.DRAFT && record.reviewStatus !== ReviewStatus.REJECTED) {
           return { ok: false, reason: 'This record has already been submitted' };
+        }
+        if (!isUploadable(record)) {
+          return { ok: false, reason: 'Confirm an approved species and complete this draft before submitting it.' };
         }
         // The backend reviews visits, not plants, so a record with no visits would give
         // the officer nothing to review. Add a registration visit built from the record.
@@ -400,7 +490,10 @@ export const useRecordStore = create<RecordState>()(
         // 1. Is this tag already on ANOTHER record?
         const existing = get().findByTag(tagCode);
         if (existing && existing.id !== recordId ) {
-          return { ok: false, reason: `This tag is already attached to ${existing.scientificName}` };
+          return {
+            ok: false,
+            reason: `This tag is already attached to ${existing.scientificName || 'an identification-pending record'}`,
+          };
         } 
 
         // 2. Update only the record with this recordId (same map-and-replace pattern as the other actions)
@@ -429,7 +522,7 @@ export const useRecordStore = create<RecordState>()(
     {
       name: 'niah-ground-truth-store',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 8,
+      version: 9,
       migrate: (persistedState, version) => {
         const state = persistedState as { records?: Record<string, unknown>[] };
         if (version < 1 && Array.isArray(state.records)) {
@@ -517,6 +610,27 @@ export const useRecordStore = create<RecordState>()(
               ? { ...record, syncStatus: SyncStatus.NOT_UPLOADED }
               : record
           );
+        }
+
+        if (version < 9 && Array.isArray(state.records)) {
+          // v9 (was "v6" on main): separates record completeness, identification and
+          // upload state. Main and this branch both used the number 6 for different
+          // migrations, so this one moved to 9. A phone that already ran main's v6 has
+          // these fields, and they are kept as they are; only records without them are
+          // filled in. Existing named records remain complete even if they predate
+          // species IDs.
+          state.records = state.records.map((record) => {
+            if (record.recordStatus !== undefined && record.identificationStatus !== undefined) return record;
+            const hasName = typeof record.scientificName === 'string' && record.scientificName.trim() !== '';
+            return {
+              ...record,
+              recordStatus: hasName ? RecordStatus.COMPLETE : RecordStatus.DRAFT,
+              identificationStatus: hasName
+                ? IdentificationStatus.IDENTIFIED
+                : IdentificationStatus.PENDING,
+              syncStatus: hasName ? record.syncStatus : SyncStatus.LOCAL_ONLY,
+            };
+          });
         }
 
         return state as unknown as RecordState;

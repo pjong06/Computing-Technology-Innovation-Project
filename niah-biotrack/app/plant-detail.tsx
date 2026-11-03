@@ -14,7 +14,13 @@ import {
   type NativeScrollEvent,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useRecordStore, SyncStatus, ReviewStatus } from '../src/store/useRecordStore';
+import {
+  IdentificationStatus,
+  RecordStatus,
+  ReviewStatus,
+  SyncStatus,
+  useRecordStore,
+} from '../src/store/useRecordStore';
 import { REVIEW_BADGE } from '../src/utils/reviewStatus';
 import PlantNotFound from '../src/components/PlantNotFound';
 import { resolveStoredPhotoUri } from '../src/utils/photoStorage';
@@ -68,8 +74,16 @@ export default function PlantDetailScreen() {
       label: 'Draft',
     };
 
-  const canSubmit =
+  const needsIdentification =
+    matched.identificationStatus === IdentificationStatus.PENDING ||
+    !matched.scientificName.trim();
+  const canEdit =
     matched.reviewStatus === ReviewStatus.DRAFT || matched.reviewStatus === ReviewStatus.REJECTED;
+  const canSubmit =
+    canEdit &&
+    matched.recordStatus === RecordStatus.COMPLETE &&
+    matched.identificationStatus === IdentificationStatus.IDENTIFIED &&
+    Boolean(matched.speciesId);
 
   const handleSubmit = () => {
     Alert.alert(
@@ -151,7 +165,9 @@ export default function PlantDetailScreen() {
         </View>
 
         <View style={styles.sheet}>
-          <Text style={styles.title}>{matched.scientificName}</Text>
+          <Text style={styles.title}>
+            {matched.scientificName || 'Identification pending'}
+          </Text>
 
           <View style={styles.statusRow}>
             <View style={[styles.statusPill, { backgroundColor: review.bg }]}>
@@ -159,6 +175,29 @@ export default function PlantDetailScreen() {
             </View>
             <Text style={styles.syncText}>{matched.syncStatus}</Text>
           </View>
+
+          {needsIdentification && (
+            <View style={styles.identificationCard}>
+              <Text style={styles.identificationTitle}>Identification pending</Text>
+              <Text style={styles.identificationText}>
+                Photos, GPS and field information are stored on this device. Continue editing when
+                you can confirm an approved species.
+              </Text>
+              {canEdit && (
+                <TouchableOpacity
+                  style={styles.continueBtn}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/new-record',
+                      params: { editId: matched.id },
+                    } as any)
+                  }
+                >
+                  <Text style={styles.continueBtnText}>Continue identification</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
 
           {matched.reviewStatus === ReviewStatus.REJECTED && (
             <View style={styles.commentBox}>
@@ -177,6 +216,10 @@ export default function PlantDetailScreen() {
                   : 'Submit for review'}
               </Text>
             </TouchableOpacity>
+          ) : needsIdentification ? (
+            <Text style={styles.lockedNote}>
+              Confirm the species before submitting this record for officer review.
+            </Text>
           ) : matched.reviewStatus === ReviewStatus.PENDING ? (
             <Text style={styles.lockedNote}>
               {matched.syncStatus === SyncStatus.UPLOADED
@@ -277,7 +320,14 @@ export default function PlantDetailScreen() {
           <TouchableOpacity
             style={styles.addObsBtn}
             onPress={() =>
-              router.push({ pathname: '/add-observation', params: { id: matched.id } } as any)
+              router.push({
+                pathname: '/add-observation',
+                params: {
+                  plantId: matched.id,
+                  tagCode: matched.tagCode ?? '',
+                  scientificName: matched.scientificName,
+                },
+              } as any)
             }
           >
             <Text style={styles.addObsBtnText}>+ Add observation</Text>
@@ -444,4 +494,23 @@ const styles = StyleSheet.create({
   },
   submitBtnText: { color: '#FFFFFF', fontSize: 14.5, fontWeight: '700' },
   lockedNote: { fontSize: 12.5, color: '#68776D', marginBottom: 8 },
+  identificationCard: {
+    backgroundColor: '#FDF4D8',
+    borderRadius: 16,
+    borderWidth: 1.2,
+    borderColor: '#F2D98C',
+    padding: 14,
+    marginBottom: 12,
+  },
+  identificationTitle: { fontSize: 14, fontWeight: '800', color: '#7A5200' },
+  identificationText: { fontSize: 12.5, color: '#6A5730', lineHeight: 18, marginTop: 4 },
+  continueBtn: {
+    backgroundColor: '#213B2A',
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  continueBtnText: { color: '#FFFFFF', fontSize: 13.5, fontWeight: '700' },
 });

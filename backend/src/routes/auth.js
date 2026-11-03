@@ -1,149 +1,174 @@
 const express = require('express');
-const { createHash } = require('node:crypto');
+const router = express.Router();
+const { createClient } = require('@supabase/supabase-js');
 
-const GENERIC_MESSAGE = 'If an account exists, recovery instructions will be sent to its email.';
-const INVALID_RECOVERY = 'Recovery link is invalid or expired. Request a new email.';
+function getAdminClient() {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const serviceKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    process.env.SUPABASE_KEY;
 
-function defaultClient() {
-  const { createClient } = require('@supabase/supabase-js');
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY;
-  if (!url || !key) throw new Error('Recovery configuration unavailable');
-  return createClient(url, key, {
-    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-  });
-}
-
-// Bounded process-local throttling. Use shared gateway limits for multi-instance deployments.
-function createLimiter(now) {
-  const buckets = new Map();
-  return (key, maximum) => {
-    const time = now();
-    for (const [id, item] of buckets) if (item.until <= time) buckets.delete(id);
-    let item = buckets.get(key);
-    if (!item) {
-      if (buckets.size >= 10000) return false;
-      item = { count: 0, until: time + 10 * 60 * 1000 };
-      buckets.set(key, item);
-    }
-    item.count += 1;
-    return item.count <= maximum;
-  };
-}
-
-// Basic email shape check with bounded linear scans and no backtracking regex.
-function validEmail(email) {
-  if (!email || email.length > 254) return false;
-  const at = email.indexOf('@');
-  if (at <= 0 || at !== email.lastIndexOf('@')) return false;
-  const dot = email.lastIndexOf('.');
-  if (dot <= at + 1 || dot === email.length - 1) return false;
-  for (const character of email) {
-    if (character.trim() === '') return false;
+  if (!supabaseUrl || !serviceKey) {
+    console.error('[AUTH ERROR] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in backend/.env');
+    return null;
   }
-  return true;
+
+  return createClient(supabaseUrl, serviceKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
 }
 
-function validRedirect(value) {
+/**
+ * Helper to resolve Staff ID or Email to target user details
+ */
+async function resolveUser(adminClient, identifier) {
+  const clean = identifier.trim().toLowerCase();
+
+  // 1. Check public.profiles first
   try {
-    const url = new URL(value);
-    return !url.username && !url.password && !url.hash &&
-      (url.protocol === 'https:' ||
-       (url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname)) ||
-       (url.protocol === 'niahbiotrack:' && url.hostname === 'change-password'));
-  } catch { return false; }
-}
+    const { data: profile } = await adminClient
+      .from('profiles')
+      .select('id, email, staff_id')
+      .or(`email.ilike.${clean},staff_id.ilike.${clean}`)
+      .maybeSingle();
 
-function createAuthRouter({ createRecoveryClient = defaultClient,
-  now = Date.now, config = process.env } = {}) {
-  const router = express.Router();
-  const allow = createLimiter(now);
-  router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
+    if (profile?.email) {
+      return { id: profile.id, email: profile.email };
+    }
+  } catch (err) {
+    console.warn('[PROFILE LOOKUP WARN]', err.message);
+  }
 
-  // Permanently disabled: caller-selected identities/passwords must not reach admin APIs.
-  router.post('/temp-password', (_req, res) => res.status(410).json({
-    code: 'TEMP_PASSWORD_DISABLED',
-    message: 'Temporary password reset is disabled. Use verified email recovery.',
-  }));
-
-  router.post('/forgot-password', async (req, res) => {
-    if (!allow(`request:${req.ip}`, 20)) {
-      return res.status(429).json({ message: 'Too many requests. Try again later.' });
-    }
-    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-    if (!validEmail(email)) {
-      return res.status(400).json({ message: 'A valid email address is required.' });
-    }
-    // Do not send mail until the owner has configured the recovery client and email template.
-    if (config.PASSWORD_RECOVERY_ENABLED !== 'true' ||
-        !validRedirect(config.PASSWORD_RESET_REDIRECT_URL)) {
-      return res.status(503).json({ message: 'Email recovery is not configured. Contact support.' });
-    }
-    const emailKey = createHash('sha256').update(email).digest('hex');
-    if (!allow(`email:${emailKey}`, 3)) {
-      return res.status(429).json({ message: 'Too many requests. Try again later.' });
-    }
-    try {
-      const client = createRecoveryClient();
-      await client.auth.resetPasswordForEmail(email, { redirectTo: config.PASSWORD_RESET_REDIRECT_URL });
-      // Identical response for existing/unknown accounts and upstream errors.
-    } catch {
-      console.warn('Recovery email request failed');
-    }
-    return res.status(202).json({ message: GENERIC_MESSAGE });
+  // 2. Fallback check directly in auth.users
+  const { data: listData, error: listErr } = await adminClient.auth.admin.listUsers({
+    perPage: 1000,
   });
 
-  router.post('/reset-password', async (req, res) => {
-    if (!allow(`reset:${req.ip}`, 20)) {
-      return res.status(429).json({ message: 'Too many requests. Try again later.' });
+  if (!listErr && listData?.users) {
+    const matched = listData.users.find(
+      (u) => u.email && u.email.toLowerCase() === clean
+    );
+    if (matched) {
+      return { id: matched.id, email: matched.email };
     }
-    if (config.PASSWORD_RECOVERY_ENABLED !== 'true') {
-      return res.status(503).json({ message: 'Email recovery is not configured. Contact support.' });
-    }
-    const body = req.body;
-    if (!body || typeof body !== 'object' || Array.isArray(body) ||
-        Object.keys(body).some(key => !['token_hash', 'password'].includes(key))) {
-      return res.status(400).json({ message: 'Provide only token_hash and password.' });
-    }
-    const { token_hash: tokenHash, password } = body;
-    if (typeof tokenHash !== 'string' || !/^[A-Za-z0-9_-]{20,256}$/.test(tokenHash)) {
-      return res.status(401).json({ message: INVALID_RECOVERY });
-    }
-    if (typeof password !== 'string' || password.length < 12 || password.length > 128 ||
-        !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
-      return res.status(400).json({ message: 'Use 12 to 128 characters with uppercase, lowercase and a number.' });
-    }
-    let client;
-    try {
-      client = createRecoveryClient();
-      const { data, error } = await client.auth.verifyOtp({ token_hash: tokenHash, type: 'recovery' });
-      const session = data?.session;
-      if (error || !session?.access_token || !data?.user?.id ||
-          session.user?.id !== data.user.id || !Number.isFinite(session.expires_at) ||
-          session.expires_at * 1000 <= now()) {
-        return res.status(401).json({ message: INVALID_RECOVERY });
-      }
-      const verified = await client.auth.getUser(session.access_token);
-      if (verified.error || verified.data?.user?.id !== data.user.id) {
-        return res.status(401).json({ message: INVALID_RECOVERY });
-      }
-      const updated = await client.auth.updateUser({ password });
-      if (updated.error) {
-        return res.status(400).json({ message: 'Password could not be updated. Request a new recovery email.' });
-      }
-      return res.json({ message: 'Password updated. Sign in again.' });
-    } catch {
-      return res.status(503).json({ message: 'Recovery service unavailable. Try again later.' });
-    } finally {
-      if (client) {
-        try { await client.auth.signOut({ scope: 'local' }); }
-        catch { console.warn('Recovery session cleanup failed'); }
-      }
-    }
-  });
+  }
 
-  return router;
+  return null;
 }
 
-module.exports = createAuthRouter();
-module.exports.createAuthRouter = createAuthRouter;
+/**
+ * POST /api/auth/send-reset-code
+ * Sends 6-digit OTP verification code to the user's Gmail
+ */
+router.post('/send-reset-code', async (req, res) => {
+  const { identifier } = req.body || {};
+
+  if (!identifier) {
+    return res.status(400).json({ error: 'Staff ID or Email is required.' });
+  }
+
+  const adminClient = getAdminClient();
+  if (!adminClient) {
+    return res.status(500).json({ error: 'Server missing SUPABASE_SERVICE_ROLE_KEY' });
+  }
+
+  try {
+    const user = await resolveUser(adminClient, identifier);
+
+    if (!user) {
+      return res.status(404).json({
+        error: `No account found for "${identifier}". Please check your Staff ID or Email.`,
+      });
+    }
+
+    console.log(`[AUTH] Sending verification email to: ${user.email}`);
+
+    // Trigger Supabase Auth password recovery email
+    const { error: resetErr } = await adminClient.auth.resetPasswordForEmail(user.email);
+
+    if (resetErr) {
+      console.error('[SUPABASE RESET ERROR]', resetErr.message);
+      return res.status(400).json({ error: resetErr.message });
+    }
+
+    return res.status(200).json({
+      success: true,
+      email: user.email,
+      message: 'Verification code sent to your email.',
+    });
+  } catch (err) {
+    console.error('[SEND-RESET-CODE EXCEPTION]', err);
+    return res.status(500).json({ error: err.message || 'Server error sending verification code.' });
+  }
+});
+
+/**
+ * POST /api/auth/verify-and-change-password
+ * Verifies 6-digit OTP and updates password in Supabase Auth
+ */
+router.post('/verify-and-change-password', async (req, res) => {
+  const { email, code, newPassword } = req.body || {};
+
+  if (!email || !code || !newPassword) {
+    return res.status(400).json({ error: 'Email, verification code, and new password are required.' });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanCode = code.trim();
+  const cleanPass = String(newPassword).trim();
+
+  if (cleanPass.length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters long.' });
+  }
+
+  const adminClient = getAdminClient();
+  if (!adminClient) {
+    return res.status(500).json({ error: 'Server missing SUPABASE_SERVICE_ROLE_KEY' });
+  }
+
+  try {
+    console.log(`[AUTH] Verifying recovery OTP for: ${cleanEmail}`);
+
+    // 1. Verify OTP with Supabase Auth
+    const { data: verifyData, error: verifyErr } = await adminClient.auth.verifyOtp({
+      email: cleanEmail,
+      token: cleanCode,
+      type: 'recovery',
+    });
+
+    if (verifyErr || !verifyData?.user) {
+      console.error('[OTP VERIFICATION FAILED]', verifyErr?.message);
+      return res.status(400).json({
+        error: verifyErr?.message || 'Invalid or expired 6-digit verification code.',
+      });
+    }
+
+    const userId = verifyData.user.id;
+    console.log(`[OTP VERIFIED] Updating password for user ID: ${userId}`);
+
+    // 2. Set new password via Supabase Auth Admin
+    const { error: updateErr } = await adminClient.auth.admin.updateUserById(userId, {
+      password: cleanPass,
+    });
+
+    if (updateErr) {
+      console.error('[PASSWORD UPDATE FAILED]', updateErr.message);
+      return res.status(400).json({ error: updateErr.message });
+    }
+
+    console.log(`[SUCCESS] Password changed successfully for ${cleanEmail}`);
+    return res.status(200).json({
+      success: true,
+      message: 'Password successfully updated.',
+    });
+  } catch (err) {
+    console.error('[CHANGE-PASSWORD EXCEPTION]', err);
+    return res.status(500).json({ error: err.message || 'Server error updating password.' });
+  }
+});
+
+module.exports = router;

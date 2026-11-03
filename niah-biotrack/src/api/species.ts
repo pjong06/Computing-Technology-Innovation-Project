@@ -1,45 +1,154 @@
-// The shape of one species, exactly as the backend sends it (snake_case, like the database).
+export interface SpeciesTaxonomySummary {
+  family: string | null;
+}
+
+export interface SpeciesTaxonomy {
+  kingdom: string | null;
+  division: string | null;
+  class_name: string | null;
+  order_name: string | null;
+  family: string | null;
+  genus: string | null;
+}
+
+export interface SpeciesMedia {
+  id: string;
+  file_path: string;
+  media_type: string;
+  is_primary: boolean;
+}
+
+// Optional until the Knowledge API/database adds real attribution fields.
+export interface SpeciesSource {
+  name: string;
+  url: string | null;
+  citation: string | null;
+  accessed_at: string | null;
+  license: string | null;
+}
+
 export interface Species {
   id: string;
   scientific_name: string;
   common_name: string | null;
   local_name: string | null;
+  species_category: string | null;
   conservation_status: string | null;
   description: string | null;
+  taxonomy: SpeciesTaxonomySummary | null;
 }
 
-// Trim spaces and any trailing "/" so small typos in .env.local don't break the address.
-const BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL?.trim().replace(/\/+$/, '');
+export interface SpeciesDetail extends Species {
+  morphology: string | null;
+  habitat: string | null;
+  cultural_significance: string | null;
+  taxonomy: SpeciesTaxonomy | null;
+  species_media: SpeciesMedia[];
+  sources?: SpeciesSource[];
+}
 
-// Downloads the approved species list from the backend.
-export async function fetchSpecies(): Promise<Species[]> {
+interface SpeciesPage {
+  data: Species[];
+  pagination: {
+    page: number;
+    page_size: number;
+    total: number;
+    total_pages: number;
+  };
+}
+
+const BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL?.trim().replace(/\/+$/, '');
+const REQUEST_TIMEOUT_MS = 15_000;
+
+function requireBaseUrl(): string {
   if (!BASE_URL) {
     throw new Error('EXPO_PUBLIC_API_BASE_URL is not set');
   }
+  return BASE_URL;
+}
 
-  const url = `${BASE_URL}/api/knowledge/species`;
-
-  // Give up after 15 seconds (weak signal in the field).
+async function fetchJson<T>(path: string): Promise<T> {
+  const baseUrl = requireBaseUrl();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
     let response: Response;
+
     try {
-      response = await fetch(url, { signal: controller.signal });
-    } catch (e) {
-      // Network failure or our 15-second timeout.
-      throw new Error(`Could not reach the server at ${BASE_URL}`);
+      response = await fetch(`${baseUrl}${path}`, { signal: controller.signal });
+    } catch {
+      throw new Error(`Could not reach the server at ${baseUrl}`);
     }
+
     if (!response.ok) {
       throw new Error(`Server returned ${response.status}`);
     }
-    const body = await response.json();
-    if (!Array.isArray(body?.data)) {
-      throw new Error('Unexpected response from server');
-    }
-    return body.data as Species[];
+
+    return (await response.json()) as T;
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Downloads every approved species page instead of silently keeping only page 1.
+export async function fetchSpecies(): Promise<Species[]> {
+  const allSpecies: Species[] = [];
+  const pageSize = 100;
+  let page = 1;
+  let totalPages = 1;
+
+  do {
+    const body = await fetchJson<SpeciesPage>(
+      `/api/knowledge/species?page=${page}&page_size=${pageSize}`
+    );
+
+    if (!Array.isArray(body.data) || !body.pagination) {
+      throw new Error('Unexpected species response from server');
+    }
+
+    allSpecies.push(...body.data);
+    totalPages = Math.max(1, body.pagination.total_pages);
+    page += 1;
+  } while (page <= totalPages);
+
+  // Protect the offline cache from accidental duplicate rows.
+  const uniqueSpecies = [...new Map(allSpecies.map((item) => [item.id, item])).values()];
+
+  return uniqueSpecies.sort((a, b) =>
+    a.scientific_name.localeCompare(b.scientific_name)
+  );
+}
+
+export async function fetchSpeciesDetail(id: string): Promise<SpeciesDetail> {
+  const body = await fetchJson<{ data: SpeciesDetail }>(
+    `/api/knowledge/species/${encodeURIComponent(id)}`
+  );
+
+  if (!body.data?.id) {
+    throw new Error('Unexpected species detail response from server');
+  }
+
+  return {
+    ...body.data,
+    species_media: Array.isArray(body.data.species_media)
+      ? body.data.species_media
+      : [],
+  };
+}
+
+// The backend returns a short-lived signed URL; download it immediately.
+export async function fetchSpeciesPhotoUrl(
+  speciesId: string,
+  photoId: string
+): Promise<string> {
+  const body = await fetchJson<{ url: string }>(
+    `/api/knowledge/species/${encodeURIComponent(speciesId)}/photos/${encodeURIComponent(photoId)}`
+  );
+
+  if (!body.url) {
+    throw new Error('Species photo URL is missing');
+  }
+
+  return body.url;
 }
