@@ -1,0 +1,133 @@
+{
+  "started_at": "2026-10-30T08:35:53.029Z",
+  "baseline": "b2b8be61d3d55e23e094e62d5c90e5191e815c0e",
+  "status": "COMPLETE",
+  "results": [
+    {
+      "test": "Original signed token accepted by backend",
+      "result": "PASS",
+      "http": 200,
+      "role": "researcher"
+    },
+    {
+      "test": "/api/me: missing rejected without protected fields",
+      "result": "PASS",
+      "http": 401,
+      "body_shape_valid": true
+    },
+    {
+      "test": "/api/me: empty rejected without protected fields",
+      "result": "PASS",
+      "http": 401,
+      "body_shape_valid": true
+    },
+    {
+      "test": "/api/me: malformed rejected without protected fields",
+      "result": "PASS",
+      "http": 401,
+      "body_shape_valid": true
+    },
+    {
+      "test": "/api/me: wrong scheme rejected without protected fields",
+      "result": "PASS",
+      "http": 401,
+      "body_shape_valid": true
+    },
+    {
+      "test": "/api/me: tampered genuine signature rejected without protected fields",
+      "result": "PASS",
+      "http": 401,
+      "body_shape_valid": true
+    },
+    {
+      "test": "/api/plants: missing rejected without protected fields",
+      "result": "PASS",
+      "http": 401,
+      "body_shape_valid": true
+    },
+    {
+      "test": "/api/plants: empty rejected without protected fields",
+      "result": "PASS",
+      "http": 401,
+      "body_shape_valid": true
+    },
+    {
+      "test": "/api/plants: malformed rejected without protected fields",
+      "result": "PASS",
+      "http": 401,
+      "body_shape_valid": true
+    },
+    {
+      "test": "/api/plants: wrong scheme rejected without protected fields",
+      "result": "PASS",
+      "http": 401,
+      "body_shape_valid": true
+    },
+    {
+      "test": "/api/plants: tampered genuine signature rejected without protected fields",
+      "result": "PASS",
+      "http": 401,
+      "body_shape_valid": true
+    },
+    {
+      "test": "/api/iot/summary: missing rejected without protected fields",
+      "result": "PASS",
+      "http": 401,
+      "body_shape_valid": true
+    },
+    {
+      "test": "/api/iot/summary: empty rejected without protected fields",
+      "result": "PASS",
+      "http": 401,
+      "body_shape_valid": true
+    },
+    {
+      "test": "/api/iot/summary: malformed rejected without protected fields",
+      "result": "PASS",
+      "http": 401,
+      "body_shape_valid": true
+    },
+    {
+      "test": "/api/iot/summary: wrong scheme rejected without protected fields",
+      "result": "PASS",
+      "http": 401,
+      "body_shape_valid": true
+    },
+    {
+      "test": "/api/iot/summary: tampered genuine signature rejected without protected fields",
+      "result": "PASS",
+      "http": 401,
+      "body_shape_valid": true
+    },
+    {
+      "test": "Unchanged genuine JWT independently rejected for expiry",
+      "result": "PASS",
+      "http": 403,
+      "expiry_reason_confirmed": true,
+      "server_date": "Fri, 30 Oct 2026 09:37:25 GMT",
+      "server_after_expiry": true
+    },
+    {
+      "test": "/api/me: genuinely expired JWT rejected without protected fields",
+      "result": "PASS",
+      "http": 401,
+      "body_shape_valid": true
+    },
+    {
+      "test": "/api/plants: genuinely expired JWT rejected without protected fields",
+      "result": "PASS",
+      "http": 401,
+      "body_shape_valid": true
+    },
+    {
+      "test": "/api/iot/summary: genuinely expired JWT rejected without protected fields",
+      "result": "PASS",
+      "http": 401,
+      "body_shape_valid": true
+    }
+  ],
+  "scope": "Read-only JWT and rejection-body tests. Token retained only in process memory; auto-refresh and persistence disabled.",
+  "expires_at": "2026-10-30T09:36:11.000Z",
+  "token_sha256": "d998b6a89517e3ad2ae165a2218073a927eee9fa94dabf8f06751f5c81569ae5",
+  "finished_at": "2026-10-30T09:37:27.063Z"
+}

@@ -1,6 +1,6 @@
 # C17: tag reservation and printing
 
-Status: local implementation; shared Supabase has NOT been migrated.
+Status: backend implementation synchronised with main; PR readiness blocked by existing main authentication test failures. Shared Supabase has NOT been migrated.
 
 ## Endpoints
 
@@ -57,3 +57,12 @@ All endpoints require an active Botanist bearer session and use the existing use
   ```
 - PGlite does not prove production multi-connection races. Run concurrent real PostgreSQL transactions and real Supabase JWT/RLS tests in a development environment before shared rollout.
 - No real Supabase writes, phone camera test, web/mobile UI integration or production deployment is included in local completion.
+
+## Integration review: 2026-11-03
+
+- Merged main at 58fe5d6, retaining the latest web-data routes and registering tag reservations exactly once.
+- Tag reservation API: 43 tests passed. Isolated migration: 26 checks passed.
+- Full backend suite: 201 tests, 177 passed and 24 failed. All failures are in auth.security.test.js because main's auth route no longer exports createAuthRouter. Both the auth route and its tests are unchanged from main in this branch. Do not remove or skip these tests to unblock CI.
+- PR creation is deferred until the authentication implementation and regression tests agree and the full suite passes.
+- Deployment acceptance still requires the migration, PUBLIC_PLANT_BASE_URL=https://niah-backend.onrender.com/p/, real Botanist sessions, independent PostgreSQL concurrency checks and the team's web/mobile callers. The migration changes physical-tag creation: reserve before binding. Do not apply it independently of client rollout coordination.
+- Existing untracked Postman collections and manual SQL files are outside this change and are not included in the merge commit.

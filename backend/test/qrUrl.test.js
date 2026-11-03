@@ -29,7 +29,7 @@ test('private HTTP URLs work only outside production', t => {
   const original = process.env.NODE_ENV;
   t.after(() => { if (original === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = original; });
   process.env.NODE_ENV = 'development';
-  assert.equal(buildPublicPlantUrl(TAG, 'http://192.168.1.10:3000/p/'), `http://192.168.1.10:3000/p/${TAG}`);
+  assert.equal(buildPublicPlantUrl(TAG, 'http://localhost/p/'), `http://localhost/p/${TAG}`);
   process.env.NODE_ENV = 'production';
   assert.throws(() => buildPublicPlantUrl(TAG, 'http://localhost:3000/p/'), QrConfigurationError);
   assert.equal(buildPublicPlantUrl(TAG, BASE), BASE + TAG);

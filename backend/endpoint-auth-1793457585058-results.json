@@ -1,0 +1,941 @@
+{
+  "started_at": "2026-10-31T14:39:45.018Z",
+  "baseline": "b2b8be61d3d55e23e094e62d5c90e5191e815c0e",
+  "status": "COMPLETE WITH OPEN FINDING",
+  "source_sha256": {
+    "server.js": "65766a83b79bb9d9f220eb277e15d78d03675bf2d76e96b8945c259492cc1baa",
+    "routes/plants.js": "8f1b1fa193ead6bf5f209e4e643f6880f0b81ee452bc6eb2ac0d6acbb59860ff",
+    "routes/identify.js": "ab3834e7164390036080a36ea2a1f1b29f12e3955d3d0d28507c39c3426f4671",
+    "routes/iot.js": "e5607625abccdaed7d5a265288c9613c4e02ccc89d7b31a6331f197ca3ca3f2a",
+    "routes/knowledge.js": "cfaff57ce7b4e15889c317fa073968d8d34c417a9d4f5cf0747c4fc9e0730931",
+    "routes/qrBatch.js": "e82d34edcbc4a215ff17efd0e76e12abb86de2ce6cb893f2aaed42bf7cf46396",
+    "routes/observations.js": "2fde3fa226f95e2265d937b2aed0a23aae4a97345b55e1c02509e469b56686fb",
+    "routes/reports.js": "bb7ace327969886e2a94eda0ced00f13a7727ae415c557235ef1fddc22d74280",
+    "routes/auth.js": "f9c1cc6a7c70ba14cf4ff2bb8e30fbb2af00f7e5db29c29c3c2e02fab86ea15a",
+    "routes/officerReviews.js": "90a59209d3af3735e2986982eb3884f0e91e9637fd1e62c3e1e5e0b23d491b02",
+    "routes/iotIngestion.js": "aa40d97e25b6b4ef2f143edfdcdabc90ef75fe51b9a38a1693f5bd2f6dc9a644"
+  },
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/plants",
+      "policy": "staff JWT",
+      "source": "src/routes/plants.js",
+      "line": 76
+    },
+    {
+      "method": "GET",
+      "path": "/api/plants/:id",
+      "policy": "staff JWT",
+      "source": "src/routes/plants.js",
+      "line": 115
+    },
+    {
+      "method": "POST",
+      "path": "/api/plants",
+      "policy": "staff JWT",
+      "source": "src/routes/plants.js",
+      "line": 149
+    },
+    {
+      "method": "PUT",
+      "path": "/api/plants/:id",
+      "policy": "staff JWT",
+      "source": "src/routes/plants.js",
+      "line": 311
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/plants/:id",
+      "policy": "staff JWT",
+      "source": "src/routes/plants.js",
+      "line": 348
+    },
+    {
+      "method": "POST",
+      "path": "/api/plants/:id/photo",
+      "policy": "staff JWT",
+      "source": "src/routes/plants.js",
+      "line": 368
+    },
+    {
+      "method": "GET",
+      "path": "/api/plants/:id/qr",
+      "policy": "staff JWT",
+      "source": "src/routes/plants.js",
+      "line": 434
+    },
+    {
+      "method": "GET",
+      "path": "/api/plants/:id/qr/image",
+      "policy": "staff JWT",
+      "source": "src/routes/plants.js",
+      "line": 453
+    },
+    {
+      "method": "POST",
+      "path": "/api/identify",
+      "policy": "public/ungated",
+      "source": "src/routes/identify.js",
+      "line": 128
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/readings/history",
+      "policy": "staff JWT",
+      "source": "src/routes/iot.js",
+      "line": 16
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/readings",
+      "policy": "staff JWT",
+      "source": "src/routes/iot.js",
+      "line": 54
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/latest",
+      "policy": "staff JWT",
+      "source": "src/routes/iot.js",
+      "line": 61
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/summary",
+      "policy": "staff JWT",
+      "source": "src/routes/iot.js",
+      "line": 69
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/summary/live",
+      "policy": "staff JWT",
+      "source": "src/routes/iot.js",
+      "line": 103
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/alerts",
+      "policy": "staff JWT",
+      "source": "src/routes/iot.js",
+      "line": 111
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/alerts/live",
+      "policy": "staff JWT",
+      "source": "src/routes/iot.js",
+      "line": 151
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge/taxonomy",
+      "policy": "public/ungated",
+      "source": "src/routes/knowledge.js",
+      "line": 26
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/taxonomy",
+      "policy": "staff JWT",
+      "source": "src/routes/knowledge.js",
+      "line": 41
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge/species/manage",
+      "policy": "staff JWT",
+      "source": "src/routes/knowledge.js",
+      "line": 98
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge/species",
+      "policy": "public/ungated",
+      "source": "src/routes/knowledge.js",
+      "line": 114
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge/species/:id",
+      "policy": "public/ungated",
+      "source": "src/routes/knowledge.js",
+      "line": 175
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge/species/:id/manage",
+      "policy": "staff JWT",
+      "source": "src/routes/knowledge.js",
+      "line": 232
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/species",
+      "policy": "staff JWT",
+      "source": "src/routes/knowledge.js",
+      "line": 261
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/knowledge/species/:id",
+      "policy": "staff JWT",
+      "source": "src/routes/knowledge.js",
+      "line": 341
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/knowledge/species/:id",
+      "policy": "staff JWT",
+      "source": "src/routes/knowledge.js",
+      "line": 440
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/species/:id/photos",
+      "policy": "staff JWT",
+      "source": "src/routes/knowledge.js",
+      "line": 465
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/knowledge/species/:id/photos/:photoId/primary",
+      "policy": "staff JWT",
+      "source": "src/routes/knowledge.js",
+      "line": 560
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/knowledge/species/:id/photos/:photoId",
+      "policy": "staff JWT",
+      "source": "src/routes/knowledge.js",
+      "line": 598
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge/species/:id/photos/:photoId",
+      "policy": "public/ungated",
+      "source": "src/routes/knowledge.js",
+      "line": 667
+    },
+    {
+      "method": "POST",
+      "path": "/api/qr-batch/print",
+      "policy": "staff JWT",
+      "source": "src/routes/qrBatch.js",
+      "line": 8
+    },
+    {
+      "method": "POST",
+      "path": "/api/observations",
+      "policy": "staff JWT",
+      "source": "src/routes/observations.js",
+      "line": 12
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/observations/:id/submit",
+      "policy": "staff JWT",
+      "source": "src/routes/observations.js",
+      "line": 99
+    },
+    {
+      "method": "POST",
+      "path": "/api/observations/:id/photo",
+      "policy": "staff JWT",
+      "source": "src/routes/observations.js",
+      "line": 163
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/:type",
+      "policy": "staff JWT",
+      "source": "src/routes/reports.js",
+      "line": 55
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/temp-password",
+      "policy": "public/ungated",
+      "source": "src/routes/auth.js",
+      "line": 15
+    },
+    {
+      "method": "GET",
+      "path": "/api/officer/reviews/pending",
+      "policy": "staff JWT",
+      "source": "src/routes/officerReviews.js",
+      "line": 8
+    },
+    {
+      "method": "GET",
+      "path": "/api/officer/reviews/:observationId/photos",
+      "policy": "staff JWT",
+      "source": "src/routes/officerReviews.js",
+      "line": 28
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/officer/reviews/plants/:plantId/species",
+      "policy": "staff JWT",
+      "source": "src/routes/officerReviews.js",
+      "line": 107
+    },
+    {
+      "method": "POST",
+      "path": "/api/officer/reviews/:observationId/decision",
+      "policy": "staff JWT",
+      "source": "src/routes/officerReviews.js",
+      "line": 151
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/officer/reviews/:observationId/visibility",
+      "policy": "staff JWT",
+      "source": "src/routes/officerReviews.js",
+      "line": 242
+    },
+    {
+      "method": "POST",
+      "path": "/api/ingestion/telemetry",
+      "policy": "device credential (separate from staff JWT)",
+      "source": "src/routes/iotIngestion.js",
+      "line": 27
+    },
+    {
+      "method": "GET",
+      "path": "/",
+      "policy": "public/ungated",
+      "source": "src/server.js",
+      "line": 44
+    },
+    {
+      "method": "GET",
+      "path": "/api/health",
+      "policy": "public/ungated",
+      "source": "src/server.js",
+      "line": 51
+    },
+    {
+      "method": "GET",
+      "path": "/api/health/supabase",
+      "policy": "public/ungated",
+      "source": "src/server.js",
+      "line": 55
+    },
+    {
+      "method": "GET",
+      "path": "/api/public/plants/by-qr",
+      "policy": "public/ungated",
+      "source": "src/server.js",
+      "line": 69
+    },
+    {
+      "method": "GET",
+      "path": "/api/me",
+      "policy": "staff JWT",
+      "source": "src/server.js",
+      "line": 101
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me",
+      "policy": "staff JWT",
+      "source": "src/server.js",
+      "line": 102
+    }
+  ],
+  "results": [
+    {
+      "method": "GET",
+      "path": "/api/plants",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plants",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plants/:id",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plants/:id",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plants",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plants",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/plants/:id",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/plants/:id",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/plants/:id",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/plants/:id",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plants/:id/photo",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plants/:id/photo",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plants/:id/qr",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plants/:id/qr",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plants/:id/qr/image",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plants/:id/qr/image",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/readings/history",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/readings/history",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/readings",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/readings",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/latest",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/latest",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/summary",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/summary",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/summary/live",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/summary/live",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/alerts",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/alerts",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/alerts/live",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/iot/alerts/live",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/taxonomy",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/taxonomy",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge/species/manage",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge/species/manage",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge/species/:id/manage",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge/species/:id/manage",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/species",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/species",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/knowledge/species/:id",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/knowledge/species/:id",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/knowledge/species/:id",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/knowledge/species/:id",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/species/:id/photos",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/species/:id/photos",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/knowledge/species/:id/photos/:photoId/primary",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/knowledge/species/:id/photos/:photoId/primary",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/knowledge/species/:id/photos/:photoId",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/knowledge/species/:id/photos/:photoId",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "POST",
+      "path": "/api/qr-batch/print",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "POST",
+      "path": "/api/qr-batch/print",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "POST",
+      "path": "/api/observations",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "POST",
+      "path": "/api/observations",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/observations/:id/submit",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/observations/:id/submit",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "POST",
+      "path": "/api/observations/:id/photo",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "POST",
+      "path": "/api/observations/:id/photo",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/:type",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/:type",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/officer/reviews/pending",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/officer/reviews/pending",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/officer/reviews/:observationId/photos",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/officer/reviews/:observationId/photos",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/officer/reviews/plants/:plantId/species",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/officer/reviews/plants/:plantId/species",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "POST",
+      "path": "/api/officer/reviews/:observationId/decision",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "POST",
+      "path": "/api/officer/reviews/:observationId/decision",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/officer/reviews/:observationId/visibility",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/officer/reviews/:observationId/visibility",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/me",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/me",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me",
+      "condition": "missing",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me",
+      "condition": "invalid",
+      "http": 401,
+      "error_body_safe": true,
+      "result": "PASS"
+    }
+  ],
+  "findings": [
+    {
+      "id": "AUTH-RESET-01",
+      "severity": "HIGH / potentially critical if privileged key configured",
+      "endpoint": "POST /api/auth/temp-password",
+      "finding": "No requireAuth or proof-of-recovery gate; caller controls identifier and replacement password before admin.updateUserById. Code review finding; actual password mutation deliberately not attempted.",
+      "status": "OPEN",
+      "recommended_action": "Disable this route or replace with validated Supabase recovery/session flow; never expose a privileged unauthenticated password setter.",
+      "empty_body_probe_http": 400,
+      "empty_body_reaches_handler": true
+    }
+  ],
+  "scope": "Current local working source; static literal-route inventory. JWT checks do not prove role/RLS correctness. No valid user/device credentials sent.",
+  "finished_at": "2026-10-31T14:39:49.194Z"
+}

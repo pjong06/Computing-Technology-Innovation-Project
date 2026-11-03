@@ -66,10 +66,50 @@ function startEditor() {
   showPhoto();
 }
 
-// Runs when the chosen photo file has been read. Keeps the photo and shows it in the preview.
+// Says if the species has a real photo of the plant (an uploaded picture or a picture link),
+// not one of the default pictures.
+function hasRealPhoto() {
+  if (photo.indexOf('https://') === 0) {
+    return true;
+  }
+  return photo.indexOf('data:image/') === 0 && photo.indexOf('data:image/svg+xml') !== 0;
+}
+
+// Makes a photo smaller (at most 900 pixels wide or high), so big pictures still save quickly.
+// done is called with the smaller picture, or with null when the file is not a picture.
+function shrinkPhoto(pictureText, done) {
+  const image = new Image();
+  image.onload = function () {
+    const biggest = Math.max(image.width, image.height);
+    let scale = 1;
+    if (biggest > 900) {
+      scale = 900 / biggest;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(image.width * scale);
+    canvas.height = Math.round(image.height * scale);
+    const pen = canvas.getContext('2d');
+    pen.fillStyle = '#ffffff';
+    pen.fillRect(0, 0, canvas.width, canvas.height);
+    pen.drawImage(image, 0, 0, canvas.width, canvas.height);
+    done(canvas.toDataURL('image/jpeg', 0.8));
+  };
+  image.onerror = function () {
+    done(null);
+  };
+  image.src = pictureText;
+}
+
+// Runs when the chosen photo file has been read. Makes it smaller, keeps it and shows it in the preview.
 function photoIsRead() {
-  photo = reader.result;
-  showPhoto();
+  shrinkPhoto(reader.result, function (smallPhoto) {
+    if (smallPhoto === null) {
+      showToast('That file is not a picture. Choose a JPG or PNG image.');
+      return;
+    }
+    photo = smallPhoto;
+    showPhoto();
+  });
 }
 
 // Starts reading the photo the user chose. Called when the file picker changes.
@@ -133,7 +173,6 @@ function sendForApproval(sci) {
   });
 
   if (writeStorage(OBSERVATIONS_KEY, list) === false) {
-    showToast('Could not send. The photo may be too big.');
     return;
   }
 
@@ -146,6 +185,10 @@ function saveSpecies() {
   const sci = document.getElementById('f-sci').value.trim();
   if (sci === '') {
     showToast('Enter a scientific name');
+    return;
+  }
+  if (hasRealPhoto() === false) {
+    showToast('Please upload an image of the plant.');
     return;
   }
 
@@ -184,7 +227,6 @@ function saveSpecies() {
 
   const worked = writeStorage(SPECIES_KEY, list);
   if (worked === false) {
-    showToast('Could not save. The photo may be too big.');
     return;
   }
 

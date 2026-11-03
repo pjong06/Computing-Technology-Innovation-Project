@@ -1,63 +1,77 @@
-// species.js - the Species catalogue page.
+// species.js - the Species catalogue page. Every plant is shown as a card with a big photo.
 
 drawMenu('species.html');
 
-// Makes a table cell that shows a date on one line and the time on the next. Shows "Not recorded" if there is none.
-function makeDateCell(text) {
-  const td = document.createElement('td');
-  td.className = 'when';
+// Makes the big photo box of a card. The status pill sits on the photo.
+function makePlantPhoto(species) {
+  const box = document.createElement('div');
+  box.className = 'plant-photo';
 
-  if (!text) {
-    td.textContent = 'Not recorded';
-    return td;
-  }
+  const img = document.createElement('img');
+  img.alt = species.sci;
+  img.loading = 'lazy';
+  img.decoding = 'async';
+  // A broken picture link shows the blank leaf instead.
+  img.onerror = function () {
+    img.onerror = null;
+    img.src = PICTURE_BLANK;
+  };
+  img.src = species.photo;
+  box.appendChild(img);
 
-  const parts = text.split(', ');
-  td.appendChild(document.createTextNode(parts[0]));
-  if (parts.length > 1) {
-    td.appendChild(document.createElement('br'));
-    td.appendChild(document.createTextNode(parts[1]));
-  }
-  return td;
+  box.appendChild(makePill(species.status));
+  return box;
 }
 
-// Makes one table row for one species. index is its position in the saved list.
-function makeSpeciesRow(species, index) {
-  const row = document.createElement('tr');
-  row.className = 'row';
+// Makes the text under the photo: the common name, the scientific name, and the family and place.
+function makePlantInfo(species) {
+  const info = document.createElement('div');
+  info.className = 'plant-info';
 
-  row.onclick = function () {
+  // Plants without a common name show their scientific name as the main title.
+  const name = document.createElement('div');
+  name.className = 'plant-name';
+  name.textContent = species.com || species.sci;
+  if (!species.com) {
+    name.classList.add('latin');
+  }
+  info.appendChild(name);
+
+  if (species.com) {
+    const scientific = document.createElement('div');
+    scientific.className = 'plant-sci';
+    scientific.textContent = species.sci;
+    info.appendChild(scientific);
+  }
+
+  const details = [];
+  if (species.fam) {
+    details.push(species.fam);
+  }
+  if (species.loc) {
+    details.push(species.loc);
+  }
+  if (details.length > 0) {
+    const place = document.createElement('div');
+    place.className = 'plant-place';
+    place.textContent = details.join(' · ');
+    place.title = place.textContent;
+    info.appendChild(place);
+  }
+  return info;
+}
+
+// Makes one card for one species. index is its position in the saved list.
+function makePlantCard(species, index) {
+  const card = document.createElement('div');
+  card.className = 'plant-card';
+
+  card.onclick = function () {
     openEditorFor(index);
   };
 
-  const names = document.createElement('div');
-  const scientific = document.createElement('i');
-  scientific.className = 'sci';
-  scientific.textContent = species.sci;
-  const common = document.createElement('div');
-  common.className = 'muted';
-  common.textContent = species.com;
-  names.appendChild(scientific);
-  names.appendChild(common);
-
-  const box = document.createElement('div');
-  box.className = 'sp';
-  box.appendChild(makeThumb(species.photo, species.sci, 'big'));
-  box.appendChild(names);
-
-  const firstCell = document.createElement('td');
-  firstCell.appendChild(box);
-  row.appendChild(firstCell);
-
-  row.appendChild(makeCell(species.fam));
-  row.appendChild(makeCell(species.loc));
-
-  const statusCell = document.createElement('td');
-  statusCell.appendChild(makePill(species.status));
-  row.appendChild(statusCell);
-
-  row.appendChild(makeDateCell(species.firstWhen));
-  row.appendChild(makeDateCell(species.when));
+  card.appendChild(makePlantPhoto(species));
+  card.appendChild(makePlantInfo(species));
 
   const editButton = document.createElement('button');
   editButton.className = 'btn ghost';
@@ -67,37 +81,34 @@ function makeSpeciesRow(species, index) {
     openEditorFor(index);
   };
 
-  const deleteButton = document.createElement('button');
-  deleteButton.className = 'btn ghost';
-  deleteButton.textContent = 'Delete';
-  deleteButton.onclick = function (event) {
-    event.stopPropagation();
-    deleteSpecies(index);
-  };
-
   const buttons = document.createElement('div');
-  buttons.className = 'acts';
+  buttons.className = 'plant-actions';
   buttons.appendChild(editButton);
+
   // Botanists cannot delete records. Only officers can.
   const viewer = getCurrentUser();
   if (viewer !== null && isBotanist(viewer) === false) {
+    const deleteButton = document.createElement('button');
+    deleteButton.className = 'btn ghost';
+    deleteButton.textContent = 'Delete';
+    deleteButton.onclick = function (event) {
+      event.stopPropagation();
+      deleteSpecies(index);
+    };
     buttons.appendChild(deleteButton);
   }
 
-  const buttonCell = document.createElement('td');
-  buttonCell.appendChild(buttons);
-  row.appendChild(buttonCell);
-
-  return row;
+  card.appendChild(buttons);
+  return card;
 }
 
-// Draws the table again, showing only the species that match the search box and the status filter.
+// Draws the cards again, showing only the species that match the search box and the status filter.
 function drawSpeciesTable() {
   const searchText = document.getElementById('search-box').value.toLowerCase();
   const chosenStatus = document.getElementById('status-filter').value;
   const list = getSpecies();
-  const body = document.getElementById('species-body');
-  body.innerHTML = '';
+  const grid = document.getElementById('species-grid');
+  grid.innerHTML = '';
   let shown = 0;
 
   for (let i = 0; i < list.length; i++) {
@@ -111,15 +122,16 @@ function drawSpeciesTable() {
     }
 
     if (nameMatches && statusMatches) {
-      body.appendChild(makeSpeciesRow(species, i));
+      grid.appendChild(makePlantCard(species, i));
       shown = shown + 1;
     }
   }
 
+  document.getElementById('species-count').textContent = 'Showing ' + shown + ' of ' + list.length + ' plants';
   document.getElementById('no-species').hidden = (shown > 0);
 }
 
-// Asks for confirmation, then deletes the species at this position and redraws the table.
+// Asks for confirmation, then deletes the species at this position and redraws the cards.
 function deleteSpecies(index) {
   const sure = confirm('Delete this species record?');
   if (sure === false) {

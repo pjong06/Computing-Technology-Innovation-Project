@@ -4,10 +4,16 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const path = require('node:path');
+// Fixture-only public origin; no network request is made to this host.
+process.env.PUBLIC_PLANT_BASE_URL = 'https://example.test/p';
+process.env.PUBLIC_PLANT_BASE_URL = 'https://plants.example.test/p/';
 
 // Replace auth only within this isolated test process. Do not change auth.js.
 const authPath = require.resolve('../src/middleware/auth');
 let currentDb;
+// Role of the signed-in test user. Tests that need an officer set it and reset it
+// afterwards (see withRole).
+let currentRole = 'botanist';
 require.cache[authPath] = {
   id: authPath,
   filename: authPath,
@@ -15,7 +21,7 @@ require.cache[authPath] = {
   exports: {
     requireAuth: (req, _res, next) => {
       req.user = { id: '11111111-1111-4111-8111-111111111111' };
-      req.profile = { role: 'botanist', account_status: 'active' };
+      req.profile = { role: currentRole, account_status: 'active' };
       req.supabase = currentDb;
       next();
     },
@@ -29,17 +35,65 @@ require.cache[authPath] = {
 const plantRouter = require('../src/routes/plants');
 const observationRouter = require('../src/routes/observations');
 
-function fakeSupabase() {
+
+function fakeSupabase(options = {}) {
   const inserts = [];
+  // Every update() and delete() call is recorded here, so a test can prove that
+  // nothing was written when access was denied.
+  const writes = [];
+
+  function plantRow() {
+    if (options.ownedPlant) {
+      return {
+        id: '22222222-2222-4222-8222-222222222222',
+        qr_code_value: 'NIAH-PLT-00001',
+        registered_by: '11111111-1111-4111-8111-111111111111'
+      };
+    }
+    if (options.otherOwnersPlant) {
+      // Registered by a different botanist than the signed-in test user.
+      return {
+        id: '22222222-2222-4222-8222-222222222222',
+        qr_code_value: 'NIAH-PLT-00002',
+        registered_by: '99999999-9999-4999-8999-999999999999'
+      };
+    }
+    return null;
+  }
+
+  // Chain returned by update()/delete(): supports .eq().select().maybeSingle().
+  // A write to an existing plant resolves with the changed row, like Supabase does;
+  // anything else resolves with no row.
+  function writeChain(table, row) {
+    const plant = table === 'plants' ? plantRow() : null;
+    return {
+      eq() { return this; },
+      select() { return this; },
+      maybeSingle: async () => ({ data: plant ? { ...plant, ...row } : null, error: null })
+    };
+  }
+
   return {
     inserts,
+    writes,
     from(table) {
       return {
         select() {
           return {
             eq() { return this; },
-            maybeSingle: async () => ({ data: null, error: null })
+            maybeSingle: async () => ({
+              data: table === 'plants' ? plantRow() : null,
+              error: null
+            })
           };
+        },
+        update(row) {
+          writes.push({ table, op: 'update', row });
+          return writeChain(table, row);
+        },
+        delete() {
+          writes.push({ table, op: 'delete', row: null });
+          return writeChain(table, {});
         },
         insert(row) {
           inserts.push({ table, row });
@@ -47,7 +101,10 @@ function fakeSupabase() {
             select() {
               return {
                 single: async () => ({
-                  data: { id: '22222222-2222-4222-8222-222222222222', ...row },
+                  data: {
+                    id: '22222222-2222-4222-8222-222222222222',
+                    ...row
+                  },
                   error: null
                 })
               };
@@ -58,6 +115,7 @@ function fakeSupabase() {
     }
   };
 }
+
 
 async function withApp(run) {
   const app = express();
@@ -75,6 +133,34 @@ async function withApp(run) {
       server.close(error => error ? reject(error) : resolve())
     );
   }
+}
+
+// Runs a test as a different role, then always switches back to botanist so the
+// next test isn't affected even if this one fails.
+async function withRole(role, run) {
+  currentRole = role;
+  try {
+    await run();
+  } finally {
+    currentRole = 'botanist';
+  }
+}
+
+// PATCH then DELETE the test plant; returns both responses with parsed bodies.
+async function updateThenDeletePlant(base) {
+  const url = `${base}/api/plants/22222222-2222-4222-8222-222222222222`;
+
+  const updateResponse = await fetch(url, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ description: 'Updated description' })
+  });
+  const deleteResponse = await fetch(url, { method: 'DELETE' });
+
+  return {
+    update: { status: updateResponse.status, body: await updateResponse.json() },
+    remove: { status: deleteResponse.status, body: await deleteResponse.json() }
+  };
 }
 
 async function post(base, endpoint, payload) {
@@ -173,5 +259,274 @@ test('C16: invalid plant coordinates return HTTP 400 without inserting', async (
     });
     assert.equal(response.status, 400, JSON.stringify(response.body));
     assert.equal(currentDb.inserts.length, 0);
+  });
+});
+
+test("7.9: botanist cannot update another botanist's plant (403)", async () => {
+  currentDb = fakeSupabase({ otherOwnersPlant: true });
+
+  await withApp(async base => {
+    const response = await fetch(
+      `${base}/api/plants/22222222-2222-4222-8222-222222222222`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ description: 'Updated description' })
+      }
+    );
+
+    assert.equal(response.status, 403);
+    assert.equal(currentDb.writes.length, 0);
+  });
+});
+
+test("7.9: botanist cannot delete another botanist's plant (403)", async () => {
+  currentDb = fakeSupabase({ otherOwnersPlant: true });
+
+  await withApp(async base => {
+    const response = await fetch(
+      `${base}/api/plants/22222222-2222-4222-8222-222222222222`,
+      { method: 'DELETE' }
+    );
+
+    assert.equal(response.status, 403);
+    assert.equal(currentDb.writes.length, 0);
+  });
+});
+
+test('7.9: botanist can update and delete their own plant', async () => {
+  currentDb = fakeSupabase({ ownedPlant: true });
+
+  await withApp(async base => {
+    const { update, remove } = await updateThenDeletePlant(base);
+
+    assert.equal(update.status, 200);
+    assert.equal(update.body.plant.description, 'Updated description');
+    assert.equal(remove.status, 200);
+    assert.equal(remove.body.plant_id, '22222222-2222-4222-8222-222222222222');
+
+    // One update to the plant, then the delete removes its observations and the plant.
+    assert.deepEqual(
+      currentDb.writes.map(w => `${w.op}:${w.table}`),
+      ['update:plants', 'delete:observations', 'delete:plants']
+    );
+  });
+});
+
+test("7.9: officer can update and delete any botanist's plant", async () => {
+  currentDb = fakeSupabase({ otherOwnersPlant: true });
+
+  await withRole('officer', () =>
+    withApp(async base => {
+      const { update, remove } = await updateThenDeletePlant(base);
+
+      assert.equal(update.status, 200);
+      assert.equal(update.body.plant.description, 'Updated description');
+      assert.equal(remove.status, 200);
+      assert.equal(remove.body.plant_id, '22222222-2222-4222-8222-222222222222');
+
+      assert.deepEqual(
+        currentDb.writes.map(w => `${w.op}:${w.table}`),
+        ['update:plants', 'delete:observations', 'delete:plants']
+      );
+    })
+  );
+});
+
+test('7.9: QR lookup returns 404 for a plant not owned by the botanist', async () => {
+  currentDb = fakeSupabase();
+
+  await withApp(async base => {
+    const response = await getQrResponse(
+      base,
+      '22222222-2222-4222-8222-222222222222'
+    );
+
+    assert.equal(response.status, 404);
+    assert.equal(response.body.message, 'Plant not found');
+  });
+});
+
+async function getQrResponse(base, plantId) {
+  const response = await fetch(
+    `${base}/api/plants/${plantId}/qr`
+  );
+
+  return {
+    status: response.status,
+    body: await response.json()
+  };
+}
+
+
+test('7.9: owned plant QR lookup returns the correct tag', async () => {
+  currentDb = fakeSupabase({ ownedPlant: true });
+
+  await withApp(async base => {
+    const response = await fetch(
+      `${base}/api/plants/22222222-2222-4222-8222-222222222222/qr`
+    );
+
+    assert.equal(response.status, 200);
+
+    const body = await response.json();
+
+    assert.equal(body.qr_value, 'NIAH-PLT-00001');
+    assert.match(body.qr_code, /^data:image\/png;base64,/);
+  });
+});
+
+test('7.9: owned plant QR image returns PNG', async () => {
+  currentDb = fakeSupabase({ ownedPlant: true });
+
+  await withApp(async base => {
+    const response = await fetch(
+      `${base}/api/plants/22222222-2222-4222-8222-222222222222/qr/image`
+    );
+
+    assert.equal(response.status, 200);
+    assert.match(
+      response.headers.get('content-type'),
+      /^image\/png/
+    );
+
+    const image = Buffer.from(await response.arrayBuffer());
+
+    // PNG file signature
+    assert.deepEqual(
+      [...image.subarray(0, 8)],
+      [137, 80, 78, 71, 13, 10, 26, 10]
+    );
+  });
+});
+
+const SUBMIT_OBSERVATION_ID = '44444444-4444-4444-8444-444444444444';
+const SUBMIT_OWNER_ID = '11111111-1111-4111-8111-111111111111';
+
+function observationSubmitDb(status, options = {}) {
+  const state = {
+    observation: options.missing ? null : {
+      id: SUBMIT_OBSERVATION_ID,
+      observer_id: options.otherOwner
+        ? '99999999-9999-4999-8999-999999999999'
+        : SUBMIT_OWNER_ID,
+      review_status: status
+    },
+    updateCalls: 0
+  };
+
+  return {
+    state,
+    from(table) {
+      assert.equal(table, 'observations');
+
+      return {
+        select() {
+          return {
+            eq() { return this; },
+            async maybeSingle() {
+              return { data: state.observation && { ...state.observation }, error: null };
+            }
+          };
+        },
+        update(changes) {
+          state.updateCalls++;
+
+          return {
+            eq() { return this; },
+            in() { return this; },
+            select() { return this; },
+            async maybeSingle() {
+              if (!state.observation) {
+                return { data: null, error: null };
+              }
+
+              state.observation = {
+                ...state.observation,
+                ...changes
+              };
+
+              return {
+                data: { ...state.observation },
+                error: null
+              };
+            }
+          };
+        }
+      };
+    }
+  };
+}
+
+async function submitObservation(base) {
+  const response = await fetch(
+    `${base}/api/observations/${SUBMIT_OBSERVATION_ID}/submit`,
+    { method: 'PATCH' }
+  );
+
+  return {
+    status: response.status,
+    body: await response.json()
+  };
+}
+
+for (const initialStatus of ['draft', 'rejected']) {
+  test(`Observation submit: ${initialStatus} becomes pending`, async () => {
+    currentDb = observationSubmitDb(initialStatus);
+
+    await withApp(async base => {
+      const result = await submitObservation(base);
+
+      assert.equal(result.status, 200);
+      assert.equal(result.body.observation.review_status, 'pending');
+      assert.equal(currentDb.state.updateCalls, 1);
+    });
+  });
+}
+
+test('Observation submit: already pending returns 200 without updating', async () => {
+  currentDb = observationSubmitDb('pending');
+
+  await withApp(async base => {
+    const first = await submitObservation(base);
+    const retry = await submitObservation(base);
+
+    assert.equal(first.status, 200);
+    assert.equal(retry.status, 200);
+    assert.equal(retry.body.observation.review_status, 'pending');
+    assert.equal(currentDb.state.updateCalls, 0);
+  });
+});
+
+test('Observation submit: approved observation returns 400', async () => {
+  currentDb = observationSubmitDb('approved');
+
+  await withApp(async base => {
+    const result = await submitObservation(base);
+
+    assert.equal(result.status, 400);
+    assert.equal(currentDb.state.updateCalls, 0);
+  });
+});
+
+test('Observation submit: another botanist cannot submit observation', async () => {
+  currentDb = observationSubmitDb('draft', { otherOwner: true });
+
+  await withApp(async base => {
+    const result = await submitObservation(base);
+
+    assert.equal(result.status, 403);
+    assert.equal(currentDb.state.updateCalls, 0);
+  });
+});
+
+test('Observation submit: nonexistent observation returns 404', async () => {
+  currentDb = observationSubmitDb('draft', { missing: true });
+
+  await withApp(async base => {
+    const result = await submitObservation(base);
+
+    assert.equal(result.status, 404);
+    assert.equal(currentDb.state.updateCalls, 0);
   });
 });

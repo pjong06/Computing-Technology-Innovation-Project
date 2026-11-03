@@ -1,5 +1,36 @@
 // shared.js - the saved data, the left menu and small helpers used by every page.
 
+
+// Connection to Supabase and the backend
+// The publishable key is meant to be public. NEVER put a service_role key here.
+const SUPABASE_URL = 'https://yzhxjzbzslnveskkwvfy.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_4L1RojeFv6wLAsFNX2q3KQ_hjanSuTo';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { storageKey: 'niah_supabase_auth' } });
+window.sb = sb;
+
+// Gives back the login token, or null if nobody is logged in.
+window.getOfficerAccessToken = async function () {
+  const result = await sb.auth.getSession();
+  return result.data.session ? result.data.session.access_token : null;
+};
+
+// Calls the backend
+async function api(path, options) {
+  options = options || {};
+  const token = await window.getOfficerAccessToken();
+  const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers);
+  if (token) {
+    headers.Authorization = 'Bearer ' + token;
+  }
+  const response = await fetch('/api' + path, Object.assign({}, options, { headers: headers }));
+  const body = await response.json().catch(function () { return {}; });
+  if (response.ok === false) {
+    throw new Error(body.message || ('Request failed (' + response.status + ')'));
+  }
+  return body;
+}
+
+
 const SPECIES_KEY = 'niah_species';
 const OBSERVATIONS_KEY = 'niah_observations';
 const USERS_KEY = 'niah_users';
@@ -8,9 +39,9 @@ const TOAST_KEY = 'niah_toast';
 const VERSION_KEY = 'niah_data_version';
 const SESSION_KEY = 'niah_session';
 // Suspended botanists are told to contact the officer at this email.
-const OFFICER_CONTACT_EMAIL = 'daniel@sfc.example';
+const OFFICER_CONTACT_EMAIL = 'georgetanyonghan@gmail.com';
 // Sample users that were deleted on purpose. They are removed from saved data and not added again.
-const REMOVED_SAMPLE_EMAILS = ['mei@sfc.example'];
+const REMOVED_SAMPLE_EMAILS = ['mei@gmail.com'];
 const DATA_VERSION = 4;
 
 // Turns the text of an SVG drawing into an image address that an <img> tag can show.
@@ -24,24 +55,403 @@ const PICTURE_NEPENTHES = svgPicture('<svg xmlns="http://www.w3.org/2000/svg" vi
 const PICTURE_DIPTEROCARPUS = svgPicture('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56"><rect width="56" height="56" fill="#6aa05a"/><path d="M10 46C10 22 26 8 46 10 46 32 34 46 10 46z" fill="#2f6b3a"/><path d="M12 44L38 18" stroke="#a9d49a" stroke-width="2"/></svg>');
 const PICTURE_BLANK = svgPicture('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56"><rect width="56" height="56" fill="#6aa05a"/><path d="M10 46C10 22 26 8 46 10 46 32 34 46 10 46z" fill="#2f6b3a"/><path d="M12 44L38 18" stroke="#a9d49a" stroke-width="2"/></svg>');
 
-// Reads a saved value from the browser's localStorage. Returns null if nothing is saved.
+// ---------- Saved data lives in the database ----------
+// Each page has its own table with one column for each detail:
+//   Species catalogue and editor -> website_species
+//   Observation queue and rejected -> website_observations
+//   User & role admin and sign up -> website_users (one row for each real login account)
+// Only the data version is kept in the table web_data.
+// Everything else (the login copy, the editor shortcut, the pop-up message) stays in this browser.
+const DATABASE_KEYS = [SPECIES_KEY, OBSERVATIONS_KEY, USERS_KEY, VERSION_KEY];
+const AUTH_STORAGE_KEY = 'niah_supabase_auth';
+const NOT_LOGGED_IN = 'You are not logged in.';
+let databaseCache = {};     // the saved values, as text, loaded when the page opens
+let databaseReady = false;  // true when the values were loaded from the database
+let databaseProblem = '';   // the reason the database could not be used, if any
+let databaseSaved = {};     // what each list looked like when it was last loaded or saved
+let databaseIds = {};       // the ids each list had when it was last loaded or saved
+
+// Turns text like "14 Sep 2026, 3:42 PM" into a date and time the database understands.
+// Returns null when the text is empty or not in that form.
+function whenTextToIso(text) {
+  const match = /^(\d{1,2}) (\w{3}) (\d{4}), (\d{1,2}):(\d{2}) (AM|PM)$/.exec(text || '');
+  if (match === null) {
+    return null;
+  }
+  const month = MONTHS.indexOf(match[2]);
+  if (month === -1) {
+    return null;
+  }
+  let hour = parseInt(match[4], 10) % 12;
+  if (match[6] === 'PM') {
+    hour = hour + 12;
+  }
+  const date = new Date(parseInt(match[3], 10), month, parseInt(match[1], 10), hour, parseInt(match[5], 10));
+  return date.toISOString();
+}
+
+// Works out the saved date and time of a species: from the "when" text, or else from the plain date.
+function savedTime(whenText, dateText) {
+  const fromText = whenTextToIso(whenText);
+  if (fromText !== null) {
+    return fromText;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateText || '')) {
+    return new Date(dateText + 'T00:00:00').toISOString();
+  }
+  return null;
+}
+
+// The lists that have their own table in the database.
+// text = [name used by the pages, column in the table]
+// times = [column, text like "14 Sep 2026, 3:42 PM", plain date like "2026-09-14"]
+// flags = [name used by the pages, column] for yes/no values
+// picture = true when the pages show a picture for each record. A record without a saved photo
+// shows the default picture of its plant type.
+const LIST_TABLES = [
+  {
+    key: SPECIES_KEY, path: '/species', picture: true,
+    text: [['sci', 'scientific_name'], ['com', 'common_name'], ['fam', 'family'], ['status', 'conservation_status'],
+      ['loc', 'location_name'], ['gps', 'gps'], ['desc', 'description'], ['obsId', 'observation_id'], ['photo', 'photo']],
+    times: [['first_recorded', 'firstWhen', 'firstDate'], ['last_updated', 'when', 'date']],
+    flags: []
+  },
+  {
+    key: OBSERVATIONS_KEY, path: '/observations', picture: true,
+    text: [['sci', 'scientific_name'], ['com', 'common_name'], ['fam', 'family'], ['by', 'observed_by'],
+      ['loc', 'location_name'], ['gps', 'gps'], ['notes', 'notes'], ['photo', 'photo'],
+      ['state', 'state'], ['reason', 'reject_reason']],
+    times: [['observed_at', 'when', 'date']],
+    flags: []
+  },
+  {
+    key: USERS_KEY, path: '/users',
+    text: [['name', 'name'], ['username', 'username'], ['email', 'email'], ['role', 'role']],
+    times: [],
+    flags: [['active', 'active']]
+  }
+];
+
+// Returns the table setup for a saved key, or null when the key has no table of its own.
+function findListTable(key) {
+  for (let i = 0; i < LIST_TABLES.length; i++) {
+    if (LIST_TABLES[i].key === key) {
+      return LIST_TABLES[i];
+    }
+  }
+  return null;
+}
+
+// Returns the default picture of a species or observation, chosen by the first word of its
+// scientific name (the genus). Rafflesia gets the flower, Shorea the tree, Nepenthes the pitcher
+// plant and Dipterocarpus the leaf. Any other plant gets the blank leaf.
+function fallbackPicture(scientificName) {
+  const genus = String(scientificName || '').trim().toLowerCase().split(' ')[0];
+  const samples = makeStartingSpecies();
+  for (let i = 0; i < samples.length; i++) {
+    if (genus !== '' && samples[i].sci.toLowerCase().split(' ')[0] === genus) {
+      return samples[i].photo;
+    }
+  }
+  return PICTURE_BLANK;
+}
+
+// Turns an item used by the pages (a species, an observation or a user) into one row of its table.
+// Anything the table has no column for goes into "extra", so nothing is lost.
+function itemToRow(item, table) {
+  const row = { id: item.id };
+  const used = { id: true, passwordHash: true };
+
+  for (let i = 0; i < table.text.length; i++) {
+    const value = item[table.text[i][0]];
+    row[table.text[i][1]] = (value === undefined || value === null) ? '' : String(value);
+    used[table.text[i][0]] = true;
+  }
+  // The default pictures are not saved. Only photos uploaded by users are.
+  if (row.photo !== undefined && row.photo.indexOf('data:image/svg+xml') === 0) {
+    row.photo = '';
+  }
+  for (let i = 0; i < table.times.length; i++) {
+    row[table.times[i][0]] = savedTime(item[table.times[i][1]], item[table.times[i][2]]);
+    used[table.times[i][1]] = true;
+    used[table.times[i][2]] = true;
+  }
+  for (let i = 0; i < table.flags.length; i++) {
+    row[table.flags[i][1]] = item[table.flags[i][0]] !== false;
+    used[table.flags[i][0]] = true;
+  }
+
+  const extra = {};
+  const names = Object.keys(item);
+  for (let i = 0; i < names.length; i++) {
+    if (used[names[i]] !== true) {
+      extra[names[i]] = item[names[i]];
+    }
+  }
+  row.extra = extra;
+  return row;
+}
+
+// Turns one row of a table back into an item used by the pages.
+function rowToItem(row, table) {
+  const item = Object.assign({}, row.extra || {});
+  item.id = row.id;
+
+  for (let i = 0; i < table.text.length; i++) {
+    const value = row[table.text[i][1]];
+    item[table.text[i][0]] = (value === undefined || value === null) ? '' : value;
+  }
+  for (let i = 0; i < table.times.length; i++) {
+    const saved = row[table.times[i][0]] ? new Date(row[table.times[i][0]]) : null;
+    item[table.times[i][2]] = saved ? isoDate(saved) : '';
+    item[table.times[i][1]] = saved ? whenText(saved) : '';
+  }
+  for (let i = 0; i < table.flags.length; i++) {
+    item[table.flags[i][0]] = row[table.flags[i][1]] !== false;
+  }
+  if (table.picture === true && !item.photo) {
+    item.photo = fallbackPicture(item.sci);
+  }
+  return item;
+}
+
+// Returns the ids of the items that have one.
+function idsOf(items) {
+  const ids = [];
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].id) {
+      ids.push(items[i].id);
+    }
+  }
+  return ids;
+}
+
+// Makes a short fingerprint of a list, to tell whether it changed since it was loaded or saved.
+function listFingerprint(items, table) {
+  return JSON.stringify(items.map(function (item) {
+    return itemToRow(item, table);
+  }));
+}
+
+// Creates a real login account. The database then adds the profile and the row in website_users by itself.
+// client is the Supabase connection to use. Returns what Supabase returns: { data, error }.
+async function createAccount(client, username, email, password) {
+  return client.auth.signUp({
+    email: email,
+    password: password,
+    options: { data: { source: 'website', username: username, name: username } }
+  });
+}
+
+// Returns the login token without waiting. If it has run out, asks Supabase for a new one.
+// Returns null when there is no login.
+function getTokenNow() {
+  const text = localStorage.getItem(AUTH_STORAGE_KEY);
+  if (text === null) {
+    return null;
+  }
+  let session = null;
+  try {
+    session = JSON.parse(text);
+  } catch (error) {
+    return null;
+  }
+  if (session === null || !session.access_token) {
+    return null;
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  if (session.expires_at && session.expires_at - 30 > now) {
+    return session.access_token;
+  }
+
+  // The token has run out. Ask Supabase for a new one.
+  if (!session.refresh_token) {
+    return null;
+  }
+  const request = new XMLHttpRequest();
+  request.open('POST', SUPABASE_URL + '/auth/v1/token?grant_type=refresh_token', false);
+  request.setRequestHeader('apikey', SUPABASE_KEY);
+  request.setRequestHeader('Content-Type', 'application/json');
+  try {
+    request.send(JSON.stringify({ refresh_token: session.refresh_token }));
+  } catch (error) {
+    return null;
+  }
+  if (request.status !== 200) {
+    return null;
+  }
+  const fresh = JSON.parse(request.responseText);
+  fresh.expires_at = now + fresh.expires_in;
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(fresh));
+  return fresh.access_token;
+}
+
+// Talks to the backend and waits for the answer, so the pages can stay as they are.
+// Returns { ok: true, data: ... } or { ok: false, message: '...' }.
+function databaseRequest(method, path, body) {
+  const token = getTokenNow();
+  if (token === null) {
+    return { ok: false, message: NOT_LOGGED_IN };
+  }
+  const request = new XMLHttpRequest();
+  request.open(method, '/api/web-data' + path, false);
+  request.setRequestHeader('Content-Type', 'application/json');
+  request.setRequestHeader('Authorization', 'Bearer ' + token);
+  try {
+    if (body === undefined) {
+      request.send(null);
+    } else {
+      request.send(JSON.stringify(body));
+    }
+  } catch (error) {
+    return { ok: false, message: 'Could not reach the backend. Is it running?' };
+  }
+
+  let reply = {};
+  try {
+    reply = JSON.parse(request.responseText);
+  } catch (error) {
+    reply = {};
+  }
+  if (request.status < 200 || request.status >= 300) {
+    return { ok: false, message: reply.message || ('Database error ' + request.status) };
+  }
+  return { ok: true, data: reply.data };
+}
+
+// Loads the saved values from the database when a page opens.
+function loadFromDatabase() {
+  if (OPEN_PAGES.indexOf(thisPageName()) !== -1) {
+    return;
+  }
+  const result = databaseRequest('GET', '', undefined);
+  if (result.ok === false) {
+    databaseProblem = result.message;
+    if (result.message === NOT_LOGGED_IN) {
+      // The login has run out, so forget the saved copy and the page sends the person to the login page.
+      localStorage.removeItem(SESSION_KEY);
+    }
+    return;
+  }
+  const version = result.data[VERSION_KEY];
+  if (version !== undefined) {
+    databaseCache[VERSION_KEY] = JSON.stringify(version);
+  }
+
+  // The species, observations and users come from their own tables.
+  for (let i = 0; i < LIST_TABLES.length; i++) {
+    const table = LIST_TABLES[i];
+    const listResult = databaseRequest('GET', table.path, undefined);
+    if (listResult.ok === false) {
+      databaseProblem = listResult.message;
+      return;
+    }
+    const items = listResult.data.map(function (row) {
+      return rowToItem(row, table);
+    });
+    // An empty table means "nothing yet" only after the website was set up once.
+    // Before that, the page adds the sample records by itself.
+    if (items.length > 0 || databaseCache[VERSION_KEY] !== undefined) {
+      databaseCache[table.key] = JSON.stringify(items);
+      databaseSaved[table.key] = listFingerprint(items, table);
+      databaseIds[table.key] = idsOf(items);
+    }
+  }
+  databaseReady = true;
+}
+
+// Loads one list from the database again, for example after a new account was created.
+// Returns true if it worked.
+function reloadFromDatabase(key) {
+  const table = findListTable(key);
+  if (table === null) {
+    return false;
+  }
+  const listResult = databaseRequest('GET', table.path, undefined);
+  if (listResult.ok === false) {
+    return false;
+  }
+  const items = listResult.data.map(function (row) {
+    return rowToItem(row, table);
+  });
+  databaseCache[key] = JSON.stringify(items);
+  databaseSaved[key] = listFingerprint(items, table);
+  databaseIds[key] = idsOf(items);
+  return true;
+}
+
+// Reads a saved value. Returns null if nothing is saved.
 function readStorage(key) {
-  const text = localStorage.getItem(key);
+  let text = null;
+  if (DATABASE_KEYS.indexOf(key) !== -1) {
+    if (databaseCache[key] !== undefined) {
+      text = databaseCache[key];
+    }
+  } else {
+    text = localStorage.getItem(key);
+  }
   if (text === null) {
     return null;
   }
   return JSON.parse(text);
 }
 
-// Saves a value in localStorage. Returns true if it worked, false if the browser is full.
+// Saves a value. Returns true if it worked, false if it could not be saved.
 function writeStorage(key, value) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
+  if (DATABASE_KEYS.indexOf(key) === -1) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  databaseCache[key] = JSON.stringify(value);
+  if (databaseReady === false) {
+    // The login and sign up pages have no database data. Anywhere else this is a problem.
+    return OPEN_PAGES.indexOf(thisPageName()) !== -1;
+  }
+
+  const table = findListTable(key);
+  if (table !== null) {
+    // Nothing changed since the list was loaded, so there is nothing to save.
+    if (listFingerprint(value, table) === databaseSaved[key]) {
+      return true;
+    }
+    const rows = value.map(function (item) {
+      return itemToRow(item, table);
+    });
+    // Only the records this page really deleted are removed from the database.
+    const nowIds = idsOf(value);
+    const removed = (databaseIds[key] || []).filter(function (id) {
+      return nowIds.indexOf(id) === -1;
+    });
+    const saved = databaseRequest('PUT', table.path, { rows: rows, removed: removed });
+    if (saved.ok === false) {
+      showToast('Could not save to the database: ' + saved.message);
+      return false;
+    }
+    // The database gives every new species and user its id. Keep the list with the ids.
+    const savedItems = saved.data.map(function (row) {
+      return rowToItem(row, table);
+    });
+    databaseCache[key] = JSON.stringify(savedItems);
+    databaseSaved[key] = listFingerprint(savedItems, table);
+    databaseIds[key] = idsOf(savedItems);
     return true;
-  } catch (error) {
+  }
+
+  const toSend = value;
+  const result = databaseRequest('PUT', '/' + key, { value: toSend });
+  if (result.ok === false) {
+    showToast('Could not save to the database: ' + result.message);
     return false;
   }
+  return true;
 }
+
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -144,14 +554,14 @@ function makeStartingObservations() {
 
 // Returns the sample users.
 // passwordHash = the scrambled password (see hashPassword). Demo passwords:
-// Daniel = Officer@123, Brendan and Aina = Botanist@123.
+// George = Officer@123, Brendan and Aina = Botanist@123.
 function makeStartingUsers() {
   return [
-    { name: 'Brendan Noel', username: 'brendan', email: 'brendan@sfc.example', role: 'Botanist', active: true,
+    { name: 'Brendan Noel', username: 'brendan', email: 'brendan@gmail.com', role: 'Botanist', active: true,
       passwordHash: 'a37702c8480135497221829d63a1d7d0816e5c1b99e4de6479bf53e6a9fb1af2' },
-    { name: 'Aina Rahman', username: 'aina', email: 'aina@sfc.example', role: 'Botanist', active: true,
+    { name: 'Aina Rahman', username: 'aina', email: 'aina@gmail.com', role: 'Botanist', active: true,
       passwordHash: '4894d1955515afcec2632bbb46e35e8e971439ef8c679e0817f9af32bc4804d9' },
-    { name: 'Daniel Ling', username: 'daniel', email: 'daniel@sfc.example', role: 'Conservation Officer', active: true,
+    { name: 'George Tan', username: 'george', email: 'georgetanyonghan@gmail.com', role: 'Conservation Officer', active: true,
       passwordHash: '9b33a0b27ca119cb6e14fee832319e3fc44506bc2aa98cd09389ba8af47d6a4f' }
   ];
 }
@@ -229,7 +639,7 @@ function getObservations() {
   return list;
 }
 
-// Makes a username from the start of an email, like "daniel@sfc.example" -> "daniel".
+// Makes a username from the start of an email, like "georgetanyonghan@gmail.com" -> "george".
 // A number is added if another user already has it.
 function makeUsernameFromEmail(email, list) {
   let base = email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '');
@@ -412,18 +822,9 @@ function findUserByUsername(username) {
   return null;
 }
 
-// Returns the user who is logged in now, or null.
-// It looks the user up again each time, so a suspended or deleted user is logged out.
+// Returns the logged-in user, or null. This is a saved copy; the backend checks the real token.
 function getCurrentUser() {
-  const session = readStorage(SESSION_KEY);
-  if (session === null) {
-    return null;
-  }
-  const user = findUserByEmail(session.email);
-  if (user === null || user.active === false) {
-    return null;
-  }
-  return user;
+  return readStorage(SESSION_KEY);
 }
 
 // Says if this user is a botanist (true) or officer staff (false).
@@ -431,13 +832,21 @@ function isBotanist(user) {
   return user.role === 'Botanist';
 }
 
-// Logs this user in (remembers the email until Log out).
-function startSession(user) {
-  writeStorage(SESSION_KEY, { email: user.email });
+// Saves who is logged in. "me" is what the backend's /api/me sends back.
+function startSession(me, username) {
+  let role = 'Botanist';
+  if (me.role === 'officer') {
+    role = 'Conservation Officer';
+  }
+  const shownName = username || me.email.split('@')[0];
+  writeStorage(SESSION_KEY, {
+    id: me.id, email: me.email, name: shownName, username: shownName, role: role, active: true
+  });
 }
 
-// Logs out and goes back to the login page.
-function logout() {
+// Logs out of Supabase, forgets the saved user and goes back to the login page.
+async function logout() {
+  await sb.auth.signOut();
   localStorage.removeItem(SESSION_KEY);
   location.href = 'login.html';
 }
@@ -447,11 +856,20 @@ function goToHome() {
   location.href = 'species.html';
 }
 
-// Pages that need no login.
-const OPEN_PAGES = ['login.html', 'signup.html'];
+// Pages that need no login
+const OPEN_PAGES = [
+  'login.html',
+  'signup.html',
+  'forgot-password.html',
+  'reset-password.html'
+];
 
 // Pages a botanist may open. Officers (and administrators) may open every page.
-const BOTANIST_PAGES = ['species.html', 'editor.html', 'map.html'];
+const BOTANIST_PAGES = [
+  'species.html', 
+  'editor.html', 
+  'map.html'
+];
 
 // Says if this user may open this page.
 function canOpen(user, file) {
@@ -659,6 +1077,10 @@ function makeThumb(photo, altText, sizeClass) {
   const img = document.createElement('img');
   img.src = photo;
   img.alt = altText;
+  img.onerror = function () {
+    img.onerror = null;
+    img.src = PICTURE_BLANK;
+  };
   box.appendChild(img);
   return box;
 }
@@ -701,6 +1123,8 @@ function upgradeOldData() {
 
   writeStorage(VERSION_KEY, DATA_VERSION);
 }
+
+loadFromDatabase();
 
 upgradeOldData();
 
