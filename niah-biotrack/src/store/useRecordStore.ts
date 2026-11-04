@@ -15,7 +15,12 @@ import {
 } from '../services/offlineRecordRepository';
 
 import { syncPlantPhotos } from '../services/plantPhotoSync';
-import { clearOfflineDatabase } from '../services/offlineDatabase';
+import {
+  clearOfflineDatabase,
+  deletePlantLocallyAndQueueServerDelete,
+} from '../services/offlineDatabase';
+
+import { deleteStoredPhoto } from '../utils/photoStorage';
 import { runOutboxSync } from '../services/syncEngine';
 
 
@@ -232,6 +237,18 @@ function buildRegistrationVisit(record: PlantRecord): ObservationVisit {
 }
 
 interface RecordState {
+  deleteRecord: (
+  id: string
+) => Promise<
+  | {
+      ok: true;
+      queuedForServer: boolean;
+    }
+  | {
+      ok: false;
+      reason: string;
+    }
+>;
   records: PlantRecord[];
   routes: RecordedRoute[];
   activeDraftRoute: RecordedRoute | null;
@@ -272,12 +289,109 @@ interface RecordState {
   syncRecord: (id: string) => Promise<SyncResult>;
   syncAll: () => Promise<SyncAllResult>;
   submitForReview: (id: string) => Promise<SubmitResult>;
+  deleteRecord: async (id) => {
+  const record = get().records.find(
+    (item) => item.id === id
+  );
+
+  if (!record) {
+    return {
+      ok: false,
+      reason: 'Plant record not found',
+    };
+  }
+
+  // Botanist should not delete something already
+  // waiting for officer review or already approved.
+  if (
+    record.reviewStatus !== ReviewStatus.DRAFT &&
+    record.reviewStatus !== ReviewStatus.REJECTED
+  ) {
+    return {
+      ok: false,
+      reason:
+        'Records waiting for review or already approved cannot be deleted by the Botanist.',
+    };
+  }
+
+  if (uploadsInProgress.has(id)) {
+    return {
+      ok: false,
+      reason:
+        'This record is currently synchronizing. Try deleting it again after the upload finishes.',
+    };
+  }
+
+  try {
+    const deletion =
+      await deletePlantLocallyAndQueueServerDelete({
+        clientRecordId: record.id,
+        serverId: record.serverId,
+        rowVersion: record.rowVersion,
+        observationIds:
+          record.observations.map(
+            (observation) => observation.id
+          ),
+      });
+
+    /*
+     * Remove from Zustand immediately.
+     * From the user's point of view the plant is now deleted.
+     */
+    set((state) => ({
+      records: state.records.filter(
+        (item) => item.id !== id
+      ),
+    }));
+
+    // Remove plant photos stored on the phone.
+    for (const uri of record.photoUris ?? []) {
+      deleteStoredPhoto(uri);
+    }
+
+    // Remove observation evidence photos stored locally.
+    for (const observation of record.observations) {
+      for (const uri of observation.photoUris ?? []) {
+        deleteStoredPhoto(uri);
+      }
+    }
+
+    /*
+     * If the plant already existed on Supabase,
+     * immediately try to send the delete.
+     *
+     * Offline:
+     * runOutboxSync simply leaves it queued for reconnect.
+     *
+     * Online:
+     * it will normally disappear from the server immediately.
+     */
+    if (deletion.queuedForServer) {
+      void runOutboxSync();
+    }
+
+    return {
+      ok: true,
+      queuedForServer:
+        deletion.queuedForServer,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason:
+        error instanceof Error
+          ? error.message
+          : 'Could not delete this plant record.',
+    };
+  }
+},
   findByTag: (tagCode: string) => PlantRecord | undefined;
   attachTag: (recordId: string, tagCode: string) => Promise<{ ok: true } | { ok: false; reason: string }>;
   hydrateOfflineRecords: () => Promise<void>;
   saveRoute: (route: Omit<RecordedRoute, 'id' | 'createdAt'>) => RecordedRoute;
   clearActiveDraftRoute: () => void;
   clearAllData: () => Promise<void>;
+  
 }
 
 export const useRecordStore = create<RecordState>()(

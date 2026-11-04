@@ -764,6 +764,145 @@ export async function getLastSuccessfulSync(): Promise<string | null> {
   return row?.state_value ?? null;
 }
 
+export interface DeletePlantLocalInput {
+  clientRecordId: string;
+  serverId?: string | null;
+  rowVersion?: number | null;
+  observationIds: string[];
+}
+
+export async function deletePlantLocallyAndQueueServerDelete(
+  input: DeletePlantLocalInput
+): Promise<{ queuedForServer: boolean }> {
+  await initializeOfflineDatabase();
+
+  if (
+    input.serverId &&
+    (input.rowVersion === null ||
+      input.rowVersion === undefined)
+  ) {
+    throw new Error(
+      'This uploaded record is missing its server version and cannot be safely deleted yet.'
+    );
+  }
+
+  const db = await getDatabase();
+  const timestamp = nowIso();
+
+  let queuedForServer = false;
+
+  await db.withExclusiveTransactionAsync(
+    async (transaction) => {
+      // Any unsent observation changes become irrelevant
+      // when the whole plant is deleted.
+      for (const observationId of input.observationIds) {
+        await transaction.runAsync(
+          `
+            UPDATE sync_outbox
+            SET status = 'complete',
+                last_error = 'Superseded by plant deletion',
+                updated_at = ?
+            WHERE entity_type = 'observation'
+              AND client_record_id = ?
+              AND status <> 'complete'
+          `,
+          timestamp,
+          observationId
+        );
+
+        await transaction.runAsync(
+          `
+            DELETE FROM local_entities
+            WHERE entity_type = 'observation'
+              AND client_record_id = ?
+          `,
+          observationId
+        );
+      }
+
+      // Cancel unsent create/update operations for the plant.
+      await transaction.runAsync(
+        `
+          UPDATE sync_outbox
+          SET status = 'complete',
+              last_error = 'Superseded by plant deletion',
+              updated_at = ?
+          WHERE entity_type = 'plant'
+            AND client_record_id = ?
+            AND status <> 'complete'
+        `,
+        timestamp,
+        input.clientRecordId
+      );
+
+      /*
+       * If the record has reached the server before,
+       * queue a server delete.
+       *
+       * If it has never been uploaded, there is nothing
+       * to delete remotely.
+       */
+      if (
+        input.serverId &&
+        input.rowVersion !== null &&
+        input.rowVersion !== undefined
+      ) {
+        const operationId = randomUUID();
+
+        await transaction.runAsync(
+          `
+            INSERT INTO sync_outbox (
+              operation_id,
+              entity_type,
+              operation_type,
+              client_record_id,
+              base_version,
+              payload_json,
+              status,
+              attempts,
+              last_error,
+              created_at,
+              updated_at
+            )
+            VALUES (
+              ?,
+              'plant',
+              'delete',
+              ?,
+              ?,
+              '{}',
+              'pending',
+              0,
+              NULL,
+              ?,
+              ?
+            )
+          `,
+          operationId,
+          input.clientRecordId,
+          input.rowVersion,
+          timestamp,
+          timestamp
+        );
+
+        queuedForServer = true;
+      }
+
+      // Remove the visible local plant immediately.
+      await transaction.runAsync(
+        `
+          DELETE FROM local_entities
+          WHERE entity_type = 'plant'
+            AND client_record_id = ?
+        `,
+        input.clientRecordId
+      );
+    }
+  );
+
+  return { queuedForServer };
+}
+
 export async function clearOfflineDatabase(): Promise<void> {
   await initializeOfflineDatabase();
 

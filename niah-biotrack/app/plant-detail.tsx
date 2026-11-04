@@ -49,6 +49,13 @@ export default function PlantDetailScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const records = useRecordStore((state) => state.records);
   const submitForReview = useRecordStore((state) => state.submitForReview);
+  const deleteRecord =
+  useRecordStore(
+    (state) => state.deleteRecord
+  );
+
+const [deleting, setDeleting] =
+  useState(false);
   const { width } = useWindowDimensions();
   const [photoIndex, setPhotoIndex] = useState(0);
   const [brokenPhotos, setBrokenPhotos] = useState<Record<string, boolean>>({});
@@ -79,6 +86,9 @@ export default function PlantDetailScreen() {
     !matched.scientificName.trim();
   const canEdit =
     matched.reviewStatus === ReviewStatus.DRAFT || matched.reviewStatus === ReviewStatus.REJECTED;
+  const canDelete =
+  matched.reviewStatus === ReviewStatus.DRAFT ||
+  matched.reviewStatus === ReviewStatus.REJECTED;
   const canSubmit =
     canEdit &&
     matched.recordStatus === RecordStatus.COMPLETE &&
@@ -115,6 +125,47 @@ export default function PlantDetailScreen() {
       ]
     );
   };
+
+  const handleDelete = () => {
+  Alert.alert(
+    'Delete plant record?',
+    'This record will be removed from this phone immediately. If it was already synchronized, the deletion will also be sent to the server automatically.',
+    [
+      {
+        text: 'Cancel',
+        style: 'cancel',
+      },
+      {
+        text: 'Delete',
+        style: 'destructive',
+
+        onPress: async () => {
+          setDeleting(true);
+
+          const result =
+            await deleteRecord(
+              matched.id
+            );
+
+          setDeleting(false);
+
+          if (!result.ok) {
+            Alert.alert(
+              'Could not delete record',
+              result.reason
+            );
+
+            return;
+          }
+
+          router.replace(
+            '/(tabs)/records' as any
+          );
+        },
+      },
+    ]
+  );
+};
 
   const handlePhotoScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     setPhotoIndex(Math.round(event.nativeEvent.contentOffset.x / width));
@@ -513,4 +564,25 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   continueBtnText: { color: '#FFFFFF', fontSize: 13.5, fontWeight: '700' },
+
+  deleteBtn: {
+  height: 50,
+  borderRadius: 25,
+  justifyContent: 'center',
+  alignItems: 'center',
+  borderWidth: 1.4,
+  borderColor: '#C62828',
+  backgroundColor: '#FFF5F5',
+  marginBottom: 34,
+  },
+
+  deleteBtnDisabled: {
+    opacity: 0.55,
+  },
+
+  deleteBtnText: {
+    color: '#B42318',
+    fontSize: 14,
+    fontWeight: '800',
+  },
 });
