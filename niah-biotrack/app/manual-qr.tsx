@@ -14,23 +14,17 @@ import {
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
+import FormScrollView from '../src/components/FormScrollView';
 
-import { API_BASE_URL } from '../src/config/api';
-
-const DEFAULT_RECENT_TAGS = ['TR-2026-001', 'TR-2026-089', 'SH-2026-014', 'PL-2026-052'];
+import { lookupTag, describeTagLookup, type TagLookupResult } from '../src/services/tagLookup';
 
 export default function ManualQRScreen() {
   const router = useRouter();
   const [tagInput, setTagInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [recentTags, setRecentTags] = useState<string[]>(DEFAULT_RECENT_TAGS);
-  const [lookupResult, setLookupResult] = useState<{
-    id: string;
-    tagCode: string;
-    scientificName: string;
-    commonName: string;
-    family?: string;
-  } | null>(null);
+  // Tags looked up on this screen; starts empty (no example tags).
+  const [recentTags, setRecentTags] = useState<string[]>([]);
+  const [lookupResult, setLookupResult] = useState<TagLookupResult | null>(null);
 
   const handleSearchTag = async (overrideTag?: string) => {
     const code = (overrideTag || tagInput).trim();
@@ -46,50 +40,22 @@ export default function ManualQRScreen() {
     setIsLoading(true);
     setLookupResult(null);
 
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/plants/tag/${encodeURIComponent(code)}`);
-      
-      if (res.ok) {
-        const item = await res.json();
-        setLookupResult({
-          id: item.id || '',
-          tagCode: code,
-          scientificName: item.scientific_name || item.species?.scientific_name || 'Species Recorded',
-          commonName: item.common_name || item.species?.common_name || 'Forest Specimen',
-          family: item.family || item.species?.family || 'Sarawak Flora',
-        });
-      } else {
-        setLookupResult({
-          id: '',
-          tagCode: code,
-          scientificName: 'Unregistered Tag',
-          commonName: 'Tap below to register observation for this tag',
-        });
-      }
-
-      // Add to recent list
-      setRecentTags((prev) => [code, ...prev.filter((t) => t !== code)].slice(0, 6));
-    } catch {
-      // Offline fallback
-      setLookupResult({
-        id: '',
-        tagCode: code,
-        scientificName: 'Field Record (Offline)',
-        commonName: 'Proceed to enter offline measurements',
-      });
-    } finally {
-      setIsLoading(false);
-    }
+    // Phone first, then the server; never filled in with made-up plant details.
+    const result = await lookupTag(code);
+    setLookupResult(result);
+    setRecentTags((prev) => [result.tagCode, ...prev.filter((t) => t !== result.tagCode)].slice(0, 6));
+    setIsLoading(false);
   };
 
   const handleProceed = () => {
-    if (!lookupResult) return;
+    // Only plants saved on this phone can get a visit (it's stored with the record).
+    if (lookupResult?.status !== 'on-phone') return;
     router.push({
       pathname: '/add-observation',
       params: {
-        plantId: lookupResult.id,
+        plantId: lookupResult.record.id, // the phone's own record id
         tagCode: lookupResult.tagCode,
-        scientificName: lookupResult.scientificName,
+        scientificName: lookupResult.record.scientificName,
       },
     });
   };
@@ -107,7 +73,7 @@ export default function ManualQRScreen() {
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <FormScrollView contentContainerStyle={styles.content}>
         {/* Search Input Card */}
         <View style={styles.card}>
           <Text style={styles.cardLabel}>Enter Botanical Tag Code</Text>
@@ -115,7 +81,7 @@ export default function ManualQRScreen() {
             <Ionicons name="pricetag-outline" size={20} color="#8A998E" style={{ marginLeft: 14 }} />
             <TextInput
               style={styles.textInput}
-              placeholder="e.g. TR-2026-089"
+              placeholder="e.g. NIAH-PLT-00001"
               placeholderTextColor="#8C9A91"
               value={tagInput}
               onChangeText={setTagInput}
@@ -148,10 +114,12 @@ export default function ManualQRScreen() {
         </View>
 
         {/* Recent Scans Carousel */}
-        <View style={styles.sectionHeader}>
-          <Ionicons name="time-outline" size={16} color="#526A5A" />
-          <Text style={styles.sectionTitle}>Recent Tag Queries</Text>
-        </View>
+        {recentTags.length > 0 && (
+          <View style={styles.sectionHeader}>
+            <Ionicons name="time-outline" size={16} color="#526A5A" />
+            <Text style={styles.sectionTitle}>Recent Tag Queries</Text>
+          </View>
+        )}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recentRow}>
           {recentTags.map((tag) => (
             <TouchableOpacity
@@ -168,19 +136,23 @@ export default function ManualQRScreen() {
         </ScrollView>
 
         {/* Search Result Card */}
-        {lookupResult && (
+        {lookupResult?.status === 'on-phone' && (
           <View style={styles.resultCard}>
             <View style={styles.resultPill}>
               <Ionicons name="checkmark-circle" size={15} color="#2D6A4F" />
               <Text style={styles.resultPillText}>Tag Found: {lookupResult.tagCode}</Text>
             </View>
 
-            <Text style={styles.resultScientific}>{lookupResult.scientificName}</Text>
-            <Text style={styles.resultCommon}>{lookupResult.commonName}</Text>
+            <Text style={styles.resultScientific}>
+              {lookupResult.record.scientificName || 'Identification pending'}
+            </Text>
+            {lookupResult.record.commonName ? (
+              <Text style={styles.resultCommon}>{lookupResult.record.commonName}</Text>
+            ) : null}
 
-            {lookupResult.family && (
-              <Text style={styles.resultFamily}>Family: {lookupResult.family}</Text>
-            )}
+            {lookupResult.record.family ? (
+              <Text style={styles.resultFamily}>Family: {lookupResult.record.family}</Text>
+            ) : null}
 
             <TouchableOpacity style={styles.proceedBtn} onPress={handleProceed}>
               <Text style={styles.proceedBtnText}>Record Observation for This Plant</Text>
@@ -188,7 +160,22 @@ export default function ManualQRScreen() {
             </TouchableOpacity>
           </View>
         )}
-      </ScrollView>
+
+        {/* Every other result: say what happened instead of showing a plant. */}
+        {lookupResult && lookupResult.status !== 'on-phone' && (
+          <View style={styles.resultCard}>
+            <View style={styles.resultPill}>
+              <Ionicons name="pricetag-outline" size={15} color="#526A5A" />
+              <Text style={styles.resultPillText}>{lookupResult.tagCode}</Text>
+            </View>
+            <Text style={styles.resultScientific}>{describeTagLookup(lookupResult).title}</Text>
+            {lookupResult.status === 'server-only' && lookupResult.commonName ? (
+              <Text style={styles.resultCommon}>{lookupResult.commonName}</Text>
+            ) : null}
+            <Text style={styles.resultCommon}>{describeTagLookup(lookupResult).message}</Text>
+          </View>
+        )}
+      </FormScrollView>
     </SafeAreaView>
   );
 }

@@ -1,6 +1,6 @@
 # C17: tag reservation and printing
 
-Status: backend implementation synchronised with main; PR readiness blocked by existing main authentication test failures. Shared Supabase has NOT been migrated.
+Status: backend implementation synchronised with main; PR readiness blocked by existing main photo-upload and public-signup test failures. Shared Supabase has NOT been migrated.
 
 ## Endpoints
 
@@ -66,3 +66,12 @@ All endpoints require an active Botanist bearer session and use the existing use
 - PR creation is deferred until the authentication implementation and regression tests agree and the full suite passes.
 - Deployment acceptance still requires the migration, PUBLIC_PLANT_BASE_URL=https://niah-backend.onrender.com/p/, real Botanist sessions, independent PostgreSQL concurrency checks and the team's web/mobile callers. The migration changes physical-tag creation: reserve before binding. Do not apply it independently of client rollout coordination.
 - Existing untracked Postman collections and manual SQL files are outside this change and are not included in the merge commit.
+## Latest integration review: 2026-11-04
+
+- Synced with main 7c039a3. Main includes the OTP recovery repair; the previous authentication blocker is resolved. The older uncommitted test rewrite was backed up outside the checkout and superseded by main's maintained tests.
+- The existing POST /api/plants/:id/attach-tag mobile endpoint now uses reserve_plant_tags followed by attach_reserved_plant_tag. The plant UUID is its stable reservation request ID. Existing response fields and already-assigned tags remain supported. Only a botanist owner can allocate a new reservation; officer allocation is denied. Both RPCs and the migration must be available before rollout.
+- Reservation and mobile compatibility: 50 tests passed. Isolated migration: 26 checks passed.
+- Full suite after integration: 297 tests, 293 passed, 4 failed. Three failures concern photo input/retry behavior and one concerns public signup files. These also reproduce against the current main reference, independently of reservation changes. Do not skip these tests to make the branch appear ready.
+- PR creation and push remain deferred until the full-suite blockers are resolved. Shared database migrations have not been applied by this work.
+- Public visitor DEMO URL https://niah-backend.onrender.com/p/NIAH-PLT-90001 returned HTTP 200 with the demonstration warning and location privacy notice. Public JSON lookup also returned 200; deployed reservation listing still returned 404. This does not prove generated-label scanning or production reservation readiness.
+- Remaining acceptance: real account ownership/RLS, independent concurrent database transactions, shared migration coordination, preprinted-tag/mobile outbox integration and physical phone QR scanning.

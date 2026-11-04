@@ -1,7 +1,7 @@
 const express = require("express");
 const { randomUUID } = require("node:crypto");
 const upload = require("../services/storageService");
-const { generatePlantQR, QrConfigurationError } = require("../services/qrService");
+const { generatePlantQR, buildPublicPlantUrl, TAG_PATTERN, QrConfigurationError } = require("../services/qrService");
 const { requireAuth, requireRole } = require("../middleware/auth");
 
 const router = express.Router();
@@ -485,134 +485,310 @@ router.delete("/:id", requireRole("botanist", "officer"), async (req, res) => {
     }
 });
 
+const PHOTO_UUID =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Photos can only be added while the plant is still editable.
+const PHOTOS_LOCKED_MESSAGE =
+    "Photos can't be added after submission";
+
+function isRlsRefusal(error) {
+    return !!error && (
+        error.code === "42501" ||
+        String(error.statusCode) === "403" ||
+        /row-level security/i.test(error.message || "")
+    );
+}
+
 // UPLOAD a photo for a plant
-router.post("/:id/photo", requireRole("botanist"), async (req, res, next) => {
-    const plantId = req.params.id;
+router.post(
+    "/:id/photo",
+    requireRole("botanist"),
 
-    const uuidPattern =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    async (req, res, next) => {
+        const plantId = req.params.id;
 
-    if (!uuidPattern.test(plantId)) {
-        return res.status(400).json({
-            message: "Valid plant ID is required"
-        });
-    }
-
-    const { data: plant, error } = await req.supabase
-        .from("plants")
-        .select("id, registered_by")
-        .eq("id", plantId)
-        .maybeSingle();
-
-    if (error) {
-        console.error("Plant photo ownership lookup error:", error);
-        return res.status(500).json({
-            message: "Failed to check plant"
-        });
-    }
-
-    if (!plant) {
-        return res.status(404).json({
-            message: "Plant not found"
-        });
-    }
-
-    if (plant.registered_by !== req.user.id) {
-        return res.status(403).json({
-            message: "Only the plant owner may upload photos"
-        });
-    }
-
-    next();
-}, upload.single("photo"), async (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({
-            message: "No photo uploaded"
-        });
-    }
-
-    const allowedPhotoTypes = [
-        "whole_plant",
-        "leaf",
-        "flower",
-        "bark"
-    ];
-
-    const photoType = req.body.photo_type;
-
-    if (!allowedPhotoTypes.includes(photoType)) {
-        return res.status(400).json({
-            message: "photo_type must be whole_plant, leaf, flower or bark"
-        });
-    }
-
-    const extension = {
-        "image/jpeg": "jpg",
-        "image/png": "png",
-        "image/webp": "webp"
-    }[req.file.mimetype];
-
-    if (!extension) {
-        return res.status(400).json({
-            message: "Unsupported image type"
-        });
-    }
-
-    const plantId = req.params.id;
-    const filePath =
-        `${req.user.id}/${plantId}/${randomUUID()}.${extension}`;
-
-    try {
-        const { error: uploadError } = await req.supabase.storage
-            .from("plant-media")
-            .upload(filePath, req.file.buffer, {
-                contentType: req.file.mimetype,
-                upsert: false
-            });
-
-        if (uploadError) {
-            console.error("Plant photo storage error:", uploadError);
-            return res.status(500).json({
-                message: "Failed to upload plant photo"
+        if (!PHOTO_UUID.test(plantId)) {
+            return res.status(400).json({
+                message: "Valid plant ID is required"
             });
         }
 
-        const { data: media, error: mediaError } = await req.supabase
+        const { data: plant, error } =
+            await req.supabase
+                .from("plants")
+                .select("id, registered_by, plant_status")
+                .eq("id", plantId)
+                .maybeSingle();
+
+        if (error) {
+            console.error(
+                "Plant photo ownership lookup error:",
+                error
+            );
+
+            return res.status(500).json({
+                message: "Failed to check plant"
+            });
+        }
+
+        if (!plant) {
+            return res.status(404).json({
+                message: "Plant not found"
+            });
+        }
+
+        if (plant.registered_by !== req.user.id) {
+            return res.status(403).json({
+                message:
+                    "Only the plant owner may upload photos"
+            });
+        }
+
+        if (
+            plant.plant_status &&
+            plant.plant_status !== "pending"
+        ) {
+            return res.status(409).json({
+                message: PHOTOS_LOCKED_MESSAGE,
+                code: "photos_locked"
+            });
+        }
+
+        next();
+    },
+
+    upload.single("photo"),
+
+    async (req, res) => {
+        if (!req.file) {
+            return res.status(400).json({
+                message: "No photo uploaded"
+            });
+        }
+
+        const allowedPhotoTypes = [
+            "whole_plant",
+            "leaf",
+            "flower",
+            "bark"
+        ];
+
+        const photoType = req.body.photo_type;
+
+        if (!allowedPhotoTypes.includes(photoType)) {
+            return res.status(400).json({
+                message:
+                    "photo_type must be whole_plant, leaf, flower or bark"
+            });
+        }
+
+        /*
+         * Support both names:
+         * - kai offline-sync code sends client_record_id
+         * - newer main code may send client_photo_id
+         */
+        const photoClientId =
+            req.body.client_record_id ||
+            req.body.client_photo_id;
+
+        if (
+            typeof photoClientId !== "string" ||
+            !PHOTO_UUID.test(photoClientId)
+        ) {
+            return res.status(400).json({
+                message:
+                    "Photo client ID must be a valid UUID"
+            });
+        }
+
+        const plantId = req.params.id;
+
+        /*
+         * Idempotency:
+         * retrying the same phone photo must not create duplicates.
+         */
+        const {
+            data: existingMedia,
+            error: existingError
+        } = await req.supabase
             .from("plant_media")
-            .insert({
-                plant_id: plantId,
-                uploaded_by: req.user.id,
-                file_path: filePath,
-                media_type: "image",
-                photo_type: photoType,
-                is_primary: photoType === "whole_plant"
-            })
-            .select()
-            .single();
+            .select("*")
+            .eq("client_record_id", photoClientId)
+            .maybeSingle();
 
-        if (mediaError) {
-            await req.supabase.storage
-                .from("plant-media")
-                .remove([filePath]);
+        if (existingError) {
+            console.error(
+                "Plant media idempotency lookup error:",
+                existingError
+            );
 
-            console.error("Plant media insert error:", mediaError);
             return res.status(500).json({
-                message: "Failed to save plant photo record"
+                message:
+                    "Failed to check existing plant photo"
             });
         }
 
-        return res.status(201).json({
-            message: "Plant photo uploaded successfully",
-            plant_id: plantId,
-            media
-        });
-    } catch (error) {
-        console.error("Plant photo upload error:", error);
-        return res.status(500).json({
-            message: "Plant photo upload failed"
-        });
+        if (existingMedia) {
+            if (
+                existingMedia.plant_id !== plantId ||
+                existingMedia.uploaded_by !== req.user.id ||
+                existingMedia.photo_type !== photoType
+            ) {
+                return res.status(409).json({
+                    message:
+                        "Photo client ID is already used by another plant photo"
+                });
+            }
+
+            return res.status(200).json({
+                message: "Plant photo already uploaded",
+                plant_id: plantId,
+                media: existingMedia
+            });
+        }
+
+        const extension = {
+            "image/jpeg": "jpg",
+            "image/png": "png",
+            "image/webp": "webp"
+        }[req.file.mimetype];
+
+        if (!extension) {
+            return res.status(400).json({
+                message: "Unsupported image type"
+            });
+        }
+
+        const filePath =
+            `${req.user.id}/${plantId}/${randomUUID()}.${extension}`;
+
+        try {
+            const { error: uploadError } =
+                await req.supabase.storage
+                    .from("plant-media")
+                    .upload(
+                        filePath,
+                        req.file.buffer,
+                        {
+                            contentType: req.file.mimetype,
+                            upsert: false
+                        }
+                    );
+
+            if (uploadError) {
+                if (isRlsRefusal(uploadError)) {
+                    return res.status(409).json({
+                        message: PHOTOS_LOCKED_MESSAGE,
+                        code: "photos_locked"
+                    });
+                }
+
+                console.error(
+                    "Plant photo storage error:",
+                    uploadError
+                );
+
+                return res.status(500).json({
+                    message:
+                        "Failed to upload plant photo"
+                });
+            }
+
+            const {
+                data: media,
+                error: mediaError
+            } = await req.supabase
+                .from("plant_media")
+                .insert({
+                    client_record_id: photoClientId,
+                    plant_id: plantId,
+                    uploaded_by: req.user.id,
+                    file_path: filePath,
+                    media_type: "image",
+                    photo_type: photoType,
+                    is_primary:
+                        photoType === "whole_plant"
+                })
+                .select()
+                .single();
+
+            if (mediaError) {
+                /*
+                 * Two retries may race.
+                 * The unique client_record_id decides the winner.
+                 */
+                if (mediaError.code === "23505") {
+                    await req.supabase.storage
+                        .from("plant-media")
+                        .remove([filePath]);
+
+                    const { data: racedMedia } =
+                        await req.supabase
+                            .from("plant_media")
+                            .select("*")
+                            .eq(
+                                "client_record_id",
+                                photoClientId
+                            )
+                            .maybeSingle();
+
+                    if (
+                        racedMedia &&
+                        racedMedia.plant_id === plantId &&
+                        racedMedia.uploaded_by === req.user.id &&
+                        racedMedia.photo_type === photoType
+                    ) {
+                        return res.status(200).json({
+                            message:
+                                "Plant photo already uploaded",
+                            plant_id: plantId,
+                            media: racedMedia
+                        });
+                    }
+                }
+
+                await req.supabase.storage
+                    .from("plant-media")
+                    .remove([filePath]);
+
+                if (isRlsRefusal(mediaError)) {
+                    return res.status(409).json({
+                        message: PHOTOS_LOCKED_MESSAGE,
+                        code: "photos_locked"
+                    });
+                }
+
+                console.error(
+                    "Plant media insert error:",
+                    mediaError
+                );
+
+                return res.status(500).json({
+                    message:
+                        "Failed to save plant photo record"
+                });
+            }
+
+            return res.status(201).json({
+                message:
+                    "Plant photo uploaded successfully",
+                plant_id: plantId,
+                media
+            });
+        } catch (error) {
+            console.error(
+                "Plant photo upload error:",
+                error
+            );
+
+            return res.status(500).json({
+                message:
+                    "Plant photo upload failed"
+            });
+        }
     }
-});
+);
 
 // Find the signed-in botanist's plant and its physical QR tag.
 async function findOwnedPlantQrTag(req, res) {
@@ -690,6 +866,80 @@ router.get("/:id/qr/image", requireRole("botanist"), async (req, res) => {
         if (error instanceof QrConfigurationError) return res.status(503).json({ message: "Public QR URL is not configured" });
         console.error("Plant QR image error:", error);
         return res.status(500).json({ message: "Failed to generate QR image" });
+    }
+});
+
+function reservationFailure(res, error) {
+    if (error.code === '42501') return res.status(403).json({ message: 'Plant or tag is unavailable' });
+    if (['23505', 'P0001'].includes(error.code)) return res.status(409).json({ message: 'Tag binding conflict' });
+    return res.status(503).json({ message: 'Tag reservation service unavailable; retry the same plant' });
+}
+
+// ── 1-CLICK / AUTOMATIC TAG & QR GENERATION ────────────────────
+router.post("/:id/attach-tag", requireRole("botanist", "officer"), async (req, res) => {
+    const plantId = req.params.id;
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    if (!uuidPattern.test(plantId)) {
+        return res.status(400).json({ message: "Valid plant ID is required" });
+    }
+
+    // 1. Verify caller owns this plant record or is an officer
+    if (!(await checkPlantWriteAccess(req, res, plantId))) return;
+
+    try {
+        // 2. Fetch current plant to see if it already has a valid tag
+        const { data: plant, error: fetchError } = await req.supabase
+            .from("plants")
+            .select("id, qr_code_value")
+            .eq("id", plantId)
+            .maybeSingle();
+
+        if (fetchError || !plant) {
+            return res.status(404).json({ message: "Plant record not found" });
+        }
+
+        let tagCode = plant.qr_code_value;
+
+        // Validate the destination before allocating a persistent label.
+        buildPublicPlantUrl('NIAH-PLT-00001');
+        if (!tagCode || !TAG_PATTERN.test(tagCode)) {
+            if (req.profile.role !== 'botanist') {
+                return res.status(403).json({ message: 'Only the botanist owner may reserve and bind a tag' });
+            }
+            // Plant UUID is a stable request ID: retries reuse the same reservation.
+            const { data: reserved, error: reserveError } = await req.supabase.rpc('reserve_plant_tags', {
+                p_count: 1, p_request_id: plantId,
+            });
+            if (reserveError) return reservationFailure(res, reserveError);
+            const tag = Array.isArray(reserved) && reserved.length === 1 ? reserved[0].qr_code_value : null;
+            if (typeof tag !== 'string' || !TAG_PATTERN.test(tag)) {
+                return res.status(503).json({ message: 'Could not confirm reserved tag; retry the same plant' });
+            }
+            const { data: attached, error: attachError } = await req.supabase.rpc('attach_reserved_plant_tag', {
+                p_plant_id: plantId, p_tag: tag,
+            });
+            if (attachError) return reservationFailure(res, attachError);
+            if (typeof attached !== 'string' || attached.toLowerCase() !== plantId.toLowerCase()) {
+                return res.status(503).json({ message: 'Could not confirm tag binding; retry the same plant' });
+            }
+            tagCode = tag;
+        }
+
+        // 5. Generate QR code payload
+        const qrResult = await generatePlantQR(tagCode);
+
+        return res.status(200).json({
+            tag_code: tagCode,
+            qr_code: qrResult.qrCode, // base64 data URL
+            public_url: qrResult.publicUrl,
+        });
+    } catch (error) {
+        if (error instanceof QrConfigurationError) {
+            return res.status(503).json({ message: "Public QR URL is not configured on server" });
+        }
+        console.error("Auto attach-tag error:", error);
+        return res.status(500).json({ message: "Could not generate plant tag" });
     }
 });
 

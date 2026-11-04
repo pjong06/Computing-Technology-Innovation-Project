@@ -54,7 +54,8 @@
           "photosPermission": "Allow Niah BioTrack to attach existing specimen photos."
         }
       ],
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-sqlite"
     ],
     "experiments": {
       "typedRoutes": false

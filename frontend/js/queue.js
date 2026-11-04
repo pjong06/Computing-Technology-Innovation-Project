@@ -427,26 +427,4 @@ function reviewObservation(id, result) {
   drawQueue();
 }
 
-// Puts all observations back to "waiting for review" and removes the species records that came from approved observations.
-function resetQueue() {
-  const sure = confirm('Reset the queue? Observations go back to "waiting for review", and species records added from approved observations are removed.');
-  if (sure === false) {
-    return;
-  }
-
-  const speciesList = getSpecies();
-  const kept = [];
-  for (let i = 0; i < speciesList.length; i++) {
-    if (!speciesList[i].obsId) {
-      kept.push(speciesList[i]);
-    }
-  }
-  writeStorage(SPECIES_KEY, kept);
-
-  writeStorage(OBSERVATIONS_KEY, makeStartingObservations());
-  selectedId = null;
-  showToast('Queue reset');
-  drawQueue();
-}
-
 drawQueue();

@@ -23,6 +23,7 @@ const authRoutes = require('./routes/auth');
 const officerReviewRoutes = require('./routes/officerReviews');
 const publicPlantRoutes = require('./routes/publicPlants');
 const webDataRoutes = require('./routes/webData');
+const syncRoutes = require('./routes/sync');
 
 const { publicClient } = require('./config/supabase');
 const { requireAuth, requireRole } = require('./middleware/auth');
@@ -32,6 +33,7 @@ const { startMqttIngestion } = require('./services/mqttIngestionService');
 
 app.disable('x-powered-by');
 
+app.use('/api/ingestion/telemetry', express.json({ limit: '16kb' }), require('./routes/iotIngestion').createIngestionRouter());
 app.use(express.json({ limit: '25mb' }));
 
 app.use(require('./middleware/jsonErrorHandler'));
@@ -59,6 +61,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/officer/reviews', officerReviewRoutes);
 
 app.use('/api/web-data', webDataRoutes);
+
+app.use('/api/sync', requireAuth, requireRole('botanist'), syncRoutes);
 
 // Public plant routes
 app.use(publicPlantRoutes);
@@ -106,8 +110,14 @@ app.get('/api/health/supabase', async (_req, res) => {
 });
 
 // PUBLIC PLANT QR CODE LOOKUP
+// Return approved public plant information for a QR code.
+const { createQrLimiter, publicQrData } = require('./middleware/publicQrProtection');
+const qrLimiter = createQrLimiter({
+  limit: Number(process.env.QR_RATE_LIMIT || 60),
+  windowMs: Number(process.env.QR_RATE_WINDOW_MS || 60000),
+});
 
-app.get('/api/public/plants/by-qr', async (req, res) => {
+app.get('/api/public/plants/by-qr', qrLimiter, async (req, res) => {
   const qrCode =
     typeof req.query.code === 'string'
       ? req.query.code.trim()
@@ -139,25 +149,15 @@ app.get('/api/public/plants/by-qr', async (req, res) => {
   }
 
   res.set('Cache-Control', 'no-store');
-
-  return res.json({
-    data: data[0],
-  });
+  return res.json({ data: publicQrData(data[0]) });
 });
 
 // CURRENT USER INFORMATION
 
-function currentUser(req, res) {
-  res.json({
-    id: req.user.id,
-    email: req.user.email,
-    role: req.profile.role,
-  });
-}
-
-app.get('/api/me', requireAuth, currentUser);
-
-app.get('/api/auth/me', requireAuth, currentUser);
+// Staff and visitor accounts (see routes/me.js); every other route stays staff-only.
+const meRoutes = require('./routes/me');
+app.use('/api/me', meRoutes);
+app.use('/api/auth/me', meRoutes);
 
 // ERROR HANDLING
 

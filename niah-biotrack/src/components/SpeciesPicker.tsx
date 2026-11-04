@@ -2,6 +2,18 @@ import React, { useEffect, useMemo } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import { useSpeciesStore } from '../store/useSpeciesStore';
 import type { Species } from '../api/species';
+import { conservationStatusCode, conservationStatusColors } from '../utils/conservationStatus';
+
+// Small coloured status code (e.g. "EN") shown next to a species name.
+function StatusBadge({ status }: { status: string | null }) {
+  const code = conservationStatusCode(status);
+  const colors = conservationStatusColors(code);
+  return (
+    <View style={[styles.badge, { backgroundColor: colors.bg }]}>
+      <Text style={[styles.badgeText, { color: colors.text }]}>{code}</Text>
+    </View>
+  );
+}
 
 // What the botanist chose: an approved species, or nothing yet.
 export type SpeciesChoice = { kind: 'species'; species: Species } | null;
@@ -75,7 +87,10 @@ export default function SpeciesPicker({ value, onChange, query, onQueryChange, h
           style={styles.resultRow}
           onPress={() => onChange({ kind: 'species', species: s })}
         >
-          <Text style={styles.resultName}>{s.scientific_name}</Text>
+          <View style={styles.resultTop}>
+            <Text style={styles.resultName}>{s.scientific_name}</Text>
+            <StatusBadge status={s.conservation_status} />
+          </View>
           {s.common_name || s.local_name ? (
             <Text style={styles.resultSub}>{[s.common_name, s.local_name].filter(Boolean).join(' · ')}</Text>
           ) : null}
@@ -94,7 +109,10 @@ const styles = StyleSheet.create({
   inputError: { borderColor: '#9B1C1C' },
   helpText: { fontSize: 12.5, color: '#68776D', marginBottom: 8, lineHeight: 17 },
   resultRow: { backgroundColor: '#FFFFFF', borderRadius: 14, borderWidth: 1.2, borderColor: '#E6ECE8', paddingVertical: 10, paddingHorizontal: 14, marginBottom: 6 },
-  resultName: { fontSize: 14, fontWeight: '700', fontStyle: 'italic', color: '#1E2B22' },
+  resultTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  resultName: { flex: 1, fontSize: 14, fontWeight: '700', fontStyle: 'italic', color: '#1E2B22', marginRight: 8 },
+  badge: { paddingVertical: 2, paddingHorizontal: 8, borderRadius: 10 },
+  badgeText: { fontSize: 11, fontWeight: '700' },
   resultSub: { fontSize: 12, color: '#68776D', marginTop: 2 },
   chosenCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#E4F2E7', borderRadius: 16, padding: 14, marginBottom: 8 },
   chosenName: { fontSize: 15, fontWeight: '700', fontStyle: 'italic', color: '#1E2B22' },

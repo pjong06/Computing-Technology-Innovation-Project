@@ -11,13 +11,13 @@ import {
   KeyboardAvoidingView,
   ScrollView,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import LeafLogo from '../src/components/LeafLogo';
-
-import { API_BASE_URL } from '../src/config/api';
+import { supabase } from '../src/lib/supabase';
 
 export default function ForgotPasswordScreen() {
   const router = useRouter();
@@ -32,14 +32,14 @@ export default function ForgotPasswordScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  // STEP 1: Request 6-digit code sent to Gmail
+  // STEP 1: Request 6-digit OTP code directly from Supabase to Gmail
   const handleSendCode = async () => {
-    const cleanId = identifier.trim();
+    const cleanId = identifier.trim().toLowerCase();
     if (!cleanId) {
       Toast.show({
         type: 'error',
         text1: 'Input Required',
-        text2: 'Enter your Staff ID or registered email.',
+        text2: 'Enter your registered staff email address.',
       });
       return;
     }
@@ -47,38 +47,49 @@ export default function ForgotPasswordScreen() {
     setIsLoading(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/send-reset-code`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier: cleanId }),
-      });
+      let targetEmail = cleanId;
 
-      const data = await response.json().catch(() => ({}));
+      // If user typed a Staff ID instead of an email, look up the email in profiles
+      if (!cleanId.includes('@')) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id, staff_id')
+          .eq('staff_id', cleanId.toUpperCase())
+          .maybeSingle();
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to send verification code.');
+        if (!profile) {
+          throw new Error('Staff ID not found. Please enter your registered email address directly.');
+        }
       }
 
-      setResolvedEmail(data.email || cleanId);
+      // Trigger Supabase OTP password recovery email
+      const { error } = await supabase.auth.resetPasswordForEmail(targetEmail);
+
+      if (error) {
+        throw error;
+      }
+
+      setResolvedEmail(targetEmail);
       setStep(2);
 
       Toast.show({
         type: 'success',
         text1: 'Verification Code Sent',
-        text2: `A 6-digit code was sent to ${data.email || cleanId}.`,
+        text2: `A 6-digit recovery code was sent to ${targetEmail}.`,
       });
     } catch (error: any) {
+      Alert.alert('Send Failed', error.message || 'Could not send verification code.');
       Toast.show({
         type: 'error',
         text1: 'Request Failed',
-        text2: error.message || 'Could not connect to backend server.',
+        text2: error.message || 'Could not deliver recovery email.',
       });
     } finally {
       setIsLoading(false);
     }
   };
 
-  // STEP 2: Verify 6-digit code and apply new password
+  // STEP 2: Verify 6-digit OTP token and update password in Supabase
   const handleVerifyAndChangePassword = async () => {
     const cleanCode = verificationCode.trim();
     const cleanPass = newPassword.trim();
@@ -113,21 +124,28 @@ export default function ForgotPasswordScreen() {
     setIsLoading(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/verify-and-change-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: resolvedEmail,
-          code: cleanCode,
-          newPassword: cleanPass,
-        }),
+      // 1. Verify the 6-digit recovery OTP token with Supabase
+      const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
+        email: resolvedEmail,
+        token: cleanCode,
+        type: 'recovery',
       });
 
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to update password.');
+      if (verifyError) {
+        throw verifyError;
       }
+
+      // 2. Apply new password to the authenticated recovery session
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: cleanPass,
+      });
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      // 3. Clear the temporary session so the user logs in cleanly with the new password
+      await supabase.auth.signOut();
 
       setStep(3);
 
@@ -137,6 +155,7 @@ export default function ForgotPasswordScreen() {
         text2: 'Your account password has been reset successfully.',
       });
     } catch (error: any) {
+      Alert.alert('Reset Failed', error.message || 'Verification code failed or expired.');
       Toast.show({
         type: 'error',
         text1: 'Reset Failed',
@@ -165,19 +184,20 @@ export default function ForgotPasswordScreen() {
             <>
               <Text style={styles.title}>Reset Password</Text>
               <Text style={styles.subtitle}>
-                Enter your registered Staff ID or Gmail to receive a 6-digit verification code.
+                Enter your registered staff email address to receive a 6-digit verification code.
               </Text>
 
               <View style={styles.form}>
-                <Text style={styles.label}>Staff ID or Email</Text>
+                <Text style={styles.label}>Staff Email</Text>
                 <TextInput
                   style={styles.input}
-                  placeholder="e.g. botanistb@gmail.com or SFC-BOT-002"
+                  placeholder="e.g. botanistb@gmail.com"
                   placeholderTextColor="#8C9A91"
                   value={identifier}
                   onChangeText={setIdentifier}
                   autoCapitalize="none"
                   autoCorrect={false}
+                  keyboardType="email-address"
                 />
 
                 <TouchableOpacity
@@ -493,4 +513,3 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 });
-

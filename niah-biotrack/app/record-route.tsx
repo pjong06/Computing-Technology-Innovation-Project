@@ -15,10 +15,16 @@ import { useRouter } from 'expo-router';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
+import { useAuthRole } from '../src/context/AuthRoleContext';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MAP_WIDTH = SCREEN_WIDTH - 32;
 const MAP_HEIGHT = 240;
+
+// Anti-Jitter Threshold Constants
+const MAX_ALLOWED_ACCURACY_M = 16;  // Ignore fixes with accuracy worse than ±16m
+const MIN_MOVEMENT_THRESHOLD_M = 3.5; // Must move >= 3.5m to register a new route node
+const MIN_WALKING_SPEED_MS = 0.35;    // Below ~1.2 km/h is treated as stationary
 
 interface BreadcrumbPoint {
   latitude: number;
@@ -37,6 +43,18 @@ interface WaypointMarker {
 
 export default function RecordRouteScreen() {
   const router = useRouter();
+  const { isVisitor } = useAuthRole();
+
+  // Guard against visitor unauthorized access
+  useEffect(() => {
+    if (isVisitor) {
+      Alert.alert(
+        'Botanist Access Required',
+        'Visitor accounts are read-only. Patrol route recording is restricted to staff.',
+        [{ text: 'OK', onPress: () => router.replace('/(tabs)/home') }]
+      );
+    }
+  }, [isVisitor]);
 
   // Telemetry States
   const [isTracking, setIsTracking] = useState<boolean>(false);
@@ -105,7 +123,7 @@ export default function RecordRouteScreen() {
     return R * c;
   };
 
-  // Start Real Hardware GPS Tracking
+  // Start Real Hardware GPS Tracking with Anti-Jitter Filtering
   const startTracking = async () => {
     try {
       const servicesEnabled = await Location.hasServicesEnabledAsync();
@@ -131,7 +149,7 @@ export default function RecordRouteScreen() {
       setIsSimulating(false);
       lastPointRef.current = null;
 
-      // Get initial position fix immediately
+      // Get initial position fix
       const initialFix = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
       });
@@ -148,19 +166,26 @@ export default function RecordRouteScreen() {
       lastPointRef.current = firstPoint;
       setBreadcrumbs([firstPoint]);
 
-      // Subscribe to active location updates
+      // Subscribe to active location updates with hardware throttle
       locationSubscription.current = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.High,
-          timeInterval: 1500, // Update every 1.5 seconds
-          distanceInterval: 1, // Trigger upon 1 meter displacement
+          timeInterval: 2000,   // Check every 2 seconds
+          distanceInterval: 3,  // Hardware level: ignore movements below 3 meters
         },
         (loc) => {
           const acc = loc.coords.accuracy ? Math.round(loc.coords.accuracy) : null;
           setAccuracyM(acc);
 
-          // Reject extreme multipath GPS noise (e.g. > 35m accuracy)
-          if (acc !== null && acc > 35) return;
+          // 1. ACCURACY GATE: Reject poor satellite fixes
+          if (acc !== null && acc > MAX_ALLOWED_ACCURACY_M) {
+            return;
+          }
+
+          // 2. SPEED DEADBAND: Detect stationary device and zero false velocity
+          const rawSpeed = loc.coords.speed !== null && loc.coords.speed !== undefined ? loc.coords.speed : 0;
+          const isPhysicallyMoving = rawSpeed >= MIN_WALKING_SPEED_MS;
+          setCurrentSpeedKmh(isPhysicallyMoving ? Number((rawSpeed * 3.6).toFixed(1)) : 0);
 
           const newPoint: BreadcrumbPoint = {
             latitude: Number(loc.coords.latitude.toFixed(6)),
@@ -169,8 +194,7 @@ export default function RecordRouteScreen() {
             accuracy: acc,
           };
 
-          const rawSpeed = loc.coords.speed || 0;
-          setCurrentSpeedKmh(Math.max(0, Number((rawSpeed * 3.6).toFixed(1))));
+          // Update current cursor position
           setCurrentCoord(newPoint);
 
           if (lastPointRef.current) {
@@ -181,8 +205,8 @@ export default function RecordRouteScreen() {
               newPoint.longitude
             );
 
-            // Filter out micro jitter (< 1.2m) and impossible GPS leaps (> 30m in 1.5s)
-            if (delta >= 1.2 && delta <= 30) {
+            // 3. SOFTWARE DEADBAND: Ignore jitter (< 3.5m) and reject GPS teleportation (> 35m in 2s)
+            if (delta >= MIN_MOVEMENT_THRESHOLD_M && delta <= 35) {
               setTotalDistanceM((prev) => Math.round(prev + delta));
               setBreadcrumbs((prevTrail) => [...prevTrail, newPoint]);
               lastPointRef.current = newPoint;
@@ -197,7 +221,7 @@ export default function RecordRouteScreen() {
       Toast.show({
         type: 'success',
         text1: 'GPS Route Active',
-        text2: 'Live path tracking initialized.',
+        text2: 'Live path tracking initialized with drift filter.',
       });
     } catch (err: any) {
       Alert.alert('GPS Error', err.message || 'Could not initialize GPS listener.');
@@ -235,8 +259,8 @@ export default function RecordRouteScreen() {
     simulatorInterval.current = setInterval(() => {
       stepCount++;
       // Simulate walking a curving path
-      simLat += 0.00003 + Math.sin(stepCount / 4) * 0.000015;
-      simLng += 0.000025 + Math.cos(stepCount / 4) * 0.00002;
+      simLat += 0.00004 + Math.sin(stepCount / 4) * 0.00002;
+      simLng += 0.000035 + Math.cos(stepCount / 4) * 0.000025;
 
       const simPoint: BreadcrumbPoint = {
         latitude: Number(simLat.toFixed(6)),
@@ -368,9 +392,9 @@ export default function RecordRouteScreen() {
     const minLng = Math.min(...lngs);
     const maxLng = Math.max(...lngs);
 
-    // Minimum bounding box span (ensures 10m paths don't over-scale)
-    const latSpan = Math.max(maxLat - minLat, 0.00012);
-    const lngSpan = Math.max(maxLng - minLng, 0.00012);
+    // Minimum bounding box span (ensures tight paths do not overscale)
+    const latSpan = Math.max(maxLat - minLat, 0.00015);
+    const lngSpan = Math.max(maxLng - minLng, 0.00015);
 
     const pad = 28;
     const drawW = MAP_WIDTH - pad * 2;
@@ -384,10 +408,8 @@ export default function RecordRouteScreen() {
       return { x, y };
     };
 
-    // Project breadcrumb path nodes
     const projectedPoints = breadcrumbs.map((pt) => project(pt.latitude, pt.longitude));
 
-    // Calculate vector segments between sequential points
     const segments = [];
     for (let i = 0; i < projectedPoints.length - 1; i++) {
       const p1 = projectedPoints[i];
@@ -408,7 +430,6 @@ export default function RecordRouteScreen() {
       });
     }
 
-    // Project pinned waypoints onto the same grid
     const projectedWaypoints = waypoints.map((wp) => ({
       ...wp,
       ...project(wp.latitude, wp.longitude),
@@ -422,6 +443,8 @@ export default function RecordRouteScreen() {
       current: projectedPoints[projectedPoints.length - 1],
     };
   }, [breadcrumbs, waypoints]);
+
+  if (isVisitor) return null;
 
   return (
     <SafeAreaView style={styles.safeArea}>

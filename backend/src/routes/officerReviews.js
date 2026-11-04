@@ -5,10 +5,77 @@ const router = express.Router();
 
 router.use(requireAuth, requireRole("officer"));
 
+const OBSERVATION_COLUMNS =
+    "id, plant_id, observer_id, observed_at, notes, review_status, " +
+    "health_status, life_stage, height_cm, diameter_cm";
+
+// Ids of the rows, without repeats or blanks.
+function idsOf(rows, key) {
+    return [...new Set(rows.map(row => row[key]).filter(Boolean))];
+}
+
+// Adds what an officer needs to review each observation: the plant (tag, location
+// text, species names) and the botanist's name. Separate lookups (not embedded joins),
+// so the queue still works if a plant or profile can't be read; those fields are null.
+async function withReviewDetails(supabase, observations) {
+    if (observations.length === 0) return [];
+
+    const plantIds = idsOf(observations, "plant_id");
+    const observerIds = idsOf(observations, "observer_id");
+
+    const { data: plants, error: plantError } = plantIds.length
+        ? await supabase
+            .from("plants")
+            .select("id, qr_code_value, location_description, species_id")
+            .in("id", plantIds)
+        : { data: [], error: null };
+    if (plantError) throw plantError;
+
+    const speciesIds = idsOf(plants || [], "species_id");
+    const { data: species, error: speciesError } = speciesIds.length
+        ? await supabase
+            .from("species")
+            .select("id, scientific_name, common_name")
+            .in("id", speciesIds)
+        : { data: [], error: null };
+    if (speciesError) throw speciesError;
+
+    const { data: observers, error: observerError } = observerIds.length
+        ? await supabase
+            .from("profiles")
+            .select("id, full_name")
+            .in("id", observerIds)
+        : { data: [], error: null };
+    if (observerError) throw observerError;
+
+    const plantById = new Map((plants || []).map(row => [row.id, row]));
+    const speciesById = new Map((species || []).map(row => [row.id, row]));
+    const nameById = new Map((observers || []).map(row => [row.id, row.full_name]));
+
+    return observations.map(observation => {
+        const plant = plantById.get(observation.plant_id) || null;
+        const plantSpecies = plant ? speciesById.get(plant.species_id) || null : null;
+        return {
+            ...observation,
+            observer_name: nameById.get(observation.observer_id) || null,
+            plant: plant
+                ? {
+                    id: plant.id,
+                    tag_code: plant.qr_code_value || null,
+                    location_description: plant.location_description || null,
+                    scientific_name: plantSpecies ? plantSpecies.scientific_name : null,
+                    common_name: plantSpecies ? plantSpecies.common_name : null,
+                }
+                : null,
+        };
+    });
+}
+
+// Observations waiting for an officer, oldest first, with plant, species and botanist.
 router.get("/pending", async (req, res) => {
     const { data, error } = await req.supabase
         .from("observations")
-        .select("id, plant_id, observer_id, observed_at, notes, review_status")
+        .select(OBSERVATION_COLUMNS)
         .eq("review_status", "pending")
         .is("deleted_at", null)
         .order("observed_at", { ascending: true })
@@ -21,7 +88,60 @@ router.get("/pending", async (req, res) => {
         });
     }
 
-    return res.json({ data });
+    try {
+        return res.json({ data: await withReviewDetails(req.supabase, data || []) });
+    } catch (detailError) {
+        console.error("Pending observation details error:", detailError);
+        return res.status(500).json({ message: "Could not load pending observations" });
+    }
+});
+
+// Observations an officer sent back, newest first, with the reason given. The botanist
+// fixes and resubmits them from the app (PATCH /api/observations/:id/submit); they then
+// return to /pending. Officers can't move them back here.
+router.get("/rejected", async (req, res) => {
+    const { data, error } = await req.supabase
+        .from("observations")
+        .select(OBSERVATION_COLUMNS)
+        .eq("review_status", "rejected")
+        .is("deleted_at", null)
+        .order("observed_at", { ascending: false })
+        .limit(100);
+
+    if (error) {
+        console.error("Rejected observations error:", error);
+        return res.status(500).json({ message: "Could not load rejected observations" });
+    }
+
+    try {
+        const rows = await withReviewDetails(req.supabase, data || []);
+        const ids = rows.map(row => row.id);
+        // The latest rejection comment for each observation.
+        const { data: reviews, error: reviewError } = ids.length
+            ? await req.supabase
+                .from("observation_reviews")
+                .select("observation_id, decision, comments, reviewed_at")
+                .in("observation_id", ids)
+                .eq("decision", "rejected")
+                .order("reviewed_at", { ascending: false })
+            : { data: [], error: null };
+        if (reviewError) throw reviewError;
+
+        const latest = new Map();
+        for (const review of reviews || []) {
+            if (!latest.has(review.observation_id)) latest.set(review.observation_id, review);
+        }
+        return res.json({
+            data: rows.map(row => ({
+                ...row,
+                rejection_comment: latest.get(row.id)?.comments ?? null,
+                rejected_at: latest.get(row.id)?.reviewed_at ?? null,
+            })),
+        });
+    } catch (detailError) {
+        console.error("Rejected observation details error:", detailError);
+        return res.status(500).json({ message: "Could not load rejected observations" });
+    }
 });
 
 // Return short-lived photo links for an observation awaiting officer review.

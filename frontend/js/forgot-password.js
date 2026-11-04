@@ -1,4 +1,4 @@
-// Send 6-digit verification code
+// Send 6 digit verification code
 async function sendResetEmail() {
 
     const email = document.getElementById('reset-email').value.trim();
@@ -71,8 +71,8 @@ async function verifyResetCode() {
     const verifyButton = document.getElementById('verify-button');
 
     // Check code
-    if (!/^\d{8}$/.test(code)) {
-        showMessage('Please enter a valid 8 digit code.', 'error');
+    if (!/^\d{6}$/.test(code)) {
+        showMessage('Please enter a valid 6 digit code.', 'error');
         return;
     }
 
