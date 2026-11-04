@@ -44,6 +44,8 @@ app.use('/api/plants', plantRoutes);
 
 app.use('/api/identify', identifyRoutes);
 
+// Camera evidence remains active-Officer-only, independently of telemetry access.
+app.use('/api/iot', requireAuth, requireRole('officer'), require('./routes/iotCamera').createCameraRouter());
 app.use('/api/iot', requireAuth, requireRole('officer'), iotRoutes);
 
 app.use('/api/knowledge', knowledgeRoutes);
