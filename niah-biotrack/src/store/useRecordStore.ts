@@ -706,7 +706,17 @@ export const useRecordStore = create<RecordState>()(
         // Unfinished drafts (Local only) are left out: they aren't failures, they just
         // can't be uploaded until the botanist confirms a species.
         const ids = get()
-          .records.filter((r) => r.syncStatus !== SyncStatus.UPLOADED && isUploadable(r))
+          .records.filter(
+            (r) =>
+              isUploadable(r) &&
+              (
+                r.syncStatus !== SyncStatus.UPLOADED ||
+                (
+                  r.reviewStatus === ReviewStatus.PENDING &&
+                  !isFullySubmitted(r)
+                )
+              )
+          )
           .map((r) => r.id);
 
         let uploaded = 0;
