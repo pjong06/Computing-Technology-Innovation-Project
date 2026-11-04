@@ -1,40 +1,89 @@
-import React, { useEffect } from 'react';
+import React, {
+  useEffect,
+} from 'react';
+
 import { Stack } from 'expo-router';
 import { StatusBar } from 'react-native';
 import Toast from 'react-native-toast-message';
+
 import { AuthRoleProvider } from '../src/context/AuthRoleContext';
-import { initializeOfflineDatabase } from '../src/services/offlineDatabase';
-import { useRecordStore } from '../src/store/useRecordStore';
+
+import {
+  initializeOfflineDatabase,
+} from '../src/services/offlineDatabase';
+
+import {
+  startAutoSync,
+} from '../src/services/autoSync';
+
+import {
+  useRecordStore,
+} from '../src/store/useRecordStore';
 
 export default function RootLayout() {
   useEffect(() => {
-    const initializeOfflineData = async () => {
-      await initializeOfflineDatabase();
+    let cancelled = false;
 
-      if (!useRecordStore.persist.hasHydrated()) {
-        await new Promise<void>((resolve) => {
-          const unsubscribe = useRecordStore.persist.onFinishHydration(() => {
-            unsubscribe();
-            resolve();
-          });
-        });
+    let stopAutoSync:
+      | (() => void)
+      | undefined;
+
+    const initializeOfflineData =
+      async () => {
+        await initializeOfflineDatabase();
+
+        if (
+          !useRecordStore.persist.hasHydrated()
+        ) {
+          await new Promise<void>(
+            (resolve) => {
+              const unsubscribe =
+                useRecordStore.persist.onFinishHydration(
+                  () => {
+                    unsubscribe();
+                    resolve();
+                  }
+                );
+            }
+          );
+        }
+
+        await useRecordStore
+          .getState()
+          .hydrateOfflineRecords();
+
+        if (!cancelled) {
+          stopAutoSync =
+            startAutoSync();
+        }
+      };
+
+    void initializeOfflineData().catch(
+      (error) => {
+        console.error(
+          'Could not initialize offline data:',
+          error
+        );
       }
+    );
 
-      await useRecordStore.getState().hydrateOfflineRecords();
+    return () => {
+      cancelled = true;
+      stopAutoSync?.();
     };
-
-    void initializeOfflineData().catch((error) => {
-      console.error('Could not initialize offline data:', error);
-    });
   }, []);
 
   return (
     <AuthRoleProvider>
       <StatusBar barStyle="dark-content" />
+
       <Stack
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: '#F6F8F6' },
+          contentStyle: {
+            backgroundColor:
+              '#F6F8F6',
+          },
         }}
       >
         <Stack.Screen name="index" />
@@ -53,6 +102,7 @@ export default function RootLayout() {
         <Stack.Screen name="offline-map" />
         <Stack.Screen name="manual-qr" />
       </Stack>
+
       <Toast />
     </AuthRoleProvider>
   );

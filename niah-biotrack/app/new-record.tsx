@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { randomUUID } from 'expo-crypto';
 import {
   View,
   Text,
@@ -22,6 +23,8 @@ import {
   IdentificationStatus,
   RecordStatus,
   SyncStatus,
+  type PlantPhotoEntry,
+  type PlantPhotoType,
   useRecordStore,
 } from '../src/store/useRecordStore';
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
@@ -34,6 +37,15 @@ import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
 const DONE_BAR_ID = 'new-record-done';
 
 const PHOTO_SLOTS = ['Whole plant', 'Leaf', 'Flower', 'Bark'] as const;
+const PHOTO_TYPE_BY_SLOT: Record<
+  PhotoSlot,
+  PlantPhotoType
+> = {
+  'Whole plant': 'whole_plant',
+  Leaf: 'leaf',
+  Flower: 'flower',
+  Bark: 'bark',
+};
 type PhotoSlot = (typeof PHOTO_SLOTS)[number];
 type SlotPhotos = Record<PhotoSlot, ImagePicker.ImagePickerAsset | null>;
 
@@ -74,25 +86,85 @@ export default function NewRecordScreen() {
   const existingRecord = useRecordStore((state) =>
     editId ? state.records.find((record) => record.id === editId) : undefined
   );
+  const existingPhotoUri = (
+  slot: PhotoSlot,
+  legacyIndex: number
+) =>
+  existingRecord?.photoEntries?.find(
+    (photo) =>
+      photo.photoType ===
+      PHOTO_TYPE_BY_SLOT[slot]
+  )?.uri ??
+  existingRecord?.photoUris?.[
+    legacyIndex
+  ];
   const addRecord = useRecordStore((state) => state.addRecord);
   const updateRecord = useRecordStore((state) => state.updateRecord);
   const isEditing = Boolean(existingRecord);
 
   const syncRecord = useRecordStore((state) => state.syncRecord);
-  const [photos, setPhotos] = useState<SlotPhotos>({
-    'Whole plant': existingRecord?.photoUris?.[0]
-      ? ({ uri: existingRecord.photoUris[0], width: 0, height: 0 } as ImagePicker.ImagePickerAsset)
-      : null,
-    Leaf: existingRecord?.photoUris?.[1]
-      ? ({ uri: existingRecord.photoUris[1], width: 0, height: 0 } as ImagePicker.ImagePickerAsset)
-      : null,
-    Flower: existingRecord?.photoUris?.[2]
-      ? ({ uri: existingRecord.photoUris[2], width: 0, height: 0 } as ImagePicker.ImagePickerAsset)
-      : null,
-    Bark: existingRecord?.photoUris?.[3]
-      ? ({ uri: existingRecord.photoUris[3], width: 0, height: 0 } as ImagePicker.ImagePickerAsset)
-      : null,
-  });
+  const [photos, setPhotos] =
+    useState<SlotPhotos>({
+      'Whole plant':
+        existingPhotoUri(
+          'Whole plant',
+          0
+        )
+          ? ({
+              uri: existingPhotoUri(
+                'Whole plant',
+                0
+              )!,
+              width: 0,
+              height: 0,
+            } as ImagePicker.ImagePickerAsset)
+          : null,
+
+      Leaf:
+        existingPhotoUri(
+          'Leaf',
+          1
+        )
+          ? ({
+              uri: existingPhotoUri(
+                'Leaf',
+                1
+              )!,
+              width: 0,
+              height: 0,
+            } as ImagePicker.ImagePickerAsset)
+          : null,
+
+      Flower:
+        existingPhotoUri(
+          'Flower',
+          2
+        )
+          ? ({
+              uri: existingPhotoUri(
+                'Flower',
+                2
+              )!,
+              width: 0,
+              height: 0,
+            } as ImagePicker.ImagePickerAsset)
+          : null,
+
+      Bark:
+        existingPhotoUri(
+          'Bark',
+          3
+        )
+          ? ({
+              uri: existingPhotoUri(
+                'Bark',
+                3
+              )!,
+              width: 0,
+              height: 0,
+            } as ImagePicker.ImagePickerAsset)
+          : null,
+    });
 
   const [speciesChoice, setSpeciesChoice] = useState<SpeciesChoice>(null);
   const [speciesQuery, setSpeciesQuery] = useState(existingRecord?.scientificName ?? '');
@@ -392,7 +464,73 @@ export default function NewRecordScreen() {
   };
 
   const handleSave = async () => {
-    const photoList = PHOTO_SLOTS.map((slot) => photos[slot]?.uri).filter(Boolean) as string[];
+    const identified =
+  Boolean(speciesChoice);
+
+const photoEntries: PlantPhotoEntry[] =
+  PHOTO_SLOTS.flatMap((slot) => {
+    const asset =
+      photos[slot];
+
+    if (!asset) {
+      return [];
+    }
+
+    const photoType =
+      PHOTO_TYPE_BY_SLOT[slot];
+
+    const existing =
+      existingRecord?.photoEntries?.find(
+        (photo) =>
+          photo.photoType ===
+            photoType &&
+          photo.uri === asset.uri
+      );
+
+    let photoSyncStatus =
+      existing?.syncStatus ??
+      (
+        identified
+          ? SyncStatus.NOT_UPLOADED
+          : SyncStatus.LOCAL_ONLY
+      );
+
+    // A photo saved earlier as a local draft becomes
+    // uploadable when the Botanist confirms a species.
+    if (
+      identified &&
+      photoSyncStatus ===
+        SyncStatus.LOCAL_ONLY
+    ) {
+      photoSyncStatus =
+        SyncStatus.NOT_UPLOADED;
+    }
+
+    return [
+      {
+        id:
+          existing?.id ??
+          randomUUID(),
+
+        uri: asset.uri,
+        photoType,
+
+        syncStatus:
+          photoSyncStatus,
+
+        serverId:
+          existing?.serverId,
+
+        lastError:
+          existing?.lastError,
+      },
+    ];
+  });
+
+const photoList =
+  photoEntries.map(
+    (photo) => photo.uri
+  );
 
     const nextErrors: FieldErrors = {};
     if (photoList.length === 0) nextErrors.photos = 'Add at least one photo.';
@@ -402,7 +540,6 @@ export default function NewRecordScreen() {
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0 || !gpsFix) return;
 
-    const identified = Boolean(speciesChoice);
     const recordData = {
       scientificName: speciesChoice?.species.scientific_name ?? '',
       speciesId: speciesChoice?.species.id ?? null,
@@ -416,6 +553,7 @@ export default function NewRecordScreen() {
       gpsAccuracyM: gpsFix.accuracyM,
       gpsCoordination: formatCoordinates(gpsFix.latitude, gpsFix.longitude, gpsFix.accuracyM),
       photoUris: photoList,
+      photoEntries,
       recordStatus: identified ? RecordStatus.COMPLETE : RecordStatus.DRAFT,
       identificationStatus: identified
         ? IdentificationStatus.IDENTIFIED
@@ -447,7 +585,7 @@ export default function NewRecordScreen() {
       pathname: '/save-confirm',
       params: { id: saved.id },
     } as any);
-    
+
     if (saved.syncStatus === SyncStatus.NOT_UPLOADED) {
       void syncRecord(saved.id);
     }

@@ -7,12 +7,18 @@ import { useProfileStore } from './useProfileStore';
 // recordMapper imports only types from this file (import type), so there is no
 // runtime circular dependency between the two.
 import {
+  getObservationMetadataSyncStatus,
+  getPlantMetadataSyncStatus,
   loadOrMigrateRecords,
   persistObservation,
   persistRecordSnapshot,
 } from '../services/offlineRecordRepository';
+
+import { syncPlantPhotos } from '../services/plantPhotoSync';
 import { clearOfflineDatabase } from '../services/offlineDatabase';
 import { runOutboxSync } from '../services/syncEngine';
+
+
 
 export enum SyncStatus {
   UPLOADED = 'Uploaded',
@@ -50,6 +56,21 @@ export type LifeStage =
   | 'Pole'
   | 'Mature'
   | 'Senescent';
+
+export type PlantPhotoType =
+  | 'whole_plant'
+  | 'leaf'
+  | 'flower'
+  | 'bark';
+
+export interface PlantPhotoEntry {
+  id: string; // client_record_id used for idempotent photo retry
+  uri: string;
+  photoType: PlantPhotoType;
+  syncStatus: SyncStatus;
+  serverId?: string;
+  lastError?: string;
+}
 
 export interface ObservationVisit {
   id: string; // UUID generated on the phone; sent as client_record_id
@@ -121,6 +142,7 @@ export interface PlantRecord {
   routeLength?: string;
   walkingTime?: string;
   observations: ObservationVisit[];
+  photoEntries?: PlantPhotoEntry[];
 }
 
 export interface RecordedRoute {
@@ -236,6 +258,7 @@ interface RecordState {
       | 'gpsAccuracyM'
       | 'gpsCoordination'
       | 'photoUris'
+      | 'photoEntries'
       | 'recordStatus'
       | 'identificationStatus'
       | 'syncStatus'
@@ -330,91 +353,348 @@ export const useRecordStore = create<RecordState>()(
       // operation IDs are reused after an interrupted request, so the backend
       // can safely return the earlier result instead of creating duplicates.
       syncRecord: async (id) => {
-        const record = get().records.find((item) => item.id === id);
-        if (!record) return { ok: false, reason: 'Record not found' };
-        if (!isUploadable(record)) {
-          return {
-            ok: false,
-            reason: 'Confirm an approved species and complete this draft before uploading it.',
-          };
+  const record = get().records.find(
+    (item) => item.id === id
+  );
+
+  if (!record) {
+    return {
+      ok: false,
+      reason: 'Record not found',
+    };
+  }
+
+  if (!isUploadable(record)) {
+    return {
+      ok: false,
+      reason:
+        'Confirm an approved species and complete this draft before uploading it.',
+    };
+  }
+
+  if (uploadsInProgress.has(id)) {
+    return {
+      ok: false,
+      reason:
+        'This record is already uploading',
+    };
+  }
+
+  uploadsInProgress.add(id);
+
+  try {
+    /*
+     * Metadata operations are already queued when the record
+     * is created/edited. Only create a missing operation here,
+     * instead of creating a duplicate because a PHOTO is pending.
+     */
+    const plantMetadataStatus =
+      await getPlantMetadataSyncStatus(id);
+
+    const queueObservationIds: string[] =
+      [];
+
+    for (const observation of record.observations) {
+      const status =
+        await getObservationMetadataSyncStatus(
+          observation.id
+        );
+
+      if (
+        status === null ||
+        status === 'local_only'
+      ) {
+        queueObservationIds.push(
+          observation.id
+        );
+      }
+    }
+
+    await persistRecordSnapshot(record, {
+      queuePlant:
+        plantMetadataStatus === null ||
+        plantMetadataStatus ===
+          'local_only',
+      queueObservationIds,
+    });
+
+    /*
+     * STEP 1:
+     * Push plant + observation metadata.
+     */
+    const run =
+      await runOutboxSync();
+
+    let refreshedRecords =
+      await loadOrMigrateRecords(
+        get().records
+      );
+
+    set({
+      records: refreshedRecords,
+    });
+
+    let refreshed =
+      refreshedRecords.find(
+        (item) => item.id === id
+      );
+
+    if (!refreshed) {
+      return {
+        ok: false,
+        reason:
+          'Record not found after synchronization',
+      };
+    }
+
+    // Network/server could not complete metadata.
+    if (run.error) {
+      return {
+        ok: false,
+        reason: run.error,
+      };
+    }
+
+    /*
+     * Check THIS record's metadata status.
+     * runOutboxSync may also have processed operations
+     * belonging to other records.
+     */
+    const plantStatus =
+      await getPlantMetadataSyncStatus(
+        id
+      );
+
+    const observationStatuses =
+      await Promise.all(
+        refreshed.observations.map(
+          (observation) =>
+            getObservationMetadataSyncStatus(
+              observation.id
+            )
+        )
+      );
+
+    const hasConflict =
+      plantStatus === 'conflict' ||
+      observationStatuses.some(
+        (status) =>
+          status === 'conflict'
+      );
+
+    const hasFailure =
+      plantStatus === 'failed' ||
+      observationStatuses.some(
+        (status) =>
+          status === 'failed'
+      );
+
+    if (hasConflict || hasFailure) {
+      return {
+        ok: false,
+        reason: hasConflict
+          ? 'A newer server version exists. This record needs conflict review.'
+          : 'The server rejected part of this record. Review it and try again.',
+      };
+    }
+
+    const metadataReady =
+      plantStatus === 'uploaded' &&
+      observationStatuses.every(
+        (status) =>
+          status === 'uploaded'
+      );
+
+    if (!metadataReady) {
+      return {
+        ok: false,
+        reason:
+          'Some metadata operations are still waiting to upload.',
+      };
+    }
+
+    /*
+     * STEP 2:
+     * Metadata exists on the server, so plant photos can now
+     * safely reference the server plant ID.
+     */
+    const photoRun =
+      await syncPlantPhotos(
+        refreshed
+      );
+
+    refreshed = photoRun.record;
+
+    await persistRecordSnapshot(
+      refreshed
+    );
+
+    set((state) => ({
+      records: state.records.map(
+        (item) =>
+          item.id === id
+            ? refreshed!
+            : item
+      ),
+    }));
+
+    /*
+     * Re-read from SQLite so aggregate syncStatus now includes
+     * metadata + observations + photos.
+     */
+    refreshedRecords =
+      await loadOrMigrateRecords(
+        get().records
+      );
+
+    set({
+      records: refreshedRecords,
+    });
+
+    refreshed =
+      refreshedRecords.find(
+        (item) => item.id === id
+      );
+
+    if (!refreshed) {
+      return {
+        ok: false,
+        reason:
+          'Record not found after photo synchronization',
+      };
+    }
+
+    if (photoRun.error) {
+      return {
+        ok: false,
+        reason: photoRun.error,
+      };
+    }
+
+    /*
+     * STEP 3:
+     * Review submission is a MANUAL Botanist decision.
+     *
+     * This block only runs if the Botanist previously pressed
+     * Submit for Review and reviewStatus is already PENDING.
+     *
+     * Therefore reconnect may deliver a queued submission,
+     * but it never submits a draft by itself.
+     */
+    if (
+      refreshed.reviewStatus ===
+      ReviewStatus.PENDING
+    ) {
+      const submittedIds =
+        new Set<string>();
+
+      for (
+        const observation of [
+          ...refreshed.observations,
+        ].reverse()
+      ) {
+        if (
+          !observation.serverId ||
+          observation.submittedForReview
+        ) {
+          continue;
         }
-        if (uploadsInProgress.has(id)) {
-          return { ok: false, reason: 'This record is already uploading' };
-        }
 
-        uploadsInProgress.add(id);
-        try {
-          await persistRecordSnapshot(record, {
-            queuePlant: record.syncStatus !== SyncStatus.UPLOADED,
-            queueObservationIds: record.observations
-              .filter((observation) => observation.syncStatus !== SyncStatus.UPLOADED)
-              .map((observation) => observation.id),
-          });
-
-          const run = await runOutboxSync();
-          const refreshedRecords = await loadOrMigrateRecords(get().records);
-          set({ records: refreshedRecords });
-
-          let refreshed = refreshedRecords.find((item) => item.id === id);
-          if (!refreshed) return { ok: false, reason: 'Record not found after synchronization' };
-
-          if (run.error) return { ok: false, reason: run.error };
-          if (refreshed.syncStatus === SyncStatus.FAILED) {
-            return {
-              ok: false,
-              reason: run.conflicts > 0
-                ? 'A newer server version exists. This record needs conflict review.'
-                : 'The server rejected part of this record. Review it and try again.',
-            };
+        await apiFetch(
+          `/api/observations/${observation.serverId}/submit`,
+          {
+            method: 'PATCH',
           }
+        );
 
-          if (refreshed.reviewStatus === ReviewStatus.PENDING) {
-            const submittedIds = new Set<string>();
-            for (const observation of [...refreshed.observations].reverse()) {
-              if (!observation.serverId || observation.submittedForReview) continue;
-              await apiFetch(`/api/observations/${observation.serverId}/submit`, {
-                method: 'PATCH',
-              });
-              submittedIds.add(observation.id);
-            }
+        submittedIds.add(
+          observation.id
+        );
+      }
 
-            if (submittedIds.size > 0) {
-              refreshed = {
-                ...refreshed,
-                observations: refreshed.observations.map((observation) =>
-                  submittedIds.has(observation.id)
-                    ? { ...observation, submittedForReview: true }
-                    : observation
-                ),
-              };
-              set((state) => ({
-                records: state.records.map((item) =>
-                  item.id === id ? refreshed! : item
-                ),
-              }));
-              await persistRecordSnapshot(refreshed);
-            }
-          }
+      if (
+        submittedIds.size > 0
+      ) {
+        refreshed = {
+          ...refreshed,
+          observations:
+            refreshed.observations.map(
+              (observation) =>
+                submittedIds.has(
+                  observation.id
+                )
+                  ? {
+                      ...observation,
+                      submittedForReview:
+                        true,
+                    }
+                  : observation
+            ),
+        };
 
-          const completelyUploaded =
-            refreshed.syncStatus === SyncStatus.UPLOADED &&
-            refreshed.observations.every(
-              (observation) => observation.syncStatus === SyncStatus.UPLOADED
-            );
+        set((state) => ({
+          records:
+            state.records.map(
+              (item) =>
+                item.id === id
+                  ? refreshed!
+                  : item
+            ),
+        }));
 
-          return completelyUploaded
-            ? { ok: true, submittedForReview: isFullySubmitted(refreshed) }
-            : { ok: false, reason: 'Some operations are still waiting to upload.' };
-        } catch (error) {
-          const reason =
-            error instanceof ApiError
-              ? error.message
-              : 'Upload failed unexpectedly. Please try again.';
-          return { ok: false, reason };
-        } finally {
-          uploadsInProgress.delete(id);
+        await persistRecordSnapshot(
+          refreshed
+        );
+      }
+    }
+
+    const photosUploaded =
+      (
+        refreshed.photoEntries ??
+        []
+      ).every(
+        (photo) =>
+          photo.syncStatus ===
+          SyncStatus.UPLOADED
+      );
+
+    const completelyUploaded =
+      refreshed.syncStatus ===
+        SyncStatus.UPLOADED &&
+      refreshed.observations.every(
+        (observation) =>
+          observation.syncStatus ===
+          SyncStatus.UPLOADED
+      ) &&
+      photosUploaded;
+
+    return completelyUploaded
+      ? {
+          ok: true,
+          submittedForReview:
+            isFullySubmitted(
+              refreshed
+            ),
         }
-      },
+      : {
+          ok: false,
+          reason:
+            'Some operations are still waiting to upload.',
+        };
+  } catch (error) {
+    const reason =
+      error instanceof ApiError
+        ? error.message
+        : 'Upload failed unexpectedly. Please try again.';
+
+    return {
+      ok: false,
+      reason,
+    };
+  } finally {
+    uploadsInProgress.delete(id);
+  }
+},
 
       // Uploads every record that isn't fully on the server yet (Not uploaded AND
       // Upload failed, so "Sync now" also retries failures). One record at a time, so
