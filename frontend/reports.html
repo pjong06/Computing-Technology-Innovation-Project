@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Reports & export - Niah Biotrack</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="images/logo.png">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app">
+
+<nav id="menu"></nav>
+
+<main>
+<section class="page on">
+  <h1>Reports <span>& export</span></h1>
+  <p class="lead">Summarise biodiversity records and export them for research and planning.</p>
+  <div class="stats">
+    <div class="card"><b id="stat-species">4</b>Species recorded</div>
+    <div class="card"><b id="stat-endangered">2</b>Endangered</div>
+    <div class="card"><b id="stat-pending">3</b>Awaiting approval</div>
+    <div class="card"><b>42</b>Field records synced</div>
+  </div>
+  <div class="bar">
+    <select id="report-type" aria-label="Report type" onchange="renderReport()">
+      <option value="inventory">Species inventory</option>
+      <option value="status">Conservation status summary</option>
+      <option value="botanist">Observations by botanist</option>
+    </select>
+    <input id="report-from" type="date" value="2026-09-01" aria-label="From date" onchange="renderReport()">
+    <input id="report-to" type="date" value="2026-09-30" aria-label="To date" onchange="renderReport()">
+    <button class="btn" onclick="exportCsv()">Export CSV</button>
+    <button class="btn ghost" onclick="exportPdf()">Export PDF</button>
+  </div>
+  <p class="muted" id="report-note"></p>
+  <div class="card tw">
+    <table>
+      <thead id="report-head"></thead>
+      <tbody id="report-body"></tbody>
+    </table>
+    <p class="muted" id="report-empty" hidden>No records match this report and date range.</p>
+  </div>
+</section>
+</main>
+</div>
+
+<div id="toast" role="status"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
+<script src="js/shared.js"></script>
+<script src="js/reports.js"></script>
+<script src="js/pdf.js"></script>
+</body>
+</html>
