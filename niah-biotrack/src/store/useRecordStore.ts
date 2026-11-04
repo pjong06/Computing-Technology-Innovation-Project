@@ -1135,26 +1135,6 @@ export const useRecordStore =
               };
             }
 
-            /*
-             * Botanists may delete records they are still
-             * working on, or records returned by the officer.
-             *
-             * Pending / approved records stay protected.
-             */
-            if (
-              record.reviewStatus !==
-                ReviewStatus.DRAFT &&
-              record.reviewStatus !==
-                ReviewStatus.REJECTED
-            ) {
-              return {
-                ok: false,
-
-                reason:
-                  'Records waiting for review or already approved cannot be deleted by the Botanist.',
-              };
-            }
-
             if (
               uploadsInProgress.has(
                 id

@@ -202,11 +202,7 @@ export default function PlantDetailScreen() {
     matched.reviewStatus ===
       ReviewStatus.REJECTED;
 
-  const canDelete =
-    matched.reviewStatus ===
-      ReviewStatus.DRAFT ||
-    matched.reviewStatus ===
-      ReviewStatus.REJECTED;
+  const canDelete = true;
 
   const canSubmit =
     canEdit &&
