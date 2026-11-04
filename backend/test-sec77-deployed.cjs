@@ -144,7 +144,7 @@ function password() {
     '$s=Read-Host -AsSecureString; $p=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($s); ' +
     'try {[Console]::Out.Write([Runtime.InteropServices.Marshal]::PtrToStringBSTR($p))} ' +
     'finally {[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($p)}';
-  return execFileSync('powershell.exe', ['-NoProfile', '-Command', command], {
+  return execFileSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', ['-NoProfile', '-Command', command], {
     stdio: ['inherit', 'pipe', 'inherit'], encoding: 'utf8',
   });
 }
