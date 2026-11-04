@@ -1,7 +1,7 @@
 const express = require("express");
 const { randomUUID } = require("node:crypto");
 const upload = require("../services/storageService");
-const { generatePlantQR, QrConfigurationError } = require("../services/qrService");
+const { generatePlantQR, formatPlantTag, TAG_PATTERN, QrConfigurationError } = require("../services/qrService");
 const { requireAuth, requireRole } = require("../middleware/auth");
 
 const router = express.Router();
@@ -744,6 +744,73 @@ router.get("/:id/qr/image", requireRole("botanist"), async (req, res) => {
         if (error instanceof QrConfigurationError) return res.status(503).json({ message: "Public QR URL is not configured" });
         console.error("Plant QR image error:", error);
         return res.status(500).json({ message: "Failed to generate QR image" });
+    }
+});
+
+// ── 1-CLICK / AUTOMATIC TAG & QR GENERATION ────────────────────
+router.post("/:id/attach-tag", requireRole("botanist", "officer"), async (req, res) => {
+    const plantId = req.params.id;
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    if (!uuidPattern.test(plantId)) {
+        return res.status(400).json({ message: "Valid plant ID is required" });
+    }
+
+    // 1. Verify caller owns this plant record or is an officer
+    if (!(await checkPlantWriteAccess(req, res, plantId))) return;
+
+    try {
+        // 2. Fetch current plant to see if it already has a valid tag
+        const { data: plant, error: fetchError } = await req.supabase
+            .from("plants")
+            .select("id, qr_code_value")
+            .eq("id", plantId)
+            .maybeSingle();
+
+        if (fetchError || !plant) {
+            return res.status(404).json({ message: "Plant record not found" });
+        }
+
+        let tagCode = plant.qr_code_value;
+
+        // 3. If no valid tag exists, atomically pull the next sequence
+        if (!tagCode || !TAG_PATTERN.test(tagCode)) {
+            const { data: generatedTag, error: rpcError } = await req.supabase
+                .rpc("get_next_plant_tag");
+
+            if (rpcError || !generatedTag) {
+                console.error("RPC error:", rpcError);
+                return res.status(500).json({ message: "Failed to generate tag sequence" });
+            }
+
+            tagCode = generatedTag;
+
+            // 4. Commit assigned tag and verify database write succeeded
+            const { error: updateError } = await req.supabase
+                .from("plants")
+                .update({ qr_code_value: tagCode })
+                .eq("id", plantId);
+
+            if (updateError) {
+                console.error("Failed to commit tag to plant:", updateError);
+                return res.status(500).json({ message: "Failed to save assigned tag to plant record" });
+            }
+        }
+
+        // 5. Generate QR code payload
+        const qrResult = await generatePlantQR(tagCode);
+
+        return res.status(200).json({
+            tag_code: tagCode,
+            qr_code: qrResult.qrCode, // base64 data URL
+            public_url: qrResult.publicUrl,
+        });
+    } catch (error) {
+        if (error instanceof QrConfigurationError) {
+            return res.status(503).json({ message: "Public QR URL is not configured on server" });
+        }
+        console.error("Auto attach-tag error:", error);
+        return res.status(500).json({ message: error.message || "Server error" });
     }
 });
 

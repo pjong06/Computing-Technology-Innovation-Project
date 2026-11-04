@@ -1,169 +1,314 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
-  SafeAreaView, Platform, StatusBar, Alert,
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  SafeAreaView,
+  StatusBar,
+  Platform,
+  Image,
+  ActivityIndicator,
+  Share,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useStaffOnly } from '../src/context/AuthRoleContext';
-import { CameraView, useCameraPermissions } from 'expo-camera';
-import Toast from 'react-native-toast-message';
+import { Ionicons } from '@expo/vector-icons';
+import { API_BASE_URL } from '../src/config/api';
+import { supabase } from '../src/lib/supabase';
 import { useRecordStore } from '../src/store/useRecordStore';
-import FormScrollView from '../src/components/FormScrollView';
-import { parseTagCode } from '../src/utils/tagCode';
 
 export default function AttachTagScreen() {
   const router = useRouter();
-  // Botanist-only screen: guests and visitors are sent back to Home.
-  const blocked = useStaffOnly();
+  const { id, plantId } = useLocalSearchParams<{ id?: string; plantId?: string }>();
+  const targetId = plantId || id;
 
-  // ── 1. Which plant are we tagging? ─────────────────────────────
-  const { recordId } = useLocalSearchParams<{ recordId: string }>();
-  const record = useRecordStore((state) => state.records.find((r) => r.id === recordId));
-  const attachTag = useRecordStore((state) => state.attachTag);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [qrData, setQrData] = useState<{
+    tagCode: string;
+    qrCode: string;
+    publicUrl: string;
+  } | null>(null);
 
-  // ── 2. Camera (copied from scan.tsx) ───────────────────────────
-  const [permission, requestPermission] = useCameraPermissions();
-  const [scanned, setScanned] = useState(false);
+  const updateRecordTag = useRecordStore((state: any) => state.updateRecordTag);
 
   useEffect(() => {
-    if (permission?.status === 'undetermined') requestPermission();
-  }, [permission?.status]);
+    async function autoAssignAndLoadQR() {
+      if (!targetId) {
+        setErrorMsg('Plant ID missing.');
+        setLoading(false);
+        return;
+      }
 
-  // ── 3. Manual entry (like manual-qr.tsx) ───────────────────────
-  const [code, setCode] = useState('');
-  const [error, setError] = useState<string | null>(null);
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData?.session?.access_token;
 
-  // ── 4. The core: try to attach a code ──────────────────────────
-  const tryAttach = (raw: string) => {
-    const clean = parseTagCode(raw);
-    if (!clean) {
-      return "That isn't a Niah plant tag. Tag codes look like NIAH-PLT-00001.";
+        // Automatically fetch or create the tag in one seamless call
+        const response = await fetch(`${API_BASE_URL}/api/plants/${targetId}/attach-tag`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({}), // No manual input needed; backend handles it automatically
+        });
+
+        const resJson = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+        throw new Error(resJson.message || `Server responded with status ${response.status}`);
+        }
+
+        // Sync local Zustand state if applicable
+        if (typeof updateRecordTag === 'function') {
+          updateRecordTag(targetId, resJson.tag_code);
+        }
+
+        setQrData({
+          tagCode: resJson.tag_code,
+          qrCode: resJson.qr_code,
+          publicUrl: resJson.public_url,
+        });
+      } catch (err: any) {
+        setErrorMsg(err.message || 'Failed to load QR code.');
+      } finally {
+        setLoading(false);
+      }
     }
 
-    const result = attachTag(recordId, clean);
-    if (!result.ok) {
-      return result.reason;
-    }
+    autoAssignAndLoadQR();
+  }, [targetId]);
 
-    Toast.show({ type: 'success', text1: 'Tag attached', text2: clean });
-    router.back();
-    return null; // null = no error
+  const handleShare = async () => {
+    if (!qrData?.publicUrl) return;
+    await Share.share({
+      message: `Niah National Park Flora Record [${qrData.tagCode}]: ${qrData.publicUrl}`,
+      url: qrData.publicUrl,
+    });
   };
 
-  // Camera found a QR
-  const handleBarcodeScanned = ({ data }: { data: string }) => {
-    if (scanned) return;
-    setScanned(true);
-    const problem = tryAttach(data);
-    if (problem) {
-      Alert.alert("Couldn't attach tag", problem, [
-        { text: 'OK', onPress: () => setScanned(false) }, // re-arm the camera
-      ]);
-    }
-  };
-
-  // "Attach" button under the text box
-  const handleManualAttach = () => {
-    setError(tryAttach(code));
-  };
-
-  if (blocked) return null;
-
-  // ── 5. Safety: record doesn't exist ────────────────────────────
-  if (!record) {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.container}>
-          <Text style={styles.title}>Plant not found</Text>
-          <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.back()}>
-            <Text style={styles.secondaryBtnText}>Back</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  // ── 6. The screen ──────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.safeArea}>
-      <FormScrollView contentContainerStyle={styles.container}>
-        <TouchableOpacity onPress={() => router.back()} style={{ marginBottom: 16 }}>
-          <Text style={styles.backChevron}>‹ Back</Text>
+      <StatusBar barStyle="dark-content" />
+
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <Ionicons name="arrow-back" size={22} color="#213B2A" />
         </TouchableOpacity>
+        <Text style={styles.headerTitle}>Botanical Tag Plaque</Text>
+        <View style={{ width: 38 }} />
+      </View>
 
-        <Text style={styles.title}>Attach tag</Text>
-        <Text style={styles.subtitle}>
-          Tie a pre-printed tag to{' '}
-          <Text style={styles.plantName}>{record.scientificName || 'this identification-pending record'}</Text>,
-          then scan it.
-        </Text>
-
-        {/* Camera, only if permission granted */}
-        {permission?.granted ? (
-          <View style={styles.cameraBox}>
-            <CameraView
-              style={StyleSheet.absoluteFill}
-              barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-              onBarcodeScanned={scanned ? undefined : handleBarcodeScanned}
-            />
+      <View style={styles.content}>
+        {loading ? (
+          <View style={styles.centerBox}>
+            <ActivityIndicator size="large" color="#2D6A4F" />
+            <Text style={styles.loadingText}>Assigning next tag & generating QR...</Text>
+          </View>
+        ) : errorMsg ? (
+          <View style={styles.centerBox}>
+            <Ionicons name="alert-circle-outline" size={48} color="#DC2626" />
+            <Text style={styles.errorText}>{errorMsg}</Text>
+            <TouchableOpacity style={styles.retryBtn} onPress={() => router.back()}>
+              <Text style={styles.retryBtnText}>Go Back</Text>
+            </TouchableOpacity>
           </View>
         ) : (
-          <View style={styles.noCameraBox}>
-            <Text style={styles.noCameraText}>Camera access is off – type the code below instead.</Text>
+          <View style={styles.card}>
+            <View style={styles.badge}>
+              <Ionicons name="checkmark-circle" size={15} color="#059669" />
+              <Text style={styles.badgeText}>Plaque Assigned</Text>
+            </View>
+
+            <Text style={styles.tagCodeText}>{qrData?.tagCode}</Text>
+            <Text style={styles.subText}>Scan to open public visitor catalogue</Text>
+
+            <View style={styles.qrFrame}>
+              <Image
+                source={{ uri: qrData?.qrCode }}
+                style={styles.qrImage}
+                resizeMode="contain"
+              />
+            </View>
+
+            <View style={styles.urlContainer}>
+              <Text style={styles.urlLabel}>Public Visitor Link</Text>
+              <Text style={styles.urlText} numberOfLines={1}>
+                {qrData?.publicUrl}
+              </Text>
+            </View>
+
+            <TouchableOpacity style={styles.shareBtn} onPress={handleShare}>
+              <Ionicons name="share-social-outline" size={18} color="#2D6A4F" />
+              <Text style={styles.shareBtnText}>Share Link</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.doneBtn} onPress={() => router.back()}>
+              <Text style={styles.doneBtnText}>Done</Text>
+            </TouchableOpacity>
           </View>
         )}
-
-        {/* Manual entry */}
-        <Text style={styles.label}>Or type the tag code</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="NIAH-PLT-00001"
-          placeholderTextColor="#8C9A91"
-          value={code}
-          onChangeText={(val) => {
-            setCode(val);
-            if (error) setError(null);
-          }}
-          autoCapitalize="characters"
-          autoCorrect={false}
-          returnKeyType="done"
-          onSubmitEditing={handleManualAttach}
-        />
-
-        {error && (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
-        )}
-
-        <TouchableOpacity style={styles.primaryBtn} onPress={handleManualAttach}>
-          <Text style={styles.primaryBtnText}>Attach tag</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.back()}>
-          <Text style={styles.secondaryBtnText}>Skip for now</Text>
-        </TouchableOpacity>
-      </FormScrollView>
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F6F8F6', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
-  container: { flexGrow: 1, padding: 24 },
-  backChevron: { fontSize: 18, color: '#213B2A', fontWeight: '700' },
-  title: { fontSize: 24, fontWeight: '800', color: '#1E2B22' },
-  subtitle: { fontSize: 13, color: '#68776D', marginTop: 4, marginBottom: 18, lineHeight: 18 },
-  plantName: { fontStyle: 'italic', fontWeight: '700', color: '#213B2A' },
-  cameraBox: { height: 280, borderRadius: 20, overflow: 'hidden', backgroundColor: '#000', marginBottom: 20 },
-  noCameraBox: { padding: 16, borderRadius: 16, backgroundColor: '#FFFFFF', borderWidth: 1.2, borderColor: '#E6ECE8', marginBottom: 20 },
-  noCameraText: { fontSize: 13, color: '#68776D', textAlign: 'center' },
-  label: { fontSize: 12.5, fontWeight: '700', color: '#213B2A', marginBottom: 6 },
-  input: { backgroundColor: '#FFFFFF', height: 50, borderRadius: 25, paddingHorizontal: 18, fontSize: 14, color: '#1E2B22', borderWidth: 1.2, borderColor: '#E6ECE8', marginBottom: 12 },
-  errorBox: { backgroundColor: '#FDF2F2', padding: 14, borderRadius: 16, marginBottom: 12 },
-  errorText: { color: '#9B1C1C', fontSize: 12.5, lineHeight: 17 },
-  primaryBtn: { backgroundColor: '#213B2A', height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
-  primaryBtnText: { color: '#FFF', fontWeight: '700', fontSize: 14.5 },
-  secondaryBtn: { height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', borderWidth: 1.2, borderColor: '#213B2A', backgroundColor: '#FFF' },
-  secondaryBtnText: { color: '#213B2A', fontWeight: '700', fontSize: 14.5 },
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#F6F8F6',
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E6ECE8',
+  },
+  backBtn: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: '#F0F4F1',
+  },
+  headerTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#213B2A',
+  },
+  content: {
+    flex: 1,
+    padding: 20,
+    justifyContent: 'center',
+  },
+  centerBox: {
+    alignItems: 'center',
+    gap: 12,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: '#68776D',
+    fontWeight: '600',
+  },
+  errorText: {
+    fontSize: 14,
+    color: '#DC2626',
+    textAlign: 'center',
+    paddingHorizontal: 20,
+  },
+  retryBtn: {
+    marginTop: 10,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: '#E8EFEA',
+    borderRadius: 12,
+  },
+  retryBtnText: {
+    color: '#213B2A',
+    fontWeight: '700',
+  },
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E6ECE8',
+  },
+  badge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginBottom: 10,
+  },
+  badgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  tagCodeText: {
+    fontSize: 26,
+    fontWeight: '900',
+    color: '#213B2A',
+    letterSpacing: 2,
+    marginBottom: 4,
+  },
+  subText: {
+    fontSize: 12.5,
+    color: '#76877B',
+    marginBottom: 20,
+  },
+  qrFrame: {
+    padding: 14,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#D8E2DC',
+    marginBottom: 18,
+  },
+  qrImage: {
+    width: 220,
+    height: 220,
+  },
+  urlContainer: {
+    width: '100%',
+    backgroundColor: '#F8FAF8',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E6ECE8',
+    marginBottom: 16,
+    alignItems: 'center',
+  },
+  urlLabel: {
+    fontSize: 10,
+    color: '#76877B',
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    marginBottom: 2,
+  },
+  urlText: {
+    fontSize: 12,
+    color: '#2D6A4F',
+    fontWeight: '600',
+  },
+  shareBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    width: '100%',
+    height: 46,
+    borderRadius: 23,
+    borderWidth: 1.5,
+    borderColor: '#2D6A4F',
+    marginBottom: 10,
+  },
+  shareBtnText: {
+    color: '#2D6A4F',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  doneBtn: {
+    width: '100%',
+    height: 48,
+    backgroundColor: '#213B2A',
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  doneBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14.5,
+    fontWeight: '700',
+  },
 });
