@@ -179,20 +179,20 @@ function initialSlotPhotos(
 
   if (record.photoMeta) {
     for (const uri of uris) {
-      const type =
+      const photoType: PlantPhotoType | undefined =
         record.photoMeta[
           uri
         ]?.type;
 
-      if (!type) {
-        continue;
-      }
+            if (!photoType) {
+              continue;
+            }
 
       const slot =
         PHOTO_SLOTS.find(
           (candidate) =>
             SLOT_TYPE[candidate] ===
-            type
+            photoType 
         );
 
       if (
