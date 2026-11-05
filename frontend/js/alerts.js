@@ -86,10 +86,13 @@ const warningCount =
 const AUTO_REFRESH_MS = 5000;
 const ONLINE_WINDOW_MS = 60 * 1000;
 
+let registeredStations = [];
+
 let latestReadings = [];
+
 let recentReadings = [];
+
 let persistentAlerts = [];
-let liveActiveAlerts = [];
 
 let selectedStation = '';
 let currentRequest = null;
@@ -201,6 +204,27 @@ function capitalise(value) {
   );
 }
 
+/* Staff name */
+
+function getActorLabel(
+  name,
+  id
+) {
+  if (name) {
+    return name;
+  }
+
+  if (id) {
+    return (
+      `Staff ${String(id).slice(
+        0,
+        8
+      )}`
+    );
+  }
+
+  return 'Unknown staff';
+}
 
 function getHumidity(reading) {
   return (
@@ -251,6 +275,146 @@ function isReadingOnline(reading) {
   );
 }
 
+/* Registered station */
+
+function getStation(
+  stationId
+) {
+  return registeredStations.find(
+    (station) =>
+      station.id ===
+        stationId ||
+      station.station_code ===
+        stationId
+  );
+}
+
+
+function getStationName(
+  stationId
+) {
+  const station =
+    getStation(
+      stationId
+    );
+
+  return (
+    station?.station_code ||
+    stationId ||
+    'Unknown station'
+  );
+}
+
+
+/* Latest persisted reading */
+
+function buildLatestReadings(
+  readings
+) {
+  const latest =
+    new Map();
+
+  for (
+    const reading of
+    readings
+  ) {
+    if (
+      !reading.station_id
+    ) {
+      continue;
+    }
+
+    const existing =
+      latest.get(
+        reading.station_id
+      );
+
+    if (!existing) {
+      latest.set(
+        reading.station_id,
+        reading
+      );
+
+      continue;
+    }
+
+    const currentTime =
+      new Date(
+        getReadingTime(
+          reading
+        ) || 0
+      ).getTime();
+
+    const existingTime =
+      new Date(
+        getReadingTime(
+          existing
+        ) || 0
+      ).getTime();
+
+    if (
+      currentTime >
+      existingTime
+    ) {
+      latest.set(
+        reading.station_id,
+        reading
+      );
+    }
+  }
+
+  return Array.from(
+    latest.values()
+  );
+}
+
+
+/* Online status from Supabase */
+
+function calculateStationSummary() {
+  const totalStations =
+    registeredStations.length;
+
+  let onlineStations =
+    0;
+
+  for (
+    const station of
+    registeredStations
+  ) {
+    const reading =
+      latestReadings.find(
+        (item) =>
+          item.station_id ===
+          station.id
+      );
+
+    if (
+      reading &&
+      isReadingOnline(
+        reading
+      )
+    ) {
+      onlineStations +=
+        1;
+    }
+  }
+
+  dashboardSummary = {
+    total_stations:
+      totalStations,
+
+    online_stations:
+      onlineStations,
+
+    offline_stations:
+      Math.max(
+        0,
+        totalStations -
+          onlineStations
+      ),
+  };
+}
 
 function normalisePersistentStatus(
   status
@@ -550,44 +714,11 @@ function renderStationOptions() {
     selectedStation ||
     stationFilter.value;
 
-  const stationIds = [
-    ...new Set(
-      latestReadings
-        .map(
-          (reading) =>
-            reading.station_id
-        )
-        .filter(Boolean)
-    ),
-  ].sort();
-
   stationFilter.replaceChildren();
 
   if (
-    stationIds.length === 0
-  ) {
-    const option =
-      document.createElement(
-        'option'
-      );
-
-    option.value = '';
-
-    option.textContent =
-      'No live station data';
-
-    stationFilter.appendChild(
-      option
-    );
-
-    selectedStation = '';
-
-    return;
-  }
-
-  for (
-    const stationId of
-    stationIds
+    registeredStations.length ===
+    0
   ) {
     const option =
       document.createElement(
@@ -595,15 +726,47 @@ function renderStationOptions() {
       );
 
     option.value =
-      stationId;
+      '';
 
     option.textContent =
-      stationId;
+      'No registered stations';
+
+    stationFilter.appendChild(
+      option
+    );
+
+    selectedStation =
+      '';
+
+    return;
+  }
+
+  for (
+    const station of
+    registeredStations
+  ) {
+    const option =
+      document.createElement(
+        'option'
+      );
+
+    option.value =
+      station.id;
+
+    option.textContent =
+      station.station_code ||
+      station.id;
 
     stationFilter.appendChild(
       option
     );
   }
+
+  const stationIds =
+    registeredStations.map(
+      (station) =>
+        station.id
+    );
 
   if (
     previous &&
@@ -629,14 +792,50 @@ function findLiveAlert(
   stationId,
   type
 ) {
-  return liveActiveAlerts.find(
-    (alert) =>
-      alert.station_id ===
-        stationId &&
-      alert.type ===
-        type &&
-      alert.status ===
-        'active'
+  const metricMap = {
+    high_temperature:
+      'temperature_c',
+
+    low_soil_moisture:
+      'soil_moisture_pct',
+
+    heavy_rain:
+      'rain_intensity_pct',
+
+    high_humidity:
+      'humidity_percent',
+  };
+
+  const targetMetric =
+    metricMap[type];
+
+  return persistentAlerts.find(
+    (alert) => {
+      if (
+        alert.station_id !==
+        stationId
+      ) {
+        return false;
+      }
+
+      if (
+        !isUnresolvedAlert(
+          alert
+        )
+      ) {
+        return false;
+      }
+
+      const metric =
+        getAlertMetric(
+          alert
+        );
+
+      return (
+        metric ===
+        targetMetric
+      );
+    }
   );
 }
 
@@ -739,11 +938,17 @@ function renderSelectedStation() {
     return;
   }
 
-  selectedStationId.textContent =
-    isReadingOnline(reading)
-      ? `${reading.station_id} · Online`
-      : `${reading.station_id} · Offline`;
+const stationName =
+  getStationName(
+    reading.station_id
+  );
 
+selectedStationId.textContent =
+  isReadingOnline(
+    reading
+  )
+    ? `${stationName} · Online`
+    : `${stationName} · Offline`;
   stationLastSeen.textContent =
     formatTime(
       getReadingTime(reading)
@@ -2060,6 +2265,11 @@ async function performAlertAction(
       );
     }
 
+    /* Keep the updated alert visible */
+
+    alertFilter.value =
+      'all';
+
     await loadDashboard({
       silent:
         true,
@@ -2173,9 +2383,7 @@ async function acknowledgeAlertGroup(
 
 /* Camera alert card */
 
-function renderCameraAlertCard(
-  alert
-) {
+function renderCameraAlertCard( alert) {
   const status =
     normalisePersistentStatus(
       alert.alert_status
@@ -2607,32 +2815,52 @@ function renderCameraAlertCard(
   }
 
   if (
-    status ===
-      'acknowledged' ||
-    status ===
-      'resolved'
-  ) {
-    addInfo(
-      'Acknowledged',
-      formatTime(
-        alert
-          .acknowledged_at
-      )
-    );
-  }
-
-  if (
-    status ===
+  status ===
+    'acknowledged' ||
+  status ===
     'resolved'
-  ) {
-    addInfo(
-      'Resolved',
-      formatTime(
-        alert
-          .resolved_at
-      )
-    );
-  }
+) {
+  addInfo(
+    'Acknowledged by',
+    getActorLabel(
+      alert
+        .acknowledged_by_name,
+      alert
+        .acknowledged_by
+    )
+  );
+
+  addInfo(
+    'Acknowledged at',
+    formatTime(
+      alert
+        .acknowledged_at
+    )
+  );
+}
+
+if (
+  status ===
+  'resolved'
+) {
+  addInfo(
+    'Resolved by',
+    getActorLabel(
+      alert
+        .resolved_by_name,
+      alert
+        .resolved_by
+    )
+  );
+
+  addInfo(
+    'Resolved at',
+    formatTime(
+      alert
+        .resolved_at
+    )
+  );
+}
 
   detailSide.appendChild(
     info
@@ -3062,7 +3290,7 @@ function renderCompactAlertRow(
       'div'
     );
 
-  meta.textContent =
+  let metaText =
     `${getAlertSourceName(
       alert
     )} · ${formatTime(
@@ -3070,6 +3298,40 @@ function renderCompactAlertRow(
     )} · ${capitalise(
       status
     )}`;
+
+
+  if (
+    status ===
+      'acknowledged' ||
+    status ===
+      'resolved'
+  ) {
+    metaText +=
+      ` · Acknowledged by ${getActorLabel(
+        alert
+          .acknowledged_by_name,
+        alert
+          .acknowledged_by
+      )}`;
+  }
+
+
+  if (
+    status ===
+    'resolved'
+  ) {
+    metaText +=
+      ` · Resolved by ${getActorLabel(
+        alert
+          .resolved_by_name,
+        alert
+          .resolved_by
+      )}`;
+  }
+
+
+  meta.textContent =
+    metaText;
 
   meta.style.color =
     'var(--mute)';
@@ -3657,11 +3919,17 @@ function renderDashboard() {
 function resetDashboard(
   message
 ) {
-  latestReadings = [];
-  recentReadings = [];
-  persistentAlerts = [];
-  liveActiveAlerts = [];
-  selectedStation = '';
+  registeredStations =
+  [];
+
+  latestReadings =
+    [];
+
+  recentReadings =
+    [];
+
+  persistentAlerts =
+    [];
 
   dashboardSummary = {
     total_stations:
@@ -3771,13 +4039,12 @@ async function loadDashboard({
     const token =
       await getAccessToken();
 
+    /* Read dashboard data from Supabase through backend */
+
     const [
-      registeredSummaryResult,
-      liveSummaryResult,
-      latestResult,
-      readingsResult,
-      persistentAlertsResult,
-      liveAlertsResult,
+      stationResult,
+      historyResult,
+      alertResult,
     ] =
       await Promise.all([
         requestIoT(
@@ -3790,25 +4057,7 @@ async function loadDashboard({
         ),
 
         requestIoT(
-          '/summary/live',
-          token,
-          {
-            signal:
-              controller.signal,
-          }
-        ),
-
-        requestIoT(
-          '/latest',
-          token,
-          {
-            signal:
-              controller.signal,
-          }
-        ),
-
-        requestIoT(
-          '/readings?limit=100',
+          '/readings/history',
           token,
           {
             signal:
@@ -3824,119 +4073,107 @@ async function loadDashboard({
               controller.signal,
           }
         ),
-
-        requestIoT(
-          '/alerts/live?status=active&limit=100',
-          token,
-          {
-            signal:
-              controller.signal,
-          }
-        ),
       ]);
 
     if (
-      controller.signal.aborted
+      controller.signal
+        .aborted
     ) {
       return;
     }
 
-    const registeredSummary =
-      registeredSummaryResult.data ||
-      {};
+    /* Registered stations */
 
-    const liveSummary =
-      liveSummaryResult.data ||
-      {};
-
-    const totalStations =
-      Math.max(
-        0,
-        Number(
-          registeredSummary
-            .total_stations
-        ) || 0
-      );
-
-    const onlineStations =
-      Math.min(
-        totalStations,
-        Math.max(
-          0,
-          Number(
-            liveSummary
-              .online_stations
-          ) || 0
-        )
-      );
-
-    dashboardSummary = {
-      total_stations:
-        totalStations,
-
-      online_stations:
-        onlineStations,
-
-      offline_stations:
-        Math.max(
-          0,
-          totalStations -
-            onlineStations
-        ),
-    };
-
-    latestReadings =
+    registeredStations =
       Array.isArray(
-        latestResult.data
+        stationResult
+          .data
+          ?.stations
       )
-        ? latestResult.data
+        ? stationResult
+            .data
+            .stations
         : [];
+
+    /* Persistent telemetry */
 
     recentReadings =
       Array.isArray(
-        readingsResult.data
+        historyResult.data
       )
-        ? readingsResult.data
+        ? historyResult.data
         : [];
 
-    persistentAlerts =
-      Array.isArray(
-        persistentAlertsResult.data
-      )
-        ? persistentAlertsResult.data
-        : [];
-
-    persistentAlerts.sort(
-      (a, b) =>
+    recentReadings.sort(
+      (
+        a,
+        b
+      ) =>
         new Date(
-          b.triggered_at || 0
+          getReadingTime(
+            b
+          ) || 0
         ).getTime() -
         new Date(
-          a.triggered_at || 0
+          getReadingTime(
+            a
+          ) || 0
         ).getTime()
     );
 
-    liveActiveAlerts =
+    /* Latest reading for each station */
+
+    latestReadings =
+      buildLatestReadings(
+        recentReadings
+      );
+
+    /* Online/offline from latest persisted reading */
+
+    calculateStationSummary();
+
+    /* Persistent threat alerts */
+
+    persistentAlerts =
       Array.isArray(
-        liveAlertsResult.data
+        alertResult.data
       )
-        ? liveAlertsResult.data
+        ? alertResult.data
         : [];
+
+    persistentAlerts.sort(
+      (
+        a,
+        b
+      ) =>
+        new Date(
+          b.triggered_at ||
+            0
+        ).getTime() -
+        new Date(
+          a.triggered_at ||
+            0
+        ).getTime()
+    );
 
     renderDashboard();
 
+    const now =
+      new Date();
+
     lastUpdated.textContent =
-      `Last updated ${new Date().toLocaleTimeString(
+      `Last updated ${now.toLocaleTimeString(
         'en-MY'
       )}`;
 
     setDashboardStatus(
       'live',
-      'Backend connected'
+      'Supabase synced'
     );
   } catch (error) {
     if (
-      controller.signal.aborted
+      controller.signal
+        .aborted
     ) {
       return;
     }
