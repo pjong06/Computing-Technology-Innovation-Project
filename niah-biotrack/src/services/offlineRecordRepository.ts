@@ -9,6 +9,7 @@ import type {
 
 import {
   getLocalEntities,
+  getPlantTagRefusals,
   saveEntityAndQueue,
   type LocalSyncStatus,
   type SyncOperationType,
@@ -476,6 +477,10 @@ export async function loadOrMigrateRecords(
       'observation'
     );
 
+  // Tags the server refused for each plant (tag in use / plant locked).
+  const tagRefusals =
+    await getPlantTagRefusals();
+
   const observationById = new Map(
     storedObservations.map((entity) => [
       entity.clientRecordId,
@@ -564,8 +569,19 @@ export async function loadOrMigrateRecords(
               ? UPLOADED
               : NOT_UPLOADED;
 
+      const tagRefusal =
+        tagRefusals.get(
+          entity.clientRecordId
+        );
+
       return {
         ...snapshot,
+        tagProblem:
+          tagRefusal === 'tag_in_use'
+            ? 'in_use'
+            : tagRefusal === 'plant_locked'
+              ? 'locked'
+              : null,
         serverId:
           entity.serverId ??
           snapshot.serverId,

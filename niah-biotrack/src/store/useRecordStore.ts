@@ -193,7 +193,31 @@ export interface ObservationVisit {
 
   submittedForReview?:
     boolean;
+
+  /*
+   * The officer's decision on this visit, read back
+   * from the server by refreshReviewStatuses.
+   */
+  reviewStatus?:
+    ReviewStatus;
+
+  /*
+   * The officer's reason, when rejected.
+   */
+  reviewComment?:
+    | string
+    | null;
 }
+
+/*
+ * Why the server refused this plant's tag:
+ * in_use = another plant already has it;
+ * locked = the plant can't be changed any more.
+ * Rebuilt from the SQLite outbox on every load.
+ */
+export type TagProblem =
+  | 'in_use'
+  | 'locked';
 
 export interface PlantRecord {
   /*
@@ -210,6 +234,10 @@ export interface PlantRecord {
 
   tagCode:
     | string
+    | null;
+
+  tagProblem?:
+    | TagProblem
     | null;
 
   scientificName: string;
@@ -731,6 +759,13 @@ interface RecordState {
       Promise<SyncAllResult>;
 
   /*
+   * Read-only: picks up the officer's decisions
+   * for submitted visits.
+   */
+  refreshReviewStatuses:
+    () => Promise<void>;
+
+  /*
    * MAIN photo problem removal.
    */
   removePhoto: (
@@ -778,7 +813,16 @@ interface RecordState {
       string,
 
     tagCode:
-      string
+      string,
+
+    /*
+     * Set when the server already saved this tag
+     * (POST /api/plants/:id/attach-tag): the plant's
+     * row_version after that write.
+     */
+    options?: {
+      serverRowVersion?: number;
+    }
   ) =>
     Promise<
       | {
@@ -1304,8 +1348,18 @@ export const useRecordStore =
                 return {
                   ok: false,
 
+                  /*
+                   * A refused tag is not a version conflict:
+                   * say what is actually wrong.
+                   */
                   reason:
-                    hasConflict
+                    refreshed.tagProblem ===
+                    'in_use'
+                      ? 'This tag is already attached to another plant'
+                      : refreshed.tagProblem ===
+                          'locked'
+                        ? "This plant can't be changed after submission, so the tag was not saved on the server"
+                        : hasConflict
                       ? 'A newer server version exists. This record needs conflict review.'
                       : 'The server rejected part of this record. Review it and try again.',
 
@@ -2282,6 +2336,12 @@ export const useRecordStore =
                 0;
             }
 
+            /*
+             * Then pick up the officer's decisions
+             * (read-only).
+             */
+            await get().refreshReviewStatuses();
+
             return {
               uploaded,
 
@@ -2293,6 +2353,291 @@ export const useRecordStore =
 
               photoProblems,
             };
+          },
+
+        /* -------------------------------------------------
+         * REVIEW RESULTS
+         * ------------------------------------------------ */
+
+        refreshReviewStatuses:
+          async () => {
+            /*
+             * Visits the server has and the officer
+             * may have reviewed.
+             */
+            const ids = get()
+              .records.flatMap(
+                (record) =>
+                  record.observations
+              )
+              .filter(
+                (observation) =>
+                  observation.serverId &&
+                  (observation.submittedForReview ||
+                    observation.reviewStatus)
+              )
+              .map(
+                (observation) =>
+                  observation.serverId as string
+              );
+
+            if (ids.length === 0) {
+              return;
+            }
+
+            type ReviewRow = {
+              id: string;
+              review_status: string;
+              rejection_comment:
+                | string
+                | null;
+            };
+
+            const byServerId =
+              new Map<string, ReviewRow>();
+
+            try {
+              /*
+               * The route takes at most 100 IDs
+               * per request.
+               */
+              for (
+                let i = 0;
+                i < ids.length;
+                i += 100
+              ) {
+                const response =
+                  await apiFetch<{
+                    data: ReviewRow[];
+                  }>(
+                    `/api/observations/review-status?ids=${ids
+                      .slice(i, i + 100)
+                      .join(',')}`
+                  );
+
+                for (const row of response.data) {
+                  byServerId.set(
+                    row.id,
+                    row
+                  );
+                }
+              }
+            } catch {
+              /*
+               * Offline or server error:
+               * keep what the phone shows.
+               */
+              return;
+            }
+
+            const toStatus = (
+              value: string
+            ): ReviewStatus | null =>
+              value === 'approved'
+                ? ReviewStatus.APPROVED
+                : value === 'rejected'
+                  ? ReviewStatus.REJECTED
+                  : value === 'pending'
+                    ? ReviewStatus.PENDING
+                    : null; // e.g. still 'draft' on the server: not reviewed
+
+            const changedRecords:
+              PlantRecord[] = [];
+
+            /*
+             * Work from the latest records: a sync may
+             * have finished while the request was out.
+             */
+            for (const record of get().records) {
+              let changed = false;
+
+              const observations =
+                record.observations.map(
+                  (observation) => {
+                    const row =
+                      observation.serverId
+                        ? byServerId.get(
+                            observation.serverId
+                          )
+                        : undefined;
+
+                    const status = row
+                      ? toStatus(
+                          row.review_status
+                        )
+                      : null;
+
+                    if (!row || !status) {
+                      return observation;
+                    }
+
+                    /*
+                     * A visit resubmitted on the phone but
+                     * not uploaded yet keeps its new state
+                     * until the next sync (the server still
+                     * shows the old decision).
+                     */
+                    if (
+                      !observation.submittedForReview &&
+                      observation.reviewStatus ===
+                        ReviewStatus.REJECTED &&
+                      status ===
+                        ReviewStatus.REJECTED
+                    ) {
+                      return observation;
+                    }
+
+                    const comment =
+                      status ===
+                      ReviewStatus.REJECTED
+                        ? row.rejection_comment
+                        : null;
+
+                    if (
+                      observation.reviewStatus ===
+                        status &&
+                      (observation.reviewComment ??
+                        null) === comment
+                    ) {
+                      return observation;
+                    }
+
+                    changed = true;
+
+                    return {
+                      ...observation,
+
+                      reviewStatus:
+                        status,
+
+                      reviewComment:
+                        comment,
+
+                      /*
+                       * Rejected: the botanist fixes it and
+                       * submits again, which must send it again.
+                       */
+                      submittedForReview:
+                        status ===
+                        ReviewStatus.REJECTED
+                          ? false
+                          : observation.submittedForReview,
+                    };
+                  }
+                );
+
+              if (!changed) {
+                continue;
+              }
+
+              /*
+               * The record's status follows its visits.
+               * Drafts (never submitted on the phone) are
+               * left alone, and so is a resubmission that
+               * hasn't uploaded yet.
+               */
+              let reviewStatus =
+                record.reviewStatus;
+
+              let reviewComment =
+                record.reviewComment ??
+                null;
+
+              const reviewed =
+                observations.filter(
+                  (observation) =>
+                    observation.serverId &&
+                    observation.reviewStatus
+                );
+
+              const resubmitting =
+                record.reviewStatus ===
+                  ReviewStatus.PENDING &&
+                observations.some(
+                  (observation) =>
+                    observation.serverId &&
+                    !observation.submittedForReview
+                );
+
+              if (
+                record.reviewStatus !==
+                  ReviewStatus.DRAFT &&
+                !resubmitting &&
+                reviewed.length > 0
+              ) {
+                const rejected =
+                  reviewed.find(
+                    (observation) =>
+                      observation.reviewStatus ===
+                      ReviewStatus.REJECTED
+                  );
+
+                if (rejected) {
+                  reviewStatus =
+                    ReviewStatus.REJECTED;
+
+                  reviewComment =
+                    rejected.reviewComment ??
+                    null;
+                } else if (
+                  reviewed.every(
+                    (observation) =>
+                      observation.reviewStatus ===
+                      ReviewStatus.APPROVED
+                  )
+                ) {
+                  reviewStatus =
+                    ReviewStatus.APPROVED;
+
+                  reviewComment = null;
+                } else {
+                  reviewStatus =
+                    ReviewStatus.PENDING;
+
+                  reviewComment = null;
+                }
+              }
+
+              changedRecords.push({
+                ...record,
+                observations,
+                reviewStatus,
+                reviewComment,
+              });
+            }
+
+            if (changedRecords.length === 0) {
+              return;
+            }
+
+            /*
+             * SQLite first, then the UI, like every
+             * other change. Nothing is queued: the
+             * decision came from the server.
+             */
+            for (const record of changedRecords) {
+              await persistRecordSnapshot(
+                record
+              );
+            }
+
+            const byId = new Map(
+              changedRecords.map(
+                (record) => [
+                  record.id,
+                  record,
+                ]
+              )
+            );
+
+            set((state) => ({
+              records:
+                state.records.map(
+                  (record) =>
+                    byId.get(record.id) ??
+                    record
+                ),
+            }));
           },
 
         /* -------------------------------------------------
@@ -2602,7 +2947,8 @@ export const useRecordStore =
         attachTag:
           async (
             recordId,
-            tagCode
+            tagCode,
+            options
           ) => {
             const existing =
               get().findByTag(
@@ -2643,18 +2989,59 @@ export const useRecordStore =
               };
             }
 
+            const serverRowVersion =
+              options?.serverRowVersion;
+
+            /*
+             * The server already saved this tag and
+             * raised the plant's row_version. Take the
+             * new version, so later outbox updates are
+             * based on it.
+             *
+             * Queue an update only if the plant has other
+             * unsent changes: that pending update is then
+             * re-based on the new version. Otherwise there
+             * is nothing to send, and queuing the same tag
+             * again with the old version would come back
+             * as a version conflict.
+             */
+            const serverHasTag =
+              typeof serverRowVersion ===
+                'number' &&
+              serverRowVersion > 0;
+
+            const plantMetadataStatus =
+              serverHasTag
+                ? await getPlantMetadataSyncStatus(
+                    recordId
+                  )
+                : null;
+
             const updated:
               PlantRecord = {
               ...current,
 
               tagCode,
+
+              tagProblem: null,
+
+              ...(serverHasTag
+                ? {
+                    rowVersion:
+                      serverRowVersion,
+                  }
+                : {}),
             };
 
             await persistRecordSnapshot(
               updated,
               {
                 queuePlant:
-                  true,
+                  !serverHasTag ||
+                  (plantMetadataStatus !==
+                    null &&
+                    plantMetadataStatus !==
+                      'uploaded'),
               }
             );
 

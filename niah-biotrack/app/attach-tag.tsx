@@ -57,6 +57,8 @@ import FormScrollView from '../src/components/FormScrollView';
 
 interface AutoAttachTagResponse {
   tag_code: string;
+  // The plant's version after the server saved the tag.
+  row_version?: number;
   qr_code: string;
   public_url: string;
 }
@@ -282,7 +284,11 @@ export default function AttachTagScreen() {
           const localResult =
             await attachTag(
               record.id,
-              response.tag_code
+              response.tag_code,
+              {
+                serverRowVersion:
+                  response.row_version,
+              }
             );
 
           if (
@@ -528,7 +534,11 @@ export default function AttachTagScreen() {
         const localResult =
           await attachTag(
             record.id,
-            response.tag_code
+            response.tag_code,
+            {
+              serverRowVersion:
+                response.row_version,
+            }
           );
 
         if (

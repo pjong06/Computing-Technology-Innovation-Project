@@ -39,6 +39,23 @@ import {
 
 import PlantNotFound from '../src/components/PlantNotFound';
 
+/*
+ * Why the server refused this plant's tag
+ * (record.tagProblem, rebuilt from the sync outbox).
+ */
+const TAG_PROBLEM_TEXT: Record<
+  'in_use' | 'locked',
+  string
+> = {
+  in_use:
+    'This tag is already attached to another plant. Check the tag, then attach the right one.',
+  locked:
+    "This plant can't be changed after submission, so the tag was not saved on the server. It stays on this phone.",
+};
+
+const TAG_NOT_ON_SERVER_TEXT =
+  "The new tag hasn't reached the server yet. Use Sync now on Home, then try again.";
+
 import {
   resolveStoredPhotoUri,
 } from '../src/utils/photoStorage';
@@ -417,13 +434,40 @@ export default function PlantDetailScreen() {
         return;
       }
 
+      /*
+       * The server refused this tag, so its QR
+       * would show a different (or no) tag.
+       */
+      if (
+        matched.tagProblem
+      ) {
+        Alert.alert(
+          'No QR code for this tag',
+          TAG_PROBLEM_TEXT[
+            matched.tagProblem
+          ]
+        );
+
+        return;
+      }
+
       setQrVisible(
         true
       );
 
-      if (qr) {
+      /*
+       * Reuse the loaded QR only while it is
+       * still for this plant's current tag.
+       */
+      if (
+        qr &&
+        qr.qrValue ===
+          matched.tagCode
+      ) {
         return;
       }
+
+      setQr(null);
 
       setQrLoading(
         true
@@ -436,6 +480,24 @@ export default function PlantDetailScreen() {
           await fetchPlantQr(
             matched.serverId
           );
+
+        /*
+         * A tag attached after upload goes up with
+         * the next sync. Until then the server's QR
+         * still has the old tag (or none): don't
+         * show it as this plant's QR.
+         */
+        if (
+          matched.tagCode &&
+          result.qrValue !==
+            matched.tagCode
+        ) {
+          setQrError(
+            TAG_NOT_ON_SERVER_TEXT
+          );
+
+          return;
+        }
 
         setQr(
           result
@@ -1131,6 +1193,51 @@ export default function PlantDetailScreen() {
                 'No tag attached'
               }
             />
+
+            {matched.tagProblem ? (
+              <View
+                style={
+                  styles.tagProblemBox
+                }
+              >
+                <Text
+                  style={
+                    styles.tagProblemText
+                  }
+                >
+                  {
+                    TAG_PROBLEM_TEXT[
+                      matched.tagProblem
+                    ]
+                  }
+                </Text>
+
+                {matched.tagProblem ===
+                'in_use' ? (
+                  <TouchableOpacity
+                    onPress={() =>
+                      router.push({
+                        pathname:
+                          '/attach-tag',
+                        params: {
+                          recordId:
+                            matched.id,
+                        },
+                      } as any)
+                    }
+                    hitSlop={8}
+                  >
+                    <Text
+                      style={
+                        styles.tagProblemAction
+                      }
+                    >
+                      Attach a different tag
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ) : null}
           </View>
 
           <Text
@@ -1831,6 +1938,28 @@ export default function PlantDetailScreen() {
 
 const styles =
   StyleSheet.create({
+    tagProblemBox: {
+      paddingVertical: 8,
+      borderTopWidth: 1,
+      borderTopColor:
+        '#EEF2EF',
+    },
+
+    tagProblemText: {
+      fontSize: 12,
+      color: '#9B1C1C',
+      lineHeight: 17,
+    },
+
+    tagProblemAction: {
+      fontSize: 12.5,
+      fontWeight: '700',
+      color: '#213B2A',
+      textDecorationLine:
+        'underline',
+      marginTop: 6,
+    },
+
     safeArea: {
       flex: 1,
       backgroundColor:

@@ -177,7 +177,8 @@ router.get("/:id", requireRole("botanist", "officer", "researcher"), async (req,
         .from("plants")
         .select(
             "id, species_id, qr_code_value, plant_status, registered_at, " +
-            "gps_accuracy_m, location_description"
+            // row_version: the phone needs it to send later changes as updates
+            "gps_accuracy_m, location_description, row_version"
         )
         .eq("id", plantId)
         .maybeSingle();
@@ -403,6 +404,9 @@ router.patch("/:id", requireRole("botanist", "officer"), async (req, res) => {
 
     const newTag = qr_code_value ?? tag_code;
     if (newTag !== undefined) {
+        if (typeof newTag !== "string") {
+            return res.status(400).json({ message: "Tag code must look like NIAH-PLT-00001" });
+        }
         const cleaned = newTag.trim().toUpperCase();
         if (!/^NIAH-PLT-\d{5}$/.test(cleaned)) {
             return res.status(400).json({ message: "Tag code must look like NIAH-PLT-00001" });
@@ -424,13 +428,35 @@ router.patch("/:id", requireRole("botanist", "officer"), async (req, res) => {
             .select()
             .maybeSingle();
 
+        // The tag is unique: another plant already has it. The phone shows this and
+        // does not retry until the botanist attaches a different tag.
+        if (error?.code === "23505") {
+            return res.status(409).json({
+                message: "This tag is already attached to another plant",
+                code: "tag_in_use"
+            });
+        }
+
+        // RLS refused the edit (the plant can no longer be changed, e.g. after submission).
+        if (error?.code === "42501") {
+            return res.status(409).json({
+                message: "This plant can't be changed any more",
+                code: "plant_locked"
+            });
+        }
+
         if (error) {
             console.error("Update plant error:", error);
             return res.status(500).json({ message: "Could not update plant record" });
         }
 
+        // The access check above just found this plant, so "no row updated" means RLS hid
+        // it from the update: the plant is locked, not missing.
         if (!data) {
-            return res.status(404).json({ message: "Plant record not found" });
+            return res.status(409).json({
+                message: "This plant can't be changed any more",
+                code: "plant_locked"
+            });
         }
 
         return res.json({
@@ -885,7 +911,7 @@ router.post("/:id/attach-tag", requireRole("botanist", "officer"), async (req, r
         // 2. Fetch current plant to see if it already has a valid tag
         const { data: plant, error: fetchError } = await req.supabase
             .from("plants")
-            .select("id, qr_code_value")
+            .select("id, qr_code_value, row_version")
             .eq("id", plantId)
             .maybeSingle();
 
@@ -894,6 +920,9 @@ router.post("/:id/attach-tag", requireRole("botanist", "officer"), async (req, r
         }
 
         let tagCode = plant.qr_code_value;
+        // Writing the tag raises the plant's row_version. The phone needs the new one,
+        // or its next outbox update for this plant is refused as out of date.
+        let rowVersion = plant.row_version;
 
         // 3. If no valid tag exists, atomically pull the next sequence
         if (!tagCode || !TAG_PATTERN.test(tagCode)) {
@@ -908,15 +937,19 @@ router.post("/:id/attach-tag", requireRole("botanist", "officer"), async (req, r
             tagCode = generatedTag;
 
             // 4. Commit assigned tag and verify database write succeeded
-            const { error: updateError } = await req.supabase
+            const { data: updated, error: updateError } = await req.supabase
                 .from("plants")
                 .update({ qr_code_value: tagCode })
-                .eq("id", plantId);
+                .eq("id", plantId)
+                .select("row_version")
+                .maybeSingle();
 
-            if (updateError) {
+            // No row back = RLS hid the plant from the update, so the tag wasn't saved.
+            if (updateError || !updated) {
                 console.error("Failed to commit tag to plant:", updateError);
                 return res.status(500).json({ message: "Failed to save assigned tag to plant record" });
             }
+            rowVersion = updated.row_version;
         }
 
         // 5. Generate QR code payload
@@ -924,6 +957,7 @@ router.post("/:id/attach-tag", requireRole("botanist", "officer"), async (req, r
 
         return res.status(200).json({
             tag_code: tagCode,
+            row_version: rowVersion,
             qr_code: qrResult.qrCode, // base64 data URL
             public_url: qrResult.publicUrl,
         });

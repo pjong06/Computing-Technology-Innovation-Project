@@ -10,6 +10,68 @@ const router = express.Router();
 router.use(requireAuth, requireRole("botanist"));
 
 
+// GET /api/observations/review-status?ids=<uuid>,<uuid>,...
+// The officer's decision on the signed-in botanist's OWN observations, so the phone can
+// show Approved / Rejected (with the reason) / Pending. Other botanists' observations are
+// simply not returned. Read-only: nothing is changed.
+const REVIEW_STATUS_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_REVIEW_STATUS_IDS = 100;
+
+router.get("/review-status", async (req, res) => {
+    const raw = req.query.ids;
+    if (typeof raw !== "string" || raw.trim() === "") {
+        return res.status(400).json({ message: "ids is required" });
+    }
+    const ids = [...new Set(raw.split(",").map(id => id.trim()).filter(Boolean))];
+    if (ids.length > MAX_REVIEW_STATUS_IDS || !ids.every(id => REVIEW_STATUS_UUID.test(id))) {
+        return res.status(400).json({
+            message: `ids must be at most ${MAX_REVIEW_STATUS_IDS} observation IDs`
+        });
+    }
+
+    const { data: observations, error } = await req.supabase
+        .from("observations")
+        .select("id, review_status")
+        .eq("observer_id", req.user.id)
+        .in("id", ids)
+        .is("deleted_at", null);
+
+    if (error) {
+        console.error("Observation review status error:", error);
+        return res.status(500).json({ message: "Could not load review status" });
+    }
+
+    // The latest rejection reason for each rejected observation.
+    const rejectedIds = (observations || [])
+        .filter(row => row.review_status === "rejected")
+        .map(row => row.id);
+    const reasons = new Map();
+    if (rejectedIds.length > 0) {
+        const { data: reviews, error: reviewError } = await req.supabase
+            .from("observation_reviews")
+            .select("observation_id, comments, reviewed_at")
+            .in("observation_id", rejectedIds)
+            .eq("decision", "rejected")
+            .order("reviewed_at", { ascending: false });
+        if (reviewError) {
+            // The statuses are still useful without the reasons.
+            console.error("Observation rejection reason error:", reviewError);
+        } else {
+            for (const review of reviews || []) {
+                if (!reasons.has(review.observation_id)) reasons.set(review.observation_id, review.comments);
+            }
+        }
+    }
+
+    return res.json({
+        data: (observations || []).map(row => ({
+            id: row.id,
+            review_status: row.review_status,
+            rejection_comment: row.review_status === "rejected" ? reasons.get(row.id) ?? null : null
+        }))
+    });
+});
+
 router.post("/", async (req, res) => {
 
 const {
