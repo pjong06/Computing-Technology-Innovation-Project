@@ -1748,35 +1748,52 @@ async function fetchCameraEvidence(
         : [];
 
     if (
-      evidence.length === 0
-    ) {
-      const emptyState = {
-        status:
-          'empty',
+  evidence.length === 0
+) {
+  const previous =
+    getCameraState(
+      alert.id
+    );
 
-        evidence:
-          [],
+  const retryCount =
+    (
+      previous.retryCount ||
+      0
+    ) + 1;
 
-        latest:
-          null,
+  const emptyState = {
+    status:
+      'empty',
 
-        url:
-          null,
+    evidence:
+      [],
 
-        expiresAt:
-          0,
+    latest:
+      null,
 
-        message:
-          '',
-      };
+    url:
+      null,
 
-      setCameraState(
-        alert.id,
-        emptyState
-      );
+    expiresAt:
+      0,
 
-      return emptyState;
-    }
+    message:
+      '',
+
+    retryCount,
+
+    nextRetryAt:
+      Date.now() +
+      5000,
+  };
+
+  setCameraState(
+    alert.id,
+    emptyState
+  );
+
+  return emptyState;
+}
 
     const latest =
       evidence[0];
@@ -1870,59 +1887,77 @@ async function fetchCameraEvidence(
   }
 }
 
-
 function cameraNeedsRefresh(
   state
 ) {
-  return (
+  if (
     state.status ===
-      'idle' ||
-    (
-      state.status ===
-        'ready' &&
-      (
-        !state.url ||
-        Date.now() >=
-          state.expiresAt -
-            3000
-      )
-    )
-  );
+    'idle'
+  ) {
+    return true;
+  }
+
+  if (
+    state.status ===
+      'empty' ||
+    state.status ===
+      'error'
+  ) {
+    return (
+      state.retryCount <
+        3 &&
+      Date.now() >=
+        state.nextRetryAt
+    );
+  }
+
+  if (
+    state.status ===
+      'ready'
+  ) {
+    return (
+      !state.url ||
+      Date.now() >=
+        state.expiresAt -
+          3000
+    );
+  }
+
+  return false;
 }
 
 
-function queueCameraLoad(
-  alert
+function getCameraState(
+  alertId
 ) {
-  const state =
-    getCameraState(
-      alert.id
-    );
+  return (
+    cameraEvidenceState.get(
+      alertId
+    ) || {
+      status:
+        'idle',
 
-  if (
-    !cameraNeedsRefresh(
-      state
-    )
-  ) {
-    return;
-  }
+      evidence:
+        [],
 
-  if (
-    state.status ===
-    'loading'
-  ) {
-    return;
-  }
+      latest:
+        null,
 
-  setTimeout(
-    async () => {
-      await fetchCameraEvidence(
-        alert
-      );
+      url:
+        null,
 
-      renderAlerts();
-    },
-    0
+      expiresAt:
+        0,
+
+      message:
+        '',
+
+      retryCount:
+        0,
+
+      nextRetryAt:
+        0,
+    }
   );
 }
 
