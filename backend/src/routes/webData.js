@@ -9,6 +9,15 @@ const uuidPattern =
 const textIdPattern = /^[A-Za-z0-9._-]{1,100}$/;
 const photoLimit = 3000000;
 
+// Only an active officer may change the website data (catalogue, observations, users,
+// data version). Other staff may read it (requireAuth below admits active staff only),
+// except the user list, which only the officer may see. The web pages hide officer-only
+// pages in the browser, but that is not a protection: this check is.
+function isOfficer(req) {
+    return !!req.profile && req.profile.role === "officer";
+}
+const OFFICER_ONLY_MESSAGE = "Only the officer can change the website data";
+
 // The other saved values the website keeps in the table web_data. Anything else is refused.
 const allowedKeys = new Set(["niah_data_version"]);
 
@@ -49,11 +58,6 @@ const lists = {
         ],
         times: ["observed_at"],
         flags: [],
-        // A botanist may only add NEW observations that wait for approval (state Pending).
-        botanistMaySubmit: true,
-        // The database only lets the officer change state and reject_reason of an existing
-        // observation (trigger guard_website_observation_write), so the officer's save is an UPDATE.
-        reviewOnly: true,
     },
     users: {
         table: "website_users",
@@ -132,8 +136,7 @@ function cleanRow(item, list, index) {
     for (const column of list.flags) row[column] = item[column] !== false;
 
     row.extra = extraOf(item.extra);
-    // position is the place of the record in the full list (the page sends only changed records).
-    row.sort_order = Number.isInteger(item.position) && item.position >= 0 ? item.position : index;
+    row.sort_order = index;
     return { row };
 }
 
@@ -141,7 +144,7 @@ for (const [name, list] of Object.entries(lists)) {
     // Send the whole list to the website.
     router.get("/" + name, async (req, res) => {
         // Only the officer may see the user list. Everyone else gets an empty list.
-        if (list.officerOnly && (!req.profile || req.profile.role !== "officer")) {
+        if (list.officerOnly && !isOfficer(req)) {
             return res.json({ data: [] });
         }
         const { data, error } = await req.supabase
@@ -158,10 +161,8 @@ for (const [name, list] of Object.entries(lists)) {
 
     // Save changes: add new records, update changed ones and remove the ones the page deleted.
     router.put("/" + name, async (req, res) => {
-        const isOfficer = req.profile && req.profile.role === "officer";
-        const isSubmitter = !isOfficer && list.botanistMaySubmit && req.profile && req.profile.role === "botanist";
-        if (!isOfficer && !isSubmitter) {
-            return res.status(403).json({ message: "Only the officer can change the website data" });
+        if (!isOfficer(req)) {
+            return res.status(403).json({ message: OFFICER_ONLY_MESSAGE });
         }
         const incoming = req.body && req.body.rows;
         if (!Array.isArray(incoming) || incoming.length > 2000) {
@@ -182,54 +183,8 @@ for (const [name, list] of Object.entries(lists)) {
             rows.push(result.row);
         }
 
-        if (isSubmitter) {
-            // A botanist can only send new observations for approval. Never approve, reject,
-            // change someone else's record or delete anything.
-            const removedByBotanist = Array.isArray(req.body.removed) ? req.body.removed : [];
-            if (removedByBotanist.length > 0 || rows.some(row => row.state !== "Pending")) {
-                return res.status(403).json({ message: "Only the officer can change the website data" });
-            }
-            if (rows.length > 0) {
-                const ids = rows.map(row => row.id);
-                const { data: existing, error: lookupError } = await req.supabase
-                    .from(list.table)
-                    .select("id")
-                    .in("id", ids);
-                if (lookupError) {
-                    console.error(`Website ${name} lookup error:`, lookupError);
-                    return res.status(500).json({ message: `Could not save the ${name}` });
-                }
-                if (Array.isArray(existing) && existing.length > 0) {
-                    return res.status(403).json({ message: "Only the officer can change the website data" });
-                }
-                const ownRows = rows.map(row => ({ ...row, owner_id: req.user.id }));
-                const { error: insertError } = await req.supabase.from(list.table).insert(ownRows);
-                if (insertError) {
-                    console.error(`Website ${name} submit error:`, insertError);
-                    return res.status(500).json({ message: `Could not save the ${name}` });
-                }
-            }
-            return res.json({ data: rows });
-        }
-
-        // Officer review of observations: an upsert would run the database's INSERT check first
-        // and refuse the officer, so change only the review fields of the existing records.
-        if (list.reviewOnly && rows.length > 0) {
-            for (const row of rows) {
-                const { data: changed, error: reviewError } = await req.supabase
-                    .from(list.table)
-                    .update({ state: row.state, reject_reason: row.reject_reason })
-                    .eq("id", row.id)
-                    .select("id");
-                if (reviewError) {
-                    console.error(`Website ${name} review error:`, reviewError);
-                    return res.status(403).json({ message: reviewError.message || `Could not save the ${name}` });
-                }
-                if (Array.isArray(changed) && changed.length === 0) {
-                    return res.status(404).json({ message: "That observation was not found in the database" });
-                }
-            }
-        } else if (rows.length > 0) {
+        // Add and update first, so a failure never loses records.
+        if (rows.length > 0) {
             const { error } = await req.supabase
                 .from(list.table)
                 .upsert(rows, { onConflict: "id" });
@@ -245,22 +200,13 @@ for (const [name, list] of Object.entries(lists)) {
             typeof id === "string" && (list.ids === "uuid" ? uuidPattern.test(id) : textIdPattern.test(id))
         );
         if (removedIds.length > 0) {
-            const { data: deleted, error: removeError } = await req.supabase
+            const { error: removeError } = await req.supabase
                 .from(list.table)
                 .delete()
-                .in("id", removedIds)
-                .select("id");
+                .in("id", removedIds);
             if (removeError) {
                 console.error(`Website ${name} remove error:`, removeError);
                 return res.status(500).json({ message: `Could not remove the deleted ${name}` });
-            }
-            // A row-level security rule can block a delete without any error. Then nothing is
-            // removed, so say so instead of pretending it worked.
-            if (Array.isArray(deleted) && deleted.length < removedIds.length) {
-                console.error(`Website ${name}: asked to remove ${removedIds.length}, database removed ${deleted.length}`);
-                return res.status(403).json({
-                    message: `The database refused to delete ${removedIds.length - deleted.length} ${name} record(s). Is this account an active officer?`
-                });
             }
         }
 
@@ -288,11 +234,10 @@ router.get("/", async (req, res) => {
 
 // Save one of the other values.
 router.put("/:key", async (req, res) => {
-    const { key } = req.params;
-
-    if (!req.profile || req.profile.role !== "officer") {
-        return res.status(403).json({ message: "Only the officer can change the website data" });
+    if (!isOfficer(req)) {
+        return res.status(403).json({ message: OFFICER_ONLY_MESSAGE });
     }
+    const { key } = req.params;
 
     if (!allowedKeys.has(key)) {
         return res.status(400).json({ message: "Unknown data key" });
