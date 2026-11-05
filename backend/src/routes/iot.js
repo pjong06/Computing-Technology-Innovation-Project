@@ -79,7 +79,7 @@ router.get('/summary/live', (_req, res) => {
 
 // GET recent IoT alerts from Supabase (group member's endpoint)
 router.get('/alerts', recentIotQuery({
-  table: 'alerts', columns: 'id,station_id,reading_id,alert_message,severity,alert_status,triggered_at,acknowledged_by,acknowledged_at,resolved_by,resolved_at',
+  table: 'alerts', columns: 'id,station_id,reading_id,alert_message,severity,alert_status,triggered_at,acknowledged_by,acknowledged_at,resolved_by,resolved_at,resolution_notes',
   orderBy: 'triggered_at', message: 'IoT alerts retrieved successfully', failure: 'Failed to retrieve IoT alerts',
 }));
 
@@ -121,4 +121,5 @@ router.get('/alerts/live', (req, res) => {
   });
 });
 
+router.use(require('./iotAlertActions'));
 module.exports = router;

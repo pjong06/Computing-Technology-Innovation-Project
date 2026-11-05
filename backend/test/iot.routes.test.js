@@ -230,7 +230,7 @@ test('5.2: handles database query errors', async () => {
   }, 'sensor_readings');
 });
 
-test('active staff can read readings and alerts while station summaries stay Officer-only', async () => {
+test('active staff can read readings, alerts and dashboard summaries', async () => {
   for (const role of ['officer', 'botanist', 'researcher']) {
     await withApp(async base => {
       for (const endpoint of ['/readings/history', '/readings', '/latest', '/alerts', '/alerts/live']) {
@@ -242,7 +242,7 @@ test('active staff can read readings and alerts while station summaries stay Off
         }
       }
       for (const endpoint of ['/summary', '/summary/live']) {
-        assert.equal((await get(base, endpoint)).status, role === 'officer' ? 200 : 403, `${role} ${endpoint}`);
+        assert.equal((await get(base, endpoint)).status, 200, `${role} ${endpoint}`);
       }
       if (role !== 'officer') {
         assert.equal((await get(base, '/future-management-route')).status, 403);

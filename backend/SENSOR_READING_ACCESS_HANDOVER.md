@@ -1,5 +1,13 @@
 # Shared sensor-reading and alert read access
 
+## 5 November requirement update (supersedes earlier read-only/Officer workflow wording)
+
+All active Officer/Botanist/Researcher users may read dashboard summaries, readings, alerts/history and handle database alerts. Shared writes are limited to PATCH `/api/iot/alerts/:alertId/acknowledge` and `/resolve`. The latter accepts only optional `resolution_notes` (max 2000 characters); the former accepts an empty body. DB stamps the real actor/time and enforces open -> acknowledged -> resolved. Concurrent changes return 409. Other management paths/writes remain Officer-only. Photo reads are shared separately in PR #38; photo capture/retry remain Officer-only.
+
+Migration `20261105021021_staff_iot_dashboard_alert_workflow.sql` is already applied. It adds station SELECT for Botanist/Researcher (for dashboard summaries), their alert UPDATE policy, a column-only notes grant and the transition trigger. It does not grant UPDATE on actor/time columns, general table UPDATE or DELETE. Existing audit logging remains active. Older evidence below reflects the previous requirement and must not be used as the current expected permission matrix.
+
+Frontend owner: allow all three roles into IoT dashboard and display both lifecycle actions for them. Use database alert IDs from GET `/api/iot/alerts`, not in-memory `/alerts/live` IDs, for these PATCH endpoints. Read back status, actual actor/time and notes after each action. Website/mobile page files are not changed by this backend PR.
+
 Updated 4 November 2026. Owner-authorized database migration applied:
 `20261104133949_staff_read_sensor_readings_and_alerts.sql`.
 Backend implementation is prepared for PR review. No deployment or PR merge
