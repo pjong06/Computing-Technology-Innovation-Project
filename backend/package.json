@@ -12,7 +12,10 @@
     "test:auth": "node test-auth.js",
     "test:knowledge": "node --test test/knowledge.test.js",
     "test:coverage": "node --test --experimental-test-coverage test/*.test.js",
-    "benchmark:knowledge": "node scripts/benchmark-knowledge.js"
+    "benchmark:knowledge": "node scripts/benchmark-knowledge.js",
+    "test:security:live": "node test-sec77-deployed.cjs",
+    "test:security:transport": "node test-sec77-deployed.cjs --transport-only",
+    "test:security:self-test": "node test-sec77-deployed.cjs --self-test"
   },
   "keywords": [],
   "author": "",

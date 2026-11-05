@@ -66,7 +66,7 @@ async function main() {
       const profile = await client.from('profiles').select('id,role,account_status').eq('id', login.data.user.id).single();
       const verified = !profile.error && profile.data.role === role && profile.data.account_status === 'active';
       record(role + ' verified active profile', verified); if (!verified) continue;
-      const allowed = role === 'officer';
+      const allowed = ['officer', 'botanist', 'researcher'].includes(role);
       const metadata = await client.from('alert_camera_evidence').select('id').eq('id', fixture.id);
       const visible = !metadata.error && metadata.data?.some(r => r.id === fixture.id);
       const denied = (!metadata.error && Array.isArray(metadata.data) && !metadata.data.length) || metadata.error?.code === '42501';
@@ -76,7 +76,7 @@ async function main() {
       const token = login.data.session.access_token;
       const list = await request('/cloud', token);
       record(role + ' API list permission', list.status === (allowed ? 200 : 403), { status: list.status });
-      if (allowed && list.ok) { const body = await list.json(); record('Officer API lists known evidence', body.data?.some(r => r.id === fixture.id)); }
+      if (allowed && list.ok) { const body = await list.json(); record(role + ' API lists known evidence', body.data?.some(r => r.id === fixture.id)); }
       const linkResponse = await request('/' + fixture.id + '/url', token);
       record(role + ' API signing permission', linkResponse.status === (allowed ? 200 : 403), { status: linkResponse.status });
       if (allowed && linkResponse.ok) {
@@ -86,12 +86,14 @@ async function main() {
         if (trusted) {
           const initial = await fetch(link.url, { cache: 'no-store', signal: AbortSignal.timeout(15000) });
           record('Signed URL immediate bytes', initial.ok && (await initial.arrayBuffer()).byteLength === 631);
-          console.log('Waiting for 60-second signed link expiry; URL is never printed or saved.');
-          await wait(65000);
-          const expired = await fetch(link.url, { cache: 'no-store', signal: AbortSignal.timeout(15000) });
-          const body = await expired.text();
-          const expiry = expiryEvidence(expired.status, body);
-          record('Signed URL expiry denied with expiry-specific response', expiry.pass, expiry);
+          if (role === 'officer') {
+            console.log('Waiting for 60-second signed link expiry; URL is never printed or saved.');
+            await wait(65000);
+            const expired = await fetch(link.url, { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+            const body = await expired.text();
+            const expiry = expiryEvidence(expired.status, body);
+            record('Signed URL expiry denied with expiry-specific response', expiry.pass, expiry);
+          }
         }
       }
     } catch { secret = ''; record(role + ' live checks completed', false, { reason: 'Network or test exception; credentials and response bodies excluded' }); }
@@ -100,7 +102,7 @@ async function main() {
 }
 main().catch(e => { rows.push({ name: 'Preflight', result: 'BLOCKED', reason: e.message }); }).finally(async () => {
   if (server) await new Promise(resolve => { server.closeAllConnections(); server.close(resolve); });
-  const result = { tested_at: new Date().toISOString(), mode: process.argv.includes('--local-api') ? 'local-api-real-jwt' : 'deployed-api-real-jwt', fixture, rows };
+  const result = { tested_at: new Date().toISOString(), permission_contract: 'three-active-staff-photo-read', mode: process.argv.includes('--local-api') ? 'local-api-real-jwt' : 'deployed-api-real-jwt', fixture, rows };
   const output = path.resolve(__dirname, '..', `camera-access-${Date.now()}-results.json`);
   await fs.writeFile(output, JSON.stringify(result, null, 2));
   console.log(`Results: ${output}`);

@@ -113,12 +113,13 @@ function fakeSupabase(errorTable = null) {
   };
 }
 
-async function withApp(run, errorTable = null) {
+async function withApp(run, errorTable = null, profile = { role: 'officer', account_status: 'active' }) {
   const app = express();
 
   // Supply a mock database only in this test application.
   app.use('/api/iot', (req, _res, next) => {
     req.supabase = fakeSupabase(errorTable);
+    req.profile = profile;
     next();
   });
 
@@ -227,4 +228,39 @@ test('5.2: handles database query errors', async () => {
     assert.equal(result.status, 500);
     assert.equal(result.body.message, 'Failed to retrieve sensor readings');
   }, 'sensor_readings');
+});
+
+test('active staff can read readings, alerts and dashboard summaries', async () => {
+  for (const role of ['officer', 'botanist', 'researcher']) {
+    await withApp(async base => {
+      for (const endpoint of ['/readings/history', '/readings', '/latest', '/alerts', '/alerts/live']) {
+        assert.equal((await get(base, endpoint)).status, 200, `${role} ${endpoint}`);
+        assert.equal((await fetch(`${base}/api/iot${endpoint}`, { method: 'HEAD' })).status, 200);
+        for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+          const write = await fetch(`${base}/api/iot${endpoint}`, { method });
+          assert.equal(write.status, role === 'officer' ? 404 : 403, `${role} ${method} ${endpoint}`);
+        }
+      }
+      for (const endpoint of ['/summary', '/summary/live']) {
+        assert.equal((await get(base, endpoint)).status, 200, `${role} ${endpoint}`);
+      }
+      if (role !== 'officer') {
+        assert.equal((await get(base, '/future-management-route')).status, 403);
+      }
+    }, null, { role, account_status: 'active' });
+  }
+});
+
+test('readings and alerts reject anonymous, visitor, legacy Admin and inactive profiles', async () => {
+  for (const profile of [null, { role: 'visitor', account_status: 'active' },
+    { role: 'admin', account_status: 'active' }, { role: 'botanist', account_status: 'suspended' },
+    { role: 'researcher', account_status: 'suspended' }, { role: 'officer', account_status: 'suspended' }]) {
+    await withApp(async base => {
+      for (const endpoint of ['/readings/history', '/readings', '/latest', '/alerts', '/alerts/live']) {
+        const result = await get(base, endpoint);
+        assert.equal(result.status, profile ? 403 : 401);
+        assert.equal(result.body.data, undefined);
+      }
+    }, null, profile);
+  }
 });

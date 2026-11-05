@@ -1,5 +1,13 @@
 # Laptop camera and private alert evidence
 
+## 5 November permission revision
+
+Active Officer, Botanist and Researcher may all view photo lists, local photo bytes and cloud signed URLs. Only Officer may inspect camera operational status, manually capture or retry upload. Migration `20261105021349_staff_read_camera_evidence.sql` adds only Botanist/Researcher SELECT policies; Officer policies and writer grants remain unchanged. It is already applied to Niah Biotrack. The user-scoped signing API still uses 60-second bearer links.
+
+PR #38 now includes PR #37's shared dashboard/lifecycle implementation to keep the permission contract consistent. All three roles may acknowledge/resolve database alerts and submit resolution notes via the explicit PATCH endpoints; other management/ingestion writes remain restricted. Frontend dashboard entry/action guards must be updated by its owner; this PR does not edit their pages. The older Officer-only photo statements below describe the initial implementation and are superseded by this paragraph.
+
+Live test default now expects photo access for all three roles and records `three-active-staff-photo-read`. Officer checks expiry once; every role checks actual bytes, lists and signing. Historical 15-PASS/2-FAIL output is retained under the previous Officer-only contract, not rewritten. Botanist login and the new shared-photo genuine-session matrix remain pending until the local runner is completed.
+
 Camera is disabled in the normal backend. Render serves authenticated metadata and short-lived links; the laptop process alone operates its webcam. No frontend/mobile code is included.
 
 ## Architecture and rules

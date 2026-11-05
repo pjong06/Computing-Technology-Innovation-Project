@@ -140,6 +140,12 @@ test('HTTP routes deny anonymous/non-Officer/inactive and bind image to alert ID
     assert.equal(response.status, role ? 403 : 401);
   }
   assert.equal((await fetch(base + '/camera/status', { headers: { 'x-test-role': 'officer', 'x-test-status': 'inactive' } })).status, 403);
+  for (const role of ['botanist', 'researcher']) {
+    const staffHeaders = { 'x-test-role': role };
+    assert.equal((await fetch(`${base}/alerts/${event().alert.id}/camera/${r.evidence.id}/image`, { headers: staffHeaders })).status, 200);
+    assert.equal((await fetch(`${base}/alerts/${event().alert.id}/camera/capture`, { method: 'POST', headers: staffHeaders })).status, 403);
+    assert.equal((await fetch(`${base}/alerts/${event().alert.id}/camera/${r.evidence.id}/retry`, { method: 'POST', headers: staffHeaders })).status, 403);
+  }
   const headers = { 'x-test-role': 'officer' };
   const response = await fetch(`${base}/alerts/${event().alert.id}/camera/${r.evidence.id}/image`, { headers });
   assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
@@ -148,7 +154,7 @@ test('HTTP routes deny anonymous/non-Officer/inactive and bind image to alert ID
   assert.equal((await fetch(`${base}/alerts/invalid/camera`, { headers })).status, 400);
 });
 
-test('cloud list uses Officer user client and never opens the laptop camera', async t => {
+test('cloud list permits three active staff roles without opening the laptop camera', async t => {
   const alertId = randomUUID(), evidenceId = randomUUID();
   let queries = 0;
   const q = { select(columns) { assert.equal(columns, 'id,alert_id,captured_at,byte_count,created_at'); return q; },
@@ -165,15 +171,17 @@ test('cloud list uses Officer user client and never opens the laptop camera', as
   const server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
   t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
   const url = `http://127.0.0.1:${server.address().port}/alerts/${alertId}/camera/cloud`;
-  for (const role of [null, 'botanist', 'researcher']) {
+  for (const role of [null, 'visitor', 'admin']) {
     const response = await fetch(url, { headers: role ? { 'x-test-role': role } : {} });
     assert.equal(response.status, role ? 403 : 401);
   }
   assert.equal(queries, 0);
-  const response = await fetch(url, { headers: { 'x-test-role': 'officer' } });
-  assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await response.json(), { data: [{ id: evidenceId, alert_id: alertId }], limit: 100 });
-  assert.equal(queries, 1);
+  for (const role of ['officer', 'botanist', 'researcher']) {
+    const response = await fetch(url, { headers: { 'x-test-role': role } });
+    assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await response.json(), { data: [{ id: evidenceId, alert_id: alertId }], limit: 100 });
+  }
+  assert.equal(queries, 3);
 });
 
 test('cloud URL route uses user-scoped evidence lookup and fixed 60-second TTL', async t => {
@@ -183,14 +191,17 @@ test('cloud URL route uses user-scoped evidence lookup and fixed 60-second TTL',
   const query = { select() { return query; }, eq(key, value) { filters.push([key, value]); return query; }, async maybeSingle() { return { data: { id: evidenceId, alert_id: alertId, file_path: 'server-created-path.jpg' } }; } };
   const app = express();
   app.use((req, res, next) => {
-    req.user = { id: 'officer-test' }; req.profile = { role: 'officer', account_status: 'active' };
+    req.user = { id: 'staff-test' }; req.profile = { role: req.get('x-test-role'), account_status: 'active' };
     req.supabase = { from(table) { assert.equal(table, 'alert_camera_evidence'); return query; }, storage: { from(bucket) { assert.equal(bucket, 'camera-evidence'); return { async createSignedUrl(object, ttl) { assert.equal(object, 'server-created-path.jpg'); assert.equal(ttl, 60); signed = true; return { data: { signedUrl: 'https://example.invalid/test-link' } }; } }; } } };
     next();
   });
   app.use(createCameraRouter());
   const server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
   t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
-  const response = await fetch(`http://127.0.0.1:${server.address().port}/alerts/${alertId}/camera/${evidenceId}/url`);
-  assert.equal(response.status, 200); assert.equal((await response.json()).expires_in, 60);
-  assert.deepEqual(filters, [['id', evidenceId], ['alert_id', alertId]]); assert.ok(signed);
+  for (const role of ['officer', 'botanist', 'researcher']) {
+    filters.length = 0; signed = false;
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/alerts/${alertId}/camera/${evidenceId}/url`, { headers: { 'x-test-role': role } });
+    assert.equal(response.status, 200); assert.equal((await response.json()).expires_in, 60);
+    assert.deepEqual(filters, [['id', evidenceId], ['alert_id', alertId]]); assert.ok(signed);
+  }
 });
