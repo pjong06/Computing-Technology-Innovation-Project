@@ -5,7 +5,7 @@ const { execFileSync } = require('node:child_process');
 require('dotenv').config({ path: [path.resolve(__dirname, '../.env'),
   path.resolve(__dirname, '../../../Steven-Sprint2-Security/backend/.env')], quiet: true });
 const { createClient } = require('@supabase/supabase-js');
-const { expiryEvidence } = require('./accessAssertions');
+const { expiryEvidence } = require('./accessAssertions.cjs');
 const fixture = { id: '01642a63-a3cd-4afe-b193-bbe1b9462235', alert: 'e6b5792a-c2c7-40c8-8627-bda87873f157',
   object: '985fc35a-d1ba-4794-82c2-0ac8bde220b3/e6b5792a-c2c7-40c8-8627-bda87873f157/01642a63-a3cd-4afe-b193-bbe1b9462235.jpg' };
 const allAccounts = [['officer', 'stevenchengyujay@gmail.com'], ['botanist', 'scyjay06@gmail.com'],
