@@ -13,7 +13,9 @@ require.cache[authPath] = { id: authPath, filename: authPath, loaded: true, expo
     req.supabase = {
       from() {
         const q = { select() { return q; }, eq() { return q; }, async maybeSingle() {
-          return { data: { id: ID, registered_by: OWNER, qr_code_value: options.existing || 'plant:internal' } };
+          const attached = calls.some(call => call[0] === 'attach_reserved_plant_tag');
+          return { data: { id: ID, registered_by: OWNER,
+            qr_code_value: attached ? TAG : (options.existing || 'plant:internal'), row_version: attached ? 8 : 7 } };
         } }; return q;
       },
       async rpc(name, args) {
@@ -42,12 +44,13 @@ test('mobile one-click tags reserve before attaching and reuse a stable retry ke
   for (let i = 0; i < 2; i++) {
     const r = await send(); assert.equal(r.status, 200); assert.equal(r.body.tag_code, TAG);
     assert.equal(r.body.public_url, 'https://plants.example.test/p/' + TAG);
+    assert.equal(r.body.row_version, 8);
     assert.match(r.body.qr_code, /^data:image\/png;base64,/);
   }
-  assert.deepEqual(calls, Array(2).fill([
+  assert.deepEqual(calls, [
     ['reserve_plant_tags', { p_count: 1, p_request_id: ID }],
     ['attach_reserved_plant_tag', { p_plant_id: ID, p_tag: TAG }],
-  ]).flat());
+  ]); // The second request reads the saved tag and allocates nothing.
 });
 test('existing tags do not allocate another reservation', async t => {
   const send = await start(t, { existing: TAG }); assert.equal((await send()).status, 200); assert.deepEqual(calls, []);

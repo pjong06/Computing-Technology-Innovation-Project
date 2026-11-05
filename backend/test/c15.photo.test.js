@@ -1,6 +1,8 @@
 
 'use strict';
 
+const { randomUUID } = require('node:crypto');
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -67,6 +69,16 @@ function fakeDb({ owner = BOTANIST, insertError = null } = {}) {
 
       if (table === 'plant_media') {
         return {
+          // The retry check: no photo saved yet with this client ID.
+          select() {
+            return {
+              eq() { return this; },
+              async maybeSingle() {
+                return { data: null, error: null };
+              }
+            };
+          },
+
           insert(row) {
             calls.inserts.push(row);
 
@@ -148,6 +160,8 @@ async function uploadPhoto(base, photoType = 'leaf') {
   const form = new FormData();
 
   form.set('photo_type', photoType);
+  // The route needs the phone's own photo ID (retry protection).
+  form.set('client_record_id', randomUUID());
 
   form.set(
     'photo',

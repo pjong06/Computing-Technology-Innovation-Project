@@ -177,7 +177,8 @@ router.get("/:id", requireRole("botanist", "officer", "researcher"), async (req,
         .from("plants")
         .select(
             "id, species_id, qr_code_value, plant_status, registered_at, " +
-            "gps_accuracy_m, location_description"
+            // row_version: the phone needs it to send later changes as updates
+            "gps_accuracy_m, location_description, row_version"
         )
         .eq("id", plantId)
         .maybeSingle();
@@ -403,6 +404,9 @@ router.patch("/:id", requireRole("botanist", "officer"), async (req, res) => {
 
     const newTag = qr_code_value ?? tag_code;
     if (newTag !== undefined) {
+        if (typeof newTag !== "string") {
+            return res.status(400).json({ message: "Tag code must look like NIAH-PLT-00001" });
+        }
         const cleaned = newTag.trim().toUpperCase();
         if (!/^NIAH-PLT-\d{5}$/.test(cleaned)) {
             return res.status(400).json({ message: "Tag code must look like NIAH-PLT-00001" });
@@ -424,13 +428,35 @@ router.patch("/:id", requireRole("botanist", "officer"), async (req, res) => {
             .select()
             .maybeSingle();
 
+        // The tag is unique: another plant already has it. The phone shows this and
+        // does not retry until the botanist attaches a different tag.
+        if (error?.code === "23505") {
+            return res.status(409).json({
+                message: "This tag is already attached to another plant",
+                code: "tag_in_use"
+            });
+        }
+
+        // RLS refused the edit (the plant can no longer be changed, e.g. after submission).
+        if (error?.code === "42501") {
+            return res.status(409).json({
+                message: "This plant can't be changed any more",
+                code: "plant_locked"
+            });
+        }
+
         if (error) {
             console.error("Update plant error:", error);
             return res.status(500).json({ message: "Could not update plant record" });
         }
 
+        // The access check above just found this plant, so "no row updated" means RLS hid
+        // it from the update: the plant is locked, not missing.
         if (!data) {
-            return res.status(404).json({ message: "Plant record not found" });
+            return res.status(409).json({
+                message: "This plant can't be changed any more",
+                code: "plant_locked"
+            });
         }
 
         return res.json({
@@ -891,7 +917,7 @@ router.post("/:id/attach-tag", requireRole("botanist", "officer"), async (req, r
         // 2. Fetch current plant to see if it already has a valid tag
         const { data: plant, error: fetchError } = await req.supabase
             .from("plants")
-            .select("id, qr_code_value")
+            .select("id, qr_code_value, row_version")
             .eq("id", plantId)
             .maybeSingle();
 
@@ -900,6 +926,9 @@ router.post("/:id/attach-tag", requireRole("botanist", "officer"), async (req, r
         }
 
         let tagCode = plant.qr_code_value;
+        // Writing the tag raises the plant's row_version. The phone needs the new one,
+        // or its next outbox update for this plant is refused as out of date.
+        let rowVersion = plant.row_version;
 
         // Validate the destination before allocating a persistent label.
         buildPublicPlantUrl('NIAH-PLT-00001');
@@ -924,6 +953,18 @@ router.post("/:id/attach-tag", requireRole("botanist", "officer"), async (req, r
                 return res.status(503).json({ message: 'Could not confirm tag binding; retry the same plant' });
             }
             tagCode = tag;
+            // Read the committed version instead of assuming how many triggers ran.
+            const { data: refreshed, error: refreshError } = await req.supabase
+                .from('plants')
+                .select('qr_code_value, row_version')
+                .eq('id', plantId)
+                .maybeSingle();
+            if (refreshError || !refreshed || refreshed.qr_code_value !== tag ||
+                !Number.isSafeInteger(refreshed.row_version) || refreshed.row_version < 1) {
+                return res.status(503).json({ message: 'Could not confirm the updated plant version; retry the same plant' });
+            }
+            rowVersion = refreshed.row_version;
+
         }
 
         // 5. Generate QR code payload
@@ -931,6 +972,7 @@ router.post("/:id/attach-tag", requireRole("botanist", "officer"), async (req, r
 
         return res.status(200).json({
             tag_code: tagCode,
+            row_version: rowVersion,
             qr_code: qrResult.qrCode, // base64 data URL
             public_url: qrResult.publicUrl,
         });

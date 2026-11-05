@@ -14,9 +14,11 @@ import { useRouter } from 'expo-router';
 import { useStaffOnly } from '../../src/context/AuthRoleContext';
 import {
   IdentificationStatus,
+  ReviewStatus,
   SyncStatus,
   useRecordStore,
 } from '../../src/store/useRecordStore';
+import { REVIEW_BADGE } from '../../src/utils/reviewStatus';
 
 type RecordFilter = 'All' | 'Needs identification' | SyncStatus;
 
@@ -148,6 +150,18 @@ export default function RecordsScreen() {
                     <Text style={styles.recordMeta}>
                       {item.locationName} · {item.createdAt}
                     </Text>
+                    {/* The officer's decision (read back from the server), once submitted. */}
+                    {item.reviewStatus && item.reviewStatus !== ReviewStatus.DRAFT ? (
+                      <Text
+                        style={[styles.reviewLine, { color: REVIEW_BADGE[item.reviewStatus].text }]}
+                        numberOfLines={2}
+                      >
+                        {REVIEW_BADGE[item.reviewStatus].label}
+                        {item.reviewStatus === ReviewStatus.REJECTED
+                          ? `: ${item.reviewComment?.trim() || 'No reason was given.'}`
+                          : ''}
+                      </Text>
+                    ) : null}
                   </View>
                   <View
                     style={[
@@ -227,6 +241,7 @@ const styles = StyleSheet.create({
   },
   recordSpecies: { fontSize: 15, fontWeight: '700', color: '#1E2B22' },
   recordMeta: { fontSize: 12.5, color: '#68776D', marginTop: 4 },
+  reviewLine: { fontSize: 12, fontWeight: '600', marginTop: 4 },
   statusBadge: { paddingVertical: 5, paddingHorizontal: 12, borderRadius: 16 },
   statusBadgeText: { fontSize: 11.5, fontWeight: '700' },
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 20 },

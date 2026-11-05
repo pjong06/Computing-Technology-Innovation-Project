@@ -1,6 +1,6 @@
 # C17: tag reservation and printing
 
-Status: backend implementation synchronised with main; PR readiness blocked by existing main photo-upload and public-signup test failures. Shared Supabase has NOT been migrated.
+Status: backend implementation synchronised with main and all local checks passing. Shared Supabase has NOT been migrated by this work; production acceptance remains pending.
 
 ## Endpoints
 
@@ -75,3 +75,11 @@ All endpoints require an active Botanist bearer session and use the existing use
 - PR creation and push remain deferred until the full-suite blockers are resolved. Shared database migrations have not been applied by this work.
 - Public visitor DEMO URL https://niah-backend.onrender.com/p/NIAH-PLT-90001 returned HTTP 200 with the demonstration warning and location privacy notice. Public JSON lookup also returned 200; deployed reservation listing still returned 404. This does not prove generated-label scanning or production reservation readiness.
 - Remaining acceptance: real account ownership/RLS, independent concurrent database transactions, shared migration coordination, preprinted-tag/mobile outbox integration and physical phone QR scanning.
+
+## Current integration review: 2026-11-05
+
+- Combined main 62794e8 with reservation-before-binding. The mobile attach-tag endpoint retains main's row_version response and reads it from the committed plant row after successful binding; it does not guess the version increment. Missing/inaccessible/mismatched rows or invalid versions return 503 rather than stale success.
+- Main now includes the photo test fixes and removes public website signup. Those maintained implementations/tests were retained. Earlier user test edits remain in the named Git stash as a backup, not in the PR.
+- Full backend suite: 350 passed, 0 failed, 0 skipped. Reservation-related API and compatibility checks: 58 passed within that suite. Isolated migration: 26 passed. Backend production dependency audit: 0 known vulnerabilities.
+- The historical blocked statuses above are superseded by this review. The branch is ready for code review, not a claim of completed live deployment.
+- Both the reservation migration and backend rollout must be coordinated with mobile/preprinted-label callers. Existing labels remain consumed, new physical tags require an owned reservation, and officer allocation of new reservations is denied. Public QR configuration and real JWT/RLS, concurrency, print/scan and deployed acceptance remain required. The website permission migrations already present in this branch are separate historical changes and require database-owner review; do not blindly reapply migrations already recorded on the shared project.

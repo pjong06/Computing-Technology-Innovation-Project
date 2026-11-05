@@ -44,7 +44,9 @@ app.use('/api/plants', plantRoutes);
 
 app.use('/api/identify', identifyRoutes);
 
-app.use('/api/iot', requireAuth, requireRole('officer'), iotRoutes);
+// Camera router distinguishes shared photo reads from Officer-only operations.
+app.use('/api/iot', requireAuth, require('./routes/iotCamera').createCameraRouter());
+app.use('/api/iot', requireAuth, iotRoutes);
 
 app.use('/api/knowledge', knowledgeRoutes);
 
