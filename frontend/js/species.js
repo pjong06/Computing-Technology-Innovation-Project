@@ -139,10 +139,7 @@ function deleteSpecies(index) {
   }
   const list = getSpecies();
   list.splice(index, 1);
-  if (writeStorage(SPECIES_KEY, list) === false) {
-    drawSpeciesTable();   // the database kept the record, so show it again
-    return;
-  }
+  writeStorage(SPECIES_KEY, list);
   showToast('Species deleted');
   drawSpeciesTable();
 }

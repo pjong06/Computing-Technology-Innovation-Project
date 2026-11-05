@@ -66,13 +66,12 @@ function startEditor() {
   showPhoto();
 }
 
-// Says if the species has a real photo of the plant, accepting any standard image format.
+// Says if the species has a real photo of the plant (an uploaded picture or a picture link),
+// not one of the default pictures.
 function hasRealPhoto() {
-  if (!photo) return false;
-  if (photo.indexOf('https://') === 0 || photo.indexOf('http://') === 0) {
+  if (photo.indexOf('https://') === 0) {
     return true;
   }
-  // Accept any data image format (jpeg, png, webp, gif, etc.) except svg
   return photo.indexOf('data:image/') === 0 && photo.indexOf('data:image/svg+xml') !== 0;
 }
 
