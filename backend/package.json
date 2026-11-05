@@ -7,7 +7,7 @@
     "test": "node --test test/*.test.js",
     "start": "node src/server.js",
     "camera:start": "node camera/start-local.cjs",
-    "test:camera": "node --test test/cameraEvidence.test.js",
+    "test:camera": "node --test test/cameraEvidence.test.js test/cameraAccessAssertions.test.js",
     "test:camera:live": "node camera/test-access-live.cjs",
     "test:auth": "node test-auth.js",
     "test:knowledge": "node --test test/knowledge.test.js",

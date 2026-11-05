@@ -5,9 +5,10 @@ const { execFileSync } = require('node:child_process');
 require('dotenv').config({ path: [path.resolve(__dirname, '../.env'),
   path.resolve(__dirname, '../../../Steven-Sprint2-Security/backend/.env')], quiet: true });
 const { createClient } = require('@supabase/supabase-js');
+const { expiryEvidence } = require('./accessAssertions');
 const fixture = { id: '01642a63-a3cd-4afe-b193-bbe1b9462235', alert: 'e6b5792a-c2c7-40c8-8627-bda87873f157',
   object: '985fc35a-d1ba-4794-82c2-0ac8bde220b3/e6b5792a-c2c7-40c8-8627-bda87873f157/01642a63-a3cd-4afe-b193-bbe1b9462235.jpg' };
-const accounts = [['officer', 'stevenchengyujay@gmail.com'], ['botanist', 'scyjay06@gmail.com'],
+const allAccounts = [['officer', 'stevenchengyujay@gmail.com'], ['botanist', 'scyjay06@gmail.com'],
   ['researcher', 'stevenchengyujay+researcher@gmail.com']];
 const rows = [];
 const record = (name, pass, detail = {}) => { rows.push({ name, result: pass ? 'PASS' : 'FAIL', ...detail }); console.log(`${pass ? 'PASS' : 'FAIL'} ${name}`); };
@@ -30,10 +31,14 @@ async function main() {
   try { publicKey ||= JSON.parse(Buffer.from(key.split('.')[1], 'base64url')).role === 'anon'; } catch {}
   if (!publicKey || new URL(process.env.SUPABASE_URL).hostname !== 'yzhxjzbzslnveskkwvfy.supabase.co') throw Error('Matching public project configuration required');
   const clientFor = () => createClient(process.env.SUPABASE_URL, key, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
+  const selectedRoles = process.argv.find(arg => arg.startsWith('--roles='))?.slice(8).split(',');
+  if (selectedRoles && selectedRoles.some(role => !allAccounts.some(([r]) => r === role))) throw Error('Unknown test role');
+  const accounts = selectedRoles ? allAccounts.filter(([role]) => selectedRoles.includes(role)) : allAccounts;
   let base;
   if (process.argv.includes('--local-api')) {
     const express = require('express');
     const app = express();
+    app.disable('x-powered-by');
     app.use('/api/iot', require('../src/middleware/auth').requireAuth, require('../src/routes/iotCamera').createCameraRouter());
     server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
     base = `http://127.0.0.1:${server.address().port}`;
@@ -53,7 +58,11 @@ async function main() {
     if (!secret) { rows.push({ name: role + ' login', result: 'BLOCKED', reason: 'Skipped locally' }); continue; }
     try {
       const login = await client.auth.signInWithPassword({ email, password: secret }); secret = '';
-      if (login.error || !login.data.session) { record(role + ' login', false); continue; }
+      if (login.error || !login.data.session) {
+        const known = ['invalid_credentials', 'email_not_confirmed', 'over_request_rate_limit', 'user_banned'];
+        record(role + ' login', false, { status: login.error?.status || null,
+          code: known.includes(login.error?.code) ? login.error.code : 'other_auth_error' }); continue;
+      }
       const profile = await client.from('profiles').select('id,role,account_status').eq('id', login.data.user.id).single();
       const verified = !profile.error && profile.data.role === role && profile.data.account_status === 'active';
       record(role + ' verified active profile', verified); if (!verified) continue;
@@ -81,7 +90,8 @@ async function main() {
           await wait(65000);
           const expired = await fetch(link.url, { cache: 'no-store', signal: AbortSignal.timeout(15000) });
           const body = await expired.text();
-          record('Signed URL expiry denied with expiry-specific response', !expired.ok && /expir/i.test(body), { status: expired.status });
+          const expiry = expiryEvidence(expired.status, body);
+          record('Signed URL expiry denied with expiry-specific response', expiry.pass, expiry);
         }
       }
     } catch { secret = ''; record(role + ' live checks completed', false, { reason: 'Network or test exception; credentials and response bodies excluded' }); }
