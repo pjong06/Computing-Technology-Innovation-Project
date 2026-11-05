@@ -1965,3 +1965,199 @@ table.big .btn {
   }
 
 }
+
+/* ============================================================
+   IOT CAMERA EVIDENCE
+   ============================================================ */
+
+.iot-camera-section {
+  margin-top: 16px;
+  padding-top: 14px;
+
+  border-top: 1px solid var(--line);
+}
+
+.iot-camera-title {
+  display: block;
+
+  margin-bottom: 10px;
+
+  color: var(--ink);
+
+  font-size: 13px;
+}
+
+.iot-camera-container {
+  margin-top: 12px;
+}
+
+.iot-camera-evidence {
+  width: 100%;
+}
+
+.iot-camera-image {
+  display: block;
+
+  width: 100%;
+  max-height: 360px;
+
+  object-fit: cover;
+
+  border: 1px solid var(--line);
+  border-radius: 14px;
+
+  background: var(--card);
+}
+
+.iot-camera-meta {
+  margin: 7px 0 0;
+
+  color: var(--mute);
+
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+
+/* Four main environmental sensor cards */
+
+.iot-sensor-grid {
+  grid-template-columns:
+    repeat(
+      4,
+      minmax(170px, 1fr)
+    );
+}
+
+
+@media (max-width: 1100px) {
+
+  .iot-sensor-grid {
+    grid-template-columns:
+      repeat(
+        2,
+        minmax(180px, 1fr)
+      );
+  }
+
+}
+
+
+@media (max-width: 700px) {
+
+  .iot-sensor-grid {
+    grid-template-columns:
+      1fr;
+  }
+
+}
+
+/* ============================================================
+   CAMERA THREAT ALERT
+   ============================================================ */
+
+.iot-camera-alert-card {
+  grid-column: 1 / -1;
+}
+
+
+/* Camera evidence highlighted area */
+
+.iot-camera-section {
+  margin: 16px 0;
+
+  padding: 18px;
+
+  border: 1px solid #d6a85f;
+  border-radius: 16px;
+
+  background:
+    rgba(214, 168, 95, 0.08);
+}
+
+
+.iot-camera-title {
+  display: block;
+
+  margin-bottom: 12px;
+
+  color: var(--ink);
+
+  font-size: 16px;
+  font-weight: 800;
+}
+
+
+.iot-camera-button {
+  display: flex;
+
+  align-items: center;
+  justify-content: center;
+
+  width: 100%;
+
+  min-height: 48px;
+
+  padding: 12px 18px;
+
+  border: 1px solid var(--pri);
+  border-radius: 12px;
+
+  background: var(--pri);
+
+  color: white;
+
+  font-size: 14px;
+  font-weight: 700;
+
+  cursor: pointer;
+}
+
+
+.iot-camera-button:hover {
+  opacity: 0.9;
+}
+
+
+.iot-camera-button:disabled {
+  opacity: 0.6;
+
+  cursor: not-allowed;
+}
+
+
+.iot-camera-container {
+  margin-top: 14px;
+}
+
+
+.iot-camera-evidence {
+  width: 100%;
+}
+
+
+.iot-camera-image {
+  display: block;
+
+  width: 100%;
+  max-width: 900px;
+  max-height: 520px;
+
+  margin-top: 10px;
+
+  object-fit: contain;
+
+  border: 1px solid var(--line);
+  border-radius: 14px;
+
+  background: #000;
+}
+
+
+.iot-camera-meta {
+  margin: 8px 0 0;
+
+  color: var(--mute);
+
+  font-size: 12px;
+}

@@ -15,7 +15,6 @@ import { useRouter } from 'expo-router';
 
 import type { Species } from '../../src/api/species';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
-import OfflineReferenceCard from '../../src/components/OfflineReferenceCard';
 
 const STATUS_LABELS: Record<string, string> = {
   CR: 'Critically Endangered',
@@ -154,7 +153,7 @@ export default function SpeciesReferenceBookScreen() {
           </Text>
 
           <Text style={styles.emptyText}>
-            Connect once to download the catalogue for offline use.
+            Connect to refresh the species catalogue. The last saved catalogue remains available offline.
           </Text>
 
           <Text style={styles.technicalError}>{error}</Text>
@@ -209,8 +208,6 @@ export default function SpeciesReferenceBookScreen() {
             you view here will be added to your plant record automatically.
           </Text>
         </View>
-
-        <OfflineReferenceCard />
 
         <TextInput
           style={styles.searchBar}
@@ -309,7 +306,7 @@ export default function SpeciesReferenceBookScreen() {
           <View style={styles.countRow}>
             <Text style={styles.countBanner}>
               {filteredSpecies.length === species.length
-                ? `${species.length} species · available offline`
+                ? `${species.length} species · automatically synced`
                 : `Showing ${filteredSpecies.length} of ${species.length} species`}
             </Text>
 
