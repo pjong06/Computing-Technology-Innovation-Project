@@ -629,7 +629,11 @@ export async function applySyncOperationResult(
         WHERE operation_id = ?
       `,
       outboxStatus,
-      result.message ?? result.code ?? 'Synchronization failed',
+      // Tag refusals keep their code, so the plant screen can explain them
+      // (see getPlantTagRefusals). Everything else keeps the server's message.
+      result.code && TAG_REFUSAL_CODES.has(result.code)
+        ? result.code
+        : (result.message ?? result.code ?? 'Synchronization failed'),
       timestamp,
       result.operation_id
     );
@@ -646,6 +650,138 @@ export async function applySyncOperationResult(
       timestamp,
       operation.entity_type,
       operation.client_record_id
+    );
+  });
+}
+
+// Server codes for a plant tag it refused (backend/src/routes/sync.js). They come
+// back as 'conflict', which retryFailedOperations leaves alone: sending the same
+// tag again would fail the same way. Attaching another tag queues a new operation.
+export type TagRefusalCode = 'tag_in_use' | 'plant_locked';
+
+const TAG_REFUSAL_CODES = new Set<string>(['tag_in_use', 'plant_locked']);
+
+/**
+ * Plants whose LATEST outbox operation was a refused tag, by client record ID.
+ * A later operation (e.g. a different tag) replaces the old refusal.
+ */
+export async function getPlantTagRefusals(): Promise<
+  Map<string, TagRefusalCode>
+> {
+  await initializeOfflineDatabase();
+
+  const db = await getDatabase();
+
+  const rows = await db.getAllAsync<{
+    client_record_id: string;
+    status: OutboxStatus;
+    last_error: string | null;
+  }>(
+    `
+      SELECT o.client_record_id, o.status, o.last_error
+      FROM sync_outbox o
+      WHERE o.entity_type = 'plant'
+        AND o.created_at = (
+          SELECT MAX(latest.created_at)
+          FROM sync_outbox latest
+          WHERE latest.entity_type = 'plant'
+            AND latest.client_record_id = o.client_record_id
+        )
+    `
+  );
+
+  const refusals = new Map<string, TagRefusalCode>();
+  for (const row of rows) {
+    if (
+      row.status === 'conflict' &&
+      row.last_error &&
+      TAG_REFUSAL_CODES.has(row.last_error)
+    ) {
+      refusals.set(row.client_record_id, row.last_error as TagRefusalCode);
+    }
+  }
+  return refusals;
+}
+
+/**
+ * Plants the server already has (server_id known) whose row_version the phone never
+ * learned, with a queued create. These were uploaded before the outbox existed
+ * (POST /api/plants). A create for an existing plant is answered "success" without
+ * changing anything, so a later edit or tag would be silently lost.
+ */
+export async function getUploadedPlantsQueuedAsCreate(): Promise<
+  { clientRecordId: string; serverId: string }[]
+> {
+  await initializeOfflineDatabase();
+
+  const db = await getDatabase();
+
+  const rows = await db.getAllAsync<{
+    client_record_id: string;
+    server_id: string;
+  }>(
+    `
+      SELECT DISTINCT e.client_record_id, e.server_id
+      FROM local_entities e
+      JOIN sync_outbox o
+        ON o.entity_type = e.entity_type
+       AND o.client_record_id = e.client_record_id
+      WHERE e.entity_type = 'plant'
+        AND e.server_id IS NOT NULL
+        AND e.row_version IS NULL
+        AND o.operation_type = 'create'
+        AND o.status IN ('pending', 'retry')
+    `
+  );
+
+  return rows.map((row) => ({
+    clientRecordId: row.client_record_id,
+    serverId: row.server_id,
+  }));
+}
+
+/**
+ * Saves the server's current row_version for such a plant and turns its queued
+ * create into an update based on that version, so the change really is applied.
+ */
+export async function rebaseQueuedCreateAsUpdate(
+  clientRecordId: string,
+  rowVersion: number
+): Promise<void> {
+  await initializeOfflineDatabase();
+
+  const db = await getDatabase();
+  const timestamp = nowIso();
+
+  await db.withExclusiveTransactionAsync(async (transaction) => {
+    await transaction.runAsync(
+      `
+        UPDATE local_entities
+        SET row_version = ?,
+            updated_at = ?
+        WHERE entity_type = 'plant'
+          AND client_record_id = ?
+          AND row_version IS NULL
+      `,
+      rowVersion,
+      timestamp,
+      clientRecordId
+    );
+
+    await transaction.runAsync(
+      `
+        UPDATE sync_outbox
+        SET operation_type = 'update',
+            base_version = ?,
+            updated_at = ?
+        WHERE entity_type = 'plant'
+          AND client_record_id = ?
+          AND operation_type = 'create'
+          AND status IN ('pending', 'retry')
+      `,
+      rowVersion,
+      timestamp,
+      clientRecordId
     );
   });
 }

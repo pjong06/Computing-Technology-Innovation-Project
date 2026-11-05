@@ -1,0 +1,8 @@
+   # Changes to these need a review from their owner
+   niah-biotrack/src/store/useRecordStore.ts   @pjong06 @Kaiiiii327
+   niah-biotrack/src/services/                 @pjong06 @Kaiiiii327
+   backend/src/routes/auth.js                  @JayCheng06
+   backend/src/routes/webData.js               @JayCheng06 @GeorgeTanYongHan
+   backend/src/routes/sync.js                  @Kaiiiii327
+   supabase/migrations/                        @JayCheng06
+   frontend/                                   @GeorgeTanYongHan @pjong06

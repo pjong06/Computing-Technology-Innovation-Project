@@ -12,7 +12,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import { useAuthRole } from '../../src/context/AuthRoleContext';
@@ -28,6 +28,15 @@ const FEATURED_COUNT = 4;
 export default function HomeScreen() {
   const router = useRouter();
   const { isVisitor, userName, logout } = useAuthRole();
+  const refreshReviewStatuses = useRecordStore((state) => state.refreshReviewStatuses);
+
+  // Staff: pick up the officer's decisions whenever Home is opened (read-only; does
+  // nothing offline). Sync now also does this after uploading.
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!isVisitor) void refreshReviewStatuses();
+    }, [isVisitor, refreshReviewStatuses])
+  );
 
   // Visitor Home: the first approved species (public list, cached on the phone). Their
   // details are loaded so the photos appear.
