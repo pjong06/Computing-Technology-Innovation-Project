@@ -29,7 +29,6 @@
 <body>
   <div class="app">
 
-    <!-- Shared officer portal navigation -->
     <nav id="menu"></nav>
 
     <main>
@@ -40,6 +39,7 @@
              ===================================================== -->
 
         <div class="iot-page-header">
+
           <div>
             <h1>
               IoT
@@ -84,7 +84,7 @@
 
 
         <!-- =====================================================
-             TOP SUMMARY
+             SUMMARY
              ===================================================== -->
 
         <section
@@ -93,6 +93,7 @@
         >
 
           <article class="card iot-summary-card">
+
             <span class="iot-summary-label">
               Monitored stations
             </span>
@@ -102,12 +103,14 @@
             </strong>
 
             <span class="iot-summary-note">
-              Stations with live telemetry
+              Registered monitoring stations
             </span>
+
           </article>
 
 
           <article class="card iot-summary-card">
+
             <span class="iot-summary-label">
               Online
             </span>
@@ -122,10 +125,12 @@
             <span class="iot-summary-note">
               Seen within 60 seconds
             </span>
+
           </article>
 
 
           <article class="card iot-summary-card">
+
             <span class="iot-summary-label">
               Offline
             </span>
@@ -140,12 +145,14 @@
             <span class="iot-summary-note">
               No recent telemetry
             </span>
+
           </article>
 
 
           <article class="card iot-summary-card">
+
             <span class="iot-summary-label">
-              Active alerts
+              Unresolved alerts
             </span>
 
             <strong
@@ -156,8 +163,9 @@
             </strong>
 
             <span class="iot-summary-note">
-              Requires monitoring
+              Open or acknowledged
             </span>
+
           </article>
 
         </section>
@@ -184,6 +192,7 @@
 
 
             <label class="iot-station-selector">
+
               <span>
                 Station
               </span>
@@ -196,6 +205,7 @@
                   No station data
                 </option>
               </select>
+
             </label>
 
           </div>
@@ -239,7 +249,7 @@
           </div>
 
 
-          <!-- Sensor cards -->
+          <!-- Sensor Cards -->
 
           <div class="iot-sensor-grid">
 
@@ -248,6 +258,7 @@
             <article class="card iot-sensor-card">
 
               <div class="iot-sensor-top">
+
                 <span class="iot-sensor-icon">
                   🌡️
                 </span>
@@ -255,9 +266,11 @@
                 <span class="iot-sensor-name">
                   Temperature
                 </span>
+
               </div>
 
               <div class="iot-sensor-reading">
+
                 <strong id="sensor-temperature">
                   –
                 </strong>
@@ -265,6 +278,7 @@
                 <span>
                   °C
                 </span>
+
               </div>
 
               <p id="temperature-status">
@@ -279,6 +293,7 @@
             <article class="card iot-sensor-card">
 
               <div class="iot-sensor-top">
+
                 <span class="iot-sensor-icon">
                   💧
                 </span>
@@ -286,9 +301,11 @@
                 <span class="iot-sensor-name">
                   Humidity
                 </span>
+
               </div>
 
               <div class="iot-sensor-reading">
+
                 <strong id="sensor-humidity">
                   –
                 </strong>
@@ -296,6 +313,7 @@
                 <span>
                   %
                 </span>
+
               </div>
 
               <p id="humidity-status">
@@ -305,11 +323,12 @@
             </article>
 
 
-            <!-- Soil -->
+            <!-- Soil Moisture -->
 
             <article class="card iot-sensor-card">
 
               <div class="iot-sensor-top">
+
                 <span class="iot-sensor-icon">
                   🌱
                 </span>
@@ -317,9 +336,11 @@
                 <span class="iot-sensor-name">
                   Soil moisture
                 </span>
+
               </div>
 
               <div class="iot-sensor-reading">
+
                 <strong id="sensor-soil">
                   –
                 </strong>
@@ -327,6 +348,7 @@
                 <span>
                   %
                 </span>
+
               </div>
 
               <p id="soil-status">
@@ -341,6 +363,7 @@
             <article class="card iot-sensor-card">
 
               <div class="iot-sensor-top">
+
                 <span class="iot-sensor-icon">
                   🚶
                 </span>
@@ -348,15 +371,18 @@
                 <span class="iot-sensor-name">
                   Motion
                 </span>
+
               </div>
 
               <div class="iot-sensor-reading">
+
                 <strong
                   id="sensor-motion"
                   class="iot-text-reading"
                 >
                   –
                 </strong>
+
               </div>
 
               <p id="motion-status">
@@ -366,11 +392,12 @@
             </article>
 
 
-            <!-- Distance -->
+            <!-- Proximity -->
 
             <article class="card iot-sensor-card">
 
               <div class="iot-sensor-top">
+
                 <span class="iot-sensor-icon">
                   📏
                 </span>
@@ -378,9 +405,11 @@
                 <span class="iot-sensor-name">
                   Proximity
                 </span>
+
               </div>
 
               <div class="iot-sensor-reading">
+
                 <strong id="sensor-distance">
                   –
                 </strong>
@@ -388,6 +417,7 @@
                 <span>
                   cm
                 </span>
+
               </div>
 
               <p id="distance-status">
@@ -402,6 +432,7 @@
             <article class="card iot-sensor-card">
 
               <div class="iot-sensor-top">
+
                 <span class="iot-sensor-icon">
                   🌧️
                 </span>
@@ -409,9 +440,11 @@
                 <span class="iot-sensor-name">
                   Rain intensity
                 </span>
+
               </div>
 
               <div class="iot-sensor-reading">
+
                 <strong id="sensor-rain">
                   –
                 </strong>
@@ -419,6 +452,7 @@
                 <span>
                   %
                 </span>
+
               </div>
 
               <p id="rain-status">
@@ -469,37 +503,14 @@
 
                 <thead>
                   <tr>
-                    <th>
-                      Received
-                    </th>
-
-                    <th>
-                      Temp
-                    </th>
-
-                    <th>
-                      Humidity
-                    </th>
-
-                    <th>
-                      Soil
-                    </th>
-
-                    <th>
-                      Motion
-                    </th>
-
-                    <th>
-                      Distance
-                    </th>
-
-                    <th>
-                      Rain
-                    </th>
-
-                    <th>
-                      Sequence
-                    </th>
+                    <th>Received</th>
+                    <th>Temp</th>
+                    <th>Humidity</th>
+                    <th>Soil</th>
+                    <th>Motion</th>
+                    <th>Distance</th>
+                    <th>Rain</th>
+                    <th>Sequence</th>
                   </tr>
                 </thead>
 
@@ -526,7 +537,7 @@
 
 
         <!-- =====================================================
-             ALERT PANEL
+             PERSISTENT ALERT MANAGEMENT
              ===================================================== -->
 
         <section class="iot-section">
@@ -539,8 +550,9 @@
               </h2>
 
               <p>
-                Automated warnings generated when environmental
-                or security readings cross configured thresholds.
+                Persistent environmental and security alerts.
+                Staff can acknowledge an alert and resolve it
+                after the threat has been investigated.
               </p>
             </div>
 
@@ -555,8 +567,13 @@
                 id="alert-filter"
                 aria-label="Filter alerts by status"
               >
-                <option value="active">
-                  Active
+
+                <option value="open">
+                  Open
+                </option>
+
+                <option value="acknowledged">
+                  Acknowledged
                 </option>
 
                 <option value="resolved">
@@ -566,6 +583,7 @@
                 <option value="all">
                   All
                 </option>
+
               </select>
 
             </label>
@@ -618,7 +636,7 @@
 
 
         <!-- =====================================================
-             SYSTEM NOTE
+             SYSTEM INFO
              ===================================================== -->
 
         <section class="iot-system-note">
@@ -628,10 +646,12 @@
           </strong>
 
           <p>
-            The dashboard refreshes live telemetry and alerts
-            automatically. ESP32 readings are transmitted through
-            MQTT to the Niah BioTrack backend, where readings are
-            validated, stored and evaluated for threats.
+            ESP32 sensor readings are transmitted through MQTT
+            to the Niah BioTrack backend. Live readings are
+            evaluated for threats and stored in the central
+            database. Persistent alerts remain available after
+            backend restarts and can be acknowledged and resolved
+            by active staff.
           </p>
 
         </section>

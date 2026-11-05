@@ -1828,3 +1828,140 @@ table.big .btn {
   }
 
 }
+
+/*IOT ALERT WORKFLOW*/
+
+.iot-alert-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+
+/* ============================================================
+   ALERT ACTION BUTTONS
+   ============================================================ */
+
+.iot-alert-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  margin-top: 14px;
+}
+
+
+/* ============================================================
+   RESOLUTION PANEL
+   ============================================================ */
+
+.iot-resolution-box {
+  margin-top: 16px;
+  padding-top: 14px;
+
+  border-top: 1px solid var(--line);
+}
+
+.iot-resolution-label {
+  display: flex;
+  flex-direction: column;
+
+  gap: 7px;
+
+  color: var(--ink);
+
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.iot-resolution-input {
+  width: 100%;
+  min-height: 82px;
+
+  padding: 10px 12px;
+
+  border: 1px solid var(--line);
+  border-radius: 10px;
+
+  background: var(--card);
+  color: var(--ink);
+
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+
+  resize: vertical;
+
+  outline: none;
+}
+
+.iot-resolution-input::placeholder {
+  color: var(--mute);
+}
+
+.iot-resolution-input:focus {
+  border-color: var(--pri);
+
+  box-shadow:
+    0 0 0 3px rgba(63, 107, 72, 0.12);
+}
+
+.iot-resolution-input:disabled {
+  opacity: 0.65;
+
+  cursor: not-allowed;
+}
+
+
+/* ============================================================
+   ALERT CARD ACTION STATES
+   ============================================================ */
+
+.iot-alert-card button:disabled {
+  opacity: 0.6;
+
+  cursor: not-allowed;
+}
+
+.iot-alert-card .pill {
+  white-space: nowrap;
+}
+
+
+/* ============================================================
+   OPEN ALERT
+   ============================================================ */
+
+.iot-alert-card:has(.pill.e)
+.iot-alert-status-row {
+  color: #a52020;
+}
+
+
+/* ============================================================
+   ACKNOWLEDGED ALERT
+   ============================================================ */
+
+.iot-alert-card:has(.iot-resolution-box) {
+  border-color: #e3cc74;
+}
+
+
+/* ============================================================
+   RESPONSIVE ALERT WORKFLOW
+   ============================================================ */
+
+@media (max-width: 700px) {
+
+  .iot-alert-actions {
+    align-items: stretch;
+
+    flex-direction: column;
+  }
+
+  .iot-alert-actions .btn {
+    width: 100%;
+  }
+
+}

@@ -5,25 +5,28 @@ drawMenu('alerts.html');
  * NIAH BIOTRACK - IOT MONITORING DASHBOARD
  * ============================================================
  *
- * Existing backend endpoints used:
+ * Persistent / database data:
+ *   GET /api/iot/summary
+ *   GET /api/iot/alerts
  *
- * GET /api/iot/summary/live
- * GET /api/iot/latest
- * GET /api/iot/readings
- * GET /api/iot/alerts/live
+ * Live MQTT / backend-memory data:
+ *   GET /api/iot/summary/live
+ *   GET /api/iot/latest
+ *   GET /api/iot/readings
+ *   GET /api/iot/alerts/live
  *
- * All endpoints are protected by:
+ * Alert workflow:
+ *   PATCH /api/iot/alerts/:id/acknowledge
+ *   PATCH /api/iot/alerts/:id/resolve
  *
- * requireAuth
- * requireRole('officer')
- *
- * The officer access token comes from shared.js.
+ * Active staff roles may read the dashboard and manage
+ * the supported alert lifecycle.
  * ============================================================
  */
 
 
 /* ============================================================
-   DOM REFERENCES
+   DOM
    ============================================================ */
 
 const refreshButton =
@@ -39,8 +42,6 @@ const stationFilter =
   document.getElementById('station-filter');
 
 
-/* Summary */
-
 const stationCount =
   document.getElementById('station-count');
 
@@ -54,8 +55,6 @@ const activeAlertCount =
   document.getElementById('active-alert-count');
 
 
-/* Selected station */
-
 const selectedStationId =
   document.getElementById('selected-station-id');
 
@@ -65,8 +64,6 @@ const stationLastSeen =
 const stationSequence =
   document.getElementById('station-sequence');
 
-
-/* Sensors */
 
 const sensorTemperature =
   document.getElementById('sensor-temperature');
@@ -87,8 +84,6 @@ const sensorRain =
   document.getElementById('sensor-rain');
 
 
-/* Sensor status text */
-
 const temperatureStatus =
   document.getElementById('temperature-status');
 
@@ -108,16 +103,12 @@ const rainStatus =
   document.getElementById('rain-status');
 
 
-/* Telemetry */
-
 const telemetryMessage =
   document.getElementById('telemetry-message');
 
 const telemetryBody =
   document.getElementById('telemetry-body');
 
-
-/* Alerts */
 
 const alertFilter =
   document.getElementById('alert-filter');
@@ -139,13 +130,28 @@ const warningCount =
    STATE
    ============================================================ */
 
+const AUTO_REFRESH_MS = 5000;
+
+const ONLINE_WINDOW_MS =
+  60 * 1000;
+
+
 let latestReadings = [];
 
 let recentReadings = [];
 
-let currentAlerts = [];
+/*
+ * Persistent alerts from Supabase.
+ */
+let persistentAlerts = [];
 
-let activeAlerts = [];
+/*
+ * Live alerts produced by iotAlertService.
+ *
+ * These are used for live sensor-card warning states.
+ */
+let liveActiveAlerts = [];
+
 
 let dashboardSummary = {
   total_stations: 0,
@@ -153,11 +159,13 @@ let dashboardSummary = {
   offline_stations: 0,
 };
 
+
 let alertSummary = {
-  active: 0,
+  unresolved: 0,
   critical: 0,
   warning: 0,
 };
+
 
 let selectedStation = '';
 
@@ -167,54 +175,18 @@ let refreshTimer = null;
 
 
 /*
- * Dashboard should update fast enough to satisfy the project
- * requirement for near-real-time monitoring.
+ * Keeps resolution text safe while the 5-second dashboard
+ * refresh is running.
  */
-const AUTO_REFRESH_MS = 5000;
+const resolutionDrafts =
+  new Map();
 
 
 /*
- * Backend currently considers a station online if its latest
- * in-memory reading was received within 60 seconds.
+ * Prevent duplicate alert actions while a request is running.
  */
-const ONLINE_WINDOW_MS = 60 * 1000;
-
-
-/* ============================================================
-   THREAT DISPLAY NAMES
-   ============================================================ */
-
-const threatNames = {
-  high_temperature:
-    'High temperature',
-
-  low_soil_moisture:
-    'Low soil moisture',
-
-  motion_detected:
-    'Motion detected',
-
-  proximity_breach:
-    'Proximity breach',
-
-  heavy_rain:
-    'Heavy rain',
-};
-
-
-const sensorUnits = {
-  temperature_c:
-    '°C',
-
-  soil_moisture_pct:
-    '%',
-
-  distance_cm:
-    ' cm',
-
-  rain_intensity_pct:
-    '%',
-};
+const alertActionsInProgress =
+  new Set();
 
 
 /* ============================================================
@@ -228,15 +200,11 @@ function formatNumber(
   const number =
     Number(value);
 
-  if (
-    !Number.isFinite(number)
-  ) {
+  if (!Number.isFinite(number)) {
     return '–';
   }
 
-  return number.toFixed(
-    digits
-  );
+  return number.toFixed(digits);
 }
 
 
@@ -259,19 +227,14 @@ function formatTime(value) {
   return date.toLocaleString(
     'en-MY',
     {
-      dateStyle:
-        'medium',
-
-      timeStyle:
-        'medium',
+      dateStyle: 'medium',
+      timeStyle: 'medium',
     }
   );
 }
 
 
-function formatShortTime(
-  value
-) {
+function formatShortTime(value) {
   if (!value) {
     return '–';
   }
@@ -290,54 +253,29 @@ function formatShortTime(
   return date.toLocaleTimeString(
     'en-MY',
     {
-      hour:
-        '2-digit',
-
-      minute:
-        '2-digit',
-
-      second:
-        '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
     }
   );
 }
 
 
-function isReadingOnline(
-  reading
-) {
-  if (
-    !reading ||
-    !reading.received_at
-  ) {
-    return false;
-  }
-
-  const time =
-    new Date(
-      reading.received_at
-    ).getTime();
-
-  if (
-    Number.isNaN(time)
-  ) {
-    return false;
+function capitalise(value) {
+  if (!value) {
+    return 'Unknown';
   }
 
   return (
-    Date.now() - time <=
-    ONLINE_WINDOW_MS
+    String(value)
+      .charAt(0)
+      .toUpperCase() +
+    String(value).slice(1)
   );
 }
 
 
-/*
- * Support both live MQTT field names and the persisted
- * Supabase field names.
- */
-function getHumidity(
-  reading
-) {
+function getHumidity(reading) {
   return (
     reading?.humidity_pct ??
     reading?.humidity_percent
@@ -345,9 +283,7 @@ function getHumidity(
 }
 
 
-function getMotion(
-  reading
-) {
+function getMotion(reading) {
   return (
     reading?.motion_detected ??
     reading?.movement_detected
@@ -355,9 +291,7 @@ function getMotion(
 }
 
 
-function getReadingTime(
-  reading
-) {
+function getReadingTime(reading) {
   return (
     reading?.received_at ??
     reading?.recorded_at
@@ -365,8 +299,97 @@ function getReadingTime(
 }
 
 
+function isReadingOnline(reading) {
+  if (
+    !reading ||
+    !getReadingTime(reading)
+  ) {
+    return false;
+  }
+
+  const timestamp =
+    new Date(
+      getReadingTime(reading)
+    ).getTime();
+
+  if (
+    Number.isNaN(timestamp)
+  ) {
+    return false;
+  }
+
+  return (
+    Date.now() - timestamp <=
+    ONLINE_WINDOW_MS
+  );
+}
+
+
+function normalisePersistentStatus(
+  status
+) {
+  /*
+   * Compatibility with any old prototype data.
+   */
+  if (status === 'active') {
+    return 'open';
+  }
+
+  return status || 'open';
+}
+
+
+function isUnresolvedAlert(alert) {
+  const status =
+    normalisePersistentStatus(
+      alert.alert_status
+    );
+
+  return (
+    status === 'open' ||
+    status === 'acknowledged'
+  );
+}
+
+
+function isCriticalSeverity(
+  severity
+) {
+  const value =
+    String(
+      severity || ''
+    ).toLowerCase();
+
+  return (
+    value === 'critical' ||
+    value === 'high'
+  );
+}
+
+
+function createCell(text) {
+  const cell =
+    document.createElement('td');
+
+  cell.textContent =
+    text;
+
+  return cell;
+}
+
+
+function notify(message) {
+  if (
+    typeof showToast ===
+    'function'
+  ) {
+    showToast(message);
+  }
+}
+
+
 /* ============================================================
-   OFFICER AUTHENTICATION
+   AUTH + API
    ============================================================ */
 
 async function getAccessToken() {
@@ -376,7 +399,7 @@ async function getAccessToken() {
     'function'
   ) {
     throw new Error(
-      'Officer authentication is not connected.'
+      'Authentication is not connected.'
     );
   }
 
@@ -386,7 +409,7 @@ async function getAccessToken() {
 
   if (!token) {
     throw new Error(
-      'Sign in as a Conservation Officer to view IoT monitoring.'
+      'Please sign in to access IoT monitoring.'
     );
   }
 
@@ -394,33 +417,61 @@ async function getAccessToken() {
 }
 
 
-/* ============================================================
-   API REQUEST
-   ============================================================ */
-
-async function fetchIoT(
+async function requestIoT(
   path,
   token,
-  signal
+  options = {}
 ) {
+  const headers = {
+    Authorization:
+      `Bearer ${token}`,
+  };
+
+  if (
+    options.body !==
+    undefined
+  ) {
+    headers['Content-Type'] =
+      'application/json';
+  }
+
+
   const response =
     await fetch(
       `/api/iot${path}`,
       {
         method:
+          options.method ||
           'GET',
 
-        headers: {
-          Authorization:
-            `Bearer ${token}`,
-        },
+        headers,
+
+        body:
+          options.body ===
+          undefined
+            ? undefined
+            : JSON.stringify(
+                options.body
+              ),
 
         cache:
           'no-store',
 
-        signal,
+        signal:
+          options.signal,
       }
     );
+
+
+  let body = {};
+
+  try {
+    body =
+      await response.json();
+  } catch {
+    body = {};
+  }
+
 
   if (
     response.status ===
@@ -431,22 +482,26 @@ async function fetchIoT(
     );
   }
 
+
   if (
     response.status ===
     403
   ) {
     throw new Error(
-      'The IoT dashboard is available to Conservation Officers only.'
+      'Your account does not have permission to access this IoT operation.'
     );
   }
+
 
   if (!response.ok) {
     throw new Error(
-      `IoT API request failed (${response.status}).`
+      body.message ||
+      `IoT request failed (${response.status}).`
     );
   }
 
-  return response.json();
+
+  return body;
 }
 
 
@@ -464,9 +519,8 @@ function setDashboardStatus(
     'iot-status-error'
   );
 
-  if (
-    state === 'live'
-  ) {
+
+  if (state === 'live') {
     dashboardStatus.classList.add(
       'iot-status-live'
     );
@@ -482,8 +536,31 @@ function setDashboardStatus(
     );
   }
 
-  dashboardStatus.lastChild.textContent =
-    ` ${text}`;
+
+  /*
+   * Preserve the status dot <span>.
+   */
+  const textNodes =
+    Array.from(
+      dashboardStatus.childNodes
+    ).filter(
+      (node) =>
+        node.nodeType ===
+        Node.TEXT_NODE
+    );
+
+  if (
+    textNodes.length > 0
+  ) {
+    textNodes[
+      textNodes.length - 1
+    ].textContent =
+      ` ${text}`;
+  } else {
+    dashboardStatus.append(
+      ` ${text}`
+    );
+  }
 }
 
 
@@ -491,33 +568,62 @@ function setDashboardStatus(
    SUMMARY
    ============================================================ */
 
+function calculateAlertSummary() {
+  const unresolved =
+    persistentAlerts.filter(
+      isUnresolvedAlert
+    );
+
+
+  const critical =
+    unresolved.filter(
+      (alert) =>
+        isCriticalSeverity(
+          alert.severity
+        )
+    ).length;
+
+
+  const warning =
+    unresolved.length -
+    critical;
+
+
+  alertSummary = {
+    unresolved:
+      unresolved.length,
+
+    critical,
+
+    warning,
+  };
+}
+
+
 function renderSummary() {
   stationCount.textContent =
     dashboardSummary
-      .total_stations ??
-    0;
+      .total_stations ?? 0;
 
   onlineCount.textContent =
     dashboardSummary
-      .online_stations ??
-    0;
+      .online_stations ?? 0;
 
   offlineCount.textContent =
     dashboardSummary
-      .offline_stations ??
-    0;
+      .offline_stations ?? 0;
 
   activeAlertCount.textContent =
-    alertSummary.active ??
-    0;
+    alertSummary
+      .unresolved ?? 0;
 
   criticalCount.textContent =
-    alertSummary.critical ??
-    0;
+    alertSummary
+      .critical ?? 0;
 
   warningCount.textContent =
-    alertSummary.warning ??
-    0;
+    alertSummary
+      .warning ?? 0;
 }
 
 
@@ -530,6 +636,7 @@ function renderStationOptions() {
     selectedStation ||
     stationFilter.value;
 
+
   const stationIds = [
     ...new Set(
       latestReadings
@@ -541,7 +648,9 @@ function renderStationOptions() {
     ),
   ].sort();
 
+
   stationFilter.replaceChildren();
+
 
   if (
     stationIds.length === 0
@@ -565,6 +674,7 @@ function renderStationOptions() {
     return;
   }
 
+
   for (
     const stationId of
     stationIds
@@ -585,6 +695,7 @@ function renderStationOptions() {
     );
   }
 
+
   if (
     previous &&
     stationIds.includes(
@@ -598,20 +709,21 @@ function renderStationOptions() {
       stationIds[0];
   }
 
+
   stationFilter.value =
     selectedStation;
 }
 
 
 /* ============================================================
-   ACTIVE ALERT LOOKUP
+   LIVE SENSOR ALERT HELPERS
    ============================================================ */
 
-function findActiveAlert(
+function findLiveAlert(
   stationId,
   type
 ) {
-  return activeAlerts.find(
+  return liveActiveAlerts.find(
     (alert) =>
       alert.station_id ===
         stationId &&
@@ -621,10 +733,6 @@ function findActiveAlert(
   );
 }
 
-
-/* ============================================================
-   SENSOR CARD STYLING
-   ============================================================ */
 
 function setSensorCardState(
   element,
@@ -639,12 +747,14 @@ function setSensorCardState(
     return;
   }
 
+
   card.classList.remove(
     'iot-sensor-normal',
     'iot-sensor-warning',
     'iot-sensor-critical',
     'iot-sensor-unavailable'
   );
+
 
   if (state) {
     card.classList.add(
@@ -655,7 +765,7 @@ function setSensorCardState(
 
 
 /* ============================================================
-   LIVE SENSOR DISPLAY
+   SENSOR DISPLAY
    ============================================================ */
 
 function clearSensorDisplay() {
@@ -715,23 +825,23 @@ function clearSensorDisplay() {
     sensorDistance,
     sensorRain,
   ].forEach(
-    (element) =>
+    (element) => {
       setSensorCardState(
         element,
         'unavailable'
-      )
+      );
+    }
   );
 }
 
 
 function renderSelectedStation() {
-  if (
-    !selectedStation
-  ) {
+  if (!selectedStation) {
     clearSensorDisplay();
 
     return;
   }
+
 
   const reading =
     latestReadings.find(
@@ -739,6 +849,7 @@ function renderSelectedStation() {
         item.station_id ===
         selectedStation
     );
+
 
   if (!reading) {
     clearSensorDisplay();
@@ -748,7 +859,10 @@ function renderSelectedStation() {
 
 
   selectedStationId.textContent =
-    reading.station_id;
+    isReadingOnline(reading)
+      ? `${reading.station_id} · Online`
+      : `${reading.station_id} · Offline`;
+
 
   stationLastSeen.textContent =
     formatTime(
@@ -756,6 +870,7 @@ function renderSelectedStation() {
         reading
       )
     );
+
 
   stationSequence.textContent =
     Number.isFinite(
@@ -769,11 +884,9 @@ function renderSelectedStation() {
       : '–';
 
 
-  /*
-   * ======================================================
-   * TEMPERATURE
-   * ======================================================
-   */
+  /* --------------------------------------------------------
+     TEMPERATURE
+     -------------------------------------------------------- */
 
   if (
     reading.dht_valid ===
@@ -795,11 +908,13 @@ function renderSelectedStation() {
         reading.temperature_c
       );
 
+
     const alert =
-      findActiveAlert(
+      findLiveAlert(
         selectedStation,
         'high_temperature'
       );
+
 
     if (alert) {
       temperatureStatus.textContent =
@@ -807,8 +922,9 @@ function renderSelectedStation() {
 
       setSensorCardState(
         sensorTemperature,
-        alert.severity ===
-          'critical'
+        isCriticalSeverity(
+          alert.severity
+        )
           ? 'critical'
           : 'warning'
       );
@@ -824,15 +940,12 @@ function renderSelectedStation() {
   }
 
 
-  /*
-   * ======================================================
-   * HUMIDITY
-   *
-   * Current backend does not define a humidity threat rule.
-   * The dashboard therefore reports the real value without
-   * inventing a threshold.
-   * ======================================================
-   */
+  /* --------------------------------------------------------
+     HUMIDITY
+
+     Live humidity is displayed, but the current in-memory
+     threat detector has no humidity threshold.
+     -------------------------------------------------------- */
 
   if (
     reading.dht_valid ===
@@ -866,11 +979,9 @@ function renderSelectedStation() {
   }
 
 
-  /*
-   * ======================================================
-   * SOIL MOISTURE
-   * ======================================================
-   */
+  /* --------------------------------------------------------
+     SOIL MOISTURE
+     -------------------------------------------------------- */
 
   sensorSoil.textContent =
     formatNumber(
@@ -878,11 +989,13 @@ function renderSelectedStation() {
         .soil_moisture_pct
     );
 
+
   const soilAlert =
-    findActiveAlert(
+    findLiveAlert(
       selectedStation,
       'low_soil_moisture'
     );
+
 
   if (soilAlert) {
     soilStatus.textContent =
@@ -890,8 +1003,9 @@ function renderSelectedStation() {
 
     setSensorCardState(
       sensorSoil,
-      soilAlert.severity ===
-        'critical'
+      isCriticalSeverity(
+        soilAlert.severity
+      )
         ? 'critical'
         : 'warning'
     );
@@ -906,16 +1020,13 @@ function renderSelectedStation() {
   }
 
 
-  /*
-   * ======================================================
-   * MOTION
-   * ======================================================
-   */
+  /* --------------------------------------------------------
+     MOTION
+     -------------------------------------------------------- */
 
   const motion =
-    getMotion(
-      reading
-    );
+    getMotion(reading);
+
 
   sensorMotion.textContent =
     motion === true
@@ -924,11 +1035,13 @@ function renderSelectedStation() {
         ? 'Clear'
         : '–';
 
+
   const motionAlert =
-    findActiveAlert(
+    findLiveAlert(
       selectedStation,
       'motion_detected'
     );
+
 
   if (motionAlert) {
     motionStatus.textContent =
@@ -936,8 +1049,9 @@ function renderSelectedStation() {
 
     setSensorCardState(
       sensorMotion,
-      motionAlert.severity ===
-        'critical'
+      isCriticalSeverity(
+        motionAlert.severity
+      )
         ? 'critical'
         : 'warning'
     );
@@ -963,11 +1077,9 @@ function renderSelectedStation() {
   }
 
 
-  /*
-   * ======================================================
-   * DISTANCE / PROXIMITY
-   * ======================================================
-   */
+  /* --------------------------------------------------------
+     PROXIMITY
+     -------------------------------------------------------- */
 
   if (
     reading.distance_valid ===
@@ -989,13 +1101,15 @@ function renderSelectedStation() {
         reading.distance_cm
       );
 
-    const distanceAlert =
-      findActiveAlert(
+
+    const proximityAlert =
+      findLiveAlert(
         selectedStation,
         'proximity_breach'
       );
 
-    if (distanceAlert) {
+
+    if (proximityAlert) {
       distanceStatus.textContent =
         'Object inside protection zone';
 
@@ -1015,11 +1129,9 @@ function renderSelectedStation() {
   }
 
 
-  /*
-   * ======================================================
-   * RAIN
-   * ======================================================
-   */
+  /* --------------------------------------------------------
+     RAIN
+     -------------------------------------------------------- */
 
   sensorRain.textContent =
     formatNumber(
@@ -1027,11 +1139,13 @@ function renderSelectedStation() {
         .rain_intensity_pct
     );
 
+
   const rainAlert =
-    findActiveAlert(
+    findLiveAlert(
       selectedStation,
       'heavy_rain'
     );
+
 
   if (rainAlert) {
     rainStatus.textContent =
@@ -1039,8 +1153,9 @@ function renderSelectedStation() {
 
     setSensorCardState(
       sensorRain,
-      rainAlert.severity ===
-        'critical'
+      isCriticalSeverity(
+        rainAlert.severity
+      )
         ? 'critical'
         : 'warning'
     );
@@ -1053,23 +1168,6 @@ function renderSelectedStation() {
       'normal'
     );
   }
-
-
-  /*
-   * Station state.
-   */
-
-  if (
-    isReadingOnline(
-      reading
-    )
-  ) {
-    selectedStationId.textContent =
-      `${reading.station_id} · Online`;
-  } else {
-    selectedStationId.textContent =
-      `${reading.station_id} · Offline`;
-  }
 }
 
 
@@ -1077,27 +1175,14 @@ function renderSelectedStation() {
    TELEMETRY TABLE
    ============================================================ */
 
-function makeCell(text) {
-  const td =
-    document.createElement(
-      'td'
-    );
-
-  td.textContent =
-    text;
-
-  return td;
-}
-
-
 function renderTelemetry() {
   telemetryBody.replaceChildren();
 
-  if (
-    !selectedStation
-  ) {
+
+  if (!selectedStation) {
     telemetryMessage.textContent =
-      'No monitoring station is currently available.';
+      'No live monitoring station is currently available.';
+
 
     const row =
       document.createElement(
@@ -1105,8 +1190,8 @@ function renderTelemetry() {
       );
 
     const cell =
-      makeCell(
-        'No telemetry available.'
+      createCell(
+        'No live telemetry available.'
       );
 
     cell.colSpan = 8;
@@ -1114,9 +1199,7 @@ function renderTelemetry() {
     cell.className =
       'iot-empty-cell';
 
-    row.appendChild(
-      cell
-    );
+    row.appendChild(cell);
 
     telemetryBody.appendChild(
       row
@@ -1124,6 +1207,7 @@ function renderTelemetry() {
 
     return;
   }
+
 
   const readings =
     recentReadings.filter(
@@ -1132,11 +1216,13 @@ function renderTelemetry() {
         selectedStation
     );
 
+
   if (
     readings.length === 0
   ) {
     telemetryMessage.textContent =
       `No recent telemetry for ${selectedStation}.`;
+
 
     const row =
       document.createElement(
@@ -1144,7 +1230,7 @@ function renderTelemetry() {
       );
 
     const cell =
-      makeCell(
+      createCell(
         'No recent telemetry.'
       );
 
@@ -1153,9 +1239,7 @@ function renderTelemetry() {
     cell.className =
       'iot-empty-cell';
 
-    row.appendChild(
-      cell
-    );
+    row.appendChild(cell);
 
     telemetryBody.appendChild(
       row
@@ -1164,19 +1248,16 @@ function renderTelemetry() {
     return;
   }
 
-  telemetryMessage.textContent =
-    `Showing ${readings.length} recent readings from ${selectedStation}.`;
 
-
-  /*
-   * Limit visual table size.
-   * Backend itself still keeps more recent readings.
-   */
   const visible =
     readings.slice(
       0,
       20
     );
+
+
+  telemetryMessage.textContent =
+    `Showing ${visible.length} recent readings from ${selectedStation}.`;
 
 
   for (
@@ -1190,7 +1271,7 @@ function renderTelemetry() {
 
 
     row.appendChild(
-      makeCell(
+      createCell(
         formatShortTime(
           getReadingTime(
             reading
@@ -1201,7 +1282,7 @@ function renderTelemetry() {
 
 
     row.appendChild(
-      makeCell(
+      createCell(
         reading.dht_valid ===
           false
           ? 'Invalid'
@@ -1213,7 +1294,7 @@ function renderTelemetry() {
 
 
     row.appendChild(
-      makeCell(
+      createCell(
         reading.dht_valid ===
           false
           ? 'Invalid'
@@ -1227,7 +1308,7 @@ function renderTelemetry() {
 
 
     row.appendChild(
-      makeCell(
+      createCell(
         `${formatNumber(
           reading
             .soil_moisture_pct
@@ -1237,12 +1318,11 @@ function renderTelemetry() {
 
 
     const motion =
-      getMotion(
-        reading
-      );
+      getMotion(reading);
+
 
     row.appendChild(
-      makeCell(
+      createCell(
         motion === true
           ? 'Detected'
           : motion === false
@@ -1253,7 +1333,7 @@ function renderTelemetry() {
 
 
     row.appendChild(
-      makeCell(
+      createCell(
         reading.distance_valid ===
           false
           ? 'Invalid'
@@ -1265,7 +1345,7 @@ function renderTelemetry() {
 
 
     row.appendChild(
-      makeCell(
+      createCell(
         `${formatNumber(
           reading
             .rain_intensity_pct
@@ -1275,7 +1355,7 @@ function renderTelemetry() {
 
 
     row.appendChild(
-      makeCell(
+      createCell(
         Number.isFinite(
           Number(
             reading.sequence
@@ -1297,41 +1377,8 @@ function renderTelemetry() {
 
 
 /* ============================================================
-   ALERT DISPLAY
+   PERSISTENT ALERT DISPLAY
    ============================================================ */
-
-function formatAlertReading(
-  alert
-) {
-  if (
-    alert.sensor ===
-    'motion_detected'
-  ) {
-    return 'PIR motion detected';
-  }
-
-  const unit =
-    sensorUnits[
-      alert.sensor
-    ] || '';
-
-  const value =
-    `${alert.value}${unit}`;
-
-  const threshold =
-    alert.threshold ===
-    null ||
-    alert.threshold ===
-    undefined
-      ? 'Not applicable'
-      : `${alert.threshold}${unit}`;
-
-  return (
-    `Reading: ${value} · ` +
-    `Threshold: ${threshold}`
-  );
-}
-
 
 function addAlertDetail(
   parent,
@@ -1346,6 +1393,7 @@ function addAlertDetail(
   row.className =
     'iot-alert-detail';
 
+
   const title =
     document.createElement(
       'span'
@@ -1353,6 +1401,7 @@ function addAlertDetail(
 
   title.textContent =
     `${label}: `;
+
 
   const content =
     document.createElement(
@@ -1362,23 +1411,183 @@ function addAlertDetail(
   content.textContent =
     value;
 
-  row.appendChild(
-    title
-  );
 
-  row.appendChild(
-    content
-  );
+  row.appendChild(title);
 
-  parent.appendChild(
-    row
-  );
+  row.appendChild(content);
+
+  parent.appendChild(row);
 }
 
 
-function renderAlertCard(
+function createAlertStatusPill(
+  status
+) {
+  const pill =
+    document.createElement(
+      'span'
+    );
+
+  pill.className =
+    'pill';
+
+
+  if (status === 'open') {
+    pill.classList.add('e');
+
+    pill.textContent =
+      'Open';
+  } else if (
+    status === 'acknowledged'
+  ) {
+    pill.classList.add('w');
+
+    pill.textContent =
+      'Acknowledged';
+  } else {
+    pill.textContent =
+      'Resolved';
+  }
+
+
+  return pill;
+}
+
+
+function createAlertActionButton(
+  label,
+  className,
+  action
+) {
+  const button =
+    document.createElement(
+      'button'
+    );
+
+  button.type =
+    'button';
+
+  button.className =
+    className;
+
+  button.textContent =
+    label;
+
+  button.addEventListener(
+    'click',
+    action
+  );
+
+  return button;
+}
+
+
+async function performAlertAction(
+  alert,
+  action,
+  notes = ''
+) {
+  if (
+    alertActionsInProgress.has(
+      alert.id
+    )
+  ) {
+    return;
+  }
+
+
+  alertActionsInProgress.add(
+    alert.id
+  );
+
+  renderAlerts();
+
+
+  try {
+    const token =
+      await getAccessToken();
+
+
+    const options = {
+      method: 'PATCH',
+      body:
+        action === 'resolve'
+          ? {
+              resolution_notes:
+                notes.trim(),
+            }
+          : {},
+    };
+
+
+    await requestIoT(
+      `/alerts/${encodeURIComponent(
+        alert.id
+      )}/${action}`,
+      token,
+      options
+    );
+
+
+    if (
+      action === 'resolve'
+    ) {
+      resolutionDrafts.delete(
+        alert.id
+      );
+
+      notify(
+        'Alert resolved successfully.'
+      );
+    } else {
+      notify(
+        'Alert acknowledged successfully.'
+      );
+    }
+
+
+    await loadDashboard({
+      silent: true,
+    });
+
+  } catch (error) {
+    console.error(
+      'IoT alert action failed:',
+      error
+    );
+
+
+    notify(
+      error instanceof Error
+        ? error.message
+        : 'Alert action failed.'
+    );
+
+  } finally {
+    alertActionsInProgress.delete(
+      alert.id
+    );
+
+    renderAlerts();
+  }
+}
+
+
+function renderPersistentAlertCard(
   alert
 ) {
+  const status =
+    normalisePersistentStatus(
+      alert.alert_status
+    );
+
+
+  const busy =
+    alertActionsInProgress.has(
+      alert.id
+    );
+
+
   const card =
     document.createElement(
       'article'
@@ -1387,9 +1596,11 @@ function renderAlertCard(
   card.className =
     'card iot-alert-card';
 
+
   if (
-    alert.severity ===
-    'critical'
+    isCriticalSeverity(
+      alert.severity
+    )
   ) {
     card.classList.add(
       'iot-alert-critical'
@@ -1400,6 +1611,8 @@ function renderAlertCard(
     );
   }
 
+
+  /* Heading */
 
   const heading =
     document.createElement(
@@ -1422,11 +1635,8 @@ function renderAlertCard(
     );
 
   title.textContent =
-    threatNames[
-      alert.type
-    ] ||
-    alert.type ||
-    'IoT threat';
+    alert.alert_message ||
+    'IoT threat alert';
 
 
   const station =
@@ -1438,8 +1648,9 @@ function renderAlertCard(
     'iot-alert-station';
 
   station.textContent =
-    alert.station_id ||
-    'Unknown station';
+    alert.station_id
+      ? `Station ${alert.station_id}`
+      : 'Unknown station';
 
 
   titleArea.appendChild(
@@ -1457,16 +1668,16 @@ function renderAlertCard(
     );
 
   severity.className =
-    alert.severity ===
-      'critical'
+    isCriticalSeverity(
+      alert.severity
+    )
       ? 'pill e'
       : 'pill w';
 
   severity.textContent =
-    alert.severity ===
-      'critical'
-      ? 'Critical'
-      : 'Warning';
+    capitalise(
+      alert.severity
+    );
 
 
   heading.appendChild(
@@ -1482,73 +1693,65 @@ function renderAlertCard(
   );
 
 
-  const message =
+  /* Status */
+
+  const statusRow =
     document.createElement(
-      'p'
+      'div'
     );
 
-  message.className =
-    'iot-alert-description';
+  statusRow.className =
+    'iot-alert-status-row';
 
-  message.textContent =
-    alert.message ||
-    'Threat detected.';
+  statusRow.appendChild(
+    createAlertStatusPill(
+      status
+    )
+  );
 
   card.appendChild(
-    message
+    statusRow
   );
 
 
   addAlertDetail(
     card,
-    'Status',
-    alert.status ===
-      'active'
-      ? 'Active'
-      : 'Resolved'
-  );
-
-
-  addAlertDetail(
-    card,
-    'Sensor',
-    formatAlertReading(
-      alert
-    )
-  );
-
-
-  addAlertDetail(
-    card,
-    'First detected',
+    'Triggered',
     formatTime(
-      alert.first_detected_at
-    )
-  );
-
-
-  addAlertDetail(
-    card,
-    'Last detected',
-    formatTime(
-      alert.last_detected_at
-    )
-  );
-
-
-  addAlertDetail(
-    card,
-    'Occurrences',
-    String(
-      alert.occurrence_count ??
-      1
+      alert.triggered_at
     )
   );
 
 
   if (
-    alert.status ===
-    'resolved'
+    alert.reading_id
+  ) {
+    addAlertDetail(
+      card,
+      'Reading ID',
+      alert.reading_id
+    );
+  }
+
+
+  if (
+    status ===
+      'acknowledged' ||
+    status ===
+      'resolved'
+  ) {
+    addAlertDetail(
+      card,
+      'Acknowledged',
+      formatTime(
+        alert.acknowledged_at
+      )
+    );
+  }
+
+
+  if (
+    status === 'resolved'
   ) {
     addAlertDetail(
       card,
@@ -1557,6 +1760,179 @@ function renderAlertCard(
         alert.resolved_at
       )
     );
+
+
+    if (
+      alert.resolution_notes
+    ) {
+      addAlertDetail(
+        card,
+        'Resolution',
+        alert.resolution_notes
+      );
+    }
+  }
+
+
+  /* --------------------------------------------------------
+     OPEN -> ACKNOWLEDGE
+     -------------------------------------------------------- */
+
+  if (
+    status === 'open'
+  ) {
+    const actions =
+      document.createElement(
+        'div'
+      );
+
+    actions.className =
+      'iot-alert-actions';
+
+
+    const acknowledgeButton =
+      createAlertActionButton(
+        busy
+          ? 'Working...'
+          : 'Acknowledge',
+        'btn small',
+        () => {
+          void performAlertAction(
+            alert,
+            'acknowledge'
+          );
+        }
+      );
+
+
+    acknowledgeButton.disabled =
+      busy;
+
+
+    actions.appendChild(
+      acknowledgeButton
+    );
+
+    card.appendChild(
+      actions
+    );
+  }
+
+
+  /* --------------------------------------------------------
+     ACKNOWLEDGED -> RESOLVE
+     -------------------------------------------------------- */
+
+  if (
+    status ===
+    'acknowledged'
+  ) {
+    const resolveBox =
+      document.createElement(
+        'div'
+      );
+
+    resolveBox.className =
+      'iot-resolution-box';
+
+
+    const label =
+      document.createElement(
+        'label'
+      );
+
+    label.className =
+      'iot-resolution-label';
+
+    label.textContent =
+      'Resolution notes';
+
+
+    const textarea =
+      document.createElement(
+        'textarea'
+      );
+
+    textarea.className =
+      'iot-resolution-input';
+
+    textarea.rows = 3;
+
+    textarea.maxLength =
+      2000;
+
+    textarea.placeholder =
+      'Optional notes about how the threat was investigated or resolved.';
+
+    textarea.value =
+      resolutionDrafts.get(
+        alert.id
+      ) || '';
+
+
+    textarea.disabled =
+      busy;
+
+
+    textarea.addEventListener(
+      'input',
+      () => {
+        resolutionDrafts.set(
+          alert.id,
+          textarea.value
+        );
+      }
+    );
+
+
+    const actions =
+      document.createElement(
+        'div'
+      );
+
+    actions.className =
+      'iot-alert-actions';
+
+
+    const resolveButton =
+      createAlertActionButton(
+        busy
+          ? 'Working...'
+          : 'Resolve alert',
+        'btn small',
+        () => {
+          void performAlertAction(
+            alert,
+            'resolve',
+            textarea.value
+          );
+        }
+      );
+
+
+    resolveButton.disabled =
+      busy;
+
+
+    label.appendChild(
+      textarea
+    );
+
+    resolveBox.appendChild(
+      label
+    );
+
+    actions.appendChild(
+      resolveButton
+    );
+
+    resolveBox.appendChild(
+      actions
+    );
+
+    card.appendChild(
+      resolveBox
+    );
   }
 
 
@@ -1564,31 +1940,49 @@ function renderAlertCard(
 }
 
 
+function getFilteredPersistentAlerts() {
+  const filter =
+    alertFilter.value;
+
+
+  if (filter === 'all') {
+    return persistentAlerts;
+  }
+
+
+  return persistentAlerts.filter(
+    (alert) =>
+      normalisePersistentStatus(
+        alert.alert_status
+      ) === filter
+  );
+}
+
+
 function renderAlerts() {
   alertList.replaceChildren();
 
-  criticalCount.textContent =
-    alertSummary.critical ??
-    0;
+  calculateAlertSummary();
 
-  warningCount.textContent =
-    alertSummary.warning ??
-    0;
+  renderSummary();
 
-  activeAlertCount.textContent =
-    alertSummary.active ??
-    0;
+
+  const alerts =
+    getFilteredPersistentAlerts();
 
 
   if (
-    currentAlerts.length ===
-    0
+    alerts.length === 0
   ) {
+    const filter =
+      alertFilter.value;
+
+
     alertMessage.textContent =
-      alertFilter.value ===
-      'active'
-        ? 'No active threats detected.'
-        : `No ${alertFilter.value} alerts to display.`;
+      filter === 'open'
+        ? 'No open alerts require attention.'
+        : `No ${filter} alerts to display.`;
+
 
     const empty =
       document.createElement(
@@ -1598,15 +1992,15 @@ function renderAlerts() {
     empty.className =
       'card iot-empty-alert';
 
+
     const title =
       document.createElement(
         'strong'
       );
 
     title.textContent =
-      alertFilter.value ===
-      'active'
-        ? 'Monitoring normal'
+      filter === 'open'
+        ? 'No open threats'
         : 'No alerts';
 
 
@@ -1616,9 +2010,8 @@ function renderAlerts() {
       );
 
     text.textContent =
-      alertFilter.value ===
-      'active'
-        ? 'No active sensor threat currently requires officer attention.'
+      filter === 'open'
+        ? 'No persistent IoT alert currently requires acknowledgement.'
         : 'There are no alerts in this category.';
 
 
@@ -1639,15 +2032,20 @@ function renderAlerts() {
 
 
   alertMessage.textContent =
-    `Showing ${currentAlerts.length} ${alertFilter.value === 'all' ? '' : `${alertFilter.value} `}alerts.`;
+    `Showing ${alerts.length} ${
+      alertFilter.value ===
+      'all'
+        ? ''
+        : `${alertFilter.value} `
+    }alerts.`;
 
 
   for (
     const alert of
-    currentAlerts
+    alerts
   ) {
     alertList.appendChild(
-      renderAlertCard(
+      renderPersistentAlertCard(
         alert
       )
     );
@@ -1656,10 +2054,12 @@ function renderAlerts() {
 
 
 /* ============================================================
-   COMPLETE DASHBOARD RENDER
+   COMPLETE RENDER
    ============================================================ */
 
 function renderDashboard() {
+  calculateAlertSummary();
+
   renderSummary();
 
   renderStationOptions();
@@ -1679,27 +2079,30 @@ function renderDashboard() {
 function resetDashboard(
   message
 ) {
+  latestReadings = [];
+
+  recentReadings = [];
+
+  persistentAlerts = [];
+
+  liveActiveAlerts = [];
+
+  selectedStation = '';
+
+
   dashboardSummary = {
     total_stations: 0,
     online_stations: 0,
     offline_stations: 0,
   };
 
+
   alertSummary = {
-    active: 0,
+    unresolved: 0,
     critical: 0,
     warning: 0,
   };
 
-  latestReadings = [];
-
-  recentReadings = [];
-
-  currentAlerts = [];
-
-  activeAlerts = [];
-
-  selectedStation = '';
 
   renderSummary();
 
@@ -1707,7 +2110,9 @@ function resetDashboard(
 
   clearSensorDisplay();
 
+
   telemetryBody.replaceChildren();
+
 
   const telemetryRow =
     document.createElement(
@@ -1715,12 +2120,9 @@ function resetDashboard(
     );
 
   const telemetryCell =
-    makeCell(
-      message
-    );
+    createCell(message);
 
-  telemetryCell.colSpan =
-    8;
+  telemetryCell.colSpan = 8;
 
   telemetryCell.className =
     'iot-empty-cell';
@@ -1733,13 +2135,16 @@ function resetDashboard(
     telemetryRow
   );
 
+
   telemetryMessage.textContent =
     message;
+
 
   alertList.replaceChildren();
 
   alertMessage.textContent =
     message;
+
 
   const alertCard =
     document.createElement(
@@ -1765,13 +2170,17 @@ function resetDashboard(
 async function loadDashboard({
   silent = false,
 } = {}) {
+
   /*
-   * Cancel old request so repeated auto-refresh does not
-   * allow old data to overwrite newer data.
+   * Do not interrupt alert actions.
+   *
+   * Dashboard refresh requests may cancel older dashboard
+   * refresh requests, but never PATCH alert operations.
    */
   if (currentRequest) {
     currentRequest.abort();
   }
+
 
   const controller =
     new AbortController();
@@ -1796,76 +2205,167 @@ async function loadDashboard({
       await getAccessToken();
 
 
-    const alertStatus =
-      encodeURIComponent(
-        alertFilter.value
-      );
-
-
     /*
-     * Fetch dashboard data concurrently.
+     * Persistent and live data are loaded together.
      */
     const [
-      summaryResult,
+      registeredSummaryResult,
+      liveSummaryResult,
       latestResult,
       readingsResult,
-      alertsResult,
-      activeAlertResult,
+      persistentAlertsResult,
+      liveAlertsResult,
     ] =
       await Promise.all([
-        fetchIoT(
-          '/summary/live',
-          token,
-          controller.signal
-        ),
-
-        fetchIoT(
-          '/latest',
-          token,
-          controller.signal
-        ),
-
-        fetchIoT(
-          '/readings?limit=100',
-          token,
-          controller.signal
-        ),
-
-        fetchIoT(
-          `/alerts/live?status=${alertStatus}&limit=100`,
-          token,
-          controller.signal
-        ),
 
         /*
-         * Always fetch active alerts separately so sensor
-         * cards continue showing the current threat state
-         * even when officer selects "Resolved".
+         * Registered stations in Supabase.
          */
-        fetchIoT(
+        requestIoT(
+          '/summary',
+          token,
+          {
+            signal:
+              controller.signal,
+          }
+        ),
+
+
+        /*
+         * Current MQTT station activity.
+         */
+        requestIoT(
+          '/summary/live',
+          token,
+          {
+            signal:
+              controller.signal,
+          }
+        ),
+
+
+        /*
+         * Latest live reading per station.
+         */
+        requestIoT(
+          '/latest',
+          token,
+          {
+            signal:
+              controller.signal,
+          }
+        ),
+
+
+        /*
+         * Recent live MQTT telemetry.
+         */
+        requestIoT(
+          '/readings?limit=100',
+          token,
+          {
+            signal:
+              controller.signal,
+          }
+        ),
+
+
+        /*
+         * Persistent Supabase alert history.
+         */
+        requestIoT(
+          '/alerts',
+          token,
+          {
+            signal:
+              controller.signal,
+          }
+        ),
+
+
+        /*
+         * Current live threat state for sensor cards.
+         */
+        requestIoT(
           '/alerts/live?status=active&limit=100',
           token,
-          controller.signal
+          {
+            signal:
+              controller.signal,
+          }
         ),
       ]);
 
 
     if (
-      controller.signal
-        .aborted
+      controller.signal.aborted
     ) {
       return;
     }
 
 
-    dashboardSummary =
-      summaryResult.data ||
-      {
-        total_stations: 0,
-        online_stations: 0,
-        offline_stations: 0,
-      };
+    /* --------------------------------------------------------
+       STATION SUMMARY
+       -------------------------------------------------------- */
 
+    const registeredSummary =
+      registeredSummaryResult.data ||
+      {};
+
+
+    const liveSummary =
+      liveSummaryResult.data ||
+      {};
+
+
+    const totalStations =
+      Math.max(
+        0,
+        Number(
+          registeredSummary
+            .total_stations
+        ) || 0
+      );
+
+
+    /*
+     * A station counts as online when the live backend
+     * considers it active within the 60-second window.
+     *
+     * Do not allow Online to exceed registered stations.
+     */
+    const onlineStations =
+      Math.min(
+        totalStations,
+        Math.max(
+          0,
+          Number(
+            liveSummary
+              .online_stations
+          ) || 0
+        )
+      );
+
+
+    dashboardSummary = {
+      total_stations:
+        totalStations,
+
+      online_stations:
+        onlineStations,
+
+      offline_stations:
+        Math.max(
+          0,
+          totalStations -
+            onlineStations
+        ),
+    };
+
+
+    /* --------------------------------------------------------
+       LIVE TELEMETRY
+       -------------------------------------------------------- */
 
     latestReadings =
       Array.isArray(
@@ -1883,30 +2383,42 @@ async function loadDashboard({
         : [];
 
 
-    currentAlerts =
+    /* --------------------------------------------------------
+       PERSISTENT ALERTS
+       -------------------------------------------------------- */
+
+    persistentAlerts =
       Array.isArray(
-        alertsResult.data
+        persistentAlertsResult.data
       )
-        ? alertsResult.data
+        ? persistentAlertsResult.data
         : [];
 
 
-    activeAlerts =
+    /*
+     * Newest first.
+     */
+    persistentAlerts.sort(
+      (a, b) =>
+        new Date(
+          b.triggered_at || 0
+        ).getTime() -
+        new Date(
+          a.triggered_at || 0
+        ).getTime()
+    );
+
+
+    /* --------------------------------------------------------
+       LIVE ALERTS
+       -------------------------------------------------------- */
+
+    liveActiveAlerts =
       Array.isArray(
-        activeAlertResult.data
+        liveAlertsResult.data
       )
-        ? activeAlertResult.data
+        ? liveAlertsResult.data
         : [];
-
-
-    alertSummary =
-      alertsResult.summary ||
-      activeAlertResult.summary ||
-      {
-        active: 0,
-        critical: 0,
-        warning: 0,
-      };
 
 
     renderDashboard();
@@ -1914,6 +2426,7 @@ async function loadDashboard({
 
     const now =
       new Date();
+
 
     lastUpdated.textContent =
       `Last updated ${now.toLocaleTimeString(
@@ -1923,13 +2436,13 @@ async function loadDashboard({
 
     setDashboardStatus(
       'live',
-      'Live monitoring'
+      'Backend connected'
     );
 
   } catch (error) {
+
     if (
-      controller.signal
-        .aborted
+      controller.signal.aborted
     ) {
       return;
     }
@@ -1942,8 +2455,7 @@ async function loadDashboard({
 
 
     const message =
-      error instanceof
-        Error
+      error instanceof Error
         ? error.message
         : 'Unable to load IoT monitoring data.';
 
@@ -1963,12 +2475,12 @@ async function loadDashboard({
       'Unable to update dashboard';
 
   } finally {
+
     if (
       currentRequest ===
       controller
     ) {
-      currentRequest =
-        null;
+      currentRequest = null;
 
       refreshButton.disabled =
         false;
@@ -2005,7 +2517,7 @@ stationFilter.addEventListener(
 alertFilter.addEventListener(
   'change',
   () => {
-    void loadDashboard();
+    renderAlerts();
   }
 );
 
@@ -2021,30 +2533,31 @@ function startAutoRefresh() {
     );
   }
 
+
   refreshTimer =
     setInterval(
       () => {
+
         /*
-         * Do not repeatedly call backend when tab is hidden.
+         * Do not poll while the tab is hidden.
          */
         if (
-          !document.hidden
+          document.hidden
         ) {
-          void loadDashboard({
-            silent: true,
-          });
+          return;
         }
-      },
 
+
+        void loadDashboard({
+          silent: true,
+        });
+
+      },
       AUTO_REFRESH_MS
     );
 }
 
 
-/*
- * When user comes back to the browser tab,
- * immediately refresh instead of waiting for next interval.
- */
 document.addEventListener(
   'visibilitychange',
   () => {
