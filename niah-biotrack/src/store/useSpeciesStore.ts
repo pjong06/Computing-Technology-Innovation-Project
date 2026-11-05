@@ -1,282 +1,588 @@
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
+import {
+  persist,
+  createJSONStorage,
+} from 'zustand/middleware';
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
 import {
   fetchSpecies,
   fetchSpeciesDetail,
   type Species,
   type SpeciesDetail,
 } from '../api/species';
-import { cachePrimarySpeciesImage } from '../services/speciesImageCache';
+
+import {
+  cachePrimarySpeciesImage,
+} from '../services/speciesImageCache';
+
+
+interface LoadSpeciesOptions {
+  /*
+   * Silent refresh is used by the automatic background
+   * catalogue refresh so the UI does not show a loading
+   * spinner every 30 seconds.
+   */
+  silent?: boolean;
+}
+
+
+interface SpeciesUpdateNotice {
+  count: number;
+
+  names: string[];
+}
+
 
 interface SpeciesState {
   species: Species[];
-  lastUpdated: string | null;
+
+  lastUpdated:
+    | string
+    | null;
+
+  /*
+   * loading:
+   * visible refresh state used by the UI.
+   *
+   * refreshing:
+   * prevents duplicate network refreshes, including silent
+   * automatic refreshes.
+   */
   loading: boolean;
-  error: string | null;
 
-  detailsById: Record<string, SpeciesDetail>;
-  detailUpdatedAt: Record<string, string>;
-  detailLoadingById: Record<string, boolean>;
-  detailErrorById: Record<string, string | null>;
-  imageUrisBySpeciesId: Record<string, string>;
+  refreshing: boolean;
 
-  offlinePackDownloading: boolean;
-  offlinePackProcessed: number;
-  offlinePackTotal: number;
-  offlinePackDetailFailures: number;
-  offlinePackPhotoFailures: number;
-  offlinePackLastCompletedAt: string | null;
-  offlinePackError: string | null;
+  error:
+    | string
+    | null;
 
-  loadSpecies: () => Promise<void>;
+
+  detailsById:
+    Record<
+      string,
+      SpeciesDetail
+    >;
+
+  detailUpdatedAt:
+    Record<
+      string,
+      string
+    >;
+
+  detailLoadingById:
+    Record<
+      string,
+      boolean
+    >;
+
+  detailErrorById:
+    Record<
+      string,
+      string | null
+    >;
+
+  imageUrisBySpeciesId:
+    Record<
+      string,
+      string
+    >;
+
+
+  /*
+   * Temporary notification state.
+   *
+   * This is NOT persisted.
+   * RootLayout shows a Toast and then clears it.
+   */
+  speciesUpdateNotice:
+    | SpeciesUpdateNotice
+    | null;
+
+
+  loadSpecies: (
+    options?: LoadSpeciesOptions
+  ) => Promise<void>;
+
+
   loadSpeciesDetail: (
     id: string,
     forceRefresh?: boolean
-  ) => Promise<SpeciesDetail | null>;
-  downloadOfflineReference: () => Promise<void>;
+  ) => Promise<
+    SpeciesDetail | null
+  >;
+
+
+  clearSpeciesUpdateNotice:
+    () => void;
 }
 
-const errorMessage = (error: unknown, fallback: string) =>
-  error instanceof Error ? error.message : fallback;
 
-export const useSpeciesStore = create<SpeciesState>()(
-  persist(
-    (set, get) => ({
-      species: [],
-      lastUpdated: null,
-      loading: false,
-      error: null,
+const errorMessage = (
+  error: unknown,
+  fallback: string
+) =>
+  error instanceof Error
+    ? error.message
+    : fallback;
 
-      detailsById: {},
-      detailUpdatedAt: {},
-      detailLoadingById: {},
-      detailErrorById: {},
-      imageUrisBySpeciesId: {},
 
-      offlinePackDownloading: false,
-      offlinePackProcessed: 0,
-      offlinePackTotal: 0,
-      offlinePackDetailFailures: 0,
-      offlinePackPhotoFailures: 0,
-      offlinePackLastCompletedAt: null,
-      offlinePackError: null,
+export const useSpeciesStore =
+  create<SpeciesState>()(
+    persist(
+      (
+        set,
+        get
+      ) => ({
+        species: [],
 
-      loadSpecies: async () => {
-        set({ loading: true, error: null });
+        lastUpdated: null,
 
-        try {
-          const list = await fetchSpecies();
-          set({
-            species: list,
-            lastUpdated: new Date().toISOString(),
-            loading: false,
-            error: null,
-          });
-        } catch (error) {
-          // Never erase the previously downloaded catalogue on a network failure.
-          set({
-            loading: false,
-            error: errorMessage(error, 'Could not load species'),
-          });
-        }
-      },
+        loading: false,
 
-      loadSpeciesDetail: async (id, forceRefresh = false) => {
-        const cachedDetail = get().detailsById[id] ?? null;
-        const cachedAt = get().detailUpdatedAt[id];
-        const cacheAge = cachedAt
-          ? Date.now() - new Date(cachedAt).getTime()
-          : Number.POSITIVE_INFINITY;
+        refreshing: false,
 
-        // Avoid a network request on every open. The user can still press Refresh.
-        if (cachedDetail && !forceRefresh && cacheAge < 24 * 60 * 60 * 1000) {
-          return cachedDetail;
-        }
+        error: null,
 
-        // A cached detail appears immediately in the UI while this refresh runs.
-        set((state) => ({
-          detailLoadingById: {
-            ...state.detailLoadingById,
-            [id]: true,
-          },
-          detailErrorById: {
-            ...state.detailErrorById,
-            [id]: null,
-          },
-        }));
 
-        try {
-          const detail = await fetchSpeciesDetail(id);
-          let imageUri = get().imageUrisBySpeciesId[id];
+        detailsById: {},
 
-          try {
-            imageUri = (await cachePrimarySpeciesImage(detail)) ?? imageUri;
-          } catch {
-            // Text reference data remains usable when a photo cannot be cached.
-          }
+        detailUpdatedAt: {},
 
-          set((state) => ({
-            detailsById: {
-              ...state.detailsById,
-              [id]: detail,
-            },
-            detailUpdatedAt: {
-              ...state.detailUpdatedAt,
-              [id]: new Date().toISOString(),
-            },
-            detailLoadingById: {
-              ...state.detailLoadingById,
-              [id]: false,
-            },
-            detailErrorById: {
-              ...state.detailErrorById,
-              [id]: null,
-            },
-            imageUrisBySpeciesId: imageUri
-              ? {
-                  ...state.imageUrisBySpeciesId,
-                  [id]: imageUri,
-                }
-              : state.imageUrisBySpeciesId,
-          }));
+        detailLoadingById: {},
 
-          return detail;
-        } catch (error) {
-          set((state) => ({
-            detailLoadingById: {
-              ...state.detailLoadingById,
-              [id]: false,
-            },
-            detailErrorById: {
-              ...state.detailErrorById,
-              [id]: errorMessage(error, 'Could not load species detail'),
-            },
-          }));
+        detailErrorById: {},
 
-          return cachedDetail;
-        }
-      },
+        imageUrisBySpeciesId: {},
 
-      downloadOfflineReference: async () => {
-        if (get().offlinePackDownloading) return;
 
-        set({
-          offlinePackDownloading: true,
-          offlinePackProcessed: 0,
-          offlinePackTotal: 0,
-          offlinePackDetailFailures: 0,
-          offlinePackPhotoFailures: 0,
-          offlinePackError: null,
-        });
+        speciesUpdateNotice:
+          null,
 
-        let catalogue = get().species;
-        let catalogueWarning: string | null = null;
 
-        try {
-          catalogue = await fetchSpecies();
-          set({
-            species: catalogue,
-            lastUpdated: new Date().toISOString(),
-            error: null,
-          });
-        } catch (error) {
-          catalogueWarning = errorMessage(
-            error,
-            'Could not refresh the species catalogue'
-          );
+        /* =====================================================
+           LOAD / REFRESH SPECIES CATALOGUE
+           ===================================================== */
 
-          // A previously downloaded list can still be used as the work queue.
-          if (catalogue.length === 0) {
-            set({
-              offlinePackDownloading: false,
-              offlinePackError: catalogueWarning,
-            });
-            return;
-          }
-        }
+        loadSpecies:
+          async (
+            options = {}
+          ) => {
 
-        set({ offlinePackTotal: catalogue.length });
-
-        let detailFailures = 0;
-        let photoFailures = 0;
-
-        for (let index = 0; index < catalogue.length; index += 1) {
-          const item = catalogue[index];
-
-          try {
-            // Refresh each detail while online. Each completed item is persisted
-            // immediately, so an interrupted run does not erase earlier work.
-            const detail = await fetchSpeciesDetail(item.id);
-            let imageUri = get().imageUrisBySpeciesId[item.id];
-
-            if (detail.species_media.length > 0) {
-              try {
-                imageUri =
-                  (await cachePrimarySpeciesImage(detail)) ?? imageUri;
-              } catch {
-                photoFailures += 1;
-              }
+            /*
+             * Prevent two automatic/manual refreshes running
+             * at the same time.
+             */
+            if (
+              get().refreshing
+            ) {
+              return;
             }
 
-            set((state) => ({
-              detailsById: {
-                ...state.detailsById,
-                [item.id]: detail,
-              },
-              detailUpdatedAt: {
-                ...state.detailUpdatedAt,
-                [item.id]: new Date().toISOString(),
-              },
-              detailErrorById: {
-                ...state.detailErrorById,
-                [item.id]: null,
-              },
-              imageUrisBySpeciesId: imageUri
-                ? {
-                    ...state.imageUrisBySpeciesId,
-                    [item.id]: imageUri,
-                  }
-                : state.imageUrisBySpeciesId,
-            }));
-          } catch (error) {
-            detailFailures += 1;
-            set((state) => ({
-              detailErrorById: {
-                ...state.detailErrorById,
-                [item.id]: errorMessage(
-                  error,
-                  'Could not download species detail'
+
+            const previousSpecies =
+              get().species;
+
+
+            /*
+             * Do not notify the user when the app downloads
+             * the catalogue for the very first time.
+             *
+             * Only notify when there was already a catalogue
+             * and genuinely new approved species appear.
+             */
+            const hadExistingCatalogue =
+              previousSpecies.length >
+                0 ||
+              get().lastUpdated !==
+                null;
+
+
+            const previousIds =
+              new Set(
+                previousSpecies.map(
+                  (item) =>
+                    item.id
+                )
+              );
+
+
+            set({
+              refreshing: true,
+
+              error: null,
+
+              ...(
+                options.silent
+                  ? {}
+                  : {
+                      loading:
+                        true,
+                    }
+              ),
+            });
+
+
+            try {
+              const list =
+                await fetchSpecies();
+
+
+              const addedSpecies =
+                hadExistingCatalogue
+                  ? list.filter(
+                      (item) =>
+                        !previousIds.has(
+                          item.id
+                        )
+                    )
+                  : [];
+
+
+              set({
+                species:
+                  list,
+
+                lastUpdated:
+                  new Date()
+                    .toISOString(),
+
+                loading:
+                  false,
+
+                refreshing:
+                  false,
+
+                error:
+                  null,
+
+                ...(
+                  addedSpecies.length >
+                  0
+                    ? {
+                        speciesUpdateNotice:
+                          {
+                            count:
+                              addedSpecies.length,
+
+                            names:
+                              addedSpecies
+                                .map(
+                                  (
+                                    item
+                                  ) =>
+                                    item
+                                      .scientific_name
+                                )
+                                .slice(
+                                  0,
+                                  3
+                                ),
+                          },
+                      }
+                    : {}
                 ),
-              },
-            }));
-          }
+              });
 
-          set({
-            offlinePackProcessed: index + 1,
-            offlinePackDetailFailures: detailFailures,
-            offlinePackPhotoFailures: photoFailures,
-          });
-        }
 
-        set({
-          offlinePackDownloading: false,
-          offlinePackLastCompletedAt: new Date().toISOString(),
-          offlinePackError: catalogueWarning,
-        });
-      },
-    }),
-    {
-      name: 'niah-species-cache',
-      storage: createJSONStorage(() => AsyncStorage),
-      partialize: (state) => ({
-        species: state.species,
-        lastUpdated: state.lastUpdated,
-        detailsById: state.detailsById,
-        detailUpdatedAt: state.detailUpdatedAt,
-        imageUrisBySpeciesId: state.imageUrisBySpeciesId,
-        offlinePackLastCompletedAt: state.offlinePackLastCompletedAt,
+              /*
+               * Automatically maintain the offline reference.
+               *
+               * loadSpeciesDetail() already avoids downloading
+               * details again when the cached copy is less than
+               * 24 hours old.
+               *
+               * This replaces the old manual
+               * "Download for offline use" button.
+               */
+              for (
+                const item of list
+              ) {
+                void get()
+                  .loadSpeciesDetail(
+                    item.id
+                  );
+              }
+
+            } catch (error) {
+
+              /*
+               * IMPORTANT:
+               *
+               * Never erase the previously cached catalogue
+               * when the network/backend is unavailable.
+               */
+              set({
+                loading:
+                  false,
+
+                refreshing:
+                  false,
+
+                error:
+                  errorMessage(
+                    error,
+                    'Could not load species'
+                  ),
+              });
+            }
+          },
+
+
+        /* =====================================================
+           LOAD SPECIES DETAIL
+           ===================================================== */
+
+        loadSpeciesDetail:
+          async (
+            id,
+            forceRefresh =
+              false
+          ) => {
+
+            const cachedDetail =
+              get()
+                .detailsById[
+                id
+              ] ?? null;
+
+
+            const cachedAt =
+              get()
+                .detailUpdatedAt[
+                id
+              ];
+
+
+            const cacheAge =
+              cachedAt
+                ? Date.now() -
+                  new Date(
+                    cachedAt
+                  ).getTime()
+                : Number
+                    .POSITIVE_INFINITY;
+
+
+            /*
+             * Cached details remain valid for 24 hours.
+             *
+             * This avoids downloading the same species
+             * information every 30 seconds.
+             */
+            if (
+              cachedDetail &&
+              !forceRefresh &&
+              cacheAge <
+                24 *
+                  60 *
+                  60 *
+                  1000
+            ) {
+              return cachedDetail;
+            }
+
+
+            set(
+              (
+                state
+              ) => ({
+                detailLoadingById:
+                  {
+                    ...state
+                      .detailLoadingById,
+
+                    [id]:
+                      true,
+                  },
+
+                detailErrorById:
+                  {
+                    ...state
+                      .detailErrorById,
+
+                    [id]:
+                      null,
+                  },
+              })
+            );
+
+
+            try {
+              const detail =
+                await fetchSpeciesDetail(
+                  id
+                );
+
+
+              let imageUri =
+                get()
+                  .imageUrisBySpeciesId[
+                  id
+                ];
+
+
+              try {
+                imageUri =
+                  (
+                    await cachePrimarySpeciesImage(
+                      detail
+                    )
+                  ) ??
+                  imageUri;
+              } catch {
+                /*
+                 * Text reference remains usable if a
+                 * species image cannot be cached.
+                 */
+              }
+
+
+              set(
+                (
+                  state
+                ) => ({
+                  detailsById:
+                    {
+                      ...state
+                        .detailsById,
+
+                      [id]:
+                        detail,
+                    },
+
+                  detailUpdatedAt:
+                    {
+                      ...state
+                        .detailUpdatedAt,
+
+                      [id]:
+                        new Date()
+                          .toISOString(),
+                    },
+
+                  detailLoadingById:
+                    {
+                      ...state
+                        .detailLoadingById,
+
+                      [id]:
+                        false,
+                    },
+
+                  detailErrorById:
+                    {
+                      ...state
+                        .detailErrorById,
+
+                      [id]:
+                        null,
+                    },
+
+                  imageUrisBySpeciesId:
+                    imageUri
+                      ? {
+                          ...state
+                            .imageUrisBySpeciesId,
+
+                          [id]:
+                            imageUri,
+                        }
+                      : state
+                          .imageUrisBySpeciesId,
+                })
+              );
+
+
+              return detail;
+
+            } catch (error) {
+
+              set(
+                (
+                  state
+                ) => ({
+                  detailLoadingById:
+                    {
+                      ...state
+                        .detailLoadingById,
+
+                      [id]:
+                        false,
+                    },
+
+                  detailErrorById:
+                    {
+                      ...state
+                        .detailErrorById,
+
+                      [id]:
+                        errorMessage(
+                          error,
+                          'Could not load species detail'
+                        ),
+                    },
+                })
+              );
+
+
+              /*
+               * If online refresh fails, continue using
+               * the last cached detail.
+               */
+              return cachedDetail;
+            }
+          },
+
+
+        /* =====================================================
+           NOTIFICATION
+           ===================================================== */
+
+        clearSpeciesUpdateNotice:
+          () => {
+            set({
+              speciesUpdateNotice:
+                null,
+            });
+          },
       }),
-    }
-  )
-);
+      {
+        name:
+          'niah-species-cache',
+
+        storage:
+          createJSONStorage(
+            () =>
+              AsyncStorage
+          ),
+
+        /*
+         * Only real offline-reference data is persisted.
+         *
+         * Loading flags and notification state must not
+         * survive an app restart.
+         */
+        partialize:
+          (
+            state
+          ) => ({
+            species:
+              state.species,
+
+            lastUpdated:
+              state.lastUpdated,
+
+            detailsById:
+              state.detailsById,
+
+            detailUpdatedAt:
+              state.detailUpdatedAt,
+
+            imageUrisBySpeciesId:
+              state.imageUrisBySpeciesId,
+          }),
+      }
+    )
+  );
