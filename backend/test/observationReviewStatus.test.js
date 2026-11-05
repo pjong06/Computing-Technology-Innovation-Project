@@ -4,7 +4,7 @@
 // own observations.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const express = require('express');
+const { mockAuth, callRoute } = require('./helpers/routeTestKit');
 
 const BOTANIST = '11111111-1111-4111-8111-111111111111';
 const OBS_A = '22222222-2222-4222-8222-222222222222';
@@ -13,24 +13,7 @@ const OBS_B = '33333333-3333-4333-8333-333333333333';
 let db;
 let role = 'botanist';
 
-const authPath = require.resolve('../src/middleware/auth');
-require.cache[authPath] = {
-  id: authPath,
-  filename: authPath,
-  loaded: true,
-  exports: {
-    requireAuth(req, res, next) {
-      req.user = { id: BOTANIST };
-      req.profile = { role, account_status: 'active' };
-      req.supabase = db;
-      next();
-    },
-    requireRole: (...roles) => (req, res, next) => {
-      if (!roles.includes(req.profile.role)) return res.status(403).json({ message: 'Insufficient permissions' });
-      next();
-    },
-  },
-};
+mockAuth(() => ({ userId: BOTANIST, role, db }));
 
 const router = require('../src/routes/observations');
 
@@ -53,19 +36,7 @@ function fakeDb(tables) {
   };
 }
 
-async function get(query) {
-  const app = express();
-  app.use('/api/observations', router);
-  const server = await new Promise(resolve => {
-    const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
-  });
-  try {
-    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/observations/review-status${query}`);
-    return { status: response.status, body: await response.json() };
-  } finally {
-    await new Promise(resolve => server.close(resolve));
-  }
-}
+const get = query => callRoute('/api/observations', router, { path: `/review-status${query}` });
 
 test('returns status and the latest rejection reason for own observations', async () => {
   role = 'botanist';

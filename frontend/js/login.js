@@ -82,6 +82,8 @@ async function doLogin() {
 // Pressing Enter in the password box also logs in.
 document.getElementById('login-password').onkeydown = function (event) {
   if (event.key === 'Enter') {
-    doLogin();
+    doLogin().catch(function (error) {
+      showAuthError(error.message);
+    });
   }
 };

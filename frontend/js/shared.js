@@ -503,6 +503,108 @@ function whenText(d) {
     hour + ':' + twoDigits(d.getMinutes()) + ' ' + ampm;
 }
 
+// ---- Shared by the approval queue and the rejected list ----
+
+// Returns the observation with this id from the list, or null if there is none.
+function findObservation(list, id) {
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].id === id) {
+      return list[i];
+    }
+  }
+  return null;
+}
+
+// The name to show: the plant's scientific name, or a plain fallback.
+function observationName(observation) {
+  if (observation.plant && observation.plant.scientific_name) {
+    return observation.plant.scientific_name;
+  }
+  return 'Species not recorded';
+}
+
+// "2 Nov 2026, 11:00 AM" for an ISO date, or '' when there is none.
+function visitTime(iso) {
+  if (!iso) {
+    return '';
+  }
+  return whenText(new Date(iso));
+}
+
+// Adds a bold title with a line of text under it to the card.
+function addInfo(parent, title, text) {
+  const paragraph = document.createElement('p');
+  const bold = document.createElement('b');
+  bold.textContent = title;
+  paragraph.appendChild(bold);
+  paragraph.appendChild(document.createElement('br'));
+  paragraph.appendChild(document.createTextNode(text));
+  parent.appendChild(paragraph);
+}
+
+// Makes one small card for an observation list: picture, scientific name, who recorded it
+// and when. selected = highlight it. onSelect runs when the card is clicked.
+function makeObservationListCard(observation, selected, picture, onSelect) {
+  const card = document.createElement('div');
+  card.className = 'q';
+  if (selected) {
+    card.classList.add('on');
+  }
+  card.onclick = onSelect;
+
+  const bold = document.createElement('b');
+  const name = document.createElement('i');
+  name.className = 'sci';
+  name.textContent = observationName(observation);
+  bold.appendChild(name);
+
+  const small = document.createElement('span');
+  small.className = 'muted';
+  small.textContent = (observation.observer_name || 'Botanist') + ' · ' + visitTime(observation.observed_at);
+
+  const text = document.createElement('div');
+  text.appendChild(bold);
+  text.appendChild(small);
+
+  const row = document.createElement('div');
+  row.className = 'sp';
+  row.appendChild(makeThumb(picture, observationName(observation), 'md'));
+  row.appendChild(text);
+  card.appendChild(row);
+  return card;
+}
+
+// Starts the big detail card for an observation: its scientific name and plant tag.
+function makeObservationDetailCard(observation) {
+  const card = document.createElement('div');
+  card.className = 'card detail';
+
+  const title = document.createElement('h3');
+  title.style.marginTop = '0';
+  const name = document.createElement('i');
+  name.className = 'sci';
+  name.textContent = observationName(observation);
+  title.appendChild(name);
+  card.appendChild(title);
+
+  const plant = observation.plant || {};
+  const record = document.createElement('p');
+  record.className = 'muted';
+  record.textContent = plant.tag_code ? 'Tag ' + plant.tag_code : 'No tag attached';
+  card.appendChild(record);
+  return card;
+}
+
+// Adds the plant's common name (if any), its location and who recorded the visit, and when.
+function addPlantAndRecorder(card, observation) {
+  const plant = observation.plant || {};
+  if (plant.common_name) {
+    addInfo(card, 'Common name', plant.common_name);
+  }
+  addInfo(card, 'Location', plant.location_description || 'Not recorded');
+  addInfo(card, 'Recorded by', (observation.observer_name || 'Botanist') + ', ' + visitTime(observation.observed_at));
+}
+
 // Checks if two texts are the same, ignoring capital letters and spaces at the ends.
 function sameText(a, b) {
   return String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
@@ -847,7 +949,9 @@ function drawMenu(activeFile) {
   const out = document.createElement('button');
   out.className = 'btn ghost small';
   out.textContent = 'Log out';
-  out.onclick = logout;
+  out.onclick = function () {
+    logout().catch(showUnexpectedError);
+  };
   who.appendChild(out);
   nav.appendChild(who);
 }
@@ -858,6 +962,13 @@ function hideToast() {
 }
 
 // Shows a small pop-up message for a few seconds.
+// Shows an error that a background task did not handle itself, so a failure is never
+// silent. Used as .catch(showUnexpectedError) where a promise is started but not awaited.
+function showUnexpectedError(error) {
+  const detail = error && error.message ? error.message : String(error);
+  showToast('Something went wrong: ' + detail);
+}
+
 function showToast(message) {
   const toast = document.getElementById('toast');
   toast.textContent = message;

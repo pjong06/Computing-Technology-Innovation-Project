@@ -243,4 +243,4 @@ function deleteUser(index) {
 }
 
 drawUsers();
-loadProfileStatuses().then(drawUsers);
+loadProfileStatuses().then(drawUsers).catch(showUnexpectedError);

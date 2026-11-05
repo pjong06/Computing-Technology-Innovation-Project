@@ -6,88 +6,24 @@ process.env.PUBLIC_PLANT_BASE_URL = 'https://plants.example.test/p/';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const express = require('express');
+const { mockAuth, callRoute, fakePlantsDb } = require('./helpers/routeTestKit');
 
 const BOTANIST = '11111111-1111-4111-8111-111111111111';
 const PLANT = '22222222-2222-4222-8222-222222222222';
 
 let db;
 
-const authPath = require.resolve('../src/middleware/auth');
-require.cache[authPath] = {
-  id: authPath,
-  filename: authPath,
-  loaded: true,
-  exports: {
-    requireAuth(req, res, next) {
-      req.user = { id: BOTANIST };
-      req.profile = { role: 'botanist', account_status: 'active' };
-      req.supabase = db;
-      next();
-    },
-    requireRole: (...roles) => (req, res, next) => {
-      if (!roles.includes(req.profile.role)) return res.sendStatus(403);
-      next();
-    },
-  },
-};
+mockAuth(() => ({ userId: BOTANIST, role: 'botanist', db }));
 
 const plantRouter = require('../src/routes/plants');
 
 // plant: the stored row. update: what the tag update returns.
 function fakeDb({ plant, update = { data: { row_version: 8 }, error: null } }) {
-  const calls = [];
-  return {
-    calls,
-    from(table) {
-      assert.equal(table, 'plants');
-      return {
-        select() {
-          return {
-            eq() { return this; },
-            async maybeSingle() { return { data: plant, error: null }; },
-          };
-        },
-        update(changes) {
-          calls.push(['update', changes]);
-          return {
-            eq() { return this; },
-            select() { return this; },
-            async maybeSingle() { return update; },
-          };
-        },
-      };
-    },
-    async rpc(name) {
-      calls.push(['rpc', name]);
-      return { data: 'NIAH-PLT-00077', error: null };
-    },
-  };
+  return fakePlantsDb({ row: plant, update, rpcResult: 'NIAH-PLT-00077' });
 }
 
-async function attach() {
-  const app = express();
-  app.use(express.json());
-  app.use('/api/plants', (req, res, next) => {
-    req.user = { id: BOTANIST };
-    req.profile = { role: 'botanist', account_status: 'active' };
-    req.supabase = db;
-    next();
-  }, plantRouter);
-
-  const server = await new Promise(resolve => {
-    const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
-  });
-  try {
-    const response = await fetch(
-      `http://127.0.0.1:${server.address().port}/api/plants/${PLANT}/attach-tag`,
-      { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }
-    );
-    return { status: response.status, body: await response.json() };
-  } finally {
-    await new Promise(resolve => server.close(resolve));
-  }
-}
+const attach = () =>
+  callRoute('/api/plants', plantRouter, { method: 'POST', path: `/${PLANT}/attach-tag`, body: {} });
 
 test('a new server tag comes back with the raised row_version', async () => {
   db = fakeDb({ plant: { id: PLANT, registered_by: BOTANIST, qr_code_value: null, row_version: 7 } });

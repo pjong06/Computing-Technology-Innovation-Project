@@ -11,97 +11,19 @@ let selectedId = null;
 let photosById = {};   // short-lived photo links for each observation, once loaded
 let busy = false;      // a decision is being saved
 
-// Returns the observation with this id from the list, or null if there is none.
-function findObservation(list, id) {
-  for (let i = 0; i < list.length; i++) {
-    if (list[i].id === id) {
-      return list[i];
-    }
-  }
-  return null;
-}
-
-// The name to show: the plant's scientific name, or a plain fallback.
-function observationName(observation) {
-  if (observation.plant && observation.plant.scientific_name) {
-    return observation.plant.scientific_name;
-  }
-  return 'Species not recorded';
-}
-
-// "2 Nov 2026, 11:00 AM" for an ISO date, or '' when there is none.
-function visitTime(iso) {
-  if (!iso) {
-    return '';
-  }
-  return whenText(new Date(iso));
-}
-
-// Adds a bold title with a line of text under it to the card.
-function addInfo(parent, title, text) {
-  const paragraph = document.createElement('p');
-  const bold = document.createElement('b');
-  bold.textContent = title;
-  paragraph.appendChild(bold);
-  paragraph.appendChild(document.createElement('br'));
-  paragraph.appendChild(document.createTextNode(text));
-  parent.appendChild(paragraph);
-}
-
-// Makes one small card for the list on the left.
+// Makes one small card for the list on the left, with the first photo once it is loaded.
 function makeListCard(observation) {
-  const card = document.createElement('div');
-  card.className = 'q';
-  if (observation.id === selectedId) {
-    card.classList.add('on');
-  }
-  card.onclick = function () {
-    selectedId = observation.id;
-    drawQueue();
-  };
-
-  const bold = document.createElement('b');
-  const name = document.createElement('i');
-  name.className = 'sci';
-  name.textContent = observationName(observation);
-  bold.appendChild(name);
-
-  const small = document.createElement('span');
-  small.className = 'muted';
-  small.textContent = (observation.observer_name || 'Botanist') + ' · ' + visitTime(observation.observed_at);
-
-  const text = document.createElement('div');
-  text.appendChild(bold);
-  text.appendChild(small);
-
-  const row = document.createElement('div');
-  row.className = 'sp';
   const photos = photosById[observation.id];
   const firstPhoto = photos && photos.length > 0 && photos[0].url ? photos[0].url : PICTURE_BLANK;
-  row.appendChild(makeThumb(firstPhoto, observationName(observation), 'md'));
-  row.appendChild(text);
-  card.appendChild(row);
-  return card;
+  return makeObservationListCard(observation, observation.id === selectedId, firstPhoto, function () {
+    selectedId = observation.id;
+    drawQueue();
+  });
 }
 
 // Makes the big card on the right with the photos, the details and the buttons.
 function makeDetailCard(observation) {
-  const card = document.createElement('div');
-  card.className = 'card detail';
-
-  const title = document.createElement('h3');
-  title.style.marginTop = '0';
-  const name = document.createElement('i');
-  name.className = 'sci';
-  name.textContent = observationName(observation);
-  title.appendChild(name);
-  card.appendChild(title);
-
-  const plant = observation.plant || {};
-  const record = document.createElement('p');
-  record.className = 'muted';
-  record.textContent = plant.tag_code ? 'Tag ' + plant.tag_code : 'No tag attached';
-  card.appendChild(record);
+  const card = makeObservationDetailCard(observation);
 
   // Photos: loaded when the observation is opened (the links last one minute).
   const photos = photosById[observation.id];
@@ -133,11 +55,7 @@ function makeDetailCard(observation) {
     }
   }
 
-  if (plant.common_name) {
-    addInfo(card, 'Common name', plant.common_name);
-  }
-  addInfo(card, 'Location', plant.location_description || 'Not recorded');
-  addInfo(card, 'Recorded by', (observation.observer_name || 'Botanist') + ', ' + visitTime(observation.observed_at));
+  addPlantAndRecorder(card, observation);
   if (observation.health_status) {
     addInfo(card, 'Health', observation.health_status);
   }
@@ -161,7 +79,7 @@ function makeDetailCard(observation) {
   approveButton.textContent = 'Approve';
   approveButton.disabled = busy;
   approveButton.onclick = function () {
-    reviewObservation(observation.id, 'approved');
+    reviewObservation(observation.id, 'approved').catch(showUnexpectedError);
   };
 
   const rejectButton = document.createElement('button');
@@ -169,7 +87,7 @@ function makeDetailCard(observation) {
   rejectButton.textContent = 'Reject';
   rejectButton.disabled = busy;
   rejectButton.onclick = function () {
-    reviewObservation(observation.id, 'rejected');
+    reviewObservation(observation.id, 'rejected').catch(showUnexpectedError);
   };
 
   const buttons = document.createElement('div');
@@ -204,7 +122,7 @@ function drawQueue() {
     selected = pending[0];
     selectedId = selected.id;
   }
-  loadPhotos(selected.id);
+  loadPhotos(selected.id).catch(showUnexpectedError);
 
   const listBox = document.getElementById('queue-list');
   listBox.innerHTML = '';
@@ -296,4 +214,4 @@ async function loadQueue() {
   drawQueue();
 }
 
-loadQueue();
+loadQueue().catch(showUnexpectedError);
