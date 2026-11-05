@@ -9,46 +9,513 @@
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-<div class="app">
-  <nav id="menu"></nav>
+  <div class="app">
 
-  <main>
-    <section class="page on">
-      <h1>IoT <span>alerts</span></h1>
-      <p class="lead">
-        Monitor sensor threats across Niah stations. Alerts resolve automatically
-        when a valid reading returns to normal.
-      </p>
+    <nav id="menu"></nav>
 
-      <div class="stats" aria-label="Active alert summary">
-        <div class="card"><b id="active-count">–</b>Active alerts</div>
-        <div class="card"><b id="critical-count">–</b>Critical</div>
-        <div class="card"><b id="warning-count">–</b>Warnings</div>
-      </div>
+    <main>
+      <section class="page on iot-dashboard">
 
-      <div class="bar">
-        <select id="alert-filter" aria-label="Filter alerts by status">
-          <option value="active">Active</option>
-          <option value="resolved">Resolved</option>
-          <option value="all">All</option>
-        </select>
-        <button id="refresh-alerts" class="btn" type="button">Refresh alerts</button>
-      </div>
+        <!-- =====================================================
+             PAGE HEADER
+             ===================================================== -->
 
-      <p id="alert-message" class="muted" role="status" aria-live="polite"></p>
-      <div id="alert-list" class="alert-list"></div>
+        <div class="iot-page-header">
 
-      <p class="muted">
-        Sprint 1 prototype: alert history is held in backend memory and resets
-        when the server restarts.
-      </p>
-    </section>
-  </main>
-</div>
+          <div>
+            <h1>
+              IoT
+              <span>Monitoring Dashboard</span>
+            </h1>
 
-<div id="toast" role="status"></div>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="js/shared.js"></script>
-<script src="js/alerts.js"></script>
+            <p class="lead">
+              Live environmental monitoring and threat detection
+              for protected plant monitoring stations in Niah
+              National Park.
+            </p>
+          </div>
+
+          <div class="iot-header-actions">
+
+            <div
+              id="dashboard-status"
+              class="iot-live-status"
+              aria-live="polite"
+            >
+              <span class="iot-live-dot"></span>
+              Connecting
+            </div>
+
+            <button
+              id="refresh-dashboard"
+              class="btn"
+              type="button"
+            >
+              Refresh
+            </button>
+
+          </div>
+        </div>
+
+        <p
+          id="last-updated"
+          class="iot-last-updated"
+        >
+          Waiting for telemetry...
+        </p>
+
+
+        <!-- =====================================================
+             SUMMARY
+             ===================================================== -->
+
+        <section
+          class="iot-summary-grid"
+          aria-label="IoT monitoring summary"
+        >
+
+          <article class="card iot-summary-card">
+
+            <span class="iot-summary-label">
+              Monitored stations
+            </span>
+
+            <strong id="station-count">
+              –
+            </strong>
+
+            <span class="iot-summary-note">
+              Registered monitoring stations
+            </span>
+
+          </article>
+
+
+          <article class="card iot-summary-card">
+
+            <span class="iot-summary-label">
+              Online
+            </span>
+
+            <strong
+              id="online-count"
+              class="iot-summary-good"
+            >
+              –
+            </strong>
+
+            <span class="iot-summary-note">
+              Seen within 60 seconds
+            </span>
+
+          </article>
+
+
+          <article class="card iot-summary-card">
+
+            <span class="iot-summary-label">
+              Offline
+            </span>
+
+            <strong
+              id="offline-count"
+              class="iot-summary-warning"
+            >
+              –
+            </strong>
+
+            <span class="iot-summary-note">
+              No recent telemetry
+            </span>
+
+          </article>
+
+
+          <article class="card iot-summary-card">
+
+            <span class="iot-summary-label">
+              Unresolved alerts
+            </span>
+
+            <strong
+              id="active-alert-count"
+              class="iot-summary-danger"
+            >
+              –
+            </strong>
+
+            <span class="iot-summary-note">
+              Open or acknowledged
+            </span>
+
+          </article>
+
+        </section>
+
+
+        <!-- =====================================================
+             LIVE SENSOR MONITORING
+             ===================================================== -->
+
+        <section class="iot-section">
+
+          <div class="iot-section-heading">
+
+            <div>
+              <h2>
+                Live sensor readings
+              </h2>
+
+              <p>
+                Latest environmental telemetry received from
+                the selected ESP32 monitoring station.
+              </p>
+            </div>
+
+
+            <label class="iot-station-selector">
+
+              <span>
+                Station
+              </span>
+
+              <select
+                id="station-filter"
+                aria-label="Select monitoring station"
+              >
+                <option value="">
+                  No station data
+                </option>
+              </select>
+
+            </label>
+
+          </div>
+
+
+          <div
+            id="station-information"
+            class="iot-station-information"
+          >
+
+            <div>
+              <span class="iot-information-label">
+                Station ID
+              </span>
+
+              <strong id="selected-station-id">
+                –
+              </strong>
+            </div>
+
+            <div>
+              <span class="iot-information-label">
+                Last telemetry
+              </span>
+
+              <strong id="station-last-seen">
+                –
+              </strong>
+            </div>
+
+            <div>
+              <span class="iot-information-label">
+                Sequence
+              </span>
+
+              <strong id="station-sequence">
+                –
+              </strong>
+            </div>
+
+          </div>
+
+
+          <!-- Sensor Cards -->
+
+          <div class="iot-sensor-grid">
+
+          <!-- Temperature -->
+
+          <article class="card iot-sensor-card">
+            <div class="iot-sensor-top">
+              <span class="iot-sensor-icon">🌡️</span>
+              <span class="iot-sensor-name">Temperature</span>
+            </div>
+
+            <div class="iot-sensor-reading">
+              <strong id="sensor-temperature">–</strong>
+              <span>°C</span>
+            </div>
+
+            <p id="temperature-status">
+              Waiting for reading
+            </p>
+          </article>
+
+
+          <!-- Humidity -->
+
+          <article class="card iot-sensor-card">
+            <div class="iot-sensor-top">
+              <span class="iot-sensor-icon">💧</span>
+              <span class="iot-sensor-name">Humidity</span>
+            </div>
+
+            <div class="iot-sensor-reading">
+              <strong id="sensor-humidity">–</strong>
+              <span>%</span>
+            </div>
+
+            <p id="humidity-status">
+              Waiting for reading
+            </p>
+          </article>
+
+
+          <!-- Soil Moisture -->
+
+          <article class="card iot-sensor-card">
+            <div class="iot-sensor-top">
+              <span class="iot-sensor-icon">🌱</span>
+              <span class="iot-sensor-name">Soil moisture</span>
+            </div>
+
+            <div class="iot-sensor-reading">
+              <strong id="sensor-soil">–</strong>
+              <span>%</span>
+            </div>
+
+            <p id="soil-status">
+              Waiting for reading
+            </p>
+          </article>
+
+
+          <!-- Rain -->
+
+          <article class="card iot-sensor-card">
+            <div class="iot-sensor-top">
+              <span class="iot-sensor-icon">🌧️</span>
+              <span class="iot-sensor-name">Rain intensity</span>
+            </div>
+
+            <div class="iot-sensor-reading">
+              <strong id="sensor-rain">–</strong>
+              <span>%</span>
+            </div>
+
+            <p id="rain-status">
+              Waiting for reading
+            </p>
+          </article>
+
+        </div>
+              </section>
+
+
+        <!-- =====================================================
+             RECENT TELEMETRY
+             ===================================================== -->
+
+        <section class="iot-section">
+
+          <div class="iot-section-heading">
+
+            <div>
+              <h2>
+                Recent telemetry
+              </h2>
+
+              <p>
+                Latest readings received from the selected
+                monitoring station.
+              </p>
+            </div>
+
+          </div>
+
+
+          <p
+            id="telemetry-message"
+            class="muted"
+            role="status"
+          ></p>
+
+
+          <div class="card iot-table-card">
+
+            <div class="iot-table-wrap">
+
+              <table class="iot-telemetry-table">
+
+                <thead>
+                  <tr>
+                    <th>Received</th>
+                    <th>Temp</th>
+                    <th>Humidity</th>
+                    <th>Soil</th>
+                    <th>Motion</th>
+                    <th>Distance</th>
+                    <th>Rain</th>
+                    <th>Sequence</th>
+                  </tr>
+                </thead>
+
+                <tbody id="telemetry-body">
+
+                  <tr>
+                    <td
+                      colspan="8"
+                      class="iot-empty-cell"
+                    >
+                      Waiting for telemetry...
+                    </td>
+                  </tr>
+
+                </tbody>
+
+              </table>
+
+            </div>
+
+          </div>
+
+        </section>
+
+
+        <!-- =====================================================
+             PERSISTENT ALERT MANAGEMENT
+             ===================================================== -->
+
+        <section class="iot-section">
+
+          <div class="iot-section-heading">
+
+            <div>
+              <h2>
+                Threat alerts
+              </h2>
+
+              <p>
+                Persistent environmental and security alerts.
+                Staff can acknowledge an alert and resolve it
+                after the threat has been investigated.
+              </p>
+            </div>
+
+
+            <label class="iot-alert-filter">
+
+              <span>
+                Status
+              </span>
+
+              <select id="alert-filter">
+              <option value="all" selected>
+                All
+              </option>
+
+              <option value="open">
+                Open
+              </option>
+
+              <option value="acknowledged">
+                Acknowledged
+              </option>
+
+              <option value="resolved">
+                Resolved
+              </option>
+            </select>
+
+            </label>
+
+          </div>
+
+
+          <div
+            class="iot-alert-summary"
+            aria-label="Alert summary"
+          >
+
+            <div>
+              <span>
+                Critical
+              </span>
+
+              <strong id="critical-count">
+                –
+              </strong>
+            </div>
+
+            <div>
+              <span>
+                Warning
+              </span>
+
+              <strong id="warning-count">
+                –
+              </strong>
+            </div>
+
+          </div>
+
+
+          <p
+            id="alert-message"
+            class="muted"
+            role="status"
+            aria-live="polite"
+          ></p>
+
+
+          <div
+            id="alert-list"
+            class="iot-alert-list"
+          ></div>
+
+        </section>
+
+
+        <!-- =====================================================
+             SYSTEM INFO
+             ===================================================== -->
+
+        <section class="iot-system-note">
+
+          <strong>
+            Monitoring behaviour
+          </strong>
+
+          <p>
+            ESP32 sensor readings are transmitted through MQTT
+            to the Niah BioTrack backend. Live readings are
+            evaluated for threats and stored in the central
+            database. Persistent alerts remain available after
+            backend restarts and can be acknowledged and resolved
+            by active staff.
+          </p>
+
+        </section>
+
+      </section>
+    </main>
+
+  </div>
+
+
+  <div
+    id="toast"
+    role="status"
+  ></div>
+
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
+
+  <script src="js/shared.js"></script>
+
+  <script src="js/alerts.js"></script>
+
 </body>
 </html>
