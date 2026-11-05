@@ -69,7 +69,6 @@ import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
 
 const DONE_BAR_ID = 'new-record-done';
 
-// Maps photos in chronological order for backwards compatibility with storage types
 const DEFAULT_PHOTO_TYPES: PlantPhotoType[] = [
   'whole_plant',
   'leaf',
@@ -164,12 +163,10 @@ export default function NewRecordScreen() {
 
   const isEditing = Boolean(existingRecord);
 
-  // 1. Unified 1-4 photo state
   const [photos, setPhotos] = useState<ImagePicker.ImagePickerAsset[]>(() =>
     initialPhotos(existingRecord)
   );
 
-  // 2. Split measurements into Height and Diameter
   const [height, setHeight] = useState(existingRecord?.height ?? '');
   const [diameter, setDiameter] = useState(
     (existingRecord as PlantRecordWithOfflinePhotos)?.diameter ?? ''
@@ -225,7 +222,6 @@ export default function NewRecordScreen() {
   const [identifying, setIdentifying] = useState(false);
   const [identifyMessage, setIdentifyMessage] = useState('');
 
-  // Primary image used for AI identification (index 0)
   const identifyPhoto = photos.length > 0 ? photos[0] : null;
 
   const photosRef = useRef(photos);
@@ -558,7 +554,6 @@ export default function NewRecordScreen() {
     const photoList = photoEntries.map((photo) => photo.uri);
     const nextErrors: FieldErrors = {};
 
-    // Enforce minimum 1 photo
     if (photoList.length === 0) {
       nextErrors.photos = 'Add at least one photo (min. 1, max. 4).';
     }
@@ -659,7 +654,7 @@ export default function NewRecordScreen() {
       </View>
 
       <FormScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Section 1: Evidence Photos (Unified 1 button, 1-4 uploads) */}
+        {/* ── SECTION 1: PHOTOS (PILL OUTLINE BUTTON) ── */}
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionLabel}>PHOTOS *</Text>
           <Text style={styles.sectionSubLabel}>
@@ -667,35 +662,39 @@ export default function NewRecordScreen() {
           </Text>
         </View>
 
-        <View style={styles.photoContainer}>
-          {photos.map((asset, index) => (
-            <View key={`${asset.uri}-${index}`} style={styles.thumbnailWrapper}>
-              <Image source={{ uri: asset.uri }} style={styles.thumbnail} />
-              <TouchableOpacity
-                style={styles.removePhotoBtn}
-                onPress={() => removePhoto(index)}
-                hitSlop={6}
-              >
-                <Text style={styles.removePhotoText}>✕</Text>
-              </TouchableOpacity>
-              <View style={styles.photoBadge}>
-                <Text style={styles.photoBadgeText}>#{index + 1}</Text>
+        {/* Thumbnail Previews */}
+        {photos.length > 0 && (
+          <View style={styles.thumbnailGrid}>
+            {photos.map((asset, index) => (
+              <View key={`${asset.uri}-${index}`} style={styles.thumbnailWrapper}>
+                <Image source={{ uri: asset.uri }} style={styles.thumbnail} />
+                <TouchableOpacity
+                  style={styles.removePhotoBtn}
+                  onPress={() => removePhoto(index)}
+                  hitSlop={6}
+                >
+                  <Text style={styles.removePhotoText}>✕</Text>
+                </TouchableOpacity>
+                <View style={styles.photoBadge}>
+                  <Text style={styles.photoBadgeText}>#{index + 1}</Text>
+                </View>
               </View>
-            </View>
-          ))}
+            ))}
+          </View>
+        )}
 
-          {photos.length < 4 && (
-            <TouchableOpacity
-              style={styles.addPhotoCard}
-              onPress={handleAddPhoto}
-              activeOpacity={0.8}
-            >
-              <Text style={{ fontSize: 24 }}>📷</Text>
-              <Text style={styles.addPhotoText}>Add Photo</Text>
-              <Text style={styles.addPhotoHint}>{4 - photos.length} left</Text>
-            </TouchableOpacity>
-          )}
-        </View>
+        {/* Pill Button styled like "+ Propose new species" */}
+        {photos.length < 4 && (
+          <TouchableOpacity
+            style={styles.pillUploadBtn}
+            onPress={handleAddPhoto}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.pillUploadBtnText}>
+              + {photos.length === 0 ? 'Add plant photo' : 'Add another photo'}
+            </Text>
+          </TouchableOpacity>
+        )}
 
         {errors.photos && <Text style={styles.errorText}>{errors.photos}</Text>}
 
@@ -1051,15 +1050,15 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     color: '#88988D',
   },
-  photoContainer: {
+  thumbnailGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
-    marginBottom: 10,
+    marginBottom: 8,
   },
   thumbnailWrapper: {
-    width: 76,
-    height: 76,
+    width: 74,
+    height: 74,
     borderRadius: 12,
     position: 'relative',
   },
@@ -1098,26 +1097,21 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '700',
   },
-  addPhotoCard: {
-    width: 76,
-    height: 76,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderStyle: 'dashed',
-    borderColor: '#A3D9A5',
-    backgroundColor: '#E8F5E9',
+  pillUploadBtn: {
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 1.2,
+    borderColor: '#213B2A',
+    backgroundColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
+    marginTop: 6,
+    marginBottom: 10,
   },
-  addPhotoText: {
-    fontSize: 10,
+  pillUploadBtnText: {
+    fontSize: 14,
     fontWeight: '700',
-    color: '#2D6A4F',
-    marginTop: 2,
-  },
-  addPhotoHint: {
-    fontSize: 8.5,
-    color: '#68776D',
+    color: '#213B2A',
   },
   measurementRow: {
     flexDirection: 'row',
