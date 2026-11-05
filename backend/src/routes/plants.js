@@ -428,8 +428,6 @@ router.patch("/:id", requireRole("botanist", "officer"), async (req, res) => {
             .select()
             .maybeSingle();
 
-        // The tag is unique: another plant already has it. The phone shows this and
-        // does not retry until the botanist attaches a different tag.
         if (error?.code === "23505") {
             return res.status(409).json({
                 message: "This tag is already attached to another plant",
@@ -437,7 +435,6 @@ router.patch("/:id", requireRole("botanist", "officer"), async (req, res) => {
             });
         }
 
-        // RLS refused the edit (the plant can no longer be changed, e.g. after submission).
         if (error?.code === "42501") {
             return res.status(409).json({
                 message: "This plant can't be changed any more",
@@ -450,8 +447,6 @@ router.patch("/:id", requireRole("botanist", "officer"), async (req, res) => {
             return res.status(500).json({ message: "Could not update plant record" });
         }
 
-        // The access check above just found this plant, so "no row updated" means RLS hid
-        // it from the update: the plant is locked, not missing.
         if (!data) {
             return res.status(409).json({
                 message: "This plant can't be changed any more",
@@ -481,10 +476,8 @@ router.delete("/:id", requireRole("botanist", "officer"), async (req, res) => {
     if (!(await checkPlantWriteAccess(req, res, plantId))) return;
 
     try {
-        // Delete child observations if any exist
         await req.supabase.from("observations").delete().eq("plant_id", plantId);
 
-        // Delete the plant record
         const { data, error } = await req.supabase
             .from("plants")
             .delete()
@@ -526,11 +519,10 @@ function isRlsRefusal(error) {
     );
 }
 
-// UPLOAD a photo for a plant
+// ── UPLOAD A PHOTO FOR A PLANT ──────────────────────────────────
 router.post(
     "/:id/photo",
     requireRole("botanist"),
-
     async (req, res, next) => {
         const plantId = req.params.id;
 
@@ -593,27 +585,24 @@ router.post(
             });
         }
 
+        // Expanded allowed types to support flexible 1-4 photo capture
         const allowedPhotoTypes = [
             "whole_plant",
             "leaf",
             "flower",
-            "bark"
+            "bark",
+            "field_photo"
         ];
 
-        const photoType = req.body.photo_type;
+        const photoType = req.body.photo_type || "whole_plant";
 
         if (!allowedPhotoTypes.includes(photoType)) {
             return res.status(400).json({
                 message:
-                    "photo_type must be whole_plant, leaf, flower or bark"
+                    "photo_type must be whole_plant, leaf, flower, bark or field_photo"
             });
         }
 
-        /*
-         * Support both names:
-         * - kai offline-sync code sends client_record_id
-         * - newer main code may send client_photo_id
-         */
         const photoClientId =
             req.body.client_record_id ||
             req.body.client_photo_id;
@@ -630,10 +619,6 @@ router.post(
 
         const plantId = req.params.id;
 
-        /*
-         * Idempotency:
-         * retrying the same phone photo must not create duplicates.
-         */
         const {
             data: existingMedia,
             error: existingError
@@ -734,16 +719,14 @@ router.post(
                     media_type: "image",
                     photo_type: photoType,
                     is_primary:
-                        photoType === "whole_plant"
+                        photoType === "whole_plant" ||
+                        req.body.is_primary === "true" ||
+                        req.body.is_primary === true
                 })
                 .select()
                 .single();
 
             if (mediaError) {
-                /*
-                 * Two retries may race.
-                 * The unique client_record_id decides the winner.
-                 */
                 if (mediaError.code === "23505") {
                     await req.supabase.storage
                         .from("plant-media")
@@ -910,11 +893,9 @@ router.post("/:id/attach-tag", requireRole("botanist", "officer"), async (req, r
         return res.status(400).json({ message: "Valid plant ID is required" });
     }
 
-    // 1. Verify caller owns this plant record or is an officer
     if (!(await checkPlantWriteAccess(req, res, plantId))) return;
 
     try {
-        // 2. Fetch current plant to see if it already has a valid tag
         const { data: plant, error: fetchError } = await req.supabase
             .from("plants")
             .select("id, qr_code_value, row_version")
@@ -926,17 +907,14 @@ router.post("/:id/attach-tag", requireRole("botanist", "officer"), async (req, r
         }
 
         let tagCode = plant.qr_code_value;
-        // Writing the tag raises the plant's row_version. The phone needs the new one,
-        // or its next outbox update for this plant is refused as out of date.
         let rowVersion = plant.row_version;
 
-        // Validate the destination before allocating a persistent label.
         buildPublicPlantUrl('NIAH-PLT-00001');
         if (!tagCode || !TAG_PATTERN.test(tagCode)) {
             if (req.profile.role !== 'botanist') {
                 return res.status(403).json({ message: 'Only the botanist owner may reserve and bind a tag' });
             }
-            // Plant UUID is a stable request ID: retries reuse the same reservation.
+
             const { data: reserved, error: reserveError } = await req.supabase.rpc('reserve_plant_tags', {
                 p_count: 1, p_request_id: plantId,
             });
@@ -953,7 +931,7 @@ router.post("/:id/attach-tag", requireRole("botanist", "officer"), async (req, r
                 return res.status(503).json({ message: 'Could not confirm tag binding; retry the same plant' });
             }
             tagCode = tag;
-            // Read the committed version instead of assuming how many triggers ran.
+
             const { data: refreshed, error: refreshError } = await req.supabase
                 .from('plants')
                 .select('qr_code_value, row_version')
@@ -964,16 +942,14 @@ router.post("/:id/attach-tag", requireRole("botanist", "officer"), async (req, r
                 return res.status(503).json({ message: 'Could not confirm the updated plant version; retry the same plant' });
             }
             rowVersion = refreshed.row_version;
-
         }
 
-        // 5. Generate QR code payload
         const qrResult = await generatePlantQR(tagCode);
 
         return res.status(200).json({
             tag_code: tagCode,
             row_version: rowVersion,
-            qr_code: qrResult.qrCode, // base64 data URL
+            qr_code: qrResult.qrCode,
             public_url: qrResult.publicUrl,
         });
     } catch (error) {

@@ -1,33 +1,6 @@
 drawMenu('alerts.html');
 
-/*
- * ============================================================
- * NIAH BIOTRACK - IOT MONITORING DASHBOARD
- * ============================================================
- *
- * Persistent / database data:
- *   GET /api/iot/summary
- *   GET /api/iot/alerts
- *
- * Live MQTT / backend-memory data:
- *   GET /api/iot/summary/live
- *   GET /api/iot/latest
- *   GET /api/iot/readings
- *   GET /api/iot/alerts/live
- *
- * Alert workflow:
- *   PATCH /api/iot/alerts/:id/acknowledge
- *   PATCH /api/iot/alerts/:id/resolve
- *
- * Active staff roles may read the dashboard and manage
- * the supported alert lifecycle.
- * ============================================================
- */
-
-
-/* ============================================================
-   DOM
-   ============================================================ */
+/* DOM */
 
 const refreshButton =
   document.getElementById('refresh-dashboard');
@@ -41,7 +14,6 @@ const lastUpdated =
 const stationFilter =
   document.getElementById('station-filter');
 
-
 const stationCount =
   document.getElementById('station-count');
 
@@ -54,7 +26,6 @@ const offlineCount =
 const activeAlertCount =
   document.getElementById('active-alert-count');
 
-
 const selectedStationId =
   document.getElementById('selected-station-id');
 
@@ -63,7 +34,6 @@ const stationLastSeen =
 
 const stationSequence =
   document.getElementById('station-sequence');
-
 
 const sensorTemperature =
   document.getElementById('sensor-temperature');
@@ -74,15 +44,8 @@ const sensorHumidity =
 const sensorSoil =
   document.getElementById('sensor-soil');
 
-const sensorMotion =
-  document.getElementById('sensor-motion');
-
-const sensorDistance =
-  document.getElementById('sensor-distance');
-
 const sensorRain =
   document.getElementById('sensor-rain');
-
 
 const temperatureStatus =
   document.getElementById('temperature-status');
@@ -93,22 +56,14 @@ const humidityStatus =
 const soilStatus =
   document.getElementById('soil-status');
 
-const motionStatus =
-  document.getElementById('motion-status');
-
-const distanceStatus =
-  document.getElementById('distance-status');
-
 const rainStatus =
   document.getElementById('rain-status');
-
 
 const telemetryMessage =
   document.getElementById('telemetry-message');
 
 const telemetryBody =
   document.getElementById('telemetry-body');
-
 
 const alertFilter =
   document.getElementById('alert-filter');
@@ -126,32 +81,22 @@ const warningCount =
   document.getElementById('warning-count');
 
 
-/* ============================================================
-   STATE
-   ============================================================ */
+/* State */
 
 const AUTO_REFRESH_MS = 5000;
+const ONLINE_WINDOW_MS = 60 * 1000;
 
-const ONLINE_WINDOW_MS =
-  60 * 1000;
-
+let registeredStations = [];
 
 let latestReadings = [];
 
 let recentReadings = [];
 
-/*
- * Persistent alerts from Supabase.
- */
 let persistentAlerts = [];
 
-/*
- * Live alerts produced by iotAlertService.
- *
- * These are used for live sensor-card warning states.
- */
-let liveActiveAlerts = [];
-
+let selectedStation = '';
+let currentRequest = null;
+let refreshTimer = null;
 
 let dashboardSummary = {
   total_stations: 0,
@@ -159,39 +104,23 @@ let dashboardSummary = {
   offline_stations: 0,
 };
 
-
 let alertSummary = {
   unresolved: 0,
   critical: 0,
   warning: 0,
 };
 
-
-let selectedStation = '';
-
-let currentRequest = null;
-
-let refreshTimer = null;
-
-
-/*
- * Keeps resolution text safe while the 5-second dashboard
- * refresh is running.
- */
 const resolutionDrafts =
   new Map();
 
-
-/*
- * Prevent duplicate alert actions while a request is running.
- */
 const alertActionsInProgress =
   new Set();
 
+const cameraEvidenceState =
+  new Map();
 
-/* ============================================================
-   GENERAL HELPERS
-   ============================================================ */
+
+/* General helpers */
 
 function formatNumber(
   value,
@@ -266,14 +195,36 @@ function capitalise(value) {
     return 'Unknown';
   }
 
+  const text =
+    String(value);
+
   return (
-    String(value)
-      .charAt(0)
-      .toUpperCase() +
-    String(value).slice(1)
+    text.charAt(0).toUpperCase() +
+    text.slice(1)
   );
 }
 
+/* Staff name */
+
+function getActorLabel(
+  name,
+  id
+) {
+  if (name) {
+    return name;
+  }
+
+  if (id) {
+    return (
+      `Staff ${String(id).slice(
+        0,
+        8
+      )}`
+    );
+  }
+
+  return 'Unknown staff';
+}
 
 function getHumidity(reading) {
   return (
@@ -324,13 +275,150 @@ function isReadingOnline(reading) {
   );
 }
 
+/* Registered station */
+
+function getStation(
+  stationId
+) {
+  return registeredStations.find(
+    (station) =>
+      station.id ===
+        stationId ||
+      station.station_code ===
+        stationId
+  );
+}
+
+
+function getStationName(
+  stationId
+) {
+  const station =
+    getStation(
+      stationId
+    );
+
+  return (
+    station?.station_code ||
+    stationId ||
+    'Unknown station'
+  );
+}
+
+
+/* Latest persisted reading */
+
+function buildLatestReadings(
+  readings
+) {
+  const latest =
+    new Map();
+
+  for (
+    const reading of
+    readings
+  ) {
+    if (
+      !reading.station_id
+    ) {
+      continue;
+    }
+
+    const existing =
+      latest.get(
+        reading.station_id
+      );
+
+    if (!existing) {
+      latest.set(
+        reading.station_id,
+        reading
+      );
+
+      continue;
+    }
+
+    const currentTime =
+      new Date(
+        getReadingTime(
+          reading
+        ) || 0
+      ).getTime();
+
+    const existingTime =
+      new Date(
+        getReadingTime(
+          existing
+        ) || 0
+      ).getTime();
+
+    if (
+      currentTime >
+      existingTime
+    ) {
+      latest.set(
+        reading.station_id,
+        reading
+      );
+    }
+  }
+
+  return Array.from(
+    latest.values()
+  );
+}
+
+
+/* Online status from Supabase */
+
+function calculateStationSummary() {
+  const totalStations =
+    registeredStations.length;
+
+  let onlineStations =
+    0;
+
+  for (
+    const station of
+    registeredStations
+  ) {
+    const reading =
+      latestReadings.find(
+        (item) =>
+          item.station_id ===
+          station.id
+      );
+
+    if (
+      reading &&
+      isReadingOnline(
+        reading
+      )
+    ) {
+      onlineStations +=
+        1;
+    }
+  }
+
+  dashboardSummary = {
+    total_stations:
+      totalStations,
+
+    online_stations:
+      onlineStations,
+
+    offline_stations:
+      Math.max(
+        0,
+        totalStations -
+          onlineStations
+      ),
+  };
+}
 
 function normalisePersistentStatus(
   status
 ) {
-  /*
-   * Compatibility with any old prototype data.
-   */
   if (status === 'active') {
     return 'open';
   }
@@ -388,9 +476,7 @@ function notify(message) {
 }
 
 
-/* ============================================================
-   AUTH + API
-   ============================================================ */
+/* Auth and API */
 
 async function getAccessToken() {
   if (
@@ -435,7 +521,6 @@ async function requestIoT(
       'application/json';
   }
 
-
   const response =
     await fetch(
       `/api/iot${path}`,
@@ -462,7 +547,6 @@ async function requestIoT(
       }
     );
 
-
   let body = {};
 
   try {
@@ -471,7 +555,6 @@ async function requestIoT(
   } catch {
     body = {};
   }
-
 
   if (
     response.status ===
@@ -482,7 +565,6 @@ async function requestIoT(
     );
   }
 
-
   if (
     response.status ===
     403
@@ -492,22 +574,28 @@ async function requestIoT(
     );
   }
 
-
   if (!response.ok) {
+    console.error(
+      'IoT request failed:',
+      {
+        path,
+        status:
+          response.status,
+        body,
+      }
+    );
+
     throw new Error(
       body.message ||
       `IoT request failed (${response.status}).`
     );
   }
 
-
   return body;
 }
 
 
-/* ============================================================
-   DASHBOARD CONNECTION STATUS
-   ============================================================ */
+/* Dashboard status */
 
 function setDashboardStatus(
   state,
@@ -519,13 +607,16 @@ function setDashboardStatus(
     'iot-status-error'
   );
 
-
-  if (state === 'live') {
+  if (
+    state ===
+    'live'
+  ) {
     dashboardStatus.classList.add(
       'iot-status-live'
     );
   } else if (
-    state === 'loading'
+    state ===
+    'loading'
   ) {
     dashboardStatus.classList.add(
       'iot-status-loading'
@@ -536,10 +627,6 @@ function setDashboardStatus(
     );
   }
 
-
-  /*
-   * Preserve the status dot <span>.
-   */
   const textNodes =
     Array.from(
       dashboardStatus.childNodes
@@ -564,16 +651,13 @@ function setDashboardStatus(
 }
 
 
-/* ============================================================
-   SUMMARY
-   ============================================================ */
+/* Summary */
 
 function calculateAlertSummary() {
   const unresolved =
     persistentAlerts.filter(
       isUnresolvedAlert
     );
-
 
   const critical =
     unresolved.filter(
@@ -583,19 +667,15 @@ function calculateAlertSummary() {
         )
     ).length;
 
-
-  const warning =
-    unresolved.length -
-    critical;
-
-
   alertSummary = {
     unresolved:
       unresolved.length,
 
     critical,
 
-    warning,
+    warning:
+      unresolved.length -
+      critical,
   };
 }
 
@@ -627,57 +707,18 @@ function renderSummary() {
 }
 
 
-/* ============================================================
-   STATION SELECTOR
-   ============================================================ */
+/* Station selector */
 
 function renderStationOptions() {
   const previous =
     selectedStation ||
     stationFilter.value;
 
-
-  const stationIds = [
-    ...new Set(
-      latestReadings
-        .map(
-          (reading) =>
-            reading.station_id
-        )
-        .filter(Boolean)
-    ),
-  ].sort();
-
-
   stationFilter.replaceChildren();
 
-
   if (
-    stationIds.length === 0
-  ) {
-    const option =
-      document.createElement(
-        'option'
-      );
-
-    option.value = '';
-
-    option.textContent =
-      'No live station data';
-
-    stationFilter.appendChild(
-      option
-    );
-
-    selectedStation = '';
-
-    return;
-  }
-
-
-  for (
-    const stationId of
-    stationIds
+    registeredStations.length ===
+    0
   ) {
     const option =
       document.createElement(
@@ -685,16 +726,47 @@ function renderStationOptions() {
       );
 
     option.value =
-      stationId;
+      '';
 
     option.textContent =
-      stationId;
+      'No registered stations';
+
+    stationFilter.appendChild(
+      option
+    );
+
+    selectedStation =
+      '';
+
+    return;
+  }
+
+  for (
+    const station of
+    registeredStations
+  ) {
+    const option =
+      document.createElement(
+        'option'
+      );
+
+    option.value =
+      station.id;
+
+    option.textContent =
+      station.station_code ||
+      station.id;
 
     stationFilter.appendChild(
       option
     );
   }
 
+  const stationIds =
+    registeredStations.map(
+      (station) =>
+        station.id
+    );
 
   if (
     previous &&
@@ -709,27 +781,61 @@ function renderStationOptions() {
       stationIds[0];
   }
 
-
   stationFilter.value =
     selectedStation;
 }
 
 
-/* ============================================================
-   LIVE SENSOR ALERT HELPERS
-   ============================================================ */
+/* Live sensor helpers */
 
 function findLiveAlert(
   stationId,
   type
 ) {
-  return liveActiveAlerts.find(
-    (alert) =>
-      alert.station_id ===
-        stationId &&
-      alert.type === type &&
-      alert.status ===
-        'active'
+  const metricMap = {
+    high_temperature:
+      'temperature_c',
+
+    low_soil_moisture:
+      'soil_moisture_pct',
+
+    heavy_rain:
+      'rain_intensity_pct',
+
+    high_humidity:
+      'humidity_percent',
+  };
+
+  const targetMetric =
+    metricMap[type];
+
+  return persistentAlerts.find(
+    (alert) => {
+      if (
+        alert.station_id !==
+        stationId
+      ) {
+        return false;
+      }
+
+      if (
+        !isUnresolvedAlert(
+          alert
+        )
+      ) {
+        return false;
+      }
+
+      const metric =
+        getAlertMetric(
+          alert
+        );
+
+      return (
+        metric ===
+        targetMetric
+      );
+    }
   );
 }
 
@@ -747,14 +853,12 @@ function setSensorCardState(
     return;
   }
 
-
   card.classList.remove(
     'iot-sensor-normal',
     'iot-sensor-warning',
     'iot-sensor-critical',
     'iot-sensor-unavailable'
   );
-
 
   if (state) {
     card.classList.add(
@@ -764,9 +868,7 @@ function setSensorCardState(
 }
 
 
-/* ============================================================
-   SENSOR DISPLAY
-   ============================================================ */
+/* Sensor display */
 
 function clearSensorDisplay() {
   selectedStationId.textContent =
@@ -778,7 +880,6 @@ function clearSensorDisplay() {
   stationSequence.textContent =
     '–';
 
-
   sensorTemperature.textContent =
     '–';
 
@@ -788,15 +889,8 @@ function clearSensorDisplay() {
   sensorSoil.textContent =
     '–';
 
-  sensorMotion.textContent =
-    '–';
-
-  sensorDistance.textContent =
-    '–';
-
   sensorRain.textContent =
     '–';
-
 
   temperatureStatus.textContent =
     'Waiting for reading';
@@ -807,22 +901,13 @@ function clearSensorDisplay() {
   soilStatus.textContent =
     'Waiting for reading';
 
-  motionStatus.textContent =
-    'Waiting for reading';
-
-  distanceStatus.textContent =
-    'Waiting for reading';
-
   rainStatus.textContent =
     'Waiting for reading';
-
 
   [
     sensorTemperature,
     sensorHumidity,
     sensorSoil,
-    sensorMotion,
-    sensorDistance,
     sensorRain,
   ].forEach(
     (element) => {
@@ -838,10 +923,8 @@ function clearSensorDisplay() {
 function renderSelectedStation() {
   if (!selectedStation) {
     clearSensorDisplay();
-
     return;
   }
-
 
   const reading =
     latestReadings.find(
@@ -850,27 +933,26 @@ function renderSelectedStation() {
         selectedStation
     );
 
-
   if (!reading) {
     clearSensorDisplay();
-
     return;
   }
 
+const stationName =
+  getStationName(
+    reading.station_id
+  );
 
-  selectedStationId.textContent =
-    isReadingOnline(reading)
-      ? `${reading.station_id} · Online`
-      : `${reading.station_id} · Offline`;
-
-
+selectedStationId.textContent =
+  isReadingOnline(
+    reading
+  )
+    ? `${stationName} · Online`
+    : `${stationName} · Offline`;
   stationLastSeen.textContent =
     formatTime(
-      getReadingTime(
-        reading
-      )
+      getReadingTime(reading)
     );
-
 
   stationSequence.textContent =
     Number.isFinite(
@@ -883,10 +965,7 @@ function renderSelectedStation() {
         )
       : '–';
 
-
-  /* --------------------------------------------------------
-     TEMPERATURE
-     -------------------------------------------------------- */
+  /* Temperature */
 
   if (
     reading.dht_valid ===
@@ -908,13 +987,11 @@ function renderSelectedStation() {
         reading.temperature_c
       );
 
-
     const alert =
       findLiveAlert(
         selectedStation,
         'high_temperature'
       );
-
 
     if (alert) {
       temperatureStatus.textContent =
@@ -939,13 +1016,7 @@ function renderSelectedStation() {
     }
   }
 
-
-  /* --------------------------------------------------------
-     HUMIDITY
-
-     Live humidity is displayed, but the current in-memory
-     threat detector has no humidity threshold.
-     -------------------------------------------------------- */
+  /* Humidity */
 
   if (
     reading.dht_valid ===
@@ -978,10 +1049,7 @@ function renderSelectedStation() {
     );
   }
 
-
-  /* --------------------------------------------------------
-     SOIL MOISTURE
-     -------------------------------------------------------- */
+  /* Soil */
 
   sensorSoil.textContent =
     formatNumber(
@@ -989,13 +1057,11 @@ function renderSelectedStation() {
         .soil_moisture_pct
     );
 
-
   const soilAlert =
     findLiveAlert(
       selectedStation,
       'low_soil_moisture'
     );
-
 
   if (soilAlert) {
     soilStatus.textContent =
@@ -1019,119 +1085,7 @@ function renderSelectedStation() {
     );
   }
 
-
-  /* --------------------------------------------------------
-     MOTION
-     -------------------------------------------------------- */
-
-  const motion =
-    getMotion(reading);
-
-
-  sensorMotion.textContent =
-    motion === true
-      ? 'Detected'
-      : motion === false
-        ? 'Clear'
-        : '–';
-
-
-  const motionAlert =
-    findLiveAlert(
-      selectedStation,
-      'motion_detected'
-    );
-
-
-  if (motionAlert) {
-    motionStatus.textContent =
-      'Movement detected near station';
-
-    setSensorCardState(
-      sensorMotion,
-      isCriticalSeverity(
-        motionAlert.severity
-      )
-        ? 'critical'
-        : 'warning'
-    );
-  } else if (
-    typeof motion ===
-    'boolean'
-  ) {
-    motionStatus.textContent =
-      'No active movement alert';
-
-    setSensorCardState(
-      sensorMotion,
-      'normal'
-    );
-  } else {
-    motionStatus.textContent =
-      'Motion sensor unavailable';
-
-    setSensorCardState(
-      sensorMotion,
-      'unavailable'
-    );
-  }
-
-
-  /* --------------------------------------------------------
-     PROXIMITY
-     -------------------------------------------------------- */
-
-  if (
-    reading.distance_valid ===
-    false
-  ) {
-    sensorDistance.textContent =
-      '–';
-
-    distanceStatus.textContent =
-      'Distance sensor unavailable';
-
-    setSensorCardState(
-      sensorDistance,
-      'unavailable'
-    );
-  } else {
-    sensorDistance.textContent =
-      formatNumber(
-        reading.distance_cm
-      );
-
-
-    const proximityAlert =
-      findLiveAlert(
-        selectedStation,
-        'proximity_breach'
-      );
-
-
-    if (proximityAlert) {
-      distanceStatus.textContent =
-        'Object inside protection zone';
-
-      setSensorCardState(
-        sensorDistance,
-        'critical'
-      );
-    } else {
-      distanceStatus.textContent =
-        'Protection zone clear';
-
-      setSensorCardState(
-        sensorDistance,
-        'normal'
-      );
-    }
-  }
-
-
-  /* --------------------------------------------------------
-     RAIN
-     -------------------------------------------------------- */
+  /* Rain */
 
   sensorRain.textContent =
     formatNumber(
@@ -1139,13 +1093,11 @@ function renderSelectedStation() {
         .rain_intensity_pct
     );
 
-
   const rainAlert =
     findLiveAlert(
       selectedStation,
       'heavy_rain'
     );
-
 
   if (rainAlert) {
     rainStatus.textContent =
@@ -1171,18 +1123,14 @@ function renderSelectedStation() {
 }
 
 
-/* ============================================================
-   TELEMETRY TABLE
-   ============================================================ */
+/* Telemetry */
 
 function renderTelemetry() {
   telemetryBody.replaceChildren();
 
-
   if (!selectedStation) {
     telemetryMessage.textContent =
       'No live monitoring station is currently available.';
-
 
     const row =
       document.createElement(
@@ -1194,12 +1142,15 @@ function renderTelemetry() {
         'No live telemetry available.'
       );
 
-    cell.colSpan = 8;
+    cell.colSpan =
+      8;
 
     cell.className =
       'iot-empty-cell';
 
-    row.appendChild(cell);
+    row.appendChild(
+      cell
+    );
 
     telemetryBody.appendChild(
       row
@@ -1208,7 +1159,6 @@ function renderTelemetry() {
     return;
   }
 
-
   const readings =
     recentReadings.filter(
       (reading) =>
@@ -1216,13 +1166,11 @@ function renderTelemetry() {
         selectedStation
     );
 
-
   if (
     readings.length === 0
   ) {
     telemetryMessage.textContent =
       `No recent telemetry for ${selectedStation}.`;
-
 
     const row =
       document.createElement(
@@ -1234,12 +1182,15 @@ function renderTelemetry() {
         'No recent telemetry.'
       );
 
-    cell.colSpan = 8;
+    cell.colSpan =
+      8;
 
     cell.className =
       'iot-empty-cell';
 
-    row.appendChild(cell);
+    row.appendChild(
+      cell
+    );
 
     telemetryBody.appendChild(
       row
@@ -1248,17 +1199,14 @@ function renderTelemetry() {
     return;
   }
 
-
   const visible =
     readings.slice(
       0,
       20
     );
 
-
   telemetryMessage.textContent =
     `Showing ${visible.length} recent readings from ${selectedStation}.`;
-
 
   for (
     const reading of
@@ -1268,7 +1216,6 @@ function renderTelemetry() {
       document.createElement(
         'tr'
       );
-
 
     row.appendChild(
       createCell(
@@ -1280,7 +1227,6 @@ function renderTelemetry() {
       )
     );
 
-
     row.appendChild(
       createCell(
         reading.dht_valid ===
@@ -1291,7 +1237,6 @@ function renderTelemetry() {
             )} °C`
       )
     );
-
 
     row.appendChild(
       createCell(
@@ -1306,7 +1251,6 @@ function renderTelemetry() {
       )
     );
 
-
     row.appendChild(
       createCell(
         `${formatNumber(
@@ -1316,10 +1260,10 @@ function renderTelemetry() {
       )
     );
 
-
     const motion =
-      getMotion(reading);
-
+      getMotion(
+        reading
+      );
 
     row.appendChild(
       createCell(
@@ -1330,7 +1274,6 @@ function renderTelemetry() {
             : '–'
       )
     );
-
 
     row.appendChild(
       createCell(
@@ -1343,7 +1286,6 @@ function renderTelemetry() {
       )
     );
 
-
     row.appendChild(
       createCell(
         `${formatNumber(
@@ -1352,7 +1294,6 @@ function renderTelemetry() {
         )} %`
       )
     );
-
 
     row.appendChild(
       createCell(
@@ -1368,7 +1309,6 @@ function renderTelemetry() {
       )
     );
 
-
     telemetryBody.appendChild(
       row
     );
@@ -1376,292 +1316,280 @@ function renderTelemetry() {
 }
 
 
-/* ============================================================
-   PERSISTENT ALERT DISPLAY
-   ============================================================ */
+/* Alert helpers */
 
-function addAlertDetail(
-  parent,
-  label,
-  value
-) {
-  const row =
-    document.createElement(
-      'p'
+function getAlertMetric(alert) {
+  const message =
+    String(
+      alert.alert_message || ''
     );
 
-  row.className =
-    'iot-alert-detail';
-
-
-  const title =
-    document.createElement(
-      'span'
+  const match =
+    message.match(
+      /\(([^()]+)\)\s*$/
     );
 
-  title.textContent =
-    `${label}: `;
-
-
-  const content =
-    document.createElement(
-      'strong'
-    );
-
-  content.textContent =
-    value;
-
-
-  row.appendChild(title);
-
-  row.appendChild(content);
-
-  parent.appendChild(row);
+  return match
+    ? match[1]
+    : '';
 }
 
 
-function createAlertStatusPill(
-  status
-) {
-  const pill =
-    document.createElement(
-      'span'
-    );
+function isCameraAlert(alert) {
+  const message =
+    String(
+      alert.alert_message || ''
+    ).toLowerCase();
 
-  pill.className =
-    'pill';
+  const metric =
+    getAlertMetric(alert)
+      .toLowerCase();
 
-
-  if (status === 'open') {
-    pill.classList.add('e');
-
-    pill.textContent =
-      'Open';
-  } else if (
-    status === 'acknowledged'
-  ) {
-    pill.classList.add('w');
-
-    pill.textContent =
-      'Acknowledged';
-  } else {
-    pill.textContent =
-      'Resolved';
-  }
-
-
-  return pill;
-}
-
-
-function createAlertActionButton(
-  label,
-  className,
-  action
-) {
-  const button =
-    document.createElement(
-      'button'
-    );
-
-  button.type =
-    'button';
-
-  button.className =
-    className;
-
-  button.textContent =
-    label;
-
-  button.addEventListener(
-    'click',
-    action
+  return (
+    metric ===
+      'movement_nearby_cm' ||
+    message.includes(
+      'movement_nearby_cm'
+    ) ||
+    message.includes(
+      'motion'
+    ) ||
+    message.includes(
+      'movement'
+    ) ||
+    message.includes(
+      'proximity'
+    )
   );
-
-  return button;
 }
 
 
-async function performAlertAction(
-  alert,
-  action,
-  notes = ''
-) {
+function getAlertGroup(alert) {
+  const message =
+    String(
+      alert.alert_message || ''
+    ).toLowerCase();
+
+  const metric =
+    getAlertMetric(alert)
+      .toLowerCase();
+
   if (
-    alertActionsInProgress.has(
-      alert.id
+    metric.includes(
+      'temperature'
+    ) ||
+    message.includes(
+      'temperature'
     )
   ) {
-    return;
+    return 'temperature';
   }
 
+  if (
+    metric.includes(
+      'humidity'
+    ) ||
+    message.includes(
+      'humidity'
+    )
+  ) {
+    return 'humidity';
+  }
 
-  alertActionsInProgress.add(
-    alert.id
-  );
+  if (
+    metric.includes(
+      'soil'
+    ) ||
+    message.includes(
+      'soil'
+    )
+  ) {
+    return 'soil';
+  }
 
-  renderAlerts();
+  if (
+    metric.includes(
+      'rain'
+    ) ||
+    message.includes(
+      'rain'
+    )
+  ) {
+    return 'rain';
+  }
+
+  return 'other';
+}
 
 
-  try {
-    const token =
-      await getAccessToken();
+function getGroupTitle(group) {
+  switch (group) {
+    case 'temperature':
+      return 'Temperature alerts';
+
+    case 'humidity':
+      return 'Humidity alerts';
+
+    case 'soil':
+      return 'Soil moisture alerts';
+
+    case 'rain':
+      return 'Rain alerts';
+
+    default:
+      return 'Other alerts';
+  }
+}
 
 
-    const options = {
-      method: 'PATCH',
-      body:
-        action === 'resolve'
-          ? {
-              resolution_notes:
-                notes.trim(),
-            }
-          : {},
-    };
+function getAlertIcon(group) {
+  switch (group) {
+    case 'temperature':
+      return '🌡️';
+
+    case 'humidity':
+      return '💧';
+
+    case 'soil':
+      return '🌱';
+
+    case 'rain':
+      return '🌧️';
+
+    default:
+      return '⚠️';
+  }
+}
 
 
-    await requestIoT(
-      `/alerts/${encodeURIComponent(
-        alert.id
-      )}/${action}`,
-      token,
-      options
+function getAlertDisplayTitle(
+  alert
+) {
+  if (
+    isCameraAlert(
+      alert
+    )
+  ) {
+    return (
+      'Movement detected near the camera'
+    );
+  }
+
+  const group =
+    getAlertGroup(
+      alert
     );
 
+  const message =
+    String(
+      alert.alert_message || ''
+    );
 
-    if (
-      action === 'resolve'
-    ) {
-      resolutionDrafts.delete(
-        alert.id
+  if (
+    group ===
+    'temperature'
+  ) {
+    const threshold =
+      message.match(
+        />\s*(\d+(?:\.\d+)?)/
       );
 
-      notify(
-        'Alert resolved successfully.'
-      );
-    } else {
-      notify(
-        'Alert acknowledged successfully.'
+    if (threshold) {
+      return (
+        `Temperature above ${threshold[1]} °C`
       );
     }
 
-
-    await loadDashboard({
-      silent: true,
-    });
-
-  } catch (error) {
-    console.error(
-      'IoT alert action failed:',
-      error
+    return (
+      'High temperature detected'
     );
-
-
-    notify(
-      error instanceof Error
-        ? error.message
-        : 'Alert action failed.'
-    );
-
-  } finally {
-    alertActionsInProgress.delete(
-      alert.id
-    );
-
-    renderAlerts();
   }
+
+  if (
+    group ===
+    'humidity'
+  ) {
+    return (
+      'Humidity threshold alert'
+    );
+  }
+
+  if (
+    group ===
+    'soil'
+  ) {
+    return (
+      'Low soil moisture detected'
+    );
+  }
+
+  if (
+    group ===
+    'rain'
+  ) {
+    return (
+      'Heavy rainfall detected'
+    );
+  }
+
+  return (
+    message.replace(
+      /\s*\([^()]+\)\s*$/,
+      ''
+    ) ||
+    'IoT threat alert'
+  );
 }
 
 
-function renderPersistentAlertCard(
+function getAlertSourceName(
   alert
 ) {
-  const status =
-    normalisePersistentStatus(
-      alert.alert_status
+  const message =
+    String(
+      alert.alert_message || ''
     );
 
+  const patterns = [
+    /\s+temperature\b/i,
+    /\s+humidity\b/i,
+    /\s+soil\b/i,
+    /\s+rain\b/i,
+  ];
 
-  const busy =
-    alertActionsInProgress.has(
-      alert.id
-    );
-
-
-  const card =
-    document.createElement(
-      'article'
-    );
-
-  card.className =
-    'card iot-alert-card';
-
-
-  if (
-    isCriticalSeverity(
-      alert.severity
-    )
+  for (
+    const pattern of
+    patterns
   ) {
-    card.classList.add(
-      'iot-alert-critical'
-    );
-  } else {
-    card.classList.add(
-      'iot-alert-warning'
-    );
+    const match =
+      message.match(
+        pattern
+      );
+
+    if (
+      match &&
+      match.index > 0
+    ) {
+      return message
+        .slice(
+          0,
+          match.index
+        )
+        .trim();
+    }
   }
 
-
-  /* Heading */
-
-  const heading =
-    document.createElement(
-      'div'
-    );
-
-  heading.className =
-    'iot-alert-heading';
-
-
-  const titleArea =
-    document.createElement(
-      'div'
-    );
-
-
-  const title =
-    document.createElement(
-      'h3'
-    );
-
-  title.textContent =
-    alert.alert_message ||
-    'IoT threat alert';
-
-
-  const station =
-    document.createElement(
-      'span'
-    );
-
-  station.className =
-    'iot-alert-station';
-
-  station.textContent =
+  return (
     alert.station_id
       ? `Station ${alert.station_id}`
-      : 'Unknown station';
-
-
-  titleArea.appendChild(
-    title
+      : 'Monitoring station'
   );
-
-  titleArea.appendChild(
-    station
-  );
+}
 
 
+function createSeverityPill(
+  alert
+) {
   const severity =
     document.createElement(
       'span'
@@ -1679,149 +1607,1266 @@ function renderPersistentAlertCard(
       alert.severity
     );
 
+  return severity;
+}
 
-  heading.appendChild(
-    titleArea
+
+function createStatusPill(
+  alert
+) {
+  const status =
+    normalisePersistentStatus(
+      alert.alert_status
+    );
+
+  const pill =
+    document.createElement(
+      'span'
+    );
+
+  pill.className =
+    'pill';
+
+  if (
+    status ===
+    'open'
+  ) {
+    pill.classList.add(
+      'e'
+    );
+
+    pill.textContent =
+      'Open';
+  } else if (
+    status ===
+    'acknowledged'
+  ) {
+    pill.classList.add(
+      'w'
+    );
+
+    pill.textContent =
+      'Acknowledged';
+  } else {
+    pill.textContent =
+      'Resolved';
+  }
+
+  return pill;
+}
+
+
+/* Camera evidence */
+
+function getCameraState(
+  alertId
+) {
+  return (
+    cameraEvidenceState.get(
+      alertId
+    ) || {
+      status:
+        'idle',
+
+      evidence:
+        [],
+
+      latest:
+        null,
+
+      url:
+        null,
+
+      expiresAt:
+        0,
+
+      message:
+        '',
+    }
+  );
+}
+
+
+function setCameraState(
+  alertId,
+  state
+) {
+  cameraEvidenceState.set(
+    alertId,
+    state
+  );
+}
+
+
+async function fetchCameraEvidence(
+  alert,
+  force = false
+) {
+  const current =
+    getCameraState(
+      alert.id
+    );
+
+  if (
+    current.status ===
+      'loading' &&
+    !force
+  ) {
+    return current;
+  }
+
+  setCameraState(
+    alert.id,
+    {
+      ...current,
+
+      status:
+        'loading',
+
+      message:
+        '',
+    }
   );
 
-  heading.appendChild(
-    severity
+  try {
+    const token =
+      await getAccessToken();
+
+    const result =
+      await requestIoT(
+        `/alerts/${encodeURIComponent(
+          alert.id
+        )}/camera/cloud`,
+        token
+      );
+
+    const evidence =
+      Array.isArray(
+        result.data
+      )
+        ? result.data
+        : [];
+
+    if (
+      evidence.length === 0
+    ) {
+      const emptyState = {
+        status:
+          'empty',
+
+        evidence:
+          [],
+
+        latest:
+          null,
+
+        url:
+          null,
+
+        expiresAt:
+          0,
+
+        message:
+          '',
+      };
+
+      setCameraState(
+        alert.id,
+        emptyState
+      );
+
+      return emptyState;
+    }
+
+    const latest =
+      evidence[0];
+
+    const urlResult =
+      await requestIoT(
+        `/alerts/${encodeURIComponent(
+          alert.id
+        )}/camera/${encodeURIComponent(
+          latest.id
+        )}/url`,
+        token
+      );
+
+    if (
+      !urlResult.url
+    ) {
+      throw new Error(
+        'Camera photo URL is unavailable.'
+      );
+    }
+
+    const expiresIn =
+      Number(
+        urlResult.expires_in
+      );
+
+    const readyState = {
+      status:
+        'ready',
+
+      evidence,
+
+      latest,
+
+      url:
+        urlResult.url,
+
+      expiresAt:
+        Date.now() +
+        (
+          Number.isFinite(
+            expiresIn
+          ) &&
+          expiresIn > 0
+            ? expiresIn *
+              1000
+            : 60000
+        ),
+
+      message:
+        '',
+    };
+
+    setCameraState(
+      alert.id,
+      readyState
+    );
+
+    return readyState;
+  } catch (error) {
+    console.error(
+      'Camera evidence failed:',
+      error
+    );
+
+    const errorState = {
+      ...current,
+
+      status:
+        'error',
+
+      url:
+        null,
+
+      expiresAt:
+        0,
+
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Could not load camera evidence.',
+    };
+
+    setCameraState(
+      alert.id,
+      errorState
+    );
+
+    return errorState;
+  }
+}
+
+
+function cameraNeedsRefresh(
+  state
+) {
+  return (
+    state.status ===
+      'idle' ||
+    (
+      state.status ===
+        'ready' &&
+      (
+        !state.url ||
+        Date.now() >=
+          state.expiresAt -
+            3000
+      )
+    )
+  );
+}
+
+
+function queueCameraLoad(
+  alert
+) {
+  const state =
+    getCameraState(
+      alert.id
+    );
+
+  if (
+    !cameraNeedsRefresh(
+      state
+    )
+  ) {
+    return;
+  }
+
+  if (
+    state.status ===
+    'loading'
+  ) {
+    return;
+  }
+
+  setTimeout(
+    async () => {
+      await fetchCameraEvidence(
+        alert
+      );
+
+      renderAlerts();
+    },
+    0
+  );
+}
+
+
+async function refreshCameraAlert(
+  alert
+) {
+  await fetchCameraEvidence(
+    alert,
+    true
   );
 
-  card.appendChild(
-    heading
-  );
+  renderAlerts();
+}
 
-
-  /* Status */
-
-  const statusRow =
+function showPhotoPopup(
+  url,
+  capturedAt
+) {
+  const overlay =
     document.createElement(
       'div'
     );
 
-  statusRow.className =
-    'iot-alert-status-row';
+  overlay.style.position =
+    'fixed';
 
-  statusRow.appendChild(
-    createAlertStatusPill(
-      status
+  overlay.style.inset =
+    '0';
+
+  overlay.style.zIndex =
+    '9999';
+
+  overlay.style.background =
+    'rgba(0, 0, 0, 0.82)';
+
+  overlay.style.display =
+    'flex';
+
+  overlay.style.alignItems =
+    'center';
+
+  overlay.style.justifyContent =
+    'center';
+
+  overlay.style.padding =
+    '24px';
+
+
+  const modal =
+    document.createElement(
+      'div'
+    );
+
+  modal.style.position =
+    'relative';
+
+  modal.style.width =
+    'min(1000px, 95vw)';
+
+  modal.style.maxHeight =
+    '92vh';
+
+  modal.style.padding =
+    '18px';
+
+  modal.style.borderRadius =
+    '18px';
+
+  modal.style.background =
+    'var(--card)';
+
+  modal.style.border =
+    '1px solid var(--line)';
+
+  modal.style.boxShadow =
+    '0 24px 80px rgba(0, 0, 0, 0.4)';
+
+
+  const header =
+    document.createElement(
+      'div'
+    );
+
+  header.style.display =
+    'flex';
+
+  header.style.alignItems =
+    'center';
+
+  header.style.justifyContent =
+    'space-between';
+
+  header.style.gap =
+    '16px';
+
+  header.style.marginBottom =
+    '14px';
+
+
+  const title =
+    document.createElement(
+      'div'
+    );
+
+  title.innerHTML =
+    `
+      <strong style="display:block;font-size:16px;">
+        Camera evidence
+      </strong>
+
+      <span style="font-size:12px;color:var(--mute);">
+        Captured ${formatTime(capturedAt)}
+      </span>
+    `;
+
+
+  const closeButton =
+    document.createElement(
+      'button'
+    );
+
+  closeButton.type =
+    'button';
+
+  closeButton.className =
+    'btn ghost';
+
+  closeButton.textContent =
+    'Close';
+
+
+  const image =
+    document.createElement(
+      'img'
+    );
+
+  image.src =
+    url;
+
+  image.alt =
+    'Full camera evidence';
+
+  image.style.display =
+    'block';
+
+  image.style.width =
+    '100%';
+
+  image.style.maxHeight =
+    '75vh';
+
+  image.style.objectFit =
+    'contain';
+
+  image.style.borderRadius =
+    '14px';
+
+  image.style.background =
+    '#000';
+
+
+  function closePopup() {
+    overlay.remove();
+
+    document.removeEventListener(
+      'keydown',
+      handleKeydown
+    );
+  }
+
+
+  function handleKeydown(
+    event
+  ) {
+    if (
+      event.key ===
+      'Escape'
+    ) {
+      closePopup();
+    }
+  }
+
+
+  closeButton.addEventListener(
+    'click',
+    closePopup
+  );
+
+
+  overlay.addEventListener(
+    'click',
+    (
+      event
+    ) => {
+      if (
+        event.target ===
+        overlay
+      ) {
+        closePopup();
+      }
+    }
+  );
+
+
+  document.addEventListener(
+    'keydown',
+    handleKeydown
+  );
+
+
+  header.appendChild(
+    title
+  );
+
+  header.appendChild(
+    closeButton
+  );
+
+  modal.appendChild(
+    header
+  );
+
+  modal.appendChild(
+    image
+  );
+
+  overlay.appendChild(
+    modal
+  );
+
+  document.body.appendChild(
+    overlay
+  );
+}
+
+async function openFullPhoto(
+  alert
+) {
+  let state =
+    getCameraState(
+      alert.id
+    );
+
+  if (
+    state.status !==
+      'ready' ||
+    !state.url ||
+    Date.now() >=
+      state.expiresAt -
+        3000
+  ) {
+    state =
+      await fetchCameraEvidence(
+        alert,
+        true
+      );
+
+    renderAlerts();
+  }
+
+  if (
+    state.status !==
+      'ready' ||
+    !state.url
+  ) {
+    notify(
+      'No camera photo is available for this alert.'
+    );
+
+    return;
+  }
+
+  showPhotoPopup(
+    state.url,
+    state.latest
+      ?.captured_at
+  );
+}
+
+/* Alert actions */
+
+async function performAlertAction(
+  alert,
+  action,
+  notes = ''
+) {
+  if (
+    alertActionsInProgress.has(
+      alert.id
+    )
+  ) {
+    return;
+  }
+
+  alertActionsInProgress.add(
+    alert.id
+  );
+
+  renderAlerts();
+
+  try {
+    const token =
+      await getAccessToken();
+
+    await requestIoT(
+      `/alerts/${encodeURIComponent(
+        alert.id
+      )}/${action}`,
+      token,
+      {
+        method:
+          'PATCH',
+
+        body:
+          action ===
+          'resolve'
+            ? {
+                resolution_notes:
+                  notes.trim(),
+              }
+            : {},
+      }
+    );
+
+    if (
+      action ===
+      'resolve'
+    ) {
+      resolutionDrafts.delete(
+        alert.id
+      );
+
+      notify(
+        'Alert resolved successfully.'
+      );
+    } else {
+      notify(
+        'Alert acknowledged successfully.'
+      );
+    }
+
+    /* Keep the updated alert visible */
+
+    alertFilter.value =
+      'all';
+
+    await loadDashboard({
+      silent:
+        true,
+    });
+  } catch (error) {
+    console.error(
+      'Alert action failed:',
+      error
+    );
+
+    notify(
+      error instanceof Error
+        ? error.message
+        : 'Alert action failed.'
+    );
+  } finally {
+    alertActionsInProgress.delete(
+      alert.id
+    );
+
+    renderAlerts();
+  }
+}
+
+
+async function acknowledgeAlertGroup(
+  alerts
+) {
+  const openAlerts =
+    alerts.filter(
+      (alert) =>
+        normalisePersistentStatus(
+          alert.alert_status
+        ) ===
+        'open'
+    );
+
+  if (
+    openAlerts.length === 0
+  ) {
+    return;
+  }
+
+  for (
+    const alert of
+    openAlerts
+  ) {
+    alertActionsInProgress.add(
+      alert.id
+    );
+  }
+
+  renderAlerts();
+
+  try {
+    const token =
+      await getAccessToken();
+
+    for (
+      const alert of
+      openAlerts
+    ) {
+      await requestIoT(
+        `/alerts/${encodeURIComponent(
+          alert.id
+        )}/acknowledge`,
+        token,
+        {
+          method:
+            'PATCH',
+
+          body:
+            {},
+        }
+      );
+    }
+
+    notify(
+      `${openAlerts.length} alerts acknowledged.`
+    );
+
+    await loadDashboard({
+      silent:
+        true,
+    });
+  } catch (error) {
+    console.error(
+      'Bulk acknowledge failed:',
+      error
+    );
+
+    notify(
+      error instanceof Error
+        ? error.message
+        : 'Could not acknowledge all alerts.'
+    );
+  } finally {
+    for (
+      const alert of
+      openAlerts
+    ) {
+      alertActionsInProgress.delete(
+        alert.id
+      );
+    }
+
+    renderAlerts();
+  }
+}
+
+
+/* Camera alert card */
+
+function renderCameraAlertCard( alert) {
+  const status =
+    normalisePersistentStatus(
+      alert.alert_status
+    );
+
+  const busy =
+    alertActionsInProgress.has(
+      alert.id
+    );
+
+  const state =
+    getCameraState(
+      alert.id
+    );
+
+  const card =
+    document.createElement(
+      'article'
+    );
+
+  card.className =
+    'card iot-alert-card iot-alert-critical';
+
+  card.style.gridColumn =
+    '1 / -1';
+
+  card.style.padding =
+    '0';
+
+  card.style.overflow =
+    'hidden';
+
+  const layout =
+    document.createElement(
+      'div'
+    );
+
+  layout.style.display =
+    'flex';
+
+  layout.style.flexWrap =
+    'wrap';
+
+  layout.style.minHeight =
+    '300px';
+
+  /* Photo side */
+
+  const photoSide =
+    document.createElement(
+      'div'
+    );
+
+  photoSide.style.flex =
+    '1 1 520px';
+
+  photoSide.style.minWidth =
+    '300px';
+
+  photoSide.style.position =
+    'relative';
+
+  photoSide.style.background =
+    '#07110d';
+
+  photoSide.style.display =
+    'flex';
+
+  photoSide.style.alignItems =
+    'center';
+
+  photoSide.style.justifyContent =
+    'center';
+
+  photoSide.style.minHeight =
+    '300px';
+
+  if (
+    state.status ===
+      'ready' &&
+    state.url &&
+    Date.now() <
+      state.expiresAt -
+        3000
+  ) {
+    const image =
+      document.createElement(
+        'img'
+      );
+
+    image.src =
+      state.url;
+
+    image.alt =
+      'Captured camera evidence';
+
+    image.style.width =
+      '100%';
+
+    image.style.height =
+      '100%';
+
+    image.style.maxHeight =
+      '330px';
+
+    image.style.objectFit =
+      'cover';
+
+    image.style.display =
+      'block';
+
+    image.addEventListener(
+      'error',
+      () => {
+        setCameraState(
+          alert.id,
+          {
+            ...state,
+
+            status:
+              'idle',
+
+            url:
+              null,
+
+            expiresAt:
+              0,
+          }
+        );
+
+        renderAlerts();
+      }
+    );
+
+    photoSide.appendChild(
+      image
+    );
+
+    const cameraLabel =
+      document.createElement(
+        'span'
+      );
+
+    cameraLabel.textContent =
+      `CAM 01  ${formatTime(
+        state.latest
+          ?.captured_at
+      )}`;
+
+    cameraLabel.style.position =
+      'absolute';
+
+    cameraLabel.style.top =
+      '14px';
+
+    cameraLabel.style.left =
+      '16px';
+
+    cameraLabel.style.fontSize =
+      '11px';
+
+    cameraLabel.style.fontWeight =
+      '700';
+
+    cameraLabel.style.color =
+      '#c7f5da';
+
+    cameraLabel.style.fontFamily =
+      'monospace';
+
+    photoSide.appendChild(
+      cameraLabel
+    );
+  } else {
+    const empty =
+      document.createElement(
+        'div'
+      );
+
+    empty.style.textAlign =
+      'center';
+
+    empty.style.padding =
+      '30px';
+
+    const icon =
+      document.createElement(
+        'div'
+      );
+
+    icon.textContent =
+      '📷';
+
+    icon.style.fontSize =
+      '42px';
+
+    icon.style.marginBottom =
+      '10px';
+
+    const text =
+      document.createElement(
+        'div'
+      );
+
+    text.style.color =
+      '#9ab4a5';
+
+    text.style.fontSize =
+      '13px';
+
+    if (
+      state.status ===
+      'loading'
+    ) {
+      text.textContent =
+        'Loading camera evidence...';
+    } else if (
+      state.status ===
+      'empty'
+    ) {
+      text.textContent =
+        'No photo captured for this alert.';
+    } else if (
+      state.status ===
+      'error'
+    ) {
+      text.textContent =
+        state.message ||
+        'Camera evidence unavailable.';
+    } else {
+      text.textContent =
+        'Checking camera evidence...';
+    }
+
+    empty.appendChild(
+      icon
+    );
+
+    empty.appendChild(
+      text
+    );
+
+    photoSide.appendChild(
+      empty
+    );
+  }
+
+  /* Alert information side */
+
+  const detailSide =
+    document.createElement(
+      'div'
+    );
+
+  detailSide.style.flex =
+    '1 1 420px';
+
+  detailSide.style.minWidth =
+    '300px';
+
+  detailSide.style.padding =
+    '24px';
+
+  detailSide.style.display =
+    'flex';
+
+  detailSide.style.flexDirection =
+    'column';
+
+  const pills =
+    document.createElement(
+      'div'
+    );
+
+  pills.style.display =
+    'flex';
+
+  pills.style.gap =
+    '8px';
+
+  pills.style.alignItems =
+    'center';
+
+  pills.style.marginBottom =
+    '14px';
+
+  pills.appendChild(
+    createSeverityPill(
+      alert
     )
   );
 
-  card.appendChild(
-    statusRow
+  pills.appendChild(
+    createStatusPill(
+      alert
+    )
   );
 
+  detailSide.appendChild(
+    pills
+  );
 
-  addAlertDetail(
-    card,
+  const title =
+    document.createElement(
+      'h3'
+    );
+
+  title.textContent =
+    'Movement detected near the camera';
+
+  title.style.margin =
+    '0 0 5px';
+
+  title.style.fontSize =
+    '20px';
+
+  title.style.color =
+    'var(--ink)';
+
+  detailSide.appendChild(
+    title
+  );
+
+  const metric =
+    document.createElement(
+      'div'
+    );
+
+  metric.textContent =
+    getAlertMetric(
+      alert
+    ) ||
+    'movement_nearby_cm';
+
+  metric.style.color =
+    'var(--mute)';
+
+  metric.style.fontSize =
+    '12px';
+
+  metric.style.marginBottom =
+    '20px';
+
+  detailSide.appendChild(
+    metric
+  );
+
+  const info =
+    document.createElement(
+      'div'
+    );
+
+  info.style.display =
+    'grid';
+
+  info.style.gridTemplateColumns =
+    '120px minmax(0, 1fr)';
+
+  info.style.gap =
+    '10px 18px';
+
+  info.style.fontSize =
+    '12px';
+
+  function addInfo(
+    label,
+    value
+  ) {
+    const name =
+      document.createElement(
+        'span'
+      );
+
+    name.textContent =
+      label;
+
+    name.style.color =
+      'var(--mute)';
+
+    const content =
+      document.createElement(
+        'strong'
+      );
+
+    content.textContent =
+      value;
+
+    content.style.color =
+      'var(--ink)';
+
+    content.style.fontWeight =
+      '600';
+
+    content.style.textAlign =
+      'right';
+
+    content.style.wordBreak =
+      'break-word';
+
+    info.appendChild(
+      name
+    );
+
+    info.appendChild(
+      content
+    );
+  }
+
+  addInfo(
     'Triggered',
     formatTime(
       alert.triggered_at
     )
   );
 
+  addInfo(
+    'Station',
+    alert.station_id ||
+      'Unknown'
+  );
 
   if (
     alert.reading_id
   ) {
-    addAlertDetail(
-      card,
+    addInfo(
       'Reading ID',
       alert.reading_id
     );
   }
 
-
   if (
-    status ===
-      'acknowledged' ||
-    status ===
-      'resolved'
-  ) {
-    addAlertDetail(
-      card,
-      'Acknowledged',
-      formatTime(
-        alert.acknowledged_at
-      )
-    );
-  }
+  status ===
+    'acknowledged' ||
+  status ===
+    'resolved'
+) {
+  addInfo(
+    'Acknowledged by',
+    getActorLabel(
+      alert
+        .acknowledged_by_name,
+      alert
+        .acknowledged_by
+    )
+  );
 
+  addInfo(
+    'Acknowledged at',
+    formatTime(
+      alert
+        .acknowledged_at
+    )
+  );
+}
 
-  if (
-    status === 'resolved'
-  ) {
-    addAlertDetail(
-      card,
-      'Resolved',
-      formatTime(
-        alert.resolved_at
-      )
-    );
+if (
+  status ===
+  'resolved'
+) {
+  addInfo(
+    'Resolved by',
+    getActorLabel(
+      alert
+        .resolved_by_name,
+      alert
+        .resolved_by
+    )
+  );
 
+  addInfo(
+    'Resolved at',
+    formatTime(
+      alert
+        .resolved_at
+    )
+  );
+}
 
-    if (
-      alert.resolution_notes
-    ) {
-      addAlertDetail(
-        card,
-        'Resolution',
-        alert.resolution_notes
-      );
-    }
-  }
+  detailSide.appendChild(
+    info
+  );
 
-
-  /* --------------------------------------------------------
-     OPEN -> ACKNOWLEDGE
-     -------------------------------------------------------- */
-
-  if (
-    status === 'open'
-  ) {
-    const actions =
-      document.createElement(
-        'div'
-      );
-
-    actions.className =
-      'iot-alert-actions';
-
-
-    const acknowledgeButton =
-      createAlertActionButton(
-        busy
-          ? 'Working...'
-          : 'Acknowledge',
-        'btn small',
-        () => {
-          void performAlertAction(
-            alert,
-            'acknowledge'
-          );
-        }
-      );
-
-
-    acknowledgeButton.disabled =
-      busy;
-
-
-    actions.appendChild(
-      acknowledgeButton
-    );
-
-    card.appendChild(
-      actions
-    );
-  }
-
-
-  /* --------------------------------------------------------
-     ACKNOWLEDGED -> RESOLVE
-     -------------------------------------------------------- */
+  /* Resolution */
 
   if (
     status ===
@@ -1832,21 +2877,8 @@ function renderPersistentAlertCard(
         'div'
       );
 
-    resolveBox.className =
-      'iot-resolution-box';
-
-
-    const label =
-      document.createElement(
-        'label'
-      );
-
-    label.className =
-      'iot-resolution-label';
-
-    label.textContent =
-      'Resolution notes';
-
+    resolveBox.style.marginTop =
+      '18px';
 
     const textarea =
       document.createElement(
@@ -1856,23 +2888,22 @@ function renderPersistentAlertCard(
     textarea.className =
       'iot-resolution-input';
 
-    textarea.rows = 3;
+    textarea.rows =
+      3;
 
     textarea.maxLength =
       2000;
 
     textarea.placeholder =
-      'Optional notes about how the threat was investigated or resolved.';
+      'Resolution notes';
 
     textarea.value =
       resolutionDrafts.get(
         alert.id
       ) || '';
 
-
     textarea.disabled =
       busy;
-
 
     textarea.addEventListener(
       'input',
@@ -1884,71 +2915,846 @@ function renderPersistentAlertCard(
       }
     );
 
-
-    const actions =
-      document.createElement(
-        'div'
-      );
-
-    actions.className =
-      'iot-alert-actions';
-
-
-    const resolveButton =
-      createAlertActionButton(
-        busy
-          ? 'Working...'
-          : 'Resolve alert',
-        'btn small',
-        () => {
-          void performAlertAction(
-            alert,
-            'resolve',
-            textarea.value
-          );
-        }
-      );
-
-
-    resolveButton.disabled =
-      busy;
-
-
-    label.appendChild(
+    resolveBox.appendChild(
       textarea
     );
 
-    resolveBox.appendChild(
-      label
-    );
-
-    actions.appendChild(
-      resolveButton
-    );
-
-    resolveBox.appendChild(
-      actions
-    );
-
-    card.appendChild(
+    detailSide.appendChild(
       resolveBox
     );
   }
 
+  if (
+    status ===
+      'resolved' &&
+    alert.resolution_notes
+  ) {
+    const resolution =
+      document.createElement(
+        'p'
+      );
+
+    resolution.textContent =
+      `Resolution: ${alert.resolution_notes}`;
+
+    resolution.style.color =
+      'var(--mute)';
+
+    resolution.style.fontSize =
+      '12px';
+
+    resolution.style.marginTop =
+      '16px';
+
+    detailSide.appendChild(
+      resolution
+    );
+  }
+
+  /* Actions */
+
+  const actions =
+    document.createElement(
+      'div'
+    );
+
+  actions.style.display =
+    'flex';
+
+  actions.style.flexWrap =
+    'wrap';
+
+  actions.style.gap =
+    '10px';
+
+  actions.style.marginTop =
+    'auto';
+
+  actions.style.paddingTop =
+    '22px';
+
+  if (
+    status ===
+    'open'
+  ) {
+    const acknowledge =
+      document.createElement(
+        'button'
+      );
+
+    acknowledge.type =
+      'button';
+
+    acknowledge.className =
+      'btn';
+
+    acknowledge.textContent =
+      busy
+        ? 'Working...'
+        : 'Acknowledge';
+
+    acknowledge.disabled =
+      busy;
+
+    acknowledge.addEventListener(
+      'click',
+      () => {
+        void performAlertAction(
+          alert,
+          'acknowledge'
+        );
+      }
+    );
+
+    actions.appendChild(
+      acknowledge
+    );
+  }
+
+  if (
+    status ===
+    'acknowledged'
+  ) {
+    const resolve =
+      document.createElement(
+        'button'
+      );
+
+    resolve.type =
+      'button';
+
+    resolve.className =
+      'btn';
+
+    resolve.textContent =
+      busy
+        ? 'Working...'
+        : 'Resolve alert';
+
+    resolve.disabled =
+      busy;
+
+    resolve.addEventListener(
+      'click',
+      () => {
+        void performAlertAction(
+          alert,
+          'resolve',
+          resolutionDrafts.get(
+            alert.id
+          ) || ''
+        );
+      }
+    );
+
+    actions.appendChild(
+      resolve
+    );
+  }
+
+  if (
+    state.status ===
+    'ready' &&
+    state.url
+  ) {
+    const fullPhoto =
+      document.createElement(
+        'button'
+      );
+
+    fullPhoto.type =
+      'button';
+
+    fullPhoto.className =
+      'btn ghost';
+
+    fullPhoto.textContent =
+      'View full photo';
+
+    fullPhoto.addEventListener(
+      'click',
+      () => {
+        void openFullPhoto(
+          alert
+        );
+      }
+    );
+
+    actions.appendChild(
+      fullPhoto
+    );
+  }
+
+  const refreshPhoto =
+    document.createElement(
+      'button'
+    );
+
+  refreshPhoto.type =
+    'button';
+
+  refreshPhoto.className =
+    'btn ghost';
+
+  refreshPhoto.textContent =
+    state.status ===
+      'loading'
+      ? 'Loading photo...'
+      : 'Refresh photo';
+
+  refreshPhoto.disabled =
+    state.status ===
+    'loading';
+
+  refreshPhoto.addEventListener(
+    'click',
+    () => {
+      void refreshCameraAlert(
+        alert
+      );
+    }
+  );
+
+  actions.appendChild(
+    refreshPhoto
+  );
+
+  detailSide.appendChild(
+    actions
+  );
+
+  layout.appendChild(
+    photoSide
+  );
+
+  layout.appendChild(
+    detailSide
+  );
+
+  card.appendChild(
+    layout
+  );
+
+  queueCameraLoad(
+    alert
+  );
 
   return card;
 }
 
 
+/* Compact alert row */
+
+function renderCompactAlertRow(
+  alert
+) {
+  const status =
+    normalisePersistentStatus(
+      alert.alert_status
+    );
+
+  const busy =
+    alertActionsInProgress.has(
+      alert.id
+    );
+
+  const group =
+    getAlertGroup(
+      alert
+    );
+
+  const row =
+    document.createElement(
+      'div'
+    );
+
+  row.style.display =
+    'flex';
+
+  row.style.flexWrap =
+    'wrap';
+
+  row.style.alignItems =
+    'center';
+
+  row.style.gap =
+    '14px';
+
+  row.style.padding =
+    '15px 18px';
+
+  row.style.borderTop =
+    '1px solid var(--line)';
+
+  const icon =
+    document.createElement(
+      'div'
+    );
+
+  icon.textContent =
+    getAlertIcon(
+      group
+    );
+
+  icon.style.width =
+    '42px';
+
+  icon.style.height =
+    '42px';
+
+  icon.style.flex =
+    '0 0 42px';
+
+  icon.style.display =
+    'flex';
+
+  icon.style.alignItems =
+    'center';
+
+  icon.style.justifyContent =
+    'center';
+
+  icon.style.borderRadius =
+    '12px';
+
+  icon.style.background =
+    'var(--mint)';
+
+  icon.style.fontSize =
+    '18px';
+
+  row.appendChild(
+    icon
+  );
+
+  const main =
+    document.createElement(
+      'div'
+    );
+
+  main.style.flex =
+    '1 1 320px';
+
+  main.style.minWidth =
+    '220px';
+
+  const titleRow =
+    document.createElement(
+      'div'
+    );
+
+  titleRow.style.display =
+    'flex';
+
+  titleRow.style.flexWrap =
+    'wrap';
+
+  titleRow.style.alignItems =
+    'center';
+
+  titleRow.style.gap =
+    '8px';
+
+  const title =
+    document.createElement(
+      'strong'
+    );
+
+  title.textContent =
+    getAlertDisplayTitle(
+      alert
+    );
+
+  title.style.fontSize =
+    '14px';
+
+  title.style.color =
+    'var(--ink)';
+
+  titleRow.appendChild(
+    title
+  );
+
+  titleRow.appendChild(
+    createSeverityPill(
+      alert
+    )
+  );
+
+  main.appendChild(
+    titleRow
+  );
+
+  const meta =
+    document.createElement(
+      'div'
+    );
+
+  let metaText =
+    `${getAlertSourceName(
+      alert
+    )} · ${formatTime(
+      alert.triggered_at
+    )} · ${capitalise(
+      status
+    )}`;
+
+
+  if (
+    status ===
+      'acknowledged' ||
+    status ===
+      'resolved'
+  ) {
+    metaText +=
+      ` · Acknowledged by ${getActorLabel(
+        alert
+          .acknowledged_by_name,
+        alert
+          .acknowledged_by
+      )}`;
+  }
+
+
+  if (
+    status ===
+    'resolved'
+  ) {
+    metaText +=
+      ` · Resolved by ${getActorLabel(
+        alert
+          .resolved_by_name,
+        alert
+          .resolved_by
+      )}`;
+  }
+
+
+  meta.textContent =
+    metaText;
+
+  meta.style.color =
+    'var(--mute)';
+
+  meta.style.fontSize =
+    '11.5px';
+
+  meta.style.marginTop =
+    '3px';
+
+  main.appendChild(
+    meta
+  );
+
+  if (
+    status ===
+      'acknowledged'
+  ) {
+    const textarea =
+      document.createElement(
+        'textarea'
+      );
+
+    textarea.className =
+      'iot-resolution-input';
+
+    textarea.rows =
+      2;
+
+    textarea.maxLength =
+      2000;
+
+    textarea.placeholder =
+      'Resolution notes';
+
+    textarea.value =
+      resolutionDrafts.get(
+        alert.id
+      ) || '';
+
+    textarea.disabled =
+      busy;
+
+    textarea.style.marginTop =
+      '9px';
+
+    textarea.addEventListener(
+      'input',
+      () => {
+        resolutionDrafts.set(
+          alert.id,
+          textarea.value
+        );
+      }
+    );
+
+    main.appendChild(
+      textarea
+    );
+  }
+
+  if (
+    status ===
+      'resolved' &&
+    alert.resolution_notes
+  ) {
+    const resolution =
+      document.createElement(
+        'div'
+      );
+
+    resolution.textContent =
+      `Resolution: ${alert.resolution_notes}`;
+
+    resolution.style.color =
+      'var(--mute)';
+
+    resolution.style.fontSize =
+      '11.5px';
+
+    resolution.style.marginTop =
+      '6px';
+
+    main.appendChild(
+      resolution
+    );
+  }
+
+  row.appendChild(
+    main
+  );
+
+  if (
+    alert.reading_id
+  ) {
+    const reading =
+      document.createElement(
+        'span'
+      );
+
+    reading.textContent =
+      alert.reading_id;
+
+    reading.title =
+      alert.reading_id;
+
+    reading.style.maxWidth =
+      '180px';
+
+    reading.style.overflow =
+      'hidden';
+
+    reading.style.textOverflow =
+      'ellipsis';
+
+    reading.style.whiteSpace =
+      'nowrap';
+
+    reading.style.color =
+      'var(--mute)';
+
+    reading.style.fontFamily =
+      'monospace';
+
+    reading.style.fontSize =
+      '11px';
+
+    row.appendChild(
+      reading
+    );
+  }
+
+  const action =
+    document.createElement(
+      'div'
+    );
+
+  action.style.flex =
+    '0 0 auto';
+
+  if (
+    status ===
+    'open'
+  ) {
+    const button =
+      document.createElement(
+        'button'
+      );
+
+    button.type =
+      'button';
+
+    button.className =
+      'btn small';
+
+    button.textContent =
+      busy
+        ? 'Working...'
+        : 'Acknowledge';
+
+    button.disabled =
+      busy;
+
+    button.addEventListener(
+      'click',
+      () => {
+        void performAlertAction(
+          alert,
+          'acknowledge'
+        );
+      }
+    );
+
+    action.appendChild(
+      button
+    );
+  }
+
+  if (
+    status ===
+    'acknowledged'
+  ) {
+    const button =
+      document.createElement(
+        'button'
+      );
+
+    button.type =
+      'button';
+
+    button.className =
+      'btn small';
+
+    button.textContent =
+      busy
+        ? 'Working...'
+        : 'Resolve';
+
+    button.disabled =
+      busy;
+
+    button.addEventListener(
+      'click',
+      () => {
+        void performAlertAction(
+          alert,
+          'resolve',
+          resolutionDrafts.get(
+            alert.id
+          ) || ''
+        );
+      }
+    );
+
+    action.appendChild(
+      button
+    );
+  }
+
+  if (
+    status ===
+    'resolved'
+  ) {
+    action.appendChild(
+      createStatusPill(
+        alert
+      )
+    );
+  }
+
+  row.appendChild(
+    action
+  );
+
+  return row;
+}
+
+
+/* Compact alert group */
+
+function renderCompactAlertGroup(
+  group,
+  alerts
+) {
+  const section =
+    document.createElement(
+      'section'
+    );
+
+  section.style.gridColumn =
+    '1 / -1';
+
+  section.style.marginTop =
+    '16px';
+
+  const header =
+    document.createElement(
+      'div'
+    );
+
+  header.style.display =
+    'flex';
+
+  header.style.alignItems =
+    'center';
+
+  header.style.justifyContent =
+    'space-between';
+
+  header.style.gap =
+    '16px';
+
+  header.style.marginBottom =
+    '10px';
+
+  const title =
+    document.createElement(
+      'div'
+    );
+
+  const name =
+    document.createElement(
+      'strong'
+    );
+
+  name.textContent =
+    getGroupTitle(
+      group
+    );
+
+  name.style.fontSize =
+    '14px';
+
+  name.style.color =
+    'var(--ink)';
+
+  const openCount =
+    alerts.filter(
+      (alert) =>
+        normalisePersistentStatus(
+          alert.alert_status
+        ) ===
+        'open'
+    ).length;
+
+  const count =
+    document.createElement(
+      'span'
+    );
+
+  count.textContent =
+    ` ${openCount} open`;
+
+  count.style.color =
+    'var(--mute)';
+
+  count.style.fontWeight =
+    '400';
+
+  name.appendChild(
+    count
+  );
+
+  title.appendChild(
+    name
+  );
+
+  header.appendChild(
+    title
+  );
+
+  if (
+    openCount > 1
+  ) {
+    const acknowledgeAll =
+      document.createElement(
+        'button'
+      );
+
+    acknowledgeAll.type =
+      'button';
+
+    acknowledgeAll.className =
+      'btn ghost small';
+
+    acknowledgeAll.textContent =
+      'Acknowledge all';
+
+    acknowledgeAll.addEventListener(
+      'click',
+      () => {
+        void acknowledgeAlertGroup(
+          alerts
+        );
+      }
+    );
+
+    header.appendChild(
+      acknowledgeAll
+    );
+  }
+
+  section.appendChild(
+    header
+  );
+
+  const list =
+    document.createElement(
+      'div'
+    );
+
+  list.className =
+    'card';
+
+  list.style.padding =
+    '0';
+
+  list.style.overflow =
+    'hidden';
+
+  alerts.forEach(
+    (
+      alert,
+      index
+    ) => {
+      const row =
+        renderCompactAlertRow(
+          alert
+        );
+
+      if (
+        index === 0
+      ) {
+        row.style.borderTop =
+          'none';
+      }
+
+      list.appendChild(
+        row
+      );
+    }
+  );
+
+  section.appendChild(
+    list
+  );
+
+  return section;
+}
+
+
+/* Alert list */
+
 function getFilteredPersistentAlerts() {
   const filter =
     alertFilter.value;
 
-
-  if (filter === 'all') {
+  if (
+    filter ===
+    'all'
+  ) {
     return persistentAlerts;
   }
-
 
   return persistentAlerts.filter(
     (alert) =>
@@ -1962,27 +3768,29 @@ function getFilteredPersistentAlerts() {
 function renderAlerts() {
   alertList.replaceChildren();
 
+  alertList.style.display =
+    'grid';
+
+  alertList.style.gridTemplateColumns =
+    '1fr';
+
+  alertList.style.gap =
+    '14px';
+
   calculateAlertSummary();
-
   renderSummary();
-
 
   const alerts =
     getFilteredPersistentAlerts();
 
-
   if (
     alerts.length === 0
   ) {
-    const filter =
-      alertFilter.value;
-
-
     alertMessage.textContent =
-      filter === 'open'
+      alertFilter.value ===
+      'open'
         ? 'No open alerts require attention.'
-        : `No ${filter} alerts to display.`;
-
+        : 'No alerts in this category.';
 
     const empty =
       document.createElement(
@@ -1992,36 +3800,11 @@ function renderAlerts() {
     empty.className =
       'card iot-empty-alert';
 
+    empty.style.gridColumn =
+      '1 / -1';
 
-    const title =
-      document.createElement(
-        'strong'
-      );
-
-    title.textContent =
-      filter === 'open'
-        ? 'No open threats'
-        : 'No alerts';
-
-
-    const text =
-      document.createElement(
-        'p'
-      );
-
-    text.textContent =
-      filter === 'open'
-        ? 'No persistent IoT alert currently requires acknowledgement.'
-        : 'There are no alerts in this category.';
-
-
-    empty.appendChild(
-      title
-    );
-
-    empty.appendChild(
-      text
-    );
+    empty.textContent =
+      'No persistent IoT alerts to display.';
 
     alertList.appendChild(
       empty
@@ -2029,7 +3812,6 @@ function renderAlerts() {
 
     return;
   }
-
 
   alertMessage.textContent =
     `Showing ${alerts.length} ${
@@ -2039,112 +3821,175 @@ function renderAlerts() {
         : `${alertFilter.value} `
     }alerts.`;
 
+  const cameraAlerts =
+    alerts.filter(
+      isCameraAlert
+    );
+
+  const otherAlerts =
+    alerts.filter(
+      (alert) =>
+        !isCameraAlert(
+          alert
+        )
+    );
 
   for (
     const alert of
-    alerts
+    cameraAlerts
   ) {
     alertList.appendChild(
-      renderPersistentAlertCard(
+      renderCameraAlertCard(
         alert
       )
     );
   }
+
+  const groupOrder = [
+    'temperature',
+    'humidity',
+    'soil',
+    'rain',
+    'other',
+  ];
+
+  for (
+    const group of
+    groupOrder
+  ) {
+    const groupAlerts =
+      otherAlerts.filter(
+        (alert) =>
+          getAlertGroup(
+            alert
+          ) === group
+      );
+
+    if (
+      groupAlerts.length === 0
+    ) {
+      continue;
+    }
+
+    alertList.appendChild(
+      renderCompactAlertGroup(
+        group,
+        groupAlerts
+      )
+    );
+  }
+
+  const knownIds =
+    new Set(
+      persistentAlerts.map(
+        (alert) =>
+          alert.id
+      )
+    );
+
+  for (
+    const id of
+    cameraEvidenceState.keys()
+  ) {
+    if (
+      !knownIds.has(id)
+    ) {
+      cameraEvidenceState.delete(
+        id
+      );
+    }
+  }
 }
 
 
-/* ============================================================
-   COMPLETE RENDER
-   ============================================================ */
+/* Dashboard render */
 
 function renderDashboard() {
   calculateAlertSummary();
-
   renderSummary();
-
   renderStationOptions();
-
   renderSelectedStation();
-
   renderTelemetry();
-
   renderAlerts();
 }
 
 
-/* ============================================================
-   RESET
-   ============================================================ */
+/* Reset */
 
 function resetDashboard(
   message
 ) {
-  latestReadings = [];
+  registeredStations =
+  [];
 
-  recentReadings = [];
+  latestReadings =
+    [];
 
-  persistentAlerts = [];
+  recentReadings =
+    [];
 
-  liveActiveAlerts = [];
-
-  selectedStation = '';
-
+  persistentAlerts =
+    [];
 
   dashboardSummary = {
-    total_stations: 0,
-    online_stations: 0,
-    offline_stations: 0,
-  };
+    total_stations:
+      0,
 
+    online_stations:
+      0,
+
+    offline_stations:
+      0,
+  };
 
   alertSummary = {
-    unresolved: 0,
-    critical: 0,
-    warning: 0,
+    unresolved:
+      0,
+
+    critical:
+      0,
+
+    warning:
+      0,
   };
 
-
   renderSummary();
-
   renderStationOptions();
-
   clearSensorDisplay();
-
 
   telemetryBody.replaceChildren();
 
-
-  const telemetryRow =
+  const row =
     document.createElement(
       'tr'
     );
 
-  const telemetryCell =
-    createCell(message);
+  const cell =
+    createCell(
+      message
+    );
 
-  telemetryCell.colSpan = 8;
+  cell.colSpan =
+    8;
 
-  telemetryCell.className =
+  cell.className =
     'iot-empty-cell';
 
-  telemetryRow.appendChild(
-    telemetryCell
+  row.appendChild(
+    cell
   );
 
   telemetryBody.appendChild(
-    telemetryRow
+    row
   );
-
 
   telemetryMessage.textContent =
     message;
-
 
   alertList.replaceChildren();
 
   alertMessage.textContent =
     message;
-
 
   const alertCard =
     document.createElement(
@@ -2163,31 +4008,22 @@ function resetDashboard(
 }
 
 
-/* ============================================================
-   LOAD DASHBOARD
-   ============================================================ */
+/* Load dashboard */
 
 async function loadDashboard({
   silent = false,
 } = {}) {
-
-  /*
-   * Do not interrupt alert actions.
-   *
-   * Dashboard refresh requests may cancel older dashboard
-   * refresh requests, but never PATCH alert operations.
-   */
-  if (currentRequest) {
+  if (
+    currentRequest
+  ) {
     currentRequest.abort();
   }
-
 
   const controller =
     new AbortController();
 
   currentRequest =
     controller;
-
 
   if (!silent) {
     refreshButton.disabled =
@@ -2199,28 +4035,18 @@ async function loadDashboard({
     );
   }
 
-
   try {
     const token =
       await getAccessToken();
 
+    /* Read dashboard data from Supabase through backend */
 
-    /*
-     * Persistent and live data are loaded together.
-     */
     const [
-      registeredSummaryResult,
-      liveSummaryResult,
-      latestResult,
-      readingsResult,
-      persistentAlertsResult,
-      liveAlertsResult,
+      stationResult,
+      historyResult,
+      alertResult,
     ] =
       await Promise.all([
-
-        /*
-         * Registered stations in Supabase.
-         */
         requestIoT(
           '/summary',
           token,
@@ -2230,12 +4056,8 @@ async function loadDashboard({
           }
         ),
 
-
-        /*
-         * Current MQTT station activity.
-         */
         requestIoT(
-          '/summary/live',
+          '/readings/history',
           token,
           {
             signal:
@@ -2243,36 +4065,6 @@ async function loadDashboard({
           }
         ),
 
-
-        /*
-         * Latest live reading per station.
-         */
-        requestIoT(
-          '/latest',
-          token,
-          {
-            signal:
-              controller.signal,
-          }
-        ),
-
-
-        /*
-         * Recent live MQTT telemetry.
-         */
-        requestIoT(
-          '/readings?limit=100',
-          token,
-          {
-            signal:
-              controller.signal,
-          }
-        ),
-
-
-        /*
-         * Persistent Supabase alert history.
-         */
         requestIoT(
           '/alerts',
           token,
@@ -2281,206 +4073,139 @@ async function loadDashboard({
               controller.signal,
           }
         ),
-
-
-        /*
-         * Current live threat state for sensor cards.
-         */
-        requestIoT(
-          '/alerts/live?status=active&limit=100',
-          token,
-          {
-            signal:
-              controller.signal,
-          }
-        ),
       ]);
 
-
     if (
-      controller.signal.aborted
+      controller.signal
+        .aborted
     ) {
       return;
     }
 
+    /* Registered stations */
 
-    /* --------------------------------------------------------
-       STATION SUMMARY
-       -------------------------------------------------------- */
-
-    const registeredSummary =
-      registeredSummaryResult.data ||
-      {};
-
-
-    const liveSummary =
-      liveSummaryResult.data ||
-      {};
-
-
-    const totalStations =
-      Math.max(
-        0,
-        Number(
-          registeredSummary
-            .total_stations
-        ) || 0
-      );
-
-
-    /*
-     * A station counts as online when the live backend
-     * considers it active within the 60-second window.
-     *
-     * Do not allow Online to exceed registered stations.
-     */
-    const onlineStations =
-      Math.min(
-        totalStations,
-        Math.max(
-          0,
-          Number(
-            liveSummary
-              .online_stations
-          ) || 0
-        )
-      );
-
-
-    dashboardSummary = {
-      total_stations:
-        totalStations,
-
-      online_stations:
-        onlineStations,
-
-      offline_stations:
-        Math.max(
-          0,
-          totalStations -
-            onlineStations
-        ),
-    };
-
-
-    /* --------------------------------------------------------
-       LIVE TELEMETRY
-       -------------------------------------------------------- */
-
-    latestReadings =
+    registeredStations =
       Array.isArray(
-        latestResult.data
+        stationResult
+          .data
+          ?.stations
       )
-        ? latestResult.data
+        ? stationResult
+            .data
+            .stations
         : [];
 
+    /* Persistent telemetry */
 
     recentReadings =
       Array.isArray(
-        readingsResult.data
+        historyResult.data
       )
-        ? readingsResult.data
+        ? historyResult.data
         : [];
 
-
-    /* --------------------------------------------------------
-       PERSISTENT ALERTS
-       -------------------------------------------------------- */
-
-    persistentAlerts =
-      Array.isArray(
-        persistentAlertsResult.data
-      )
-        ? persistentAlertsResult.data
-        : [];
-
-
-    /*
-     * Newest first.
-     */
-    persistentAlerts.sort(
-      (a, b) =>
+    recentReadings.sort(
+      (
+        a,
+        b
+      ) =>
         new Date(
-          b.triggered_at || 0
+          getReadingTime(
+            b
+          ) || 0
         ).getTime() -
         new Date(
-          a.triggered_at || 0
+          getReadingTime(
+            a
+          ) || 0
         ).getTime()
     );
 
+    /* Latest reading for each station */
 
-    /* --------------------------------------------------------
-       LIVE ALERTS
-       -------------------------------------------------------- */
+    latestReadings =
+      buildLatestReadings(
+        recentReadings
+      );
 
-    liveActiveAlerts =
+    /* Online/offline from latest persisted reading */
+
+    calculateStationSummary();
+
+    /* Persistent threat alerts */
+
+    persistentAlerts =
       Array.isArray(
-        liveAlertsResult.data
+        alertResult.data
       )
-        ? liveAlertsResult.data
+        ? alertResult.data
         : [];
 
+    persistentAlerts.sort(
+      (
+        a,
+        b
+      ) =>
+        new Date(
+          b.triggered_at ||
+            0
+        ).getTime() -
+        new Date(
+          a.triggered_at ||
+            0
+        ).getTime()
+    );
 
     renderDashboard();
 
-
     const now =
       new Date();
-
 
     lastUpdated.textContent =
       `Last updated ${now.toLocaleTimeString(
         'en-MY'
       )}`;
 
-
     setDashboardStatus(
       'live',
-      'Backend connected'
+      'Supabase synced'
     );
-
   } catch (error) {
-
     if (
-      controller.signal.aborted
+      controller.signal
+        .aborted
     ) {
       return;
     }
-
 
     console.error(
       'IoT dashboard error:',
       error
     );
 
-
     const message =
       error instanceof Error
         ? error.message
         : 'Unable to load IoT monitoring data.';
 
-
     resetDashboard(
       message
     );
-
 
     setDashboardStatus(
       'error',
       'Connection problem'
     );
 
-
     lastUpdated.textContent =
       'Unable to update dashboard';
-
   } finally {
-
     if (
       currentRequest ===
       controller
     ) {
-      currentRequest = null;
+      currentRequest =
+        null;
 
       refreshButton.disabled =
         false;
@@ -2489,9 +4214,7 @@ async function loadDashboard({
 }
 
 
-/* ============================================================
-   EVENTS
-   ============================================================ */
+/* Events */
 
 refreshButton.addEventListener(
   'click',
@@ -2508,7 +4231,6 @@ stationFilter.addEventListener(
       stationFilter.value;
 
     renderSelectedStation();
-
     renderTelemetry();
   }
 );
@@ -2522,37 +4244,32 @@ alertFilter.addEventListener(
 );
 
 
-/* ============================================================
-   AUTO REFRESH
-   ============================================================ */
+/* Auto refresh */
 
 function startAutoRefresh() {
-  if (refreshTimer) {
+  if (
+    refreshTimer
+  ) {
     clearInterval(
       refreshTimer
     );
   }
 
-
   refreshTimer =
     setInterval(
       () => {
-
-        /*
-         * Do not poll while the tab is hidden.
-         */
         if (
           document.hidden
         ) {
           return;
         }
 
-
         void loadDashboard({
-          silent: true,
+          silent:
+            true,
         });
-
       },
+
       AUTO_REFRESH_MS
     );
 }
@@ -2565,16 +4282,15 @@ document.addEventListener(
       !document.hidden
     ) {
       void loadDashboard({
-        silent: true,
+        silent:
+          true,
       });
     }
   }
 );
 
 
-/* ============================================================
-   INITIAL LOAD
-   ============================================================ */
+/* Start */
 
 clearSensorDisplay();
 
