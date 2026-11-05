@@ -44,7 +44,7 @@ app.use('/api/plants', plantRoutes);
 
 app.use('/api/identify', identifyRoutes);
 
-app.use('/api/iot', requireAuth, requireRole('officer'), iotRoutes);
+app.use('/api/iot', requireAuth, iotRoutes);
 
 app.use('/api/knowledge', knowledgeRoutes);
 
