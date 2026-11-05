@@ -144,12 +144,28 @@ test('plant photo stores the phone photo ID so it can be found on retry', async 
 });
 
 test('a retried plant photo returns the saved row and uploads nothing', async () => {
-  db = fakeDb({ existingMedia: { id: 'saved', client_record_id: PHOTO } });
+  // Kai's route also checks the saved row is this plant's, this botanist's and the same
+  // photo type before treating the request as a retry.
+  db = fakeDb({
+    existingMedia: { id: 'saved', client_record_id: PHOTO, plant_id: PLANT, uploaded_by: BOTANIST, photo_type: 'leaf' },
+  });
   await withApp(async base => {
     const result = await plantPhoto(base, { client_photo_id: PHOTO });
     assert.equal(result.status, 200);
     assert.equal(result.body.media.id, 'saved');
     assert.equal(db.calls.uploads.length, 0);
+  });
+});
+
+test('a plant photo ID already used for a different photo is refused, not overwritten', async () => {
+  db = fakeDb({
+    existingMedia: { id: 'saved', client_record_id: PHOTO, plant_id: PLANT, uploaded_by: BOTANIST, photo_type: 'bark' },
+  });
+  await withApp(async base => {
+    const result = await plantPhoto(base, { client_photo_id: PHOTO });
+    assert.equal(result.status, 409);
+    assert.equal(db.calls.uploads.length, 0);
+    assert.equal(db.calls.inserts.length, 0);
   });
 });
 

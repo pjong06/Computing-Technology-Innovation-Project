@@ -2,7 +2,9 @@ import { ApiError, apiFetch } from '../api/client';
 import {
   applySyncOperationResult,
   getReadyOutboxOperations,
+  getUploadedPlantsQueuedAsCreate,
   markOperationsProcessing,
+  rebaseQueuedCreateAsUpdate,
   retryFailedOperations,
   setLastSuccessfulSync,
   type OutboxOperation,
@@ -41,8 +43,36 @@ function toApiOperation(operation: OutboxOperation) {
   };
 }
 
+// Plants uploaded before the outbox existed have a server ID but no row_version, so
+// their changes were queued as creates (which the server answers without changing
+// anything). Look up each one's current version and send the change as an update.
+// If the lookup fails (offline, plant gone), the operation is left as it was.
+async function adoptServerVersions(): Promise<void> {
+  const plants = await getUploadedPlantsQueuedAsCreate();
+
+  for (const plant of plants) {
+    try {
+      const response = await apiFetch<{ row_version?: number }>(
+        `/api/plants/${encodeURIComponent(plant.serverId)}`
+      );
+      if (
+        typeof response.row_version === 'number' &&
+        response.row_version > 0
+      ) {
+        await rebaseQueuedCreateAsUpdate(
+          plant.clientRecordId,
+          response.row_version
+        );
+      }
+    } catch {
+      // Try again on the next sync.
+    }
+  }
+}
+
 async function runPush(): Promise<SyncRunResult> {
   await retryFailedOperations();
+  await adoptServerVersions();
 
   let processed = 0;
   let succeeded = 0;
