@@ -365,7 +365,7 @@ function updateCatalogue(observation, outcome, status) {
       date: isoDate(now), when: whenText(now),
       firstDate: old.firstDate, firstWhen: old.firstWhen, obsId: old.obsId || ''
     };
-    if (writeStorage(SPECIES_KEY, speciesList) === false) {
+    if (writeStorage(SPECIES_KEY, speciesList)) {
       return null;
     }
     return 'Approved: species record updated';
@@ -379,14 +379,14 @@ function updateCatalogue(observation, outcome, status) {
         speciesList[i].when = whenText(now);
       }
     }
-    if (writeStorage(SPECIES_KEY, speciesList) === false) {
+    if (writeStorage(SPECIES_KEY, speciesList)) {
       return null;
     }
     return 'Approved: already in the catalogue (Last updated refreshed)';
   }
 
   speciesList.push(makeCatalogueRecord(observation, outcome, status));
-  if (writeStorage(SPECIES_KEY, speciesList) === false) {
+  if (writeStorage(SPECIES_KEY, speciesList)) {
     return null;
   }
 
@@ -431,7 +431,7 @@ function reviewObservation(id, result) {
 
   observation.state = result;
   observation.reason = reason;
-  if (writeStorage(OBSERVATIONS_KEY, observations) === false) {
+  if (writeStorage(OBSERVATIONS_KEY, observations)) {
     drawQueue();
     return;
   }
