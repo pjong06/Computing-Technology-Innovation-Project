@@ -90,3 +90,20 @@ test('api() renews an expiring login and sends the officer to log in when it can
   assert.match(apiBody, /sendToLoginExpired\(\)/);
   assert.match(shared, /location\.replace\('login\.html'\)/);
 });
+
+// ---- The species catalogue and editor use the real species table ----
+
+test('species.js and editor.js use /api/knowledge, not the old website copy', () => {
+  for (const file of ['frontend/js/species.js', 'frontend/js/editor.js']) {
+    const source = read(file);
+    assert.match(source, /\/knowledge\/species/, file);
+    assert.doesNotMatch(source, /web-data|getSpecies\(|SPECIES_KEY|getObservations\(|OBSERVATIONS_KEY/, file);
+  }
+  // Officers review botanists' proposals on the catalogue page; a rejection needs a reason.
+  const species = read('frontend/js/species.js');
+  assert.match(species, /'\/knowledge\/species\/proposals\/pending'/);
+  assert.match(species, /'\/knowledge\/species\/proposals\/' \+ proposal\.id \+ '\/review'/);
+  assert.match(species, /Please type a reason/);
+  // Botanists only propose.
+  assert.match(read('frontend/js/editor.js'), /'\/knowledge\/species\/proposals'/);
+});

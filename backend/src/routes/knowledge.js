@@ -121,13 +121,34 @@ router.post("/taxonomy", authenticate, authorize("officer"), async (req, res) =>
     return res.status(201).json({ data });
 });
 
-// Let officers find approved and archived species.
+// Everything the officer's Species catalogue shows for one species, including its
+// family (from taxonomy) and its photos (so the page can ask for a photo link).
+const MANAGE_COLUMNS =
+    "id, scientific_name, common_name, local_name, species_category, conservation_status, " +
+    "description, morphology, habitat, distribution_notes, cultural_significance, " +
+    "verification_status, taxonomy_id, taxonomy(family, genus), species_media(id, is_primary)";
+const SPECIES_STATUSES = ["approved", "pending", "rejected", "archived"];
+
+// Let officers find species in any state (approved, pending, rejected, archived).
+// Optional filters: status (one of SPECIES_STATUSES) and q (name search).
 router.get("/species/manage", authenticate, authorize("officer"), async (req, res) => {
     const paging = parsePagination(req.query);
     if (!paging) return res.status(400).json({ message: "Invalid page or page_size" });
-    const { data, error, count } = await req.supabase
+    const { status = "", q = "" } = req.query;
+    if (typeof status !== "string" || (status !== "" && !SPECIES_STATUSES.includes(status)) ||
+        typeof q !== "string" || q.length > 100 || !/^[\p{L}\p{N} .'-]*$/u.test(q)) {
+        return res.status(400).json({ message: "Invalid species filters" });
+    }
+
+    let query = req.supabase
         .from("species")
-        .select("id, scientific_name, common_name, verification_status", { count: "exact" })
+        .select(MANAGE_COLUMNS, { count: "exact" });
+    if (status) query = query.eq("verification_status", status);
+    if (q.trim()) {
+        const search = q.trim();
+        query = query.or(`scientific_name.ilike.%${search}%,common_name.ilike.%${search}%,local_name.ilike.%${search}%`);
+    }
+    const { data, error, count } = await query
         .order("scientific_name")
         .order("id")
         .range(paging.start, paging.end);
@@ -273,6 +294,46 @@ router.get("/species/proposals/mine", authenticate, authorize("botanist"), async
     return res.json({ data, pagination: paginationMetadata(paging, count) });
 });
 
+// GET /api/knowledge/species/proposals/pending (officer): proposals waiting for review,
+// with the name of the botanist who proposed each one.
+router.get("/species/proposals/pending", authenticate, authorize("officer"), async (req, res) => {
+    const paging = parsePagination(req.query, 100);
+    if (!paging) return res.status(400).json({ message: "Invalid page or page_size" });
+
+    const { data, error, count } = await req.supabase
+        .from("species")
+        .select(`${PROPOSAL_COLUMNS}, proposed_by`, { count: "exact" })
+        .eq("verification_status", "pending")
+        .order("scientific_name")
+        .order("id")
+        .range(paging.start, paging.end);
+
+    if (error) {
+        console.error("Pending species proposals error:", error);
+        return res.status(500).json({ message: "Could not load species proposals" });
+    }
+
+    // Names are a separate lookup, so a missing profile only leaves the name empty.
+    const proposerIds = [...new Set((data || []).map(row => row.proposed_by).filter(Boolean))];
+    let nameById = new Map();
+    if (proposerIds.length > 0) {
+        const { data: profiles, error: profileError } = await req.supabase
+            .from("profiles")
+            .select("id, full_name")
+            .in("id", proposerIds);
+        if (profileError) {
+            console.error("Species proposer lookup error:", profileError);
+        } else {
+            nameById = new Map((profiles || []).map(row => [row.id, row.full_name]));
+        }
+    }
+
+    return res.json({
+        data: (data || []).map(row => ({ ...row, proposer_name: nameById.get(row.proposed_by) || null })),
+        pagination: paginationMetadata(paging, count),
+    });
+});
+
 // PATCH /api/knowledge/species/proposals/:id/review (officer): approve or reject.
 router.patch("/species/proposals/:id/review", authenticate, authorize("officer"), async (req, res) => {
     if (!PROPOSAL_UUID.test(req.params.id)) {
@@ -355,7 +416,7 @@ router.get("/species", async (req, res) => {
     const taxonomyJoin = family.trim() ? "taxonomy!inner(family)" : "taxonomy(family)";
     let query = supabase
         .from("species")
-        .select(`id, scientific_name, common_name, local_name, species_category, conservation_status, description, ${taxonomyJoin}`, { count: "exact" })
+        .select(`id, scientific_name, common_name, local_name, species_category, conservation_status, description, ${taxonomyJoin}, species_media(id, is_primary)`, { count: "exact" })
         .eq("verification_status", "approved");
 
     if (q.trim()) {

@@ -53,7 +53,9 @@ async function api(path, options) {
   options = options || {};
 
   async function send(token) {
-    const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers);
+    // A photo upload (FormData) sets its own content type; everything else is JSON.
+    const isForm = typeof FormData !== 'undefined' && options.body instanceof FormData;
+    const headers = Object.assign(isForm ? {} : { 'Content-Type': 'application/json' }, options.headers);
     if (token) {
       headers.Authorization = 'Bearer ' + token;
     }
@@ -78,6 +80,104 @@ async function api(path, options) {
     throw new Error(body.message || ('Request failed (' + response.status + ')'));
   }
   return body;
+}
+
+// ---------- The real species catalogue (/api/knowledge) ----------
+// The same species table the mobile app reads. Officers manage it; botanists propose.
+
+// Conservation status as stored in species.conservation_status (IUCN codes), with the
+// words the pages show. An empty status is "Not assessed".
+const STATUS_LABELS = {
+  CR: 'Critically Endangered',
+  EN: 'Endangered',
+  VU: 'Vulnerable',
+  NT: 'Near Threatened',
+  LC: 'Least Concern',
+  DD: 'Data Deficient'
+};
+const NOT_ASSESSED = 'Not assessed';
+
+// The words for a stored status. Older rows that already hold the words keep them.
+function statusLabel(code) {
+  if (!code) {
+    return NOT_ASSESSED;
+  }
+  return STATUS_LABELS[code] || code;
+}
+
+// Reads every page of a paged list (?page=&page_size=100) and returns all the rows.
+async function fetchAllPages(path) {
+  const joiner = path.indexOf('?') === -1 ? '?' : '&';
+  let rows = [];
+  let page = 1;
+  let totalPages = 1;
+  do {
+    const result = await api(path + joiner + 'page=' + page + '&page_size=100');
+    rows = rows.concat(result.data || []);
+    totalPages = result.pagination ? result.pagination.total_pages : 1;
+    page = page + 1;
+  } while (page <= totalPages);
+  return rows;
+}
+
+// Every taxonomy row (family and genus). Used for the Family box and to link a species.
+async function loadTaxonomy() {
+  return fetchAllPages('/knowledge/taxonomy');
+}
+
+// The taxonomy row for this family, using the genus (first word of the scientific name).
+// Creates it when it doesn't exist yet. Returns its id, or null when no family is given.
+async function taxonomyIdFor(taxonomy, family, scientificName) {
+  const wantedFamily = family.trim();
+  if (wantedFamily === '') {
+    return null;
+  }
+  const genus = scientificName.trim().split(/\s+/)[0];
+  const same = function (a, b) { return String(a || '').toLowerCase() === String(b || '').toLowerCase(); };
+  for (let i = 0; i < taxonomy.length; i++) {
+    if (same(taxonomy[i].family, wantedFamily) && same(taxonomy[i].genus, genus)) {
+      return taxonomy[i].id;
+    }
+  }
+  try {
+    const created = await api('/knowledge/taxonomy', {
+      method: 'POST',
+      body: JSON.stringify({ kingdom: 'Plantae', family: wantedFamily, genus: genus })
+    });
+    taxonomy.push(created.data);
+    return created.data.id;
+  } catch (error) {
+    // Made at the same moment by someone else: read the list again and use theirs.
+    const fresh = await loadTaxonomy();
+    for (let i = 0; i < fresh.length; i++) {
+      if (same(fresh[i].family, wantedFamily) && same(fresh[i].genus, genus)) {
+        return fresh[i].id;
+      }
+    }
+    throw error;
+  }
+}
+
+// A one-minute link to the species' main photo (or its first one), or null when it has none.
+async function speciesPhotoUrl(species) {
+  const photos = species.species_media || [];
+  if (photos.length === 0) {
+    return null;
+  }
+  let chosen = photos[0];
+  for (let i = 0; i < photos.length; i++) {
+    if (photos[i].is_primary) {
+      chosen = photos[i];
+    }
+  }
+  const result = await api('/knowledge/species/' + species.id + '/photos/' + chosen.id);
+  return result.url || null;
+}
+
+// Opens the species editor for this species id, or for a new species when id is ''.
+function openSpeciesEditor(id) {
+  writeStorage(EDIT_KEY, id || '');
+  location.href = 'editor.html';
 }
 
 
@@ -1059,7 +1159,7 @@ function openEditorFor(index) {
 
 // Returns the CSS class of the coloured pill for a conservation status.
 function statusClass(status) {
-  if (status === 'Endangered') {
+  if (status === 'Endangered' || status === 'Critically Endangered') {
     return 'pill e';
   }
   if (status === 'Vulnerable') {
