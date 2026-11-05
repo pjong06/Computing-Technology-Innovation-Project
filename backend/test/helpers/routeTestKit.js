@@ -37,6 +37,7 @@ function mockAuth(current) {
 // { status, body } with the JSON body. body (optional) is sent as JSON.
 async function callRoute(mountPath, router, { method = 'GET', path = '', body } = {}) {
   const app = express();
+  app.disable('x-powered-by');
   app.use(express.json());
   app.use(mountPath, router);
 
