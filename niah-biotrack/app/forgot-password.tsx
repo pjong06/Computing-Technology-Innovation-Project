@@ -8,18 +8,16 @@ import {
   SafeAreaView,
   Platform,
   StatusBar,
+  KeyboardAvoidingView,
+  ScrollView,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import LeafLogo from '../src/components/LeafLogo';
-import FormScrollView from '../src/components/FormScrollView';
-import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
-
-import { API_BASE_URL } from '../src/config/api';
-
-const DONE_BAR_ID = 'forgot-password-done';
+import { supabase } from '../src/lib/supabase';
 
 export default function ForgotPasswordScreen() {
   const router = useRouter();
@@ -34,14 +32,14 @@ export default function ForgotPasswordScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  // STEP 1: Request 6-digit code sent to Gmail
+  // STEP 1: Request 6-digit OTP code directly from Supabase to Gmail
   const handleSendCode = async () => {
-    const cleanId = identifier.trim();
+    const cleanId = identifier.trim().toLowerCase();
     if (!cleanId) {
       Toast.show({
         type: 'error',
         text1: 'Input Required',
-        text2: 'Enter your Staff ID or registered email.',
+        text2: 'Enter your registered staff email address.',
       });
       return;
     }
@@ -49,38 +47,49 @@ export default function ForgotPasswordScreen() {
     setIsLoading(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/send-reset-code`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier: cleanId }),
-      });
+      let targetEmail = cleanId;
 
-      const data = await response.json().catch(() => ({}));
+      // If user typed a Staff ID instead of an email, look up the email in profiles
+      if (!cleanId.includes('@')) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id, staff_id')
+          .eq('staff_id', cleanId.toUpperCase())
+          .maybeSingle();
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to send verification code.');
+        if (!profile) {
+          throw new Error('Staff ID not found. Please enter your registered email address directly.');
+        }
       }
 
-      setResolvedEmail(data.email || cleanId);
+      // Trigger Supabase OTP password recovery email
+      const { error } = await supabase.auth.resetPasswordForEmail(targetEmail);
+
+      if (error) {
+        throw error;
+      }
+
+      setResolvedEmail(targetEmail);
       setStep(2);
 
       Toast.show({
         type: 'success',
         text1: 'Verification Code Sent',
-        text2: `A 6-digit code was sent to ${data.email || cleanId}.`,
+        text2: `A 6-digit recovery code was sent to ${targetEmail}.`,
       });
     } catch (error: any) {
+      Alert.alert('Send Failed', error.message || 'Could not send verification code.');
       Toast.show({
         type: 'error',
         text1: 'Request Failed',
-        text2: error.message || 'Could not connect to backend server.',
+        text2: error.message || 'Could not deliver recovery email.',
       });
     } finally {
       setIsLoading(false);
     }
   };
 
-  // STEP 2: Verify 6-digit code and apply new password
+  // STEP 2: Verify 6-digit OTP token and update password in Supabase
   const handleVerifyAndChangePassword = async () => {
     const cleanCode = verificationCode.trim();
     const cleanPass = newPassword.trim();
@@ -115,21 +124,28 @@ export default function ForgotPasswordScreen() {
     setIsLoading(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/verify-and-change-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: resolvedEmail,
-          code: cleanCode,
-          newPassword: cleanPass,
-        }),
+      // 1. Verify the 6-digit recovery OTP token with Supabase
+      const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
+        email: resolvedEmail,
+        token: cleanCode,
+        type: 'recovery',
       });
 
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to update password.');
+      if (verifyError) {
+        throw verifyError;
       }
+
+      // 2. Apply new password to the authenticated recovery session
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: cleanPass,
+      });
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      // 3. Clear the temporary session so the user logs in cleanly with the new password
+      await supabase.auth.signOut();
 
       setStep(3);
 
@@ -139,6 +155,7 @@ export default function ForgotPasswordScreen() {
         text2: 'Your account password has been reset successfully.',
       });
     } catch (error: any) {
+      Alert.alert('Reset Failed', error.message || 'Verification code failed or expired.');
       Toast.show({
         type: 'error',
         text1: 'Reset Failed',
@@ -152,164 +169,170 @@ export default function ForgotPasswordScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" />
-      {/* Shared form scroller: keyboard avoidance on Android too (it had none here). */}
-      <FormScrollView contentContainerStyle={styles.scrollContainer}>
-        <LeafLogo width={100} height={64} marginBottom={12} />
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1 }}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContainer}
+          keyboardShouldPersistTaps="handled"
+        >
+          <LeafLogo width={100} height={64} marginBottom={12} />
 
-        {/* STEP 1: Enter Identifier */}
-        {step === 1 && (
-          <>
-            <Text style={styles.title}>Reset Password</Text>
-            <Text style={styles.subtitle}>
-              Enter your registered Staff ID or Gmail to receive a 6-digit verification code.
-            </Text>
+          {/* STEP 1: Enter Identifier */}
+          {step === 1 && (
+            <>
+              <Text style={styles.title}>Reset Password</Text>
+              <Text style={styles.subtitle}>
+                Enter your registered staff email address to receive a 6-digit verification code.
+              </Text>
 
-            <View style={styles.form}>
-              <Text style={styles.label}>Staff ID or Email</Text>
+              <View style={styles.form}>
+                <Text style={styles.label}>Staff Email</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. botanistb@gmail.com"
+                  placeholderTextColor="#8C9A91"
+                  value={identifier}
+                  onChangeText={setIdentifier}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="email-address"
+                />
+
+                <TouchableOpacity
+                  style={[styles.primaryBtn, isLoading && styles.btnDisabled]}
+                  activeOpacity={0.85}
+                  onPress={handleSendCode}
+                  disabled={isLoading}
+                >
+                  {isLoading ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.primaryBtnText}>Send Verification Code</Text>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.backLinkBtn}
+                  onPress={() => router.back()}
+                >
+                  <Text style={styles.backLinkText}>Back to login</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+
+          {/* STEP 2: Code Verification & New Password */}
+          {step === 2 && (
+            <View style={styles.formCard}>
+              <View style={styles.headerBadge}>
+                <Ionicons name="mail-open-outline" size={20} color="#2D6A4F" />
+                <Text style={styles.headerBadgeText}>Code Sent</Text>
+              </View>
+
+              <Text style={styles.cardHeading}>Enter Verification Code</Text>
+              <Text style={styles.cardSub}>
+                We sent a 6-digit code to:{'\n'}
+                <Text style={styles.highlightText}>{resolvedEmail}</Text>
+              </Text>
+
+              {/* 6-Digit OTP Input */}
+              <Text style={styles.label}>6-Digit Verification Code</Text>
+              <TextInput
+                style={styles.otpInput}
+                placeholder="123456"
+                placeholderTextColor="#A8B7AC"
+                value={verificationCode}
+                onChangeText={setVerificationCode}
+                keyboardType="number-pad"
+                maxLength={6}
+                autoFocus
+              />
+
+              {/* New Password */}
+              <Text style={styles.label}>New Password (min 8 chars)</Text>
+              <View style={styles.passwordRow}>
+                <TextInput
+                  style={styles.passwordInput}
+                  placeholder="Enter new password"
+                  placeholderTextColor="#8C9A91"
+                  value={newPassword}
+                  onChangeText={setNewPassword}
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity
+                  style={styles.eyeIconBtn}
+                  onPress={() => setShowPassword(!showPassword)}
+                >
+                  <Ionicons
+                    name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                    size={20}
+                    color="#5C7163"
+                  />
+                </TouchableOpacity>
+              </View>
+
+              {/* Confirm Password */}
+              <Text style={styles.label}>Confirm New Password</Text>
               <TextInput
                 style={styles.input}
-                placeholder="e.g. botanistb@gmail.com or SFC-BOT-002"
+                placeholder="Re-enter new password"
                 placeholderTextColor="#8C9A91"
-                value={identifier}
-                onChangeText={setIdentifier}
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                secureTextEntry={!showPassword}
                 autoCapitalize="none"
-                autoCorrect={false}
               />
 
               <TouchableOpacity
                 style={[styles.primaryBtn, isLoading && styles.btnDisabled]}
                 activeOpacity={0.85}
-                onPress={handleSendCode}
+                onPress={handleVerifyAndChangePassword}
                 disabled={isLoading}
               >
                 {isLoading ? (
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
-                  <Text style={styles.primaryBtnText}>Send Verification Code</Text>
+                  <Text style={styles.primaryBtnText}>Change Password</Text>
                 )}
               </TouchableOpacity>
 
+              <View style={styles.cardActionRow}>
+                <TouchableOpacity onPress={handleSendCode} disabled={isLoading}>
+                  <Text style={styles.actionText}>Resend Code</Text>
+                </TouchableOpacity>
+                <Text style={styles.actionDivider}>•</Text>
+                <TouchableOpacity onPress={() => setStep(1)}>
+                  <Text style={styles.actionText}>Change Email</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* STEP 3: Success Screen */}
+          {step === 3 && (
+            <View style={styles.successCard}>
+              <View style={styles.iconCircle}>
+                <Ionicons name="checkmark-circle" size={48} color="#2D6A4F" />
+              </View>
+              <Text style={styles.cardHeading}>Password Changed</Text>
+              <Text style={styles.cardSub}>
+                Your password has been successfully updated in the system. You can now log in with your new credentials.
+              </Text>
+
               <TouchableOpacity
-                style={styles.backLinkBtn}
-                onPress={() => router.back()}
+                style={styles.primaryBtn}
+                activeOpacity={0.85}
+                onPress={() => router.replace('/')}
               >
-                <Text style={styles.backLinkText}>Back to login</Text>
+                <Text style={styles.primaryBtnText}>Proceed to Login</Text>
               </TouchableOpacity>
             </View>
-          </>
-        )}
-
-        {/* STEP 2: Code Verification & New Password */}
-        {step === 2 && (
-          <View style={styles.formCard}>
-            <View style={styles.headerBadge}>
-              <Ionicons name="mail-open-outline" size={20} color="#2D6A4F" />
-              <Text style={styles.headerBadgeText}>Code Sent</Text>
-            </View>
-
-            <Text style={styles.cardHeading}>Enter Verification Code</Text>
-            <Text style={styles.cardSub}>
-              We sent a 6-digit code to:{'\n'}
-              <Text style={styles.highlightText}>{resolvedEmail}</Text>
-            </Text>
-
-            {/* 6-Digit OTP Input */}
-            <Text style={styles.label}>6-Digit Verification Code</Text>
-            <TextInput
-              style={styles.otpInput}
-              placeholder="123456"
-              placeholderTextColor="#A8B7AC"
-              value={verificationCode}
-              onChangeText={setVerificationCode}
-              keyboardType="number-pad"
-              maxLength={6}
-              inputAccessoryViewID={DONE_BAR_ID}
-              autoFocus
-            />
-
-            {/* New Password */}
-            <Text style={styles.label}>New Password (min 8 chars)</Text>
-            <View style={styles.passwordRow}>
-              <TextInput
-                style={styles.passwordInput}
-                placeholder="Enter new password"
-                placeholderTextColor="#8C9A91"
-                value={newPassword}
-                onChangeText={setNewPassword}
-                secureTextEntry={!showPassword}
-                autoCapitalize="none"
-              />
-              <TouchableOpacity
-                style={styles.eyeIconBtn}
-                onPress={() => setShowPassword(!showPassword)}
-              >
-                <Ionicons
-                  name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-                  size={20}
-                  color="#5C7163"
-                />
-              </TouchableOpacity>
-            </View>
-
-            {/* Confirm Password */}
-            <Text style={styles.label}>Confirm New Password</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Re-enter new password"
-              placeholderTextColor="#8C9A91"
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              secureTextEntry={!showPassword}
-              autoCapitalize="none"
-            />
-
-            <TouchableOpacity
-              style={[styles.primaryBtn, isLoading && styles.btnDisabled]}
-              activeOpacity={0.85}
-              onPress={handleVerifyAndChangePassword}
-              disabled={isLoading}
-            >
-              {isLoading ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <Text style={styles.primaryBtnText}>Change Password</Text>
-              )}
-            </TouchableOpacity>
-
-            <View style={styles.cardActionRow}>
-              <TouchableOpacity onPress={handleSendCode} disabled={isLoading}>
-                <Text style={styles.actionText}>Resend Code</Text>
-              </TouchableOpacity>
-              <Text style={styles.actionDivider}>•</Text>
-              <TouchableOpacity onPress={() => setStep(1)}>
-                <Text style={styles.actionText}>Change Email</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
-        {/* STEP 3: Success Screen */}
-        {step === 3 && (
-          <View style={styles.successCard}>
-            <View style={styles.iconCircle}>
-              <Ionicons name="checkmark-circle" size={48} color="#2D6A4F" />
-            </View>
-            <Text style={styles.cardHeading}>Password Changed</Text>
-            <Text style={styles.cardSub}>
-              Your password has been successfully updated in the system. You can now log in with your new credentials.
-            </Text>
-
-            <TouchableOpacity
-              style={styles.primaryBtn}
-              activeOpacity={0.85}
-              onPress={() => router.replace('/')}
-            >
-              <Text style={styles.primaryBtnText}>Proceed to Login</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </FormScrollView>
-      <KeyboardDoneBar nativeID={DONE_BAR_ID} />
+          )}
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -490,4 +513,3 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 });
-

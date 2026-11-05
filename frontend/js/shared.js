@@ -503,12 +503,6 @@ function whenText(d) {
     hour + ':' + twoDigits(d.getMinutes()) + ' ' + ampm;
 }
 
-// Returns the sample species used the first time a page opens.
-// date and when = last updated. firstDate and firstWhen = first recorded.
-// Returns the three sample observations sent by botanists.
-// photo = the picture taken in the field. com and fam = common name and family typed by the botanist.
-// Returns the sample users.
-// passwordHash = the scrambled password (see hashPassword). Demo passwords:
 // Checks if two texts are the same, ignoring capital letters and spaces at the ends.
 function sameText(a, b) {
   return String(a).trim().toLowerCase() === String(b).trim().toLowerCase();

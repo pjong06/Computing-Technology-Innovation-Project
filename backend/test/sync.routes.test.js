@@ -242,3 +242,99 @@ test('sync pull validates cursor and limit before querying Supabase', async () =
     assert.equal(database.calls.length, 0);
   });
 });
+
+// ---- Tags the server refuses (tag in use / plant locked) ----
+
+function tagUpdate(overrides = {}) {
+  return operation({
+    operation_type: 'update',
+    base_version: 3,
+    payload: { qr_code_value: 'NIAH-PLT-00042' },
+    ...overrides,
+  });
+}
+
+test('sync push reports a tag another plant already has as a tag_in_use conflict', async () => {
+  const database = fakeSupabase({
+    error: {
+      code: '23505',
+      message: 'duplicate key value violates unique constraint "plants_qr_code_value_key"',
+    },
+  });
+
+  await withApp(database, async base => {
+    const response = await push(base, [tagUpdate()]);
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.results[0], {
+      operation_id: OPERATION_ID,
+      status: 'conflict',
+      code: 'tag_in_use',
+      message: 'This tag is already attached to another plant',
+    });
+    assert.equal(response.body.summary.conflict, 1);
+  });
+});
+
+test('sync push leaves a duplicate client_record_id as a retry, not a tag problem', async () => {
+  const database = fakeSupabase({
+    error: {
+      code: '23505',
+      message: 'duplicate key value violates unique constraint "plants_client_record_id_key"',
+    },
+  });
+
+  await withApp(database, async base => {
+    const response = await push(base, [
+      operation({ payload: { ...operation().payload, qr_code_value: 'NIAH-PLT-00042' } }),
+    ]);
+
+    assert.equal(response.body.results[0].status, 'retry');
+    assert.equal(response.body.results[0].code, 'server_unavailable');
+  });
+});
+
+test('sync push reports a plant update refused by RLS as plant_locked', async () => {
+  const database = fakeSupabase({
+    error: { code: '42501', message: 'new row violates row-level security policy for table "plants"' },
+  });
+
+  await withApp(database, async base => {
+    const response = await push(base, [tagUpdate()]);
+
+    assert.equal(response.body.results[0].status, 'conflict');
+    assert.equal(response.body.results[0].code, 'plant_locked');
+    assert.equal(response.body.results[0].message, "This plant can't be changed any more");
+  });
+});
+
+test('sync push reports a plant update hidden from the botanist as plant_locked', async () => {
+  const database = fakeSupabase({
+    result: {
+      operation_id: OPERATION_ID,
+      status: 'failed',
+      code: 'not_found',
+      message: 'Plant record not found',
+    },
+  });
+
+  await withApp(database, async base => {
+    const response = await push(base, [tagUpdate()]);
+
+    assert.equal(response.body.results[0].status, 'conflict');
+    assert.equal(response.body.results[0].code, 'plant_locked');
+  });
+});
+
+test('sync push keeps an inactive account as permission_denied, not a locked plant', async () => {
+  const database = fakeSupabase({
+    error: { code: '42501', message: 'Botanist role required' },
+  });
+
+  await withApp(database, async base => {
+    const response = await push(base, [tagUpdate()]);
+
+    assert.equal(response.body.results[0].status, 'failed');
+    assert.equal(response.body.results[0].code, 'permission_denied');
+  });
+});

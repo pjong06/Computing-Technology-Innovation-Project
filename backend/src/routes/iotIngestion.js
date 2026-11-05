@@ -47,6 +47,15 @@ function createIngestionRouter(env = process.env, injectedClient) {
         temperature_c: reading.dht_valid ? reading.temperature_c : null,
         humidity_percent: reading.dht_valid ? reading.humidity_pct : null,
         movement_detected: reading.motion_detected,
+        soil_raw: reading.soil_raw,
+        soil_moisture_pct: reading.soil_moisture_pct,
+        distance_cm: reading.distance_valid ? reading.distance_cm : null,
+        distance_valid: reading.distance_valid,
+        rain_raw: reading.rain_raw,
+        rain_intensity_pct: reading.rain_intensity_pct,
+        dht_valid: reading.dht_valid,
+        sequence: reading.sequence,
+        uptime_ms: reading.uptime_ms,
       }).select('id').single();
       if (inserted.error) return res.sendStatus(503);
       return res.status(201).json({ reading_id: inserted.data.id });

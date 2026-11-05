@@ -188,9 +188,50 @@ async function applyOperation(req, operation) {
     }
   );
 
+  const isPlantUpdate =
+    operation.entity_type === 'plant' && operation.operation_type === 'update';
+
+  // A tag another plant already has (unique qr_code_value). Retrying can't fix it,
+  // so it comes back as a conflict, which the phone doesn't retry on its own.
+  // (A duplicate client_record_id is a different, retryable race, so it is left out.)
+  if (
+    error?.code === '23505' &&
+    operation.entity_type === 'plant' &&
+    operation.payload?.qr_code_value &&
+    !/client_record_id/i.test(`${error.message ?? ''} ${error.details ?? ''}`)
+  ) {
+    return {
+      operation_id: operation.operation_id,
+      status: 'conflict',
+      code: 'tag_in_use',
+      message: 'This tag is already attached to another plant',
+    };
+  }
+
+  // The botanist's own plant that RLS no longer lets them change (e.g. after
+  // submission): either refused outright (42501 from the update itself, not the
+  // sign-in/role checks at the top of the function) or hidden from the update,
+  // which the function reports as not_found.
+  const lockedByPolicy =
+    error?.code === '42501' &&
+    !/authentication required|botanist role required/i.test(error.message ?? '');
+  const hiddenFromUpdate =
+    !error && data?.status === 'failed' && data?.code === 'not_found';
+  if (isPlantUpdate && (lockedByPolicy || hiddenFromUpdate)) {
+    return {
+      operation_id: operation.operation_id,
+      status: 'conflict',
+      code: 'plant_locked',
+      message: "This plant can't be changed any more",
+    };
+  }
+
   if (error) {
     console.error('Sync push operation error:', {
       code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
       operation_id: operation.operation_id,
     });
 
