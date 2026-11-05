@@ -52,7 +52,7 @@ All endpoints require an active Botanist bearer session and use the existing use
   $c17TestDirectory = Join-Path $env:TEMP 'niah-c17-sql-test'
   npm install --prefix $c17TestDirectory --no-save --ignore-scripts --package-lock=false @electric-sql/pglite@0.3.14
   $env:NODE_PATH = Join-Path $c17TestDirectory 'node_modules'
-  node supabase/tests/tag-reservations.cjs supabase/migrations/20261031090000_tag_reservations.sql
+  node supabase/tests/tag-reservations.cjs
   Remove-Item Env:NODE_PATH
   ```
 - PGlite does not prove production multi-connection races. Run concurrent real PostgreSQL transactions and real Supabase JWT/RLS tests in a development environment before shared rollout.
