@@ -1,0 +1,1 @@
+REVOKE TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE public.website_observations, public.website_species, public.website_users FROM anon, authenticated;

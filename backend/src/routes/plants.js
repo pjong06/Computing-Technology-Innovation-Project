@@ -1,7 +1,7 @@
 const express = require("express");
 const { randomUUID } = require("node:crypto");
 const upload = require("../services/storageService");
-const { generatePlantQR, formatPlantTag, TAG_PATTERN, QrConfigurationError } = require("../services/qrService");
+const { generatePlantQR, buildPublicPlantUrl, TAG_PATTERN, QrConfigurationError } = require("../services/qrService");
 const { requireAuth, requireRole } = require("../middleware/auth");
 
 const router = express.Router();
@@ -895,6 +895,12 @@ router.get("/:id/qr/image", requireRole("botanist"), async (req, res) => {
     }
 });
 
+function reservationFailure(res, error) {
+    if (error.code === '42501') return res.status(403).json({ message: 'Plant or tag is unavailable' });
+    if (['23505', 'P0001'].includes(error.code)) return res.status(409).json({ message: 'Tag binding conflict' });
+    return res.status(503).json({ message: 'Tag reservation service unavailable; retry the same plant' });
+}
+
 // ── 1-CLICK / AUTOMATIC TAG & QR GENERATION ────────────────────
 router.post("/:id/attach-tag", requireRole("botanist", "officer"), async (req, res) => {
     const plantId = req.params.id;
@@ -924,32 +930,41 @@ router.post("/:id/attach-tag", requireRole("botanist", "officer"), async (req, r
         // or its next outbox update for this plant is refused as out of date.
         let rowVersion = plant.row_version;
 
-        // 3. If no valid tag exists, atomically pull the next sequence
+        // Validate the destination before allocating a persistent label.
+        buildPublicPlantUrl('NIAH-PLT-00001');
         if (!tagCode || !TAG_PATTERN.test(tagCode)) {
-            const { data: generatedTag, error: rpcError } = await req.supabase
-                .rpc("get_next_plant_tag");
-
-            if (rpcError || !generatedTag) {
-                console.error("RPC error:", rpcError);
-                return res.status(500).json({ message: "Failed to generate tag sequence" });
+            if (req.profile.role !== 'botanist') {
+                return res.status(403).json({ message: 'Only the botanist owner may reserve and bind a tag' });
             }
-
-            tagCode = generatedTag;
-
-            // 4. Commit assigned tag and verify database write succeeded
-            const { data: updated, error: updateError } = await req.supabase
-                .from("plants")
-                .update({ qr_code_value: tagCode })
-                .eq("id", plantId)
-                .select("row_version")
+            // Plant UUID is a stable request ID: retries reuse the same reservation.
+            const { data: reserved, error: reserveError } = await req.supabase.rpc('reserve_plant_tags', {
+                p_count: 1, p_request_id: plantId,
+            });
+            if (reserveError) return reservationFailure(res, reserveError);
+            const tag = Array.isArray(reserved) && reserved.length === 1 ? reserved[0].qr_code_value : null;
+            if (typeof tag !== 'string' || !TAG_PATTERN.test(tag)) {
+                return res.status(503).json({ message: 'Could not confirm reserved tag; retry the same plant' });
+            }
+            const { data: attached, error: attachError } = await req.supabase.rpc('attach_reserved_plant_tag', {
+                p_plant_id: plantId, p_tag: tag,
+            });
+            if (attachError) return reservationFailure(res, attachError);
+            if (typeof attached !== 'string' || attached.toLowerCase() !== plantId.toLowerCase()) {
+                return res.status(503).json({ message: 'Could not confirm tag binding; retry the same plant' });
+            }
+            tagCode = tag;
+            // Read the committed version instead of assuming how many triggers ran.
+            const { data: refreshed, error: refreshError } = await req.supabase
+                .from('plants')
+                .select('qr_code_value, row_version')
+                .eq('id', plantId)
                 .maybeSingle();
-
-            // No row back = RLS hid the plant from the update, so the tag wasn't saved.
-            if (updateError || !updated) {
-                console.error("Failed to commit tag to plant:", updateError);
-                return res.status(500).json({ message: "Failed to save assigned tag to plant record" });
+            if (refreshError || !refreshed || refreshed.qr_code_value !== tag ||
+                !Number.isSafeInteger(refreshed.row_version) || refreshed.row_version < 1) {
+                return res.status(503).json({ message: 'Could not confirm the updated plant version; retry the same plant' });
             }
-            rowVersion = updated.row_version;
+            rowVersion = refreshed.row_version;
+
         }
 
         // 5. Generate QR code payload
@@ -966,7 +981,7 @@ router.post("/:id/attach-tag", requireRole("botanist", "officer"), async (req, r
             return res.status(503).json({ message: "Public QR URL is not configured on server" });
         }
         console.error("Auto attach-tag error:", error);
-        return res.status(500).json({ message: error.message || "Server error" });
+        return res.status(500).json({ message: "Could not generate plant tag" });
     }
 });
 

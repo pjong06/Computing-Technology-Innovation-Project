@@ -52,6 +52,8 @@ app.use('/api/knowledge', knowledgeRoutes);
 
 app.use('/api/qr-batch', qrBatchRoutes);
 
+app.use('/api/tag-reservations', require('./routes/tagReservations'));
+
 app.use('/api/observations', observationRoutes);
 
 app.use('/api/reports', reportRoutes);
