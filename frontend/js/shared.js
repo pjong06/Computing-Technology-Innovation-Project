@@ -8,21 +8,71 @@ const SUPABASE_KEY = 'sb_publishable_4L1RojeFv6wLAsFNX2q3KQ_hjanSuTo';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { storageKey: 'niah_supabase_auth' } });
 window.sb = sb;
 
-// Gives back the login token, or null if nobody is logged in.
+const SESSION_EXPIRED_MESSAGE = 'Your session expired, please log in again.';
+
+// Gives back a login token that is still valid, or null if nobody is logged in or the
+// login can't be renewed. A token that runs out within a minute is renewed first, so a
+// request never leaves with a token that expires on the way.
 window.getOfficerAccessToken = async function () {
   const result = await sb.auth.getSession();
-  return result.data.session ? result.data.session.access_token : null;
+  let session = result.data.session;
+  if (!session) {
+    return null;
+  }
+  const now = Math.floor(Date.now() / 1000);
+  if (session.expires_at && session.expires_at - 60 <= now) {
+    const renewed = await sb.auth.refreshSession();
+    if (renewed.error || !renewed.data.session) {
+      return null;
+    }
+    session = renewed.data.session;
+  }
+  return session.access_token;
 };
 
-// Calls the backend
+// The login can't be renewed: forget it and go to the login page, which shows why.
+// On the login page itself nothing happens (the page shows its own error).
+async function sendToLoginExpired() {
+  if (OPEN_PAGES.indexOf(thisPageName()) !== -1) {
+    return;
+  }
+  localStorage.removeItem(SESSION_KEY);
+  rememberToast(SESSION_EXPIRED_MESSAGE);
+  try {
+    await sb.auth.signOut({ scope: 'local' });
+  } catch (error) {
+    // Already signed out: nothing to undo.
+  }
+  location.replace('login.html');
+}
+
+// Calls the backend with the officer's login token. If the backend says the token is no
+// longer valid (401), the login is renewed once and the request sent again; if that
+// fails too, the person is sent to the login page.
 async function api(path, options) {
   options = options || {};
-  const token = await window.getOfficerAccessToken();
-  const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers);
-  if (token) {
-    headers.Authorization = 'Bearer ' + token;
+
+  async function send(token) {
+    const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers);
+    if (token) {
+      headers.Authorization = 'Bearer ' + token;
+    }
+    return fetch('/api' + path, Object.assign({}, options, { headers: headers }));
   }
-  const response = await fetch('/api' + path, Object.assign({}, options, { headers: headers }));
+
+  let response = await send(await window.getOfficerAccessToken());
+  if (response.status === 401) {
+    // A 401 means the request was refused before it did anything, so sending it again is safe.
+    const renewed = await sb.auth.refreshSession();
+    if (!renewed.error && renewed.data.session) {
+      response = await send(renewed.data.session.access_token);
+    }
+    if (response.status === 401) {
+      await sendToLoginExpired();
+      throw new Error(SESSION_EXPIRED_MESSAGE);
+    }
+  }
+
   const body = await response.json().catch(function () { return {}; });
   if (response.ok === false) {
     throw new Error(body.message || ('Request failed (' + response.status + ')'));
@@ -294,7 +344,9 @@ function getTokenNow() {
   }
   const fresh = JSON.parse(request.responseText);
   fresh.expires_at = now + fresh.expires_in;
-  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(fresh));
+  // Keep what the stored session already had (e.g. the user), so the Supabase library
+  // still recognises it, and only replace the renewed tokens.
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(Object.assign({}, session, fresh)));
   return fresh.access_token;
 }
 
@@ -325,6 +377,10 @@ function databaseRequest(method, path, body) {
   } catch (error) {
     reply = {};
   }
+  if (request.status === 401) {
+    // The backend refused the login token ("Invalid or expired token").
+    return { ok: false, message: SESSION_EXPIRED_MESSAGE, expired: true };
+  }
   if (request.status < 200 || request.status >= 300) {
     return { ok: false, message: reply.message || ('Database error ' + request.status) };
   }
@@ -339,8 +395,12 @@ function loadFromDatabase() {
   const result = databaseRequest('GET', '', undefined);
   if (result.ok === false) {
     databaseProblem = result.message;
-    if (result.message === NOT_LOGGED_IN) {
-      // The login has run out, so forget the saved copy and the page sends the person to the login page.
+    if (result.message === NOT_LOGGED_IN || result.expired) {
+      // The login has run out, so forget the saved copy and the page sends the person to
+      // the login page, which says why (only if someone was logged in).
+      if (readStorage(SESSION_KEY) !== null) {
+        rememberToast(SESSION_EXPIRED_MESSAGE);
+      }
       localStorage.removeItem(SESSION_KEY);
     }
     return;

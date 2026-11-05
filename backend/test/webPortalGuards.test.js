@@ -76,3 +76,17 @@ test('the login page does not offer sign-up and keeps non-staff accounts out', (
   assert.doesNotMatch(login, /Create an account/i);
   assert.doesNotMatch(read('frontend/users.html'), /sign-up page/i);
 });
+
+// ---- Expired logins are renewed, or the officer is sent to log in again ----
+
+test('api() renews an expiring login and sends the officer to log in when it cannot', () => {
+  const shared = read('frontend/js/shared.js');
+  assert.match(shared, /const SESSION_EXPIRED_MESSAGE = 'Your session expired, please log in again\.';/);
+  const getToken = shared.slice(shared.indexOf('window.getOfficerAccessToken'), shared.indexOf('async function sendToLoginExpired'));
+  assert.match(getToken, /sb\.auth\.refreshSession\(\)/);
+  const api = shared.slice(shared.indexOf('async function api('));
+  const apiBody = api.slice(0, api.indexOf('\n}\n'));
+  assert.match(apiBody, /response\.status === 401/);
+  assert.match(apiBody, /sendToLoginExpired\(\)/);
+  assert.match(shared, /location\.replace\('login\.html'\)/);
+});
