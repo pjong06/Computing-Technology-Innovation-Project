@@ -9,15 +9,6 @@ const uuidPattern =
 const textIdPattern = /^[A-Za-z0-9._-]{1,100}$/;
 const photoLimit = 3000000;
 
-// Only an active officer may change the website data (catalogue, observations, users,
-// data version). Other staff may read it (requireAuth below admits active staff only),
-// except the user list, which only the officer may see. The web pages hide officer-only
-// pages in the browser, but that is not a protection: this check is.
-function isOfficer(req) {
-    return !!req.profile && req.profile.role === "officer";
-}
-const OFFICER_ONLY_MESSAGE = "Only the officer can change the website data";
-
 // The other saved values the website keeps in the table web_data. Anything else is refused.
 const allowedKeys = new Set(["niah_data_version"]);
 
@@ -144,7 +135,7 @@ for (const [name, list] of Object.entries(lists)) {
     // Send the whole list to the website.
     router.get("/" + name, async (req, res) => {
         // Only the officer may see the user list. Everyone else gets an empty list.
-        if (list.officerOnly && !isOfficer(req)) {
+        if (list.officerOnly && (!req.profile || req.profile.role !== "officer")) {
             return res.json({ data: [] });
         }
         const { data, error } = await req.supabase
@@ -161,8 +152,8 @@ for (const [name, list] of Object.entries(lists)) {
 
     // Save changes: add new records, update changed ones and remove the ones the page deleted.
     router.put("/" + name, async (req, res) => {
-        if (!isOfficer(req)) {
-            return res.status(403).json({ message: OFFICER_ONLY_MESSAGE });
+        if (list.officerOnly && (!req.profile || req.profile.role !== "officer")) {
+            return res.status(403).json({ message: "Only the officer can change the " + name });
         }
         const incoming = req.body && req.body.rows;
         if (!Array.isArray(incoming) || incoming.length > 2000) {
@@ -234,9 +225,6 @@ router.get("/", async (req, res) => {
 
 // Save one of the other values.
 router.put("/:key", async (req, res) => {
-    if (!isOfficer(req)) {
-        return res.status(403).json({ message: OFFICER_ONLY_MESSAGE });
-    }
     const { key } = req.params;
 
     if (!allowedKeys.has(key)) {
