@@ -138,9 +138,14 @@ function makePlantCard(species) {
 
 // Draws the cards again, showing only the species that match the search box and the status filter.
 function drawSpeciesTable() {
-  const searchText = document.getElementById('search-box').value.toLowerCase();
-  const chosenStatus = document.getElementById('status-filter').value;
+  const searchInput = document.getElementById('search-box');
+  const statusFilter = document.getElementById('status-filter');
   const grid = document.getElementById('species-grid');
+  if (grid === null) {
+    return;
+  }
+  const searchText = searchInput ? searchInput.value.toLowerCase() : '';
+  const chosenStatus = statusFilter ? statusFilter.value : '';
   grid.innerHTML = '';
   let shown = 0;
 
@@ -158,8 +163,14 @@ function drawSpeciesTable() {
     }
   }
 
-  document.getElementById('species-count').textContent = 'Showing ' + shown + ' of ' + speciesList.length + ' species';
-  document.getElementById('no-species').hidden = (shown > 0);
+  const count = document.getElementById('species-count');
+  if (count) {
+    count.textContent = 'Showing ' + shown + ' of ' + speciesList.length + ' species';
+  }
+  const noSpecies = document.getElementById('no-species');
+  if (noSpecies) {
+    noSpecies.hidden = shown > 0;
+  }
 }
 
 // Asks for confirmation, then archives the species. Archived species stay in the database
@@ -193,9 +204,18 @@ async function loadSpecies() {
     }
   } catch (error) {
     speciesList = [];
-    document.getElementById('species-grid').innerHTML = '';
-    document.getElementById('no-species').hidden = true;
-    document.getElementById('species-count').textContent = 'Could not load the species: ' + error.message;
+    const grid = document.getElementById('species-grid');
+    if (grid) {
+      grid.innerHTML = '';
+    }
+    const noSpecies = document.getElementById('no-species');
+    if (noSpecies) {
+      noSpecies.hidden = true;
+    }
+    const count = document.getElementById('species-count');
+    if (count) {
+      count.textContent = 'Could not load the species: ' + error.message;
+    }
     return;
   }
   drawSpeciesTable();
@@ -255,13 +275,19 @@ function makeProposalCard(proposal) {
 
 function drawProposals() {
   const list = document.getElementById('proposals-list');
+  if (list === null) {
+    return;
+  }
   list.innerHTML = '';
   for (let i = 0; i < proposals.length; i++) {
     list.appendChild(makeProposalCard(proposals[i]));
   }
-  document.getElementById('proposals-count').textContent = proposals.length === 0
-    ? 'No proposals waiting. New ones from the mobile app appear here.'
-    : proposals.length + ' waiting for review';
+  const count = document.getElementById('proposals-count');
+  if (count) {
+    count.textContent = proposals.length === 0
+      ? 'No proposals waiting. New ones from the mobile app appear here.'
+      : proposals.length + ' waiting for review';
+  }
 }
 
 // Approves (linking the proposed family) or rejects (with a reason) one proposal.
@@ -314,8 +340,14 @@ async function loadProposals() {
     proposals = await fetchAllPages('/knowledge/species/proposals/pending');
   } catch (error) {
     proposals = [];
-    document.getElementById('proposals-list').innerHTML = '';
-    document.getElementById('proposals-count').textContent = 'Could not load the proposals: ' + error.message;
+    const list = document.getElementById('proposals-list');
+    if (list) {
+      list.innerHTML = '';
+    }
+    const count = document.getElementById('proposals-count');
+    if (count) {
+      count.textContent = 'Could not load the proposals: ' + error.message;
+    }
     return;
   }
   drawProposals();
@@ -323,11 +355,17 @@ async function loadProposals() {
 
 // Botanists propose instead of adding.
 if (viewerIsOfficer === false) {
-  document.getElementById('add-species').textContent = 'Propose a species';
+  const addButton = document.getElementById('add-species');
+  if (addButton) {
+    addButton.textContent = 'Propose a species';
+  }
 }
 
 loadSpecies().catch(showUnexpectedError);
 if (viewerIsOfficer) {
-  document.getElementById('proposals-section').hidden = false;
+  const proposalsSection = document.getElementById('proposals-section');
+  if (proposalsSection) {
+    proposalsSection.hidden = false;
+  }
   loadProposals().catch(showUnexpectedError);
 }

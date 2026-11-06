@@ -142,3 +142,16 @@ test('species.js and editor.js use /api/knowledge, not the old website copy', ()
   // Botanists only propose.
   assert.match(read('frontend/js/editor.js'), /'\/knowledge\/species\/proposals'/);
 });
+
+test('species catalogue controls match the JavaScript selectors and redraw on changes', () => {
+  const html = read('frontend/species.html');
+  const script = read('frontend/js/species.js');
+  const htmlIds = new Set(Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]));
+  const scriptIds = Array.from(script.matchAll(/getElementById\(['"]([^'"]+)['"]\)/g), match => match[1]);
+  for (const id of scriptIds) {
+    assert.ok(htmlIds.has(id), `species.js reads #${id}, which is missing from species.html`);
+  }
+  assert.match(html, /id="search-box"[^>]*aria-label="Search species by name"[^>]*oninput="drawSpeciesTable\(\)"/);
+  assert.match(html, /id="status-filter"[^>]*aria-label="Filter by conservation status"[^>]*onchange="drawSpeciesTable\(\)"/);
+  assert.match(script, /const searchInput = document\.getElementById\('search-box'\)/);
+});

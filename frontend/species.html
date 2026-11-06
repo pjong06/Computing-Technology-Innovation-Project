@@ -139,8 +139,9 @@ main.wide { max-width: 1600px; }
   <h1>Species <span>catalogue</span></h1>
   <p class="lead">Search, filter and manage every plant species record.</p>
   <div class="bar">
-   <input id="search" type="text" placeholder="Search by scientific or common name" aria-label="Search species by name">
-   <select id="status-filter" aria-label="Filter by conservation status">
+   <input id="search-box" class="grow" type="text" placeholder="Search by scientific or common name"
+     aria-label="Search species by name" oninput="drawSpeciesTable()">
+   <select id="status-filter" aria-label="Filter by conservation status" onchange="drawSpeciesTable()">
       <option value="">All conservation status</option>
       <option>Critically Endangered</option>
       <option>Endangered</option>

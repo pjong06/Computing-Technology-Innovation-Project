@@ -911,6 +911,9 @@ function showDatabaseProblem() {
 // Builds the left menu inside <nav id="menu"> and highlights the page we are on (activeFile).
 function drawMenu(activeFile) {
   const nav = document.getElementById('menu');
+  if (nav === null) {
+    return;
+  }
   showDatabaseProblem();
 
   const logo = document.createElement('img');
@@ -968,7 +971,10 @@ function drawMenu(activeFile) {
 
 // Hides the small pop-up message.
 function hideToast() {
-  document.getElementById('toast').classList.remove('on');
+  const toast = document.getElementById('toast');
+  if (toast) {
+    toast.classList.remove('on');
+  }
 }
 
 // Shows a small pop-up message for a few seconds.
@@ -981,6 +987,9 @@ function showUnexpectedError(error) {
 
 function showToast(message) {
   const toast = document.getElementById('toast');
+  if (toast === null) {
+    return;
+  }
   toast.textContent = message;
   toast.classList.add('on');
   setTimeout(hideToast, 3500);
