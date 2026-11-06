@@ -1,5 +1,12 @@
 import { apiFetch, ApiError } from '../api/client';
-import { useRecordStore, type PlantRecord } from '../store/useRecordStore';
+import {
+  IdentificationStatus,
+  RecordStatus,
+  ReviewStatus,
+  SyncStatus,
+  useRecordStore,
+  type PlantRecord,
+} from '../store/useRecordStore';
 
 // What a tag lookup found. Every case is real: nothing is filled in when the tag
 // can't be matched, so the screen can say exactly what happened.
@@ -13,7 +20,27 @@ export type TagLookupResult =
 // GET /api/plants/tag/:tagCode answers { data: { ...plant, species: {...} } }.
 interface TagLookupResponse {
   data: {
-    species?: { scientific_name?: string | null; common_name?: string | null } | null;
+    id?: string;
+    plant_id?: string;
+    client_record_id?: string | null;
+    species_id?: string | null;
+    qr_code_value?: string | null;
+    tag_code?: string | null;
+    location_description?: string | null;
+    location_name?: string | null;
+    morphology?: string | null;
+    description?: string | null;
+    plant_status?: string | null;
+    registered_at?: string | null;
+    row_version?: number | null;
+    gps_accuracy_m?: number | null;
+    scientific_name?: string | null;
+    common_name?: string | null;
+    species?: {
+      id?: string | null;
+      scientific_name?: string | null;
+      common_name?: string | null;
+    } | null;
   };
 }
 
@@ -27,13 +54,70 @@ export async function lookupTag(rawTag: string): Promise<TagLookupResult> {
   try {
     // apiFetch attaches the login token; the route rejects requests without one.
     const response = await apiFetch<TagLookupResponse>(`/api/plants/tag/${encodeURIComponent(tagCode)}`);
-    // Read the species itself, not the route's "Unknown species" placeholder.
-    const species = response.data?.species;
+    const data = response.data;
+    const serverId = data?.plant_id || data?.id;
+    if (!serverId) {
+      return {
+        status: 'error',
+        tagCode,
+        message: 'The server returned a plant without an ID. Please try again.',
+      };
+    }
+
+    const species = data.species;
+    const speciesId = data.species_id || species?.id || null;
+    const registeredAt =
+      data.registered_at && Number.isFinite(Date.parse(data.registered_at))
+        ? new Date(data.registered_at)
+        : new Date();
+    const plantStatus = data.plant_status?.toLowerCase();
+    const cachedRecord: PlantRecord = {
+      id: data.client_record_id || serverId,
+      serverId,
+      rowVersion: data.row_version ?? undefined,
+      tagCode: data.tag_code || data.qr_code_value || tagCode,
+      scientificName:
+        species?.scientific_name ||
+        data.scientific_name ||
+        'Species not recorded',
+      speciesId,
+      commonName: species?.common_name || data.common_name || '',
+      family: '',
+      morphology: data.morphology || '',
+      description: data.description || '',
+      locationName:
+        data.location_name ||
+        data.location_description ||
+        'Location not recorded',
+      gpsAccuracyM: data.gps_accuracy_m ?? null,
+      gpsCoordination: '',
+      photoUris: [],
+      photoEntries: [],
+      recordStatus: RecordStatus.COMPLETE,
+      identificationStatus: speciesId
+        ? IdentificationStatus.IDENTIFIED
+        : IdentificationStatus.PENDING,
+      syncStatus: SyncStatus.UPLOADED,
+      reviewStatus:
+        plantStatus === 'approved'
+          ? ReviewStatus.APPROVED
+          : plantStatus === 'rejected'
+            ? ReviewStatus.REJECTED
+            : ReviewStatus.PENDING,
+      createdAt: registeredAt.toLocaleDateString('en-GB', {
+        day: 'numeric',
+        month: 'short',
+      }),
+      createdAtIso: registeredAt.toISOString(),
+      observations: [],
+    };
+    const record = await useRecordStore
+      .getState()
+      .cacheServerRecord(cachedRecord);
     return {
-      status: 'server-only',
+      status: 'on-phone',
       tagCode,
-      scientificName: species?.scientific_name || null,
-      commonName: species?.common_name || null,
+      record,
     };
   } catch (error) {
     if (error instanceof ApiError) {
@@ -57,7 +141,7 @@ export function describeTagLookup(result: Exclude<TagLookupResult, { status: 'on
       return {
         title: result.scientificName ?? 'Species not recorded',
         message:
-          'This plant is registered on the server but not on this phone. Visits can only be added to plants saved on this phone.',
+          'This plant is registered on the server but could not be added to this phone.',
       };
     case 'not-found':
       return { title: 'Tag not found', message: 'No plant has this tag, on this phone or on the server.' };
