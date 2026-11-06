@@ -1,10 +1,10 @@
 const express = require("express");
 const PDFDocument = require("pdfkit");
 const { requireAuth, requireRole } = require("../middleware/auth");
-const { buildReport, ReportError } = require("../services/reportService");
+const { buildReport, buildSummary, ReportError } = require("../services/reportService");
 
 const router = express.Router();
-const reportTypes = new Set(["inventory", "status", "botanist"]);
+const reportTypes = new Set(["inventory", "status", "botanist", "locations"]);
 const formats = new Set(["json", "csv", "pdf"]);
 
 function validDate(value) {
@@ -50,6 +50,17 @@ function sendPdf(res, report) {
     }
     pdf.end();
 }
+
+router.get("/summary", requireAuth, requireRole("officer"), async (req, res) => {
+    try {
+        return res.json({ data: await buildSummary(req.supabase) });
+    } catch (error) {
+        if (!(error instanceof ReportError)) {
+            console.error("Report summary generation error:", error);
+        }
+        return res.status(500).json({ message: "Could not load report summary" });
+    }
+});
 
 // Only officers can see reports containing drafts, pending reviews, and staff names.
 router.get("/:type", requireAuth, requireRole("officer"), async (req, res) => {

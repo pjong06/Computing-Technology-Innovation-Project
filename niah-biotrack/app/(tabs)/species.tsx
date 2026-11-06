@@ -14,7 +14,6 @@ import {
 import { useRouter } from 'expo-router';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import type { Species } from '../../src/api/species';
-import OfflineReferenceCard from '../../src/components/OfflineReferenceCard';
 import { useProposalStore, type SpeciesProposal } from '../../src/store/useProposalStore';
 import { SyncStatus } from '../../src/store/useRecordStore';
 import Toast from 'react-native-toast-message';
@@ -194,7 +193,7 @@ export default function SpeciesScreen() {
         <View style={styles.centerBox}>
           <Text style={styles.emptyTitle}>Couldn't load the species list</Text>
           <Text style={styles.emptyText}>
-            Connect once to download the catalogue for offline use.
+            Connect to refresh the species catalogue. The last saved catalogue remains available offline.
           </Text>
           <Text style={styles.emptyText}>{error}</Text>
           <TouchableOpacity style={styles.retryBtn} onPress={() => void loadSpecies()}>
@@ -217,8 +216,6 @@ export default function SpeciesScreen() {
         <Text style={styles.title}>
           Species <Text style={styles.titleAccent}>Reference</Text>
         </Text>
-
-        <OfflineReferenceCard />
 
         {canPropose && (
           <TouchableOpacity
@@ -315,7 +312,7 @@ export default function SpeciesScreen() {
           <View style={styles.countRow}>
             <Text style={styles.countBanner}>
               {filtered.length === species.length
-                ? `${species.length} species · catalogue available offline`
+                ? `${species.length} species · automatically synced`
                 : `Showing ${filtered.length} of ${species.length} species`}
             </Text>
             {statusFilter !== null && (

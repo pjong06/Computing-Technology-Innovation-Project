@@ -8,26 +8,176 @@ const SUPABASE_KEY = 'sb_publishable_4L1RojeFv6wLAsFNX2q3KQ_hjanSuTo';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { storageKey: 'niah_supabase_auth' } });
 window.sb = sb;
 
-// Gives back the login token, or null if nobody is logged in.
+const SESSION_EXPIRED_MESSAGE = 'Your session expired, please log in again.';
+
+// Gives back a login token that is still valid, or null if nobody is logged in or the
+// login can't be renewed. A token that runs out within a minute is renewed first, so a
+// request never leaves with a token that expires on the way.
 window.getOfficerAccessToken = async function () {
   const result = await sb.auth.getSession();
-  return result.data.session ? result.data.session.access_token : null;
+  let session = result.data.session;
+  if (!session) {
+    return null;
+  }
+  const now = Math.floor(Date.now() / 1000);
+  if (session.expires_at && session.expires_at - 60 <= now) {
+    const renewed = await sb.auth.refreshSession();
+    if (renewed.error || !renewed.data.session) {
+      return null;
+    }
+    session = renewed.data.session;
+  }
+  return session.access_token;
 };
 
-// Calls the backend
+// The login can't be renewed: forget it and go to the login page, which shows why.
+// On the login page itself nothing happens (the page shows its own error).
+async function sendToLoginExpired() {
+  if (OPEN_PAGES.indexOf(thisPageName()) !== -1) {
+    return;
+  }
+  localStorage.removeItem(SESSION_KEY);
+  rememberToast(SESSION_EXPIRED_MESSAGE);
+  try {
+    await sb.auth.signOut({ scope: 'local' });
+  } catch (error) {
+    // Already signed out: nothing to undo.
+  }
+  location.replace('login.html');
+}
+
+// Calls the backend with the officer's login token. If the backend says the token is no
+// longer valid (401), the login is renewed once and the request sent again; if that
+// fails too, the person is sent to the login page.
 async function api(path, options) {
   options = options || {};
-  const token = await window.getOfficerAccessToken();
-  const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers);
-  if (token) {
-    headers.Authorization = 'Bearer ' + token;
+
+  async function send(token) {
+    // A photo upload (FormData) sets its own content type; everything else is JSON.
+    const isForm = typeof FormData !== 'undefined' && options.body instanceof FormData;
+    const headers = Object.assign(isForm ? {} : { 'Content-Type': 'application/json' }, options.headers);
+    if (token) {
+      headers.Authorization = 'Bearer ' + token;
+    }
+    return fetch('/api' + path, Object.assign({}, options, { headers: headers }));
   }
-  const response = await fetch('/api' + path, Object.assign({}, options, { headers: headers }));
+
+  let response = await send(await window.getOfficerAccessToken());
+  if (response.status === 401) {
+    // A 401 means the request was refused before it did anything, so sending it again is safe.
+    const renewed = await sb.auth.refreshSession();
+    if (!renewed.error && renewed.data.session) {
+      response = await send(renewed.data.session.access_token);
+    }
+    if (response.status === 401) {
+      await sendToLoginExpired();
+      throw new Error(SESSION_EXPIRED_MESSAGE);
+    }
+  }
+
   const body = await response.json().catch(function () { return {}; });
   if (response.ok === false) {
     throw new Error(body.message || ('Request failed (' + response.status + ')'));
   }
   return body;
+}
+
+// ---------- The real species catalogue (/api/knowledge) ----------
+// The same species table the mobile app reads. Officers manage it; botanists propose.
+
+// Conservation status as stored in species.conservation_status (IUCN codes), with the
+// words the pages show. An empty status is "Not assessed".
+const STATUS_LABELS = {
+  CR: 'Critically Endangered',
+  EN: 'Endangered',
+  VU: 'Vulnerable',
+  NT: 'Near Threatened',
+  LC: 'Least Concern',
+  DD: 'Data Deficient'
+};
+const NOT_ASSESSED = 'Not assessed';
+
+// The words for a stored status. Older rows that already hold the words keep them.
+function statusLabel(code) {
+  if (!code) {
+    return NOT_ASSESSED;
+  }
+  return STATUS_LABELS[code] || code;
+}
+
+// Reads every page of a paged list (?page=&page_size=100) and returns all the rows.
+async function fetchAllPages(path) {
+  const joiner = path.indexOf('?') === -1 ? '?' : '&';
+  let rows = [];
+  let page = 1;
+  let totalPages = 1;
+  do {
+    const result = await api(path + joiner + 'page=' + page + '&page_size=100');
+    rows = rows.concat(result.data || []);
+    totalPages = result.pagination ? result.pagination.total_pages : 1;
+    page = page + 1;
+  } while (page <= totalPages);
+  return rows;
+}
+
+// Every taxonomy row (family and genus). Used for the Family box and to link a species.
+async function loadTaxonomy() {
+  return fetchAllPages('/knowledge/taxonomy');
+}
+
+// The taxonomy row for this family, using the genus (first word of the scientific name).
+// Creates it when it doesn't exist yet. Returns its id, or null when no family is given.
+async function taxonomyIdFor(taxonomy, family, scientificName) {
+  const wantedFamily = family.trim();
+  if (wantedFamily === '') {
+    return null;
+  }
+  const genus = scientificName.trim().split(/\s+/)[0];
+  const same = function (a, b) { return String(a || '').toLowerCase() === String(b || '').toLowerCase(); };
+  for (let i = 0; i < taxonomy.length; i++) {
+    if (same(taxonomy[i].family, wantedFamily) && same(taxonomy[i].genus, genus)) {
+      return taxonomy[i].id;
+    }
+  }
+  try {
+    const created = await api('/knowledge/taxonomy', {
+      method: 'POST',
+      body: JSON.stringify({ kingdom: 'Plantae', family: wantedFamily, genus: genus })
+    });
+    taxonomy.push(created.data);
+    return created.data.id;
+  } catch (error) {
+    // Made at the same moment by someone else: read the list again and use theirs.
+    const fresh = await loadTaxonomy();
+    for (let i = 0; i < fresh.length; i++) {
+      if (same(fresh[i].family, wantedFamily) && same(fresh[i].genus, genus)) {
+        return fresh[i].id;
+      }
+    }
+    throw error;
+  }
+}
+
+// A one-minute link to the species' main photo (or its first one), or null when it has none.
+async function speciesPhotoUrl(species) {
+  const photos = species.species_media || [];
+  if (photos.length === 0) {
+    return null;
+  }
+  let chosen = photos[0];
+  for (let i = 0; i < photos.length; i++) {
+    if (photos[i].is_primary) {
+      chosen = photos[i];
+    }
+  }
+  const result = await api('/knowledge/species/' + species.id + '/photos/' + chosen.id);
+  return result.url || null;
+}
+
+// Opens the species editor for this species id, or for a new species when id is ''.
+function openSpeciesEditor(id) {
+  writeStorage(EDIT_KEY, id || '');
+  location.href = 'editor.html';
 }
 
 
@@ -40,9 +190,6 @@ const VERSION_KEY = 'niah_data_version';
 const SESSION_KEY = 'niah_session';
 // Suspended botanists are told to contact the officer at this email.
 const OFFICER_CONTACT_EMAIL = 'georgetanyonghan@gmail.com';
-// Sample users that were deleted on purpose. They are removed from saved data and not added again.
-const REMOVED_SAMPLE_EMAILS = ['mei@gmail.com'];
-const DATA_VERSION = 4;
 
 // Turns the text of an SVG drawing into an image address that an <img> tag can show.
 function svgPicture(svg) {
@@ -59,7 +206,7 @@ const PICTURE_BLANK = svgPicture('<svg xmlns="http://www.w3.org/2000/svg" viewBo
 // Each page has its own table with one column for each detail:
 //   Species catalogue and editor -> website_species
 //   Observation queue and rejected -> website_observations
-//   User & role admin and sign up -> website_users (one row for each real login account)
+//   User & role admin -> website_users (one row for each real login account)
 // Only the data version is kept in the table web_data.
 // Everything else (the login copy, the editor shortcut, the pop-up message) stays in this browser.
 const DATABASE_KEYS = [SPECIES_KEY, OBSERVATIONS_KEY, USERS_KEY, VERSION_KEY];
@@ -146,15 +293,15 @@ function findListTable(key) {
 // Returns the default picture of a species or observation, chosen by the first word of its
 // scientific name (the genus). Rafflesia gets the flower, Shorea the tree, Nepenthes the pitcher
 // plant and Dipterocarpus the leaf. Any other plant gets the blank leaf.
+const GENUS_PICTURES = {
+  rafflesia: PICTURE_RAFFLESIA,
+  shorea: PICTURE_SHOREA,
+  nepenthes: PICTURE_NEPENTHES,
+  dipterocarpus: PICTURE_DIPTEROCARPUS
+};
 function fallbackPicture(scientificName) {
   const genus = String(scientificName || '').trim().toLowerCase().split(' ')[0];
-  const samples = makeStartingSpecies();
-  for (let i = 0; i < samples.length; i++) {
-    if (genus !== '' && samples[i].sci.toLowerCase().split(' ')[0] === genus) {
-      return samples[i].photo;
-    }
-  }
-  return PICTURE_BLANK;
+  return GENUS_PICTURES[genus] || PICTURE_BLANK;
 }
 
 // Turns an item used by the pages (a species, an observation or a user) into one row of its table.
@@ -297,7 +444,9 @@ function getTokenNow() {
   }
   const fresh = JSON.parse(request.responseText);
   fresh.expires_at = now + fresh.expires_in;
-  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(fresh));
+  // Keep what the stored session already had (e.g. the user), so the Supabase library
+  // still recognises it, and only replace the renewed tokens.
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(Object.assign({}, session, fresh)));
   return fresh.access_token;
 }
 
@@ -328,6 +477,10 @@ function databaseRequest(method, path, body) {
   } catch (error) {
     reply = {};
   }
+  if (request.status === 401) {
+    // The backend refused the login token ("Invalid or expired token").
+    return { ok: false, message: SESSION_EXPIRED_MESSAGE, expired: true };
+  }
   if (request.status < 200 || request.status >= 300) {
     return { ok: false, message: reply.message || ('Database error ' + request.status) };
   }
@@ -342,8 +495,12 @@ function loadFromDatabase() {
   const result = databaseRequest('GET', '', undefined);
   if (result.ok === false) {
     databaseProblem = result.message;
-    if (result.message === NOT_LOGGED_IN) {
-      // The login has run out, so forget the saved copy and the page sends the person to the login page.
+    if (result.message === NOT_LOGGED_IN || result.expired) {
+      // The login has run out, so forget the saved copy and the page sends the person to
+      // the login page, which says why (only if someone was logged in).
+      if (readStorage(SESSION_KEY) !== null) {
+        rememberToast(SESSION_EXPIRED_MESSAGE);
+      }
       localStorage.removeItem(SESSION_KEY);
     }
     return;
@@ -364,14 +521,11 @@ function loadFromDatabase() {
     const items = listResult.data.map(function (row) {
       return rowToItem(row, table);
     });
-    // An empty table means "nothing yet" only after the website was set up once.
-    // Before that, the page adds the sample records by itself.
-    if (items.length > 0 || databaseCache[VERSION_KEY] !== undefined) {
-      databaseCache[table.key] = JSON.stringify(items);
-      databaseSaved[table.key] = listFingerprint(items, table);
-      databaseIds[table.key] = idsOf(items);
-      databasePrints[table.key] = rowPrints(items, table);
-    }
+    // Used as it is, also when empty: the pages never add sample records.
+    databaseCache[table.key] = JSON.stringify(items);
+    databaseSaved[table.key] = listFingerprint(items, table);
+    databaseIds[table.key] = idsOf(items);
+    databasePrints[table.key] = rowPrints(items, table);
   }
   databaseReady = true;
 }
@@ -426,7 +580,7 @@ function writeStorage(key, value) {
 
   databaseCache[key] = JSON.stringify(value);
   if (databaseReady === false) {
-    // The login and sign up pages have no database data. Anywhere else this is a problem.
+    // The login and password pages have no database data. Anywhere else this is a problem.
     return OPEN_PAGES.indexOf(thisPageName()) !== -1;
   }
 
@@ -458,8 +612,6 @@ function writeStorage(key, value) {
     const saved = databaseRequest('PUT', table.path, { rows: rows, removed: removed });
     if (saved.ok === false) {
       showToast('Could not save to the database: ' + saved.message);
-      // Show what the database really holds, so the page does not pretend the change worked.
-      reloadFromDatabase(key);
       return false;
     }
     // The database gives every new species and user its id. Put the saved records back in the list.
@@ -511,90 +663,106 @@ function whenText(d) {
     hour + ':' + twoDigits(d.getMinutes()) + ' ' + ampm;
 }
 
-// Returns the sample species used the first time a page opens.
-// date and when = last updated. firstDate and firstWhen = first recorded.
-// obsId = the id of the observation that created the record (empty for the samples).
-function makeStartingSpecies() {
-  return [
-    {
-      sci: 'Rafflesia tuan-mudae', com: 'Corpse flower', fam: 'Rafflesiaceae',
-      status: 'Endangered', loc: 'West trail junction', gps: '3.2247, 113.7631',
-      desc: 'A parasitic flowering plant that produces the largest individual flower in the world. It has no visible leaves, stems or roots.',
-      photo: PICTURE_RAFFLESIA,
-      date: '2026-09-14', when: '14 Sep 2026, 3:42 PM',
-      firstDate: '2026-09-14', firstWhen: '14 Sep 2026, 3:42 PM'
-    },
-    {
-      sci: 'Shorea platyclados', com: 'Meranti bukit', fam: 'Dipterocarpaceae',
-      status: 'Vulnerable', loc: '2.3km trail, Niah', gps: '3.2201, 113.7702',
-      desc: 'A large lowland dipterocarp tree found along the Niah trail.',
-      photo: PICTURE_SHOREA,
-      date: '2026-09-10', when: '10 Sep 2026, 10:20 AM',
-      firstDate: '2026-09-10', firstWhen: '10 Sep 2026, 10:20 AM'
-    },
-    {
-      sci: 'Nepenthes ampullaria', com: 'Pitcher plant', fam: 'Nepenthaceae',
-      status: 'Least Concern', loc: 'Cave entrance area', gps: '3.2189, 113.7745',
-      desc: 'A carnivorous pitcher plant with rounded, clustered pitchers.',
-      photo: PICTURE_NEPENTHES,
-      date: '2026-09-14', when: '14 Sep 2026, 11:10 AM',
-      firstDate: '2026-09-14', firstWhen: '14 Sep 2026, 11:10 AM'
-    },
-    {
-      sci: 'Dipterocarpus caudatus', com: 'Keruing', fam: 'Dipterocarpaceae',
-      status: 'Endangered', loc: 'Keruing', gps: '3.2268, 113.7598',
-      desc: 'A tall emergent tree valued for timber, now under pressure.',
-      photo: PICTURE_DIPTEROCARPUS,
-      date: '2026-09-12', when: '12 Sep 2026, 9:05 AM',
-      firstDate: '2026-09-12', firstWhen: '12 Sep 2026, 9:05 AM'
+// ---- Shared by the approval queue and the rejected list ----
+
+// Returns the observation with this id from the list, or null if there is none.
+function findObservation(list, id) {
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].id === id) {
+      return list[i];
     }
-  ];
+  }
+  return null;
 }
 
-// Returns the three sample observations sent by botanists.
-// photo = the picture taken in the field. com and fam = common name and family typed by the botanist.
-// state = Pending, Approved or Rejected. reason = why it was rejected.
-function makeStartingObservations() {
-  return [
-    {
-      id: 'NP-2026-0417', sci: 'Rafflesia tuan-mudae', com: 'Corpse flower', fam: 'Rafflesiaceae',
-      by: 'Brendan Noel', date: '2026-09-14', when: '14 Sep 2026, 3:42 PM',
-      loc: 'East ridge trail', gps: '3.2312, 113.7689',
-      notes: 'Single bloom, about 60 cm wide. A second site, away from the West trail record.',
-      photo: PICTURE_RAFFLESIA,
-      state: 'Pending', reason: ''
-    },
-    {
-      id: 'NP-2026-0418', sci: 'Nepenthes rafflesiana', com: 'Raffles pitcher plant', fam: 'Nepenthaceae',
-      by: 'Brendan Noel', date: '2026-09-14', when: '14 Sep 2026, 11:10 AM',
-      loc: 'Limestone path', gps: '3.2174, 113.7733',
-      notes: 'Climbing pitcher plant with large funnel-shaped pitchers. Looks like a new species for the park list.',
-      photo: PICTURE_NEPENTHES,
-      state: 'Pending', reason: ''
-    },
-    {
-      id: 'NP-2026-0412', sci: 'Dipterocarpus caudatus', com: 'Keruing', fam: 'Dipterocarpaceae',
-      by: 'Aina Rahman', date: '2026-09-12', when: '12 Sep 2026, 9:05 AM',
-      loc: 'Cave road, km 1', gps: '3.2150, 113.7710',
-      notes: 'Height estimated at 38 m. Bark sample not taken.',
-      photo: PICTURE_DIPTEROCARPUS,
-      state: 'Pending', reason: ''
-    }
-  ];
+// The name to show: the plant's scientific name, or a plain fallback.
+function observationName(observation) {
+  if (observation.plant && observation.plant.scientific_name) {
+    return observation.plant.scientific_name;
+  }
+  return 'Species not recorded';
 }
 
-// Returns the sample users.
-// passwordHash = the scrambled password (see hashPassword). Demo passwords:
-// George = Officer@123, Brendan and Aina = Botanist@123.
-function makeStartingUsers() {
-  return [
-    { name: 'Brendan Noel', username: 'brendan', email: 'brendan@gmail.com', role: 'Botanist', active: true,
-      passwordHash: 'a37702c8480135497221829d63a1d7d0816e5c1b99e4de6479bf53e6a9fb1af2' },
-    { name: 'Aina Rahman', username: 'aina', email: 'aina@gmail.com', role: 'Botanist', active: true,
-      passwordHash: '4894d1955515afcec2632bbb46e35e8e971439ef8c679e0817f9af32bc4804d9' },
-    { name: 'George Tan', username: 'george', email: 'georgetanyonghan@gmail.com', role: 'Conservation Officer', active: true,
-      passwordHash: '9b33a0b27ca119cb6e14fee832319e3fc44506bc2aa98cd09389ba8af47d6a4f' }
-  ];
+// "2 Nov 2026, 11:00 AM" for an ISO date, or '' when there is none.
+function visitTime(iso) {
+  if (!iso) {
+    return '';
+  }
+  return whenText(new Date(iso));
+}
+
+// Adds a bold title with a line of text under it to the card.
+function addInfo(parent, title, text) {
+  const paragraph = document.createElement('p');
+  const bold = document.createElement('b');
+  bold.textContent = title;
+  paragraph.appendChild(bold);
+  paragraph.appendChild(document.createElement('br'));
+  paragraph.appendChild(document.createTextNode(text));
+  parent.appendChild(paragraph);
+}
+
+// Makes one small card for an observation list: picture, scientific name, who recorded it
+// and when. selected = highlight it. onSelect runs when the card is clicked.
+function makeObservationListCard(observation, selected, picture, onSelect) {
+  const card = document.createElement('div');
+  card.className = 'q';
+  if (selected) {
+    card.classList.add('on');
+  }
+  card.onclick = onSelect;
+
+  const bold = document.createElement('b');
+  const name = document.createElement('i');
+  name.className = 'sci';
+  name.textContent = observationName(observation);
+  bold.appendChild(name);
+
+  const small = document.createElement('span');
+  small.className = 'muted';
+  small.textContent = (observation.observer_name || 'Botanist') + ' · ' + visitTime(observation.observed_at);
+
+  const text = document.createElement('div');
+  text.appendChild(bold);
+  text.appendChild(small);
+
+  const row = document.createElement('div');
+  row.className = 'sp';
+  row.appendChild(makeThumb(picture, observationName(observation), 'md'));
+  row.appendChild(text);
+  card.appendChild(row);
+  return card;
+}
+
+// Starts the big detail card for an observation: its scientific name and plant tag.
+function makeObservationDetailCard(observation) {
+  const card = document.createElement('div');
+  card.className = 'card detail';
+
+  const title = document.createElement('h3');
+  title.style.marginTop = '0';
+  const name = document.createElement('i');
+  name.className = 'sci';
+  name.textContent = observationName(observation);
+  title.appendChild(name);
+  card.appendChild(title);
+
+  const plant = observation.plant || {};
+  const record = document.createElement('p');
+  record.className = 'muted';
+  record.textContent = plant.tag_code ? 'Tag ' + plant.tag_code : 'No tag attached';
+  card.appendChild(record);
+  return card;
+}
+
+// Adds the plant's common name (if any), its location and who recorded the visit, and when.
+function addPlantAndRecorder(card, observation) {
+  const plant = observation.plant || {};
+  if (plant.common_name) {
+    addInfo(card, 'Common name', plant.common_name);
+  }
+  addInfo(card, 'Location', plant.location_description || 'Not recorded');
+  addInfo(card, 'Recorded by', (observation.observer_name || 'Botanist') + ', ' + visitTime(observation.observed_at));
 }
 
 // Checks if two texts are the same, ignoring capital letters and spaces at the ends.
@@ -623,51 +791,27 @@ function findByScientificName(list, scientificName) {
   return null;
 }
 
-// Returns the saved list of species records.
-// The first time, it saves the sample species. Older records without dates get them filled in.
+// Returns the saved list of species records (empty when there are none, or when the
+// database could not be loaded; see showDatabaseProblem). Records without dates get
+// empty ones here, in memory only: reading never writes.
 function getSpecies() {
-  let list = readStorage(SPECIES_KEY);
-  if (list === null) {
-    list = makeStartingSpecies();
-    writeStorage(SPECIES_KEY, list);
-  }
-
-  let changed = false;
-  const starting = makeStartingSpecies();
+  const list = readStorage(SPECIES_KEY) || [];
   for (let i = 0; i < list.length; i++) {
-    if (list[i].when === undefined || list[i].firstWhen === undefined) {
-      const sample = findByScientificName(starting, list[i].sci);
-      if (list[i].when === undefined || list[i].when === '') {
-        list[i].date = '';
-        list[i].when = '';
-        if (sample !== null) {
-          list[i].date = sample.date;
-          list[i].when = sample.when;
-        }
-      }
+    if (list[i].when === undefined) {
+      list[i].date = '';
+      list[i].when = '';
+    }
+    if (list[i].firstWhen === undefined) {
       list[i].firstDate = list[i].date;
       list[i].firstWhen = list[i].when;
-      if (sample !== null) {
-        list[i].firstDate = sample.firstDate;
-        list[i].firstWhen = sample.firstWhen;
-      }
-      changed = true;
     }
-  }
-  if (changed) {
-    writeStorage(SPECIES_KEY, list);
   }
   return list;
 }
 
-// Returns the saved list of observations (the sample ones the first time).
+// Returns the saved list of observations (empty when there are none).
 function getObservations() {
-  let list = readStorage(OBSERVATIONS_KEY);
-  if (list === null) {
-    list = makeStartingObservations();
-    writeStorage(OBSERVATIONS_KEY, list);
-  }
-  return list;
+  return readStorage(OBSERVATIONS_KEY) || [];
 }
 
 // Makes a username from the start of an email, like "georgetanyonghan@gmail.com" -> "george".
@@ -696,73 +840,14 @@ function usernameTaken(list, username) {
   return false;
 }
 
-// The first sample passwords had no symbol. Accounts still using them get the new sample password.
-const OLD_DEMO_HASHES = [
-  'ea0d785b0a2382bedd91f03612f1bb0587514ab6c12ea10554ae7c957786a59e',
-  '6af89d89092d5a232ea353e5a3a1ae8634f235510e3fc82edd9a9129a1dfd4cb',
-  '9ebe6eb9c4e1d636c400413b0d34ed7fa6199f9e29ae39765b78aa3c91bca53b'
-];
-
-// Returns the sample password hash for this email, or '' if it is not a sample user.
-function findStartingHash(starting, email) {
-  for (let i = 0; i < starting.length; i++) {
-    if (sameText(starting[i].email, email)) {
-      return starting[i].passwordHash;
-    }
-  }
-  return '';
-}
-
-// Returns the saved list of users (the sample ones the first time).
-// Users saved before logins existed get the sample password if they are a sample user.
+// Returns the list of login accounts (website_users; only the officer gets it). Older
+// rows without a username get one here, in memory only: reading never writes.
 function getUsers() {
-  let list = readStorage(USERS_KEY);
-  if (list === null) {
-    list = makeStartingUsers();
-    writeStorage(USERS_KEY, list);
-  }
-
-  let changed = false;
-  const starting = makeStartingUsers();
-
-  // Remove the sample users that were deleted on purpose.
-  for (let i = list.length - 1; i >= 0; i--) {
-    for (let j = 0; j < REMOVED_SAMPLE_EMAILS.length; j++) {
-      if (sameText(list[i].email, REMOVED_SAMPLE_EMAILS[j])) {
-        list.splice(i, 1);
-        changed = true;
-        break;
-      }
-    }
-  }
-
+  const list = readStorage(USERS_KEY) || [];
   for (let i = 0; i < list.length; i++) {
     if (list[i].username === undefined) {
       list[i].username = makeUsernameFromEmail(list[i].email, list);
-      changed = true;
     }
-    if (list[i].role === 'Administrator') {
-      list[i].role = 'Botanist';
-      changed = true;
-    }
-    for (let j = 0; j < OLD_DEMO_HASHES.length; j++) {
-      if (list[i].passwordHash === OLD_DEMO_HASHES[j]) {
-        list[i].passwordHash = findStartingHash(starting, list[i].email);
-        changed = true;
-      }
-    }
-    if (list[i].passwordHash === undefined) {
-      list[i].passwordHash = '';
-      for (let j = 0; j < starting.length; j++) {
-        if (sameText(starting[j].email, list[i].email)) {
-          list[i].passwordHash = starting[j].passwordHash;
-        }
-      }
-      changed = true;
-    }
-  }
-  if (changed) {
-    writeStorage(USERS_KEY, list);
   }
   return list;
 }
@@ -890,7 +975,6 @@ function goToHome() {
 // Pages that need no login
 const OPEN_PAGES = [
   'login.html',
-  'signup.html',
   'forgot-password.html',
   'reset-password.html'
 ];
@@ -955,9 +1039,29 @@ const MENU = [
   { file: 'alerts.html', label: 'IoT alerts' }
 ];
 
+// Shows a warning at the top of the page when the database could not be loaded, so an
+// empty page is never mistaken for "no data".
+function showDatabaseProblem() {
+  if (databaseProblem === '' || OPEN_PAGES.indexOf(thisPageName()) !== -1) {
+    return;
+  }
+  const main = document.querySelector('main');
+  if (main === null || document.getElementById('database-problem') !== null) {
+    return;
+  }
+  const box = document.createElement('div');
+  box.id = 'database-problem';
+  box.className = 'card';
+  box.setAttribute('role', 'alert');
+  box.textContent = 'Could not load data from the database: ' + databaseProblem +
+    '. What you see may be incomplete. Reload the page to try again.';
+  main.insertBefore(box, main.firstChild);
+}
+
 // Builds the left menu inside <nav id="menu"> and highlights the page we are on (activeFile).
 function drawMenu(activeFile) {
   const nav = document.getElementById('menu');
+  showDatabaseProblem();
 
   const logo = document.createElement('img');
   logo.className = 'logo';
@@ -1005,7 +1109,9 @@ function drawMenu(activeFile) {
   const out = document.createElement('button');
   out.className = 'btn ghost small';
   out.textContent = 'Log out';
-  out.onclick = logout;
+  out.onclick = function () {
+    logout().catch(showUnexpectedError);
+  };
   who.appendChild(out);
   nav.appendChild(who);
 }
@@ -1016,6 +1122,13 @@ function hideToast() {
 }
 
 // Shows a small pop-up message for a few seconds.
+// Shows an error that a background task did not handle itself, so a failure is never
+// silent. Used as .catch(showUnexpectedError) where a promise is started but not awaited.
+function showUnexpectedError(error) {
+  const detail = error && error.message ? error.message : String(error);
+  showToast('Something went wrong: ' + detail);
+}
+
 function showToast(message) {
   const toast = document.getElementById('toast');
   toast.textContent = message;
@@ -1046,7 +1159,7 @@ function openEditorFor(index) {
 
 // Returns the CSS class of the coloured pill for a conservation status.
 function statusClass(status) {
-  if (status === 'Endangered') {
+  if (status === 'Endangered' || status === 'Critically Endangered') {
     return 'pill e';
   }
   if (status === 'Vulnerable') {
@@ -1131,33 +1244,7 @@ function makeCell(text) {
   return td;
 }
 
-// Runs once when the sample data changes (see DATA_VERSION).
-// It puts the new sample observations in place and removes species that were created from old observations.
-// Species added by the user are kept.
-function upgradeOldData() {
-  if (readStorage(VERSION_KEY) === DATA_VERSION) {
-    return;
-  }
-
-  writeStorage(OBSERVATIONS_KEY, makeStartingObservations());
-
-  const saved = readStorage(SPECIES_KEY);
-  if (saved !== null) {
-    const kept = [];
-    for (let i = 0; i < saved.length; i++) {
-      if (!saved[i].obsId) {
-        kept.push(saved[i]);
-      }
-    }
-    writeStorage(SPECIES_KEY, kept);
-  }
-
-  writeStorage(VERSION_KEY, DATA_VERSION);
-}
-
 loadFromDatabase();
-
-upgradeOldData();
 
 guardPages();
 

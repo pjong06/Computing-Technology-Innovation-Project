@@ -252,6 +252,8 @@ export interface PlantRecord {
 
   height?: string;
 
+  diameter?: string;
+
   morphology?: string;
 
   description?: string;

@@ -291,3 +291,37 @@ test('officer photo upload requires a photo before querying', async t => {
   });
   assert.equal(calls.length, 0);
 });
+
+// ---- Officer species list: every state, with family and photos ----
+
+test('/species/manage can filter by review state and name, and returns family and photos', async t => {
+  const { request, calls } = await setup(t, { data: [], error: null, count: 0 });
+  const response = await request('/species/manage?status=archived&q=Nepenthes');
+  assert.equal(response.status, 200);
+  assert.ok(calls.some(c => c[0] === 'eq' && c[1] === 'verification_status' && c[2] === 'archived'));
+  assert.ok(calls.some(c => c[0] === 'or' && c[1].includes('scientific_name.ilike.%Nepenthes%')));
+  const columns = calls.find(c => c[0] === 'select')[1];
+  assert.match(columns, /taxonomy\(family, genus\)/);
+  assert.match(columns, /species_media\(id, is_primary\)/);
+  assert.match(columns, /conservation_status/);
+});
+
+test('/species/manage without filters lists every state', async t => {
+  const { request, calls } = await setup(t, { data: [], error: null, count: 0 });
+  assert.equal((await request('/species/manage')).status, 200);
+  assert.ok(!calls.some(c => c[0] === 'eq' && c[1] === 'verification_status'));
+});
+
+test('/species/manage rejects unknown states and unsafe searches before database access', async t => {
+  const { request, calls } = await setup(t);
+  for (const params of ['status=deleted', 'status=approved&status=pending', 'q=a,b', 'q=%25']) {
+    assert.equal((await request(`/species/manage?${params}`)).status, 400, params);
+  }
+  assert.equal(calls.length, 0);
+});
+
+test('/species/manage is for officers only', async t => {
+  const { request, calls } = await setup(t, undefined, 'botanist');
+  assert.equal((await request('/species/manage')).status, 403);
+  assert.equal(calls.length, 0);
+});
