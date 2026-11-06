@@ -60,7 +60,8 @@ test('user changes are saved to website_users, which the database copies to prof
   const shared = read('frontend/js/shared.js');
   const users = read('frontend/js/users.js');
   // USERS_KEY is saved through /api/web-data/users (website_users), not only in the browser.
-  assert.match(shared, /key: USERS_KEY, path: '\/users'/);
+  assert.match(shared, /key: USERS_KEY/);
+  assert.match(shared, /request\.open\(method, '\/api\/web-data\/users'/);
   assert.match(read('backend/src/routes/webData.js'), /website_users/);
   // The page shows the real account status and can activate pending accounts.
   assert.match(users, /from\('profiles'\)\.select\('id, account_status'\)/);
@@ -76,7 +77,30 @@ test('user changes are saved to website_users, which the database copies to prof
 test('only the officer can change website data on the server', () => {
   const webData = read('backend/src/routes/webData.js');
   assert.match(webData, /function isOfficer\(req\)/);
-  assert.match(webData, /router\.put\("\/:key", async \(req, res\) => \{\s*if \(!isOfficer\(req\)\)/);
+  assert.match(webData, /router\.get\("\/users", async \(req, res\) => \{/);
+  assert.match(webData, /router\.put\("\/users", async \(req, res\) => \{\s*if \(!isOfficer\(req\)\)/);
+  assert.doesNotMatch(webData, /website_species|website_observations|web_data|\/species|\/observations/);
+});
+
+test('frontend no longer references the removed portal-copy data', () => {
+  const frontendRoot = path.join(repoRoot, 'frontend');
+  const files = [];
+  function collectFiles(directory) {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        collectFiles(file);
+      } else if (/\.(?:html|js|css)$/.test(entry.name)) {
+        files.push(file);
+      }
+    }
+  }
+  collectFiles(frontendRoot);
+
+  const legacyData = /\/(?:api\/)?web-data\/(?:species|observations)\b|website_(?:species|observations)/i;
+  for (const file of files) {
+    assert.doesNotMatch(fs.readFileSync(file, 'utf8'), legacyData, path.relative(repoRoot, file));
+  }
 });
 
 // ---- No public sign-up, staff-only portal ----
