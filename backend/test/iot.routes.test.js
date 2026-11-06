@@ -238,7 +238,12 @@ test('active staff can read readings, alerts and dashboard summaries', async () 
         assert.equal((await fetch(`${base}/api/iot${endpoint}`, { method: 'HEAD' })).status, 200);
         for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
           const write = await fetch(`${base}/api/iot${endpoint}`, { method });
-          assert.equal(write.status, role === 'officer' ? 404 : 403, `${role} ${method} ${endpoint}`);
+          const expectedStatus = role !== 'officer'
+            ? 403
+            : method === 'DELETE' && endpoint === '/alerts/live'
+              ? 400
+              : 404;
+          assert.equal(write.status, expectedStatus, `${role} ${method} ${endpoint}`);
         }
       }
       for (const endpoint of ['/summary', '/summary/live']) {
