@@ -191,6 +191,8 @@ export interface ObservationVisit {
     | number
     | null;
 
+  submissionRequested?: boolean;
+
   submittedForReview?:
     boolean;
 
@@ -393,6 +395,11 @@ const uploadsInProgress =
 function isUploadable(
   record: PlantRecord
 ): boolean {
+  if (record.serverId) {
+    return record.recordStatus ===
+      RecordStatus.COMPLETE;
+  }
+
   return (
     record.syncStatus !==
       SyncStatus.LOCAL_ONLY &&
@@ -411,15 +418,16 @@ function isFullySubmitted(
     | PlantRecord
     | undefined
 ): boolean {
-  return (
-    record?.reviewStatus ===
-      ReviewStatus.PENDING &&
-    record.observations.length >
-      0 &&
+  return Boolean(
+    record &&
+    record.observations.length > 0 &&
     record.observations.every(
       (observation) =>
-        observation
-          .submittedForReview
+        observation.submittedForReview ||
+        observation.reviewStatus ===
+          ReviewStatus.PENDING ||
+        observation.reviewStatus ===
+          ReviewStatus.APPROVED
     )
   );
 }
@@ -731,6 +739,10 @@ interface RecordState {
       | null
     >;
 
+  cacheServerRecord: (
+    record: PlantRecord
+  ) => Promise<PlantRecord>;
+
   addObservation: (
     plantRecordId:
       string,
@@ -1021,6 +1033,43 @@ export const useRecordStore =
             );
 
             return updated;
+          },
+
+        cacheServerRecord:
+          async (record) => {
+            const existing =
+              get().records.find(
+                (item) =>
+                  item.serverId === record.serverId ||
+                  (record.tagCode !== null &&
+                    item.tagCode === record.tagCode)
+              );
+
+            if (existing) {
+              return existing;
+            }
+
+            await persistRecordSnapshot(record);
+
+            set((state) => ({
+              records: state.records.some(
+                (item) =>
+                  item.serverId === record.serverId ||
+                  (record.tagCode !== null &&
+                    item.tagCode === record.tagCode)
+              )
+                ? state.records
+                : [record, ...state.records],
+            }));
+
+            return (
+              get().records.find(
+                (item) =>
+                  item.serverId === record.serverId ||
+                  (record.tagCode !== null &&
+                    item.tagCode === record.tagCode)
+              ) ?? record
+            );
           },
 
         /* -------------------------------------------------
@@ -1789,8 +1838,11 @@ export const useRecordStore =
                * ======================================= */
 
               if (
-                refreshed.reviewStatus ===
-                ReviewStatus.PENDING
+                refreshed.reviewStatus === ReviewStatus.PENDING ||
+                refreshed.observations.some(
+                  (observation) =>
+                    observation.submissionRequested
+                )
               ) {
                 const submittedIds =
                   new Set<string>();
@@ -1801,10 +1853,24 @@ export const useRecordStore =
                   ].reverse()
                 ) {
                   if (
-                    !observation.serverId ||
-                    observation
-                      .submittedForReview
+                    !observation.serverId
                   ) {
+                    continue;
+                  }
+
+                  if (
+                    observation.submittedForReview
+                  ) {
+                    continue;
+                  }
+
+                  if (
+                    observation.reviewStatus === ReviewStatus.PENDING ||
+                    observation.reviewStatus === ReviewStatus.APPROVED
+                  ) {
+                    if (observation.submissionRequested) {
+                      submittedIds.add(observation.id);
+                    }
                     continue;
                   }
 
@@ -1842,6 +1908,9 @@ export const useRecordStore =
 
                                   submittedForReview:
                                     true,
+
+                                  submissionRequested:
+                                    false,
                                 }
                               : observation
                         ),
@@ -2274,6 +2343,13 @@ export const useRecordStore =
                         !isFullySubmitted(
                           record
                         )
+                      ) ||
+                      record.observations.some(
+                        (observation) =>
+                          observation.submissionRequested &&
+                          !observation.submittedForReview &&
+                          observation.reviewStatus !== ReviewStatus.PENDING &&
+                          observation.reviewStatus !== ReviewStatus.APPROVED
                       )
                     )
                 )

@@ -147,9 +147,18 @@ router.get("/tag/:tagCode", requireRole("botanist", "officer", "researcher"), as
             return res.status(404).json({ message: "No plant record found with this tag code" });
         }
 
+        const requestingProfile = {
+            ...req.profile,
+            id: req.user.id
+        };
+        if (!canReadPlant(data, requestingProfile)) {
+            return res.status(404).json({ message: "No plant record found with this tag code" });
+        }
+
+        const readablePlant = visiblePlant(data, requestingProfile);
         return res.json({
             data: {
-                ...data,
+                ...readablePlant,
                 plant_id: data.id,
                 tag_code: data.qr_code_value,
                 scientific_name: data.species?.scientific_name ?? "Unknown species",

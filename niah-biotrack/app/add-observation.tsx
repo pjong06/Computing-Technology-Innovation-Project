@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as Location from 'expo-location';
 import Toast from 'react-native-toast-message';
 
 import {
@@ -21,14 +22,19 @@ import {
   type LifeStage,
 } from '../src/store/useRecordStore';
 import { useProfileStore } from '../src/store/useProfileStore';
-import { takePhotoWithCamera } from '../src/utils/imagePicker';
+import {
+  pickImageFromLibrary,
+  takePhotoWithCamera,
+} from '../src/utils/imagePicker';
 import { savePhotoPermanently } from '../src/utils/photoStorage';
 import { useAuthRole } from '../src/context/AuthRoleContext';
+import { describeTagLookup, lookupTag } from '../src/services/tagLookup';
 
 import FormScrollView from '../src/components/FormScrollView';
 import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
 
 const DONE_BAR_ID = 'add-observation-done';
+const GPS_TIMEOUT_MS = 20_000;
 
 const LIFE_STAGES: LifeStage[] = [
   'Seedling',
@@ -113,6 +119,15 @@ export default function AddObservationScreen() {
   // ── UNIFIED PHOTO EVIDENCE (MIN 1, MAX 4) ────────────────────
   const [photos, setPhotos] = useState<string[]>([]);
   const [notes, setNotes] = useState<string>('');
+  const [visitLocation, setVisitLocation] = useState<{
+    latitude: number;
+    longitude: number;
+    accuracyM: number | null;
+  } | null>(null);
+  const [locationStatus, setLocationStatus] = useState<
+    'not-requested' | 'capturing' | 'ready' | 'unavailable'
+  >('not-requested');
+  const [locationMessage, setLocationMessage] = useState('');
 
   const adjustValue = (
     setter: React.Dispatch<React.SetStateAction<string>>,
@@ -126,7 +141,7 @@ export default function AddObservationScreen() {
     });
   };
 
-  const handlePickPhoto = async () => {
+  const handlePickPhoto = async (source: 'camera' | 'gallery') => {
     if (photos.length >= 4) {
       Toast.show({
         type: 'info',
@@ -136,7 +151,10 @@ export default function AddObservationScreen() {
       return;
     }
 
-    const result = await takePhotoWithCamera();
+    const result =
+      source === 'camera'
+        ? await takePhotoWithCamera()
+        : await pickImageFromLibrary();
 
     if (result.status === 'permission-denied') {
       Alert.alert(
@@ -148,14 +166,74 @@ export default function AddObservationScreen() {
 
     if (result.status === 'error') {
       Alert.alert(
-        'Camera unavailable',
-        'The camera could not be opened. Please try again.'
+        source === 'camera' ? 'Camera unavailable' : 'Gallery unavailable',
+        source === 'camera'
+          ? 'The camera could not be opened. Please try again.'
+          : 'The photo library could not be opened. Please try again.'
       );
       return;
     }
 
     if (result.status === 'picked') {
       setPhotos((previous) => [...previous, result.asset.uri]);
+    }
+  };
+
+  const captureVisitLocation = async () => {
+    setLocationStatus('capturing');
+    setLocationMessage('');
+
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      const { status } =
+        await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setLocationMessage(
+          'Location permission is off. You can still save without GPS.'
+        );
+        setLocationStatus('unavailable');
+        return null;
+      }
+
+      if (!(await Location.hasServicesEnabledAsync())) {
+        setLocationMessage(
+          'Location services are off. You can still save without GPS.'
+        );
+        setLocationStatus('unavailable');
+        return null;
+      }
+
+      const locationPromise = Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error('GPS_TIMEOUT')),
+          GPS_TIMEOUT_MS
+        );
+      });
+      const fix = await Promise.race([locationPromise, timeoutPromise]);
+      const captured = {
+        latitude: fix.coords.latitude,
+        longitude: fix.coords.longitude,
+        accuracyM: fix.coords.accuracy,
+      };
+
+      setVisitLocation(captured);
+      setLocationStatus('ready');
+      return captured;
+    } catch (error) {
+      console.warn('Could not capture observation location:', error);
+      setLocationMessage(
+        error instanceof Error && error.message === 'GPS_TIMEOUT'
+          ? 'GPS took too long to respond. You can still save without GPS.'
+          : 'Could not get a GPS fix. You can still save without GPS.'
+      );
+      setLocationStatus('unavailable');
+      return null;
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
   };
 
@@ -166,7 +244,7 @@ export default function AddObservationScreen() {
   };
 
   // ── STEP VALIDATION ──────────────────────────────────────────
-  const handleNextStep = () => {
+  const handleNextStep = async () => {
     if (currentStep === 1) {
       if (!plantTag.trim() && !params.plantId) {
         Toast.show({
@@ -178,12 +256,15 @@ export default function AddObservationScreen() {
       }
 
       if (!plant) {
-        Toast.show({
-          type: 'error',
-          text1: 'Plant not on this phone',
-          text2: 'Register this plant with New Record before adding a visit.',
-        });
-        return;
+        const result = await lookupTag(cleanTag);
+        if (result.status !== 'on-phone') {
+          Toast.show({
+            type: 'error',
+            text1: describeTagLookup(result).title,
+            text2: describeTagLookup(result).message,
+          });
+          return;
+        }
       }
 
       setCurrentStep(2);
@@ -237,6 +318,11 @@ export default function AddObservationScreen() {
     setIsSubmitting(true);
 
     try {
+      const capturedLocation =
+        visitLocation ??
+        (locationStatus !== 'unavailable'
+          ? await captureVisitLocation()
+          : null);
       const storedPhotoUris = await Promise.all(
         photos.map((uri) => savePhotoPermanently(uri))
       );
@@ -267,14 +353,35 @@ export default function AddObservationScreen() {
         diameterCm: Number.isFinite(diameter) ? diameter : undefined,
         notes: notes.trim() || 'Observation logged in field.',
         photoUris: storedPhotoUris,
+        latitude: capturedLocation?.latitude,
+        longitude: capturedLocation?.longitude,
+        gpsAccuracyM: capturedLocation?.accuracyM,
+        submissionRequested: true,
       });
 
-      void syncRecord(plant.id);
+      syncRecord(plant.id)
+        .then((result) => {
+          if (!result.ok) {
+            Toast.show({
+              type: 'info',
+              text1: 'Saved; submission is pending',
+              text2: result.reason,
+            });
+          }
+        })
+        .catch((error: unknown) => {
+          console.error('Observation sync failed:', error);
+          Toast.show({
+            type: 'error',
+            text1: 'Saved; sync could not start',
+            text2: 'The observation is stored on this device and will retry.',
+          });
+        });
 
       Toast.show({
         type: 'success',
         text1: 'Observation saved',
-        text2: 'Saved safely on this device. Syncing with backend.',
+        text2: 'Saved on this device and queued for officer review.',
       });
 
       router.back();
@@ -561,9 +668,45 @@ export default function AddObservationScreen() {
           </View>
         )}
 
-        {/* STEP 3: Evidence (1 Button, 1-4 Photos) */}
+        {/* STEP 3: Evidence (1-4 Photos) */}
         {currentStep === 3 && (
           <View style={styles.stepContent}>
+            <View style={styles.card}>
+              <View style={styles.cardHeader}>
+                <Text style={styles.cardIcon}>📍</Text>
+                <Text style={styles.cardTitle}>Visit GPS Location</Text>
+              </View>
+              {locationStatus === 'capturing' ? (
+                <Text style={styles.locationInfo}>Capturing phone location…</Text>
+              ) : visitLocation ? (
+                <>
+                  <Text style={styles.locationInfo}>
+                    {visitLocation.latitude.toFixed(6)}, {visitLocation.longitude.toFixed(6)}
+                  </Text>
+                  <Text style={styles.locationInfo}>
+                    Accuracy:{' '}
+                    {visitLocation.accuracyM === null
+                      ? 'unavailable'
+                      : `about ${Math.round(visitLocation.accuracyM)} m`}
+                  </Text>
+                </>
+              ) : (
+                <Text style={styles.locationInfo}>
+                  {locationMessage || 'GPS will be captured for this visit when available.'}
+                </Text>
+              )}
+              {locationStatus !== 'capturing' && !visitLocation ? (
+                <TouchableOpacity
+                  style={styles.locationRetryBtn}
+                  onPress={() => void captureVisitLocation()}
+                >
+                  <Text style={styles.locationRetryText}>
+                    {locationStatus === 'unavailable' ? 'Retry GPS' : 'Capture GPS'}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
             <View style={styles.card}>
               <View style={styles.cardHeaderBetween}>
                 <View style={styles.cardHeader}>
@@ -597,19 +740,32 @@ export default function AddObservationScreen() {
                   </View>
                 ))}
 
-                {/* Single Add Photo Button */}
+                {/* Camera and gallery options */}
                 {photos.length < 4 && (
-                  <TouchableOpacity
-                    style={styles.addPhotoCard}
-                    onPress={handlePickPhoto}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.cameraIcon}>📸</Text>
-                    <Text style={styles.addPhotoText}>Add Photo</Text>
-                    <Text style={styles.addPhotoSlotHint}>
-                      {4 - photos.length} slot(s) left
-                    </Text>
-                  </TouchableOpacity>
+                  <>
+                    <TouchableOpacity
+                      style={styles.addPhotoCard}
+                      onPress={() => handlePickPhoto('camera')}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.cameraIcon}>📸</Text>
+                      <Text style={styles.addPhotoText}>Take Photo</Text>
+                      <Text style={styles.addPhotoSlotHint}>
+                        {4 - photos.length} slot(s) left
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.addPhotoCard}
+                      onPress={() => handlePickPhoto('gallery')}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.cameraIcon}>🖼️</Text>
+                      <Text style={styles.addPhotoText}>Choose from Gallery</Text>
+                      <Text style={styles.addPhotoSlotHint}>
+                        {4 - photos.length} slot(s) left
+                      </Text>
+                    </TouchableOpacity>
+                  </>
                 )}
               </View>
             </View>
@@ -663,12 +819,12 @@ export default function AddObservationScreen() {
           <TouchableOpacity
             style={[styles.saveBtn, { flex: 1, marginLeft: 12 }]}
             onPress={handleSaveObservation}
-            disabled={isSubmitting}
+            disabled={isSubmitting || locationStatus === 'capturing'}
           >
             {isSubmitting ? (
               <ActivityIndicator color="#FFFFFF" size="small" />
             ) : (
-              <Text style={styles.primaryBtnText}>☁️ Save Observation</Text>
+              <Text style={styles.primaryBtnText}>☁️ Save and submit</Text>
             )}
           </TouchableOpacity>
         )}
@@ -943,6 +1099,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#68776D',
     marginBottom: 10,
+  },
+  locationInfo: {
+    fontSize: 13,
+    color: '#526A5A',
+    marginBottom: 4,
+  },
+  locationRetryBtn: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 16,
+    backgroundColor: '#E8F5E9',
+  },
+  locationRetryText: {
+    color: '#2D6A4F',
+    fontSize: 12,
+    fontWeight: '700',
   },
   photoGrid: {
     flexDirection: 'row',
