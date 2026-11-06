@@ -16,6 +16,9 @@ const upload = multer({
   limits: {
     fileSize: MAX_IMAGE_SIZE,
     files: 1,
+    fields: 0,
+    parts: 1,
+    fieldNameSize: 32,
   },
 
   fileFilter: (_req, file, callback) => {
