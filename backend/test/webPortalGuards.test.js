@@ -43,6 +43,12 @@ test('the rejected list reads real rejected reviews', () => {
   assert.doesNotMatch(rejected, /getObservations\(|writeStorage\(OBSERVATIONS_KEY/);
 });
 
+test('the distribution map loads real plants from the officer map API', () => {
+  const map = read('frontend/js/map.js');
+  assert.match(map, /api\('\/officer\/map\/plants'\)/);
+  assert.doesNotMatch(map, /web-data|website_species|getSpecies\(/);
+});
+
 // ---- User admin changes real permissions ----
 
 test('user changes are saved to website_users, which the database copies to profiles', () => {
