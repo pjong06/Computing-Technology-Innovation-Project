@@ -40,11 +40,21 @@ export default function ManualQRScreen() {
     setIsLoading(true);
     setLookupResult(null);
 
-    // Phone first, then the server; never filled in with made-up plant details.
-    const result = await lookupTag(code);
-    setLookupResult(result);
-    setRecentTags((prev) => [result.tagCode, ...prev.filter((t) => t !== result.tagCode)].slice(0, 6));
-    setIsLoading(false);
+    try {
+      // Phone first, then the server; never filled in with made-up plant details.
+      const result = await lookupTag(code);
+      setLookupResult(result);
+      setRecentTags((prev) => [result.tagCode, ...prev.filter((t) => t !== result.tagCode)].slice(0, 6));
+    } catch (err) {
+      console.error('Tag lookup error:', err);
+      Toast.show({
+        type: 'error',
+        text1: 'Lookup Failed',
+        text2: 'Could not complete tag search. Please try again.',
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleProceed = () => {
@@ -66,8 +76,13 @@ export default function ManualQRScreen() {
 
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.headerBackBtn} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={22} color="#213B2A" />
+        <TouchableOpacity
+          style={styles.headerBackBtn}
+          onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="arrow-back-outline" size={22} color="#213B2A" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Manual Tag Entry</Text>
         <View style={{ width: 40 }} />
@@ -88,25 +103,38 @@ export default function ManualQRScreen() {
               autoCapitalize="characters"
               autoCorrect={false}
               returnKeyType="search"
-              onSubmitEditing={() => handleSearchTag()}
+              onSubmitEditing={() => {
+                handleSearchTag().catch((err) => {
+                  console.error('Failed to execute search on submit:', err);
+                });
+              }}
             />
             {tagInput.length > 0 && (
-              <TouchableOpacity style={styles.clearBtn} onPress={() => setTagInput('')}>
-                <Ionicons name="close-circle" size={18} color="#8A998E" />
+              <TouchableOpacity
+                style={styles.clearBtn}
+                onPress={() => setTagInput('')}
+                accessibilityRole="button"
+                accessibilityLabel="Clear tag input"
+              >
+                <Ionicons name="close-circle-outline" size={18} color="#8A998E" />
               </TouchableOpacity>
             )}
           </View>
 
           <TouchableOpacity
             style={[styles.searchBtn, isLoading && styles.btnDisabled]}
-            onPress={() => handleSearchTag()}
+            onPress={() => {
+              handleSearchTag().catch((err) => {
+                console.error('Failed to execute search on press:', err);
+              });
+            }}
             disabled={isLoading}
           >
             {isLoading ? (
               <ActivityIndicator color="#FFFFFF" size="small" />
             ) : (
               <>
-                <Ionicons name="search" size={17} color="#FFFFFF" />
+                <Ionicons name="search-outline" size={17} color="#FFFFFF" />
                 <Text style={styles.searchBtnText}>Look Up Tag</Text>
               </>
             )}
@@ -127,7 +155,10 @@ export default function ManualQRScreen() {
               style={styles.recentChip}
               onPress={() => {
                 setTagInput(tag);
-                handleSearchTag(tag);
+                // Line 130: Handled promise rejection with .catch() to satisfy typescript:S9383
+                handleSearchTag(tag).catch((err) => {
+                  console.error('Failed to search tag:', err);
+                });
               }}
             >
               <Text style={styles.recentChipText}>{tag}</Text>
@@ -139,7 +170,7 @@ export default function ManualQRScreen() {
         {lookupResult?.status === 'on-phone' && (
           <View style={styles.resultCard}>
             <View style={styles.resultPill}>
-              <Ionicons name="checkmark-circle" size={15} color="#2D6A4F" />
+              <Ionicons name="checkmark-circle-outline" size={15} color="#2D6A4F" />
               <Text style={styles.resultPillText}>Tag Found: {lookupResult.tagCode}</Text>
             </View>
 
@@ -156,7 +187,7 @@ export default function ManualQRScreen() {
 
             <TouchableOpacity style={styles.proceedBtn} onPress={handleProceed}>
               <Text style={styles.proceedBtnText}>Record Observation for This Plant</Text>
-              <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
+              <Ionicons name="arrow-forward-outline" size={18} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
         )}

@@ -120,7 +120,7 @@ export default function AddObservationScreen() {
     isFloat = false
   ) => {
     setter((previous) => {
-      const current = parseFloat(previous) || 0;
+      const current = Number.parseFloat(previous) || 0;
       const updated = Math.max(0, current + delta);
       return isFloat ? updated.toFixed(1) : Math.round(updated).toString();
     });
@@ -253,8 +253,8 @@ export default function AddObservationScreen() {
         hour12: true,
       });
 
-      const height = parseFloat(heightCm);
-      const diameter = parseFloat(diameterCm);
+      const height = Number.parseFloat(heightCm);
+      const diameter = Number.parseFloat(diameterCm);
 
       await addObservation(plant.id, {
         date: `${formattedDate} · ${formattedTime}`,
