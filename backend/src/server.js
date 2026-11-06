@@ -7,7 +7,9 @@ require('dotenv').config({
 
 const express = require('express');
 const app = express();
-app.set('trust proxy', 1);
+// Render's observed route: client -> Cloudflare -> forwarding proxies -> app.
+// Revalidate this hop count if the ingress path changes; never expose a shorter path.
+app.set('trust proxy', 3);
 const PORT = process.env.PORT || 3000;
 
 // IMPORT ROUTES AND SERVICES
