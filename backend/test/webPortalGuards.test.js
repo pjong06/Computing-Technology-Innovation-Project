@@ -49,6 +49,11 @@ test('the distribution map loads real plants from the officer map API', () => {
   assert.doesNotMatch(map, /web-data|website_species|getSpecies\(/);
 });
 
+test('reports.js does not load the old portal copy', () => {
+  const reports = read('frontend/js/reports.js');
+  assert.doesNotMatch(reports, /web-data|website_species|getSpecies\(|getObservations\(/);
+});
+
 // ---- User admin changes real permissions ----
 
 test('user changes are saved to website_users, which the database copies to profiles', () => {
