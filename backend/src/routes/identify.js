@@ -10,6 +10,33 @@ const router = express.Router();
 
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
 
+const MAX_CONCURRENT_IDENTIFICATIONS = 2;
+let activeIdentifications = 0;
+
+function limitConcurrentIdentifications(req, res, next) {
+  if (activeIdentifications >= MAX_CONCURRENT_IDENTIFICATIONS) {
+    return res.status(503).json({
+      success: false,
+      message: 'Plant identification is busy. Please try again later.',
+    });
+  }
+
+  activeIdentifications++;
+
+  let released = false;
+
+  function releaseSlot() {
+    if (released) return;
+    released = true;
+    activeIdentifications--;
+  }
+
+  res.once('finish', releaseSlot);
+  res.once('close', releaseSlot);
+
+  next();
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
 
@@ -130,6 +157,7 @@ function uploadImage(req, res, next) {
 
 router.post(
   '/',
+  limitConcurrentIdentifications,
   uploadImage,
   async (req, res) => {
     if (!req.file) {

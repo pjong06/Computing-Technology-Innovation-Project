@@ -10,16 +10,17 @@ const servicePath = require.resolve('../src/services/plantAiService');
 const originalService = require.cache[servicePath];
 
 let identifyCalls = 0;
+let identifyHandler = async () => [];
 
 require.cache[servicePath] = {
   id: servicePath,
   filename: servicePath,
   loaded: true,
   exports: {
-    identifyPlant: async () => {
-      identifyCalls++;
-      return [];
-    },
+  identifyPlant: async (...args) => {
+    identifyCalls++;
+    return identifyHandler(...args);
+},
     PlantAiError: class PlantAiError extends Error {},
   },
 };
@@ -143,4 +144,62 @@ test('Identify: rejects multiple image uploads', async () => {
     assert.equal(result.body.success, false);
     assert.equal(identifyCalls, 0);
   });
+});
+
+
+test('Identify: limits concurrent requests and releases slots', async () => {
+  identifyCalls = 0;
+
+  let releaseRequests;
+  const holdRequests = new Promise(resolve => {
+    releaseRequests = resolve;
+  });
+
+  let signalTwoStarted;
+  const twoStarted = new Promise(resolve => {
+    signalTwoStarted = resolve;
+  });
+
+  identifyHandler = async () => {
+    if (identifyCalls === 2) {
+      signalTwoStarted();
+    }
+
+    await holdRequests;
+    return [];
+  };
+
+  try {
+    await withApp(async base => {
+      const first = uploadImage(base);
+      const second = uploadImage(base);
+
+      try {
+        // Wait until both requests reach the mocked PlantNet service.
+        await twoStarted;
+
+        // A third request must be rejected while both slots are occupied.
+        const third = await uploadImage(base);
+
+        assert.equal(third.status, 503);
+        assert.equal(third.body.success, false);
+        assert.match(third.body.message, /busy/i);
+        assert.equal(identifyCalls, 2);
+      } finally {
+        // Always release the first two requests.
+        releaseRequests();
+        await Promise.allSettled([first, second]);
+      }
+
+      // After requests finish, a new upload should succeed.
+      const fourth = await uploadImage(base);
+
+      assert.equal(fourth.status, 200);
+      assert.equal(fourth.body.success, true);
+      assert.equal(identifyCalls, 3);
+    });
+  } finally {
+    releaseRequests();
+    identifyHandler = async () => [];
+  }
 });
