@@ -20,7 +20,7 @@ async function setup(t, results = [], role = 'botanist') {
       const calls = [['from', table]];
       queries.push(calls);
       const query = {};
-      for (const method of ['select', 'eq', 'ilike', 'order', 'limit', 'range', 'insert', 'update', 'single', 'maybeSingle']) {
+      for (const method of ['select', 'eq', 'ilike', 'in', 'order', 'limit', 'range', 'insert', 'update', 'single', 'maybeSingle']) {
         query[method] = (...args) => { calls.push([method, ...args]); return query; };
       }
       query.then = (resolve, reject) =>
@@ -224,4 +224,44 @@ test('database failures return a generic message', async t => {
   const response = await request('/species/proposals', 'POST', { scientific_name: 'Shorea example', client_record_id: CLIENT });
   assert.equal(response.status, 500);
   assert.ok(!JSON.stringify(response.body).includes('SECRET'));
+});
+
+// ---- Officer list of pending proposals ----
+
+test('officer lists pending proposals with the proposing botanist name', async t => {
+  const { request, queries } = await setup(t, [
+    { data: [{ id: SPECIES, scientific_name: 'Nepenthes example', proposed_by: USER, verification_status: 'pending' }], error: null, count: 1 },
+    { data: [{ id: USER, full_name: 'Aina Rahman' }], error: null },
+  ], 'officer');
+  const response = await request('/species/proposals/pending');
+  assert.equal(response.status, 200);
+  assert.equal(response.body.data[0].proposer_name, 'Aina Rahman');
+  assert.deepEqual(response.body.pagination, { page: 1, page_size: 100, total: 1, total_pages: 1 });
+  assert.ok(queries[0].some(c => c[0] === 'eq' && c[1] === 'verification_status' && c[2] === 'pending'));
+  assert.deepEqual(queries[1].find(c => c[0] === 'in'), ['in', 'id', [USER]]);
+});
+
+test('pending proposals still load if proposer names cannot be read', async t => {
+  const { request } = await setup(t, [
+    { data: [{ id: SPECIES, scientific_name: 'Nepenthes example', proposed_by: USER }], error: null, count: 1 },
+    { data: null, error: { message: 'permission denied' } },
+  ], 'officer');
+  const response = await request('/species/proposals/pending');
+  assert.equal(response.status, 200);
+  assert.equal(response.body.data[0].proposer_name, null);
+});
+
+test('only officers can list pending proposals', async t => {
+  for (const role of ['botanist', 'researcher', 'visitor']) {
+    const { request, queries } = await setup(t, [], role);
+    assert.equal((await request('/species/proposals/pending')).status, 403, role);
+    assert.equal(queries.length, 0);
+  }
+});
+
+test('pending proposal list failures stay generic', async t => {
+  const { request } = await setup(t, [{ data: null, error: { message: 'SECRET_DATABASE_DETAILS' } }], 'officer');
+  const response = await request('/species/proposals/pending');
+  assert.equal(response.status, 500);
+  assert.equal(response.body.message, 'Could not load species proposals');
 });

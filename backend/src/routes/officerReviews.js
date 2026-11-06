@@ -268,6 +268,54 @@ router.patch("/plants/:plantId/species", async (req, res) => {
     });
 });
 
+// Approving needs the plant's species to be approved in the catalogue (a database rule).
+// Returns a plain-language reason when it isn't, or null when approval can go ahead.
+async function speciesBlocksApproval(supabase, plantId) {
+    const { data: plant, error: plantError } = await supabase
+        .from("plants")
+        .select("id, species_id")
+        .eq("id", plantId)
+        .maybeSingle();
+    if (plantError) throw plantError;
+    if (!plant || !plant.species_id) {
+        return "This plant has no species yet, so the observation can't be approved. " +
+            "The botanist needs to choose a species first.";
+    }
+
+    const { data: species, error: speciesError } = await supabase
+        .from("species")
+        .select("id, scientific_name, verification_status")
+        .eq("id", plant.species_id)
+        .maybeSingle();
+    if (speciesError) throw speciesError;
+    if (!species || species.verification_status !== "approved") {
+        const name = species && species.scientific_name ? species.scientific_name : "this plant's species";
+        return `${name} is not an approved species yet. ` +
+            "Approve it in the Species catalogue first, then approve this observation.";
+    }
+    return null;
+}
+
+// Turns a database refusal into a message the officer can act on. Rules written in the
+// database (RAISE EXCEPTION / CHECK) already explain themselves, so their text is shown.
+// Returns null for anything unexpected (then a generic message is sent and the details logged).
+function reviewRefusal(error) {
+    if (error.code === "23503") {
+        return { status: 404, message: "Observation not found" };
+    }
+    if (error.code === "P0001" || error.code === "23514") {
+        return { status: 409, message: error.message };
+    }
+    if (error.code === "42501") {
+        return {
+            status: 403,
+            message: "The database did not allow this review for your account. " +
+                "Check that you are signed in as an active officer.",
+        };
+    }
+    return null;
+}
+
 router.post("/:observationId/decision", async (req, res) => {
     const observationId = req.params.observationId;
     const { decision, comments } = req.body || {};
@@ -295,7 +343,7 @@ router.post("/:observationId/decision", async (req, res) => {
 
     const { data: observation, error: lookupError } = await req.supabase
         .from("observations")
-        .select("id, review_status, deleted_at")
+        .select("id, plant_id, review_status, deleted_at")
         .eq("id", observationId)
         .maybeSingle();
 
@@ -314,8 +362,24 @@ router.post("/:observationId/decision", async (req, res) => {
 
     if (observation.review_status !== "pending" || observation.deleted_at !== null) {
         return res.status(409).json({
-            message: "Observation is not available for review"
+            message: "This observation is no longer waiting for review. Reload the queue."
         });
+    }
+
+    // Check the species rule here, so the page can say exactly what to do instead of
+    // the database's generic refusal.
+    if (decision === "approved") {
+        try {
+            const reason = await speciesBlocksApproval(req.supabase, observation.plant_id);
+            if (reason) return res.status(409).json({ message: reason, code: "species_not_approved" });
+        } catch (speciesError) {
+            console.error("Species check before approval error:", speciesError);
+            return res.status(500).json({ message: "Could not check the plant's species" });
+        }
+    }
+
+    if (decision === "rejected" && !(typeof comments === "string" && comments.trim())) {
+        return res.status(400).json({ message: "Please give a reason for rejecting this observation" });
     }
 
     const { data, error } = await req.supabase
@@ -344,13 +408,19 @@ router.post("/:observationId/decision", async (req, res) => {
             return res.status(403).json({ message: error.message });
         }
 
-        if (error.code === "23503") {
-            return res.status(404).json({
-                message: "Observation not found"
-            });
+        const refusal = reviewRefusal(error);
+        if (refusal) {
+            console.warn("Observation review refused:", { code: error.code, message: error.message });
+            return res.status(refusal.status).json({ message: refusal.message });
         }
 
-        console.error("Observation review error:", error);
+        // Code, message, details and hint, so the Render log shows the real cause.
+        console.error("Observation review error:", {
+            code: error.code,
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+        });
         return res.status(500).json({
             message: "Could not save observation review"
         });
