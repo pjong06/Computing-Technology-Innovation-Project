@@ -18,8 +18,10 @@ import * as Location from 'expo-location';
 import type * as ImagePicker from 'expo-image-picker';
 import Toast from 'react-native-toast-message';
 import { randomUUID } from 'expo-crypto';
+import { Ionicons } from '@expo/vector-icons';
 
 import { useStaffOnly } from '../src/context/AuthRoleContext';
+import { useProfileStore } from '../src/store/useProfileStore';
 
 import {
   pickImageFromLibrary,
@@ -35,18 +37,18 @@ import {
 import {
   IdentificationStatus,
   RecordStatus,
+  ReviewStatus,
   SyncStatus,
   useRecordStore,
+  type HealthStatus,
+  type LifeStage,
+  type ObservationVisit,
   type PlantPhotoType,
   type PlantRecord,
   type PhotoUpload,
 } from '../src/store/useRecordStore';
 
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
-
-import SpeciesPicker, {
-  type SpeciesChoice,
-} from '../src/components/SpeciesPicker';
 
 import {
   identifyPlant,
@@ -59,11 +61,6 @@ import {
   describeAccuracy,
 } from '../src/utils/formatCoordinates';
 
-import {
-  conservationStatusCode,
-  conservationStatusLabel,
-} from '../src/utils/conservationStatus';
-
 import FormScrollView from '../src/components/FormScrollView';
 import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
 
@@ -74,6 +71,27 @@ const DEFAULT_PHOTO_TYPES: PlantPhotoType[] = [
   'leaf',
   'flower',
   'bark',
+];
+
+const LIFE_STAGES: LifeStage[] = [
+  'Seedling',
+  'Sapling',
+  'Pole',
+  'Mature',
+  'Senescent',
+];
+
+const HEALTH_STATUSES: {
+  label: HealthStatus;
+  color: string;
+  bg: string;
+  border: string;
+}[] = [
+  { label: 'Healthy', color: '#2D6A4F', bg: '#E8F5E9', border: '#A3D9A5' },
+  { label: 'Stressed', color: '#D97706', bg: '#FEF3C7', border: '#FCD34D' },
+  { label: 'Diseased', color: '#DC2626', bg: '#FEE2E2', border: '#FCA5A5' },
+  { label: 'Damaged', color: '#7C3AED', bg: '#F3E8FF', border: '#D8B4FE' },
+  { label: 'Dead', color: '#4B5563', bg: '#F3F4F6', border: '#D1D5DB' },
 ];
 
 interface OfflinePlantPhotoEntry {
@@ -150,6 +168,7 @@ type FieldErrors = Partial<
 export default function NewRecordScreen() {
   const router = useRouter();
   const blocked = useStaffOnly();
+  const me = useProfileStore((state) => state.me);
 
   const { editId } = useLocalSearchParams<{ editId?: string }>();
 
@@ -163,20 +182,34 @@ export default function NewRecordScreen() {
 
   const isEditing = Boolean(existingRecord);
 
+  // Photos (1-4 uploads)
   const [photos, setPhotos] = useState<ImagePicker.ImagePickerAsset[]>(() =>
     initialPhotos(existingRecord)
   );
 
+  // Manual Botanical Inputs
+  const [scientificName, setScientificName] = useState(
+    existingRecord?.scientificName ?? ''
+  );
+  const [commonName, setCommonName] = useState(
+    existingRecord?.commonName ?? ''
+  );
+  const [family, setFamily] = useState(existingRecord?.family ?? '');
+
+  // Split Measurements: Height (m) & Diameter (cm)
   const [height, setHeight] = useState(existingRecord?.height ?? '');
   const [diameter, setDiameter] = useState(
     (existingRecord as PlantRecordWithOfflinePhotos)?.diameter ?? ''
   );
 
-  const [speciesChoice, setSpeciesChoice] = useState<SpeciesChoice>(null);
-  const [speciesQuery, setSpeciesQuery] = useState(
-    existingRecord?.scientificName ?? ''
+  // Baseline condition selectors
+  const [lifeStage, setLifeStage] = useState<LifeStage>(
+    existingRecord?.observations?.[0]?.stage ?? 'Mature'
   );
-  const [speciesNotice, setSpeciesNotice] = useState('');
+  const [healthStatus, setHealthStatus] = useState<HealthStatus>(
+    existingRecord?.observations?.[0]?.health ?? 'Healthy'
+  );
+
   const allSpecies = useSpeciesStore((state) => state.species);
 
   const [morphology, setMorphology] = useState(
@@ -229,24 +262,6 @@ export default function NewRecordScreen() {
 
   const recordSaved = useRef(false);
   const originalPhotoUris = useRef(new Set(existingRecord?.photoUris ?? []));
-
-  useEffect(() => {
-    if (!existingRecord || speciesChoice) return;
-
-    const match = allSpecies.find(
-      (species) =>
-        species.id === existingRecord.speciesId ||
-        species.scientific_name.trim().toLowerCase() ===
-          existingRecord.scientificName.trim().toLowerCase()
-    );
-
-    if (match) {
-      setSpeciesChoice({
-        kind: 'species',
-        species: match,
-      });
-    }
-  }, [allSpecies, existingRecord, speciesChoice]);
 
   useEffect(() => {
     screenActive.current = true;
@@ -324,17 +339,6 @@ export default function NewRecordScreen() {
       }
       markUnavailable('Could not get a GPS fix.');
     }
-  };
-
-  const clearSuggestionFields = () => {
-    if (!selectedSpecies) return;
-    const name = selectedSpecies.scientificName;
-    setSpeciesChoice((choice) =>
-      choice?.kind === 'species' && choice.species.scientific_name === name
-        ? null
-        : choice
-    );
-    setSpeciesNotice('');
   };
 
   const handlePickResult = async (result: PickImageResult) => {
@@ -416,7 +420,6 @@ export default function NewRecordScreen() {
       void deleteStoredPhoto(photo.uri);
     }
     setPhotos((previous) => previous.filter((_, i) => i !== index));
-    clearSuggestionFields();
   };
 
   const handleIdentify = async () => {
@@ -428,7 +431,6 @@ export default function NewRecordScreen() {
     setIdentifying(true);
     setIdentifyMessage('');
     setSuggestions([]);
-    clearSuggestionFields();
     setSelectedSpecies(null);
 
     try {
@@ -441,21 +443,17 @@ export default function NewRecordScreen() {
       setSuggestions(nextSuggestions);
 
       if (nextSuggestions.length === 0) {
-        setIdentifyMessage(
-          'No match found. Open the Species Reference to research the plant, or try another photo.'
-        );
+        setIdentifyMessage('No species match found. You can enter details manually.');
       }
     } catch (error) {
       if (request.signal.aborted) return;
       if (error instanceof IdentifyNetworkError) {
-        setIdentifyMessage(
-          "Can't reach the AI server. You can still use the cached Species Reference, or try again when connected."
-        );
+        setIdentifyMessage("Can't reach the AI server. You can enter details manually.");
       } else {
         setIdentifyMessage(
           error instanceof Error
             ? error.message
-            : 'Identification failed. Please try again.'
+            : 'Identification failed. Please enter details manually.'
         );
       }
     } finally {
@@ -467,32 +465,10 @@ export default function NewRecordScreen() {
   };
 
   const selectSuggestion = (suggestion: SpeciesSuggestion) => {
-    clearSuggestionFields();
     setSelectedSpecies(suggestion);
-
-    const wanted = suggestion.scientificName.trim().toLowerCase();
-    const match = allSpecies.find(
-      (species) => species.scientific_name.trim().toLowerCase() === wanted
-    );
-
-    if (match) {
-      setSpeciesChoice({ kind: 'species', species: match });
-      setSpeciesNotice('');
-    } else {
-      setSpeciesChoice(null);
-      setSpeciesQuery(suggestion.scientificName);
-      setSpeciesNotice(
-        `"${suggestion.scientificName}" isn't in the approved species list. Search for and select an approved species, or save this record for later.`
-      );
-    }
-    clearError('scientificName');
-  };
-
-  const handleSpeciesChange = (choice: SpeciesChoice) => {
-    if (!choice) setSpeciesQuery('');
-    setSpeciesChoice(choice);
-    setSelectedSpecies(null);
-    setSpeciesNotice('');
+    setScientificName(suggestion.scientificName);
+    if (suggestion.commonName) setCommonName(suggestion.commonName);
+    if (suggestion.family) setFamily(suggestion.family);
     clearError('scientificName');
   };
 
@@ -501,8 +477,7 @@ export default function NewRecordScreen() {
     clearError('locationName');
   };
 
-  const handleSave = async () => {
-    const identified = Boolean(speciesChoice);
+  const handleSave = async (submitForReview: boolean) => {
     const offlineRecord = existingRecord as
       | PlantRecordWithOfflinePhotos
       | undefined;
@@ -524,11 +499,11 @@ export default function NewRecordScreen() {
         previousEntry?.syncStatus ??
         (previousMeta?.uploaded
           ? SyncStatus.UPLOADED
-          : identified
+          : submitForReview
           ? SyncStatus.NOT_UPLOADED
           : SyncStatus.LOCAL_ONLY);
 
-      if (identified && photoSyncStatus === SyncStatus.LOCAL_ONLY) {
+      if (submitForReview && photoSyncStatus === SyncStatus.LOCAL_ONLY) {
         photoSyncStatus = SyncStatus.NOT_UPLOADED;
       }
 
@@ -558,6 +533,10 @@ export default function NewRecordScreen() {
       nextErrors.photos = 'Add at least one photo (min. 1, max. 4).';
     }
 
+    if (!scientificName.trim()) {
+      nextErrors.scientificName = 'Enter a scientific name.';
+    }
+
     if (!locationName.trim()) {
       nextErrors.locationName = 'Enter a location landmark.';
     }
@@ -573,14 +552,47 @@ export default function NewRecordScreen() {
       return;
     }
 
-    const species =
-      speciesChoice?.kind === 'species' ? speciesChoice.species : null;
+    const match = allSpecies.find(
+      (s) => s.scientific_name.trim().toLowerCase() === scientificName.trim().toLowerCase()
+    );
+
+    const heightNum = parseFloat(height);
+    const diameterNum = parseFloat(diameter);
+
+    const now = new Date();
+    const formattedDate = now.toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+    const formattedTime = now.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+
+    const initialVisit: ObservationVisit = {
+      id: existingRecord?.observations?.[0]?.id || randomUUID(),
+      date: `${formattedDate} · ${formattedTime}`,
+      observedAt: now.toISOString(),
+      recordedBy: me?.full_name || me?.email || 'Field Staff',
+      health: healthStatus,
+      stage: lifeStage,
+      heightCm: Number.isFinite(heightNum) ? Math.round(heightNum * 100) : undefined,
+      diameterCm: Number.isFinite(diameterNum) ? diameterNum : undefined,
+      measurement: `Height ${height || '-'} m · Diameter ${diameter || '-'} cm`,
+      notes: morphology.trim() || 'Initial registration record.',
+      photoUris: photoList,
+      syncStatus: submitForReview
+        ? SyncStatus.NOT_UPLOADED
+        : SyncStatus.LOCAL_ONLY,
+    };
 
     const recordData = {
-      scientificName: species?.scientific_name ?? '',
-      speciesId: species?.id ?? null,
-      commonName: species?.common_name ?? '',
-      family: species?.taxonomy?.family ?? '',
+      scientificName: scientificName.trim(),
+      speciesId: match?.id ?? null,
+      commonName: commonName.trim(),
+      family: family.trim(),
       height: height.trim() || undefined,
       diameter: diameter.trim() || undefined,
       morphology: morphology.trim() || undefined,
@@ -596,11 +608,19 @@ export default function NewRecordScreen() {
       photoUris: photoList,
       photoMeta,
       photoEntries,
-      recordStatus: identified ? RecordStatus.COMPLETE : RecordStatus.DRAFT,
-      identificationStatus: identified
+      observations: existingRecord?.observations?.length
+        ? [initialVisit, ...existingRecord.observations.slice(1)]
+        : [initialVisit],
+      recordStatus: submitForReview
+        ? RecordStatus.COMPLETE
+        : RecordStatus.DRAFT,
+      identificationStatus: scientificName.trim()
         ? IdentificationStatus.IDENTIFIED
         : IdentificationStatus.PENDING,
-      syncStatus: identified ? SyncStatus.NOT_UPLOADED : SyncStatus.LOCAL_ONLY,
+      syncStatus: submitForReview
+        ? SyncStatus.NOT_UPLOADED
+        : SyncStatus.LOCAL_ONLY,
+      reviewStatus: submitForReview ? ReviewStatus.PENDING : ReviewStatus.DRAFT,
     };
 
     const saved = existingRecord
@@ -626,6 +646,14 @@ export default function NewRecordScreen() {
 
     recordSaved.current = true;
 
+    Toast.show({
+      type: 'success',
+      text1: submitForReview ? 'Submitted for review' : 'Draft saved',
+      text2: submitForReview
+        ? 'Plant record queued for officer review.'
+        : 'Plant record saved safely on this device.',
+    });
+
     router.replace({
       pathname: '/save-confirm',
       params: { id: saved.id },
@@ -642,13 +670,18 @@ export default function NewRecordScreen() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" />
 
-      {/* Screen Navigation Header */}
+      {/* Navigation Header */}
       <View style={styles.navRow}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.navSide}>
-          <Text style={styles.backChevron}>‹</Text>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.navSide}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="chevron-back-outline" size={28} color="#213B2A" />
         </TouchableOpacity>
         <Text style={styles.navTitle}>
-          {isEditing ? 'Continue Plant Record' : 'New Plant Record'}
+          {isEditing ? 'Edit plant record' : 'Register plant'}
         </Text>
         <View style={styles.navSide} />
       </View>
@@ -662,7 +695,6 @@ export default function NewRecordScreen() {
           </Text>
         </View>
 
-        {/* Thumbnail Previews */}
         {photos.length > 0 && (
           <View style={styles.thumbnailGrid}>
             {photos.map((asset, index) => (
@@ -672,8 +704,10 @@ export default function NewRecordScreen() {
                   style={styles.removePhotoBtn}
                   onPress={() => removePhoto(index)}
                   hitSlop={6}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove photo ${index + 1}`}
                 >
-                  <Text style={styles.removePhotoText}>✕</Text>
+                  <Ionicons name="close-outline" size={15} color="#FFFFFF" />
                 </TouchableOpacity>
                 <View style={styles.photoBadge}>
                   <Text style={styles.photoBadgeText}>#{index + 1}</Text>
@@ -683,16 +717,24 @@ export default function NewRecordScreen() {
           </View>
         )}
 
-        {/* Pill Button styled like "+ Propose new species" */}
         {photos.length < 4 && (
           <TouchableOpacity
             style={styles.pillUploadBtn}
             onPress={handleAddPhoto}
             activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={photos.length === 0 ? 'Add plant photo' : 'Add another photo'}
           >
-            <Text style={styles.pillUploadBtnText}>
-              + {photos.length === 0 ? 'Add plant photo' : 'Add another photo'}
-            </Text>
+            <View style={styles.pillUploadContent}>
+              <Ionicons
+                name={photos.length === 0 ? 'camera-outline' : 'add-outline'}
+                size={20}
+                color="#213B2A"
+              />
+              <Text style={styles.pillUploadBtnText}>
+                {photos.length === 0 ? 'Add plant photo' : 'Add another photo'}
+              </Text>
+            </View>
           </TouchableOpacity>
         )}
 
@@ -706,6 +748,8 @@ export default function NewRecordScreen() {
               activeOpacity={0.85}
               onPress={() => void handleIdentify()}
               disabled={identifying}
+              accessibilityRole="button"
+              accessibilityLabel="Identify species with AI"
             >
               {identifying ? (
                 <View style={styles.loadingRow}>
@@ -713,9 +757,12 @@ export default function NewRecordScreen() {
                   <Text style={styles.identifyBtnText}>Analysing photo...</Text>
                 </View>
               ) : (
-                <Text style={styles.identifyBtnText}>
-                  Identify species with AI
-                </Text>
+                <View style={styles.identifyContentRow}>
+                  <Ionicons name="sparkles-outline" size={18} color="#FFFFFF" />
+                  <Text style={styles.identifyBtnText}>
+                    Identify species with AI
+                  </Text>
+                </View>
               )}
             </TouchableOpacity>
 
@@ -733,8 +780,7 @@ export default function NewRecordScreen() {
                   AI species suggestions
                 </Text>
                 <Text style={styles.suggestionsHelp}>
-                  Select an approved AI suggestion, or use the Species Reference
-                  to research the plant yourself.
+                  Select an AI suggestion to auto-fill the fields below.
                 </Text>
 
                 {suggestions.map((suggestion) => {
@@ -785,57 +831,46 @@ export default function NewRecordScreen() {
           </View>
         )}
 
-        {/* Section 2: Species Details */}
+        {/* ── SECTION 2: SPECIES DETAILS (MANUAL INPUTS ONLY) ── */}
         <Text style={styles.sectionLabel}>SPECIES DETAILS</Text>
 
-        <Text style={styles.fieldLabel}>Confirmed species</Text>
-        <SpeciesPicker
-          value={speciesChoice}
-          onChange={handleSpeciesChange}
-          query={speciesQuery}
-          onQueryChange={setSpeciesQuery}
-          hasError={!!errors.scientificName}
+        <Text style={styles.fieldLabel}>Scientific name *</Text>
+        <TextInput
+          style={[styles.input, errors.scientificName && styles.inputError]}
+          placeholder="e.g. Nepenthes bicalcarata"
+          placeholderTextColor="#8C9A91"
+          value={scientificName}
+          onChangeText={(text) => {
+            setScientificName(text);
+            clearError('scientificName');
+          }}
+          inputAccessoryViewID={DONE_BAR_ID}
         />
-
-        <Text style={styles.speciesHint}>
-          Select an approved species when you are confident. If the species
-          cannot be confirmed in the field, you can save this record locally and
-          continue later.
-        </Text>
-
-        {speciesChoice && (
-          <View style={styles.speciesInfo}>
-            <Text style={styles.speciesInfoRow}>
-              <Text style={styles.speciesInfoLabel}>Common name: </Text>
-              {speciesChoice.species.common_name || 'Not recorded'}
-            </Text>
-            <Text style={styles.speciesInfoRow}>
-              <Text style={styles.speciesInfoLabel}>Family: </Text>
-              {speciesChoice.species.taxonomy?.family || 'Not recorded'}
-            </Text>
-            <Text style={styles.speciesInfoRow}>
-              <Text style={styles.speciesInfoLabel}>
-                Conservation status:{' '}
-              </Text>
-              {(() => {
-                const code = conservationStatusCode(
-                  speciesChoice.species.conservation_status
-                );
-                return `${code} (${conservationStatusLabel(code)})`;
-              })()}
-            </Text>
-          </View>
-        )}
-
-        {speciesNotice !== '' && (
-          <Text style={styles.identifyMessage}>{speciesNotice}</Text>
-        )}
-
         {errors.scientificName && (
           <Text style={styles.errorText}>{errors.scientificName}</Text>
         )}
 
-        {/* Section 3: Split Height & Diameter */}
+        <Text style={styles.fieldLabel}>Common name</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="e.g. Fanged Pitcher Plant"
+          placeholderTextColor="#8C9A91"
+          value={commonName}
+          onChangeText={setCommonName}
+          inputAccessoryViewID={DONE_BAR_ID}
+        />
+
+        <Text style={styles.fieldLabel}>Family</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="e.g. Nepenthaceae"
+          placeholderTextColor="#8C9A91"
+          value={family}
+          onChangeText={setFamily}
+          inputAccessoryViewID={DONE_BAR_ID}
+        />
+
+        {/* ── SECTION 3: SPLIT HEIGHT (M) & DIAMETER (CM) ── */}
         <View style={styles.measurementRow}>
           <View style={styles.halfCol}>
             <Text style={styles.fieldLabel}>Height (m)</Text>
@@ -851,10 +886,10 @@ export default function NewRecordScreen() {
           </View>
 
           <View style={styles.halfCol}>
-            <Text style={styles.fieldLabel}>Diameter (m)</Text>
+            <Text style={styles.fieldLabel}>Diameter (cm)</Text>
             <TextInput
               style={styles.input}
-              placeholder="e.g. 0.4"
+              placeholder="e.g. 40"
               placeholderTextColor="#8C9A91"
               keyboardType="decimal-pad"
               value={diameter}
@@ -864,8 +899,72 @@ export default function NewRecordScreen() {
           </View>
         </View>
 
+        {/* ── SECTION 4: LIFE STAGE & HEALTH STATUS ── */}
+        <Text style={styles.fieldLabel}>Life Stage</Text>
+        <View style={styles.chipGrid}>
+          {LIFE_STAGES.map((stage) => {
+            const selected = lifeStage === stage;
+            return (
+              <TouchableOpacity
+                key={stage}
+                style={[styles.chip, selected && styles.chipSelected]}
+                onPress={() => setLifeStage(stage)}
+              >
+                <View style={styles.chipContent}>
+                  {selected && (
+                    <Ionicons
+                      name="checkmark-outline"
+                      size={14}
+                      color="#FFFFFF"
+                      style={styles.chipIcon}
+                    />
+                  )}
+                  <Text
+                    style={[styles.chipText, selected && styles.chipTextSelected]}
+                  >
+                    {stage}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        <Text style={[styles.fieldLabel, { marginTop: 14 }]}>Health Status</Text>
+        <View style={styles.chipGrid}>
+          {HEALTH_STATUSES.map((item) => {
+            const selected = healthStatus === item.label;
+            return (
+              <TouchableOpacity
+                key={item.label}
+                style={[
+                  styles.healthChip,
+                  { backgroundColor: item.bg, borderColor: item.border },
+                  selected && { borderColor: item.color, borderWidth: 2 },
+                ]}
+                onPress={() => setHealthStatus(item.label)}
+              >
+                <View
+                  style={[styles.statusDot, { backgroundColor: item.color }]}
+                />
+                <Text style={[styles.healthChipText, { color: item.color }]}>
+                  {item.label}
+                </Text>
+                {selected && (
+                  <Ionicons
+                    name="checkmark-outline"
+                    size={14}
+                    color={item.color}
+                    style={{ marginLeft: 4 }}
+                  />
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
         {/* Field Notes */}
-        <Text style={styles.fieldLabel}>Field notes</Text>
+        <Text style={[styles.fieldLabel, { marginTop: 14 }]}>Field notes</Text>
         <TextInput
           style={[styles.input, { height: 76, textAlignVertical: 'top' }]}
           placeholder="e.g. 3 pitchers, lower leaves damaged, growing on limestone"
@@ -876,8 +975,8 @@ export default function NewRecordScreen() {
           inputAccessoryViewID={DONE_BAR_ID}
         />
 
-        {/* Section 4: Location & GPS Coordinates */}
-        <Text style={styles.sectionLabel}>LOCATION</Text>
+        {/* ── SECTION 5: LOCATION & GPS ── */}
+        <Text style={[styles.sectionLabel, { marginTop: 18 }]}>LOCATION</Text>
 
         <Text style={styles.fieldLabel}>Location landmark *</Text>
         <TextInput
@@ -907,17 +1006,25 @@ export default function NewRecordScreen() {
             <TouchableOpacity
               style={styles.refreshGpsBtn}
               onPress={() => void fetchLocation()}
+              accessibilityRole="button"
+              accessibilityLabel="Retry GPS location acquisition"
             >
-              <Text style={styles.refreshGpsBtnText}>Retry</Text>
+              <View style={styles.refreshContent}>
+                <Ionicons name="refresh-outline" size={14} color="#213B2A" />
+                <Text style={styles.refreshGpsBtnText}>Retry</Text>
+              </View>
             </TouchableOpacity>
           </View>
         )}
 
         {gpsStatus === 'timeout' && (
           <View style={[styles.gpsCard, styles.gpsCardError]}>
-            <Text style={styles.gpsStatusError}>
-              Couldn't get a GPS fix – move to an open spot
-            </Text>
+            <View style={styles.gpsHeaderRow}>
+              <Ionicons name="location-outline" size={18} color="#9B1C1C" />
+              <Text style={styles.gpsStatusError}>
+                Couldn't get a GPS fix – move to an open spot
+              </Text>
+            </View>
             <Text style={styles.gpsDetails}>
               No fix after 20 seconds. Step away from dense canopy or rock walls,
               then retry.
@@ -925,8 +1032,13 @@ export default function NewRecordScreen() {
             <TouchableOpacity
               style={styles.refreshGpsBtn}
               onPress={() => void fetchLocation()}
+              accessibilityRole="button"
+              accessibilityLabel="Retry GPS location acquisition"
             >
-              <Text style={styles.refreshGpsBtnText}>Retry</Text>
+              <View style={styles.refreshContent}>
+                <Ionicons name="refresh-outline" size={14} color="#213B2A" />
+                <Text style={styles.refreshGpsBtnText}>Retry</Text>
+              </View>
             </TouchableOpacity>
           </View>
         )}
@@ -936,10 +1048,15 @@ export default function NewRecordScreen() {
             style={[styles.gpsCard, styles.gpsCardError]}
             activeOpacity={0.8}
             onPress={() => void fetchLocation()}
+            accessibilityRole="button"
+            accessibilityLabel="GPS unavailable, tap to retry"
           >
-            <Text style={styles.gpsStatusError}>
-              GPS unavailable – tap to retry
-            </Text>
+            <View style={styles.gpsHeaderRow}>
+              <Ionicons name="location-outline" size={18} color="#9B1C1C" />
+              <Text style={styles.gpsStatusError}>
+                GPS unavailable – tap to retry
+              </Text>
+            </View>
             {gpsError !== '' && (
               <Text style={styles.gpsDetails}>{gpsError}</Text>
             )}
@@ -948,9 +1065,12 @@ export default function NewRecordScreen() {
 
         {gpsStatus === 'ready' && gpsFix && (
           <View style={styles.gpsCard}>
-            <Text style={styles.gpsStatusBadge}>
-              {describeAccuracy(gpsFix.accuracyM)}
-            </Text>
+            <View style={styles.gpsHeaderRow}>
+              <Ionicons name="location-outline" size={18} color="#215A36" />
+              <Text style={styles.gpsStatusBadge}>
+                {describeAccuracy(gpsFix.accuracyM)}
+              </Text>
+            </View>
             <Text style={styles.gpsCoords}>
               {formatCoordinates(gpsFix.latitude, gpsFix.longitude, null)}
             </Text>
@@ -962,10 +1082,15 @@ export default function NewRecordScreen() {
             <TouchableOpacity
               style={styles.refreshGpsBtn}
               onPress={() => void fetchLocation()}
+              accessibilityRole="button"
+              accessibilityLabel="Update GPS to current location"
             >
-              <Text style={styles.refreshGpsBtnText}>
-                Update to current location
-              </Text>
+              <View style={styles.refreshContent}>
+                <Ionicons name="refresh-outline" size={14} color="#213B2A" />
+                <Text style={styles.refreshGpsBtnText}>
+                  Update to current location
+                </Text>
+              </View>
             </TouchableOpacity>
           </View>
         )}
@@ -982,19 +1107,28 @@ export default function NewRecordScreen() {
           </Text>
         )}
 
-        <TouchableOpacity
-          style={styles.saveBtn}
-          activeOpacity={0.85}
-          onPress={() => void handleSave()}
-        >
-          <Text style={styles.saveBtnText}>
-            {speciesChoice
-              ? isEditing
-                ? 'Save completed record'
-                : 'Save record'
-              : 'Save for later'}
-          </Text>
-        </TouchableOpacity>
+        {/* ── SECTION 6: DUAL ACTIONS ("Save" vs "Save and submit") ── */}
+        <View style={styles.bottomActionsRow}>
+          <TouchableOpacity
+            style={[styles.actionBtn, styles.saveDraftBtn]}
+            activeOpacity={0.85}
+            onPress={() => void handleSave(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Save plant record locally as draft"
+          >
+            <Text style={styles.saveDraftBtnText}>Save</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionBtn, styles.saveSubmitBtn]}
+            activeOpacity={0.85}
+            onPress={() => void handleSave(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Save and submit plant record for officer review"
+          >
+            <Text style={styles.saveSubmitBtnText}>Save and submit</Text>
+          </TouchableOpacity>
+        </View>
       </FormScrollView>
 
       <KeyboardDoneBar nativeID={DONE_BAR_ID} />
@@ -1015,10 +1149,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 10,
   },
-  backChevron: {
-    fontSize: 32,
-    color: '#213B2A',
-  },
   navTitle: {
     fontSize: 17,
     fontWeight: '700',
@@ -1026,6 +1156,7 @@ const styles = StyleSheet.create({
   },
   navSide: {
     width: 40,
+    justifyContent: 'center',
   },
   scrollContent: {
     paddingHorizontal: 20,
@@ -1069,19 +1200,14 @@ const styles = StyleSheet.create({
   },
   removePhotoBtn: {
     position: 'absolute',
-    top: -5,
-    right: -5,
+    top: -6,
+    right: -6,
     backgroundColor: '#DC2626',
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  removePhotoText: {
-    color: '#FFF',
-    fontSize: 11,
-    fontWeight: '800',
   },
   photoBadge: {
     position: 'absolute',
@@ -1108,6 +1234,11 @@ const styles = StyleSheet.create({
     marginTop: 6,
     marginBottom: 10,
   },
+  pillUploadContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   pillUploadBtnText: {
     fontSize: 14,
     fontWeight: '700',
@@ -1119,6 +1250,58 @@ const styles = StyleSheet.create({
   },
   halfCol: {
     flex: 1,
+  },
+  chipGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 6,
+  },
+  chip: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    backgroundColor: '#F0F4F1',
+    borderWidth: 1,
+    borderColor: '#DFE7E1',
+  },
+  chipSelected: {
+    backgroundColor: '#213B2A',
+    borderColor: '#213B2A',
+  },
+  chipContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  chipIcon: {
+    marginRight: 4,
+  },
+  chipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#49594D',
+  },
+  chipTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  healthChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 18,
+    borderWidth: 1,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  healthChipText: {
+    fontSize: 12.5,
+    fontWeight: '700',
   },
   aiSection: {
     marginBottom: 16,
@@ -1138,6 +1321,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+  },
+  identifyContentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   identifyBtnText: {
     color: '#FFFFFF',
@@ -1254,11 +1442,16 @@ const styles = StyleSheet.create({
     borderColor: '#F0C2C2',
     backgroundColor: '#FFF8F8',
   },
+  gpsHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
   gpsStatusBadge: {
     color: '#215A36',
     fontWeight: '700',
     fontSize: 12,
-    marginBottom: 4,
   },
   gpsStatusPending: {
     color: '#213B2A',
@@ -1269,7 +1462,6 @@ const styles = StyleSheet.create({
     color: '#9B1C1C',
     fontWeight: '700',
     fontSize: 14,
-    marginBottom: 4,
   },
   gpsCoords: {
     fontSize: 14,
@@ -1289,48 +1481,44 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 16,
   },
+  refreshContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
   refreshGpsBtnText: {
     color: '#213B2A',
     fontWeight: '700',
     fontSize: 12,
   },
-  saveBtn: {
-    backgroundColor: '#213B2A',
+  bottomActionsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 18,
+  },
+  actionBtn: {
+    flex: 1,
     height: 52,
     borderRadius: 26,
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 4,
   },
-  saveBtnText: {
-    color: '#FFF',
+  saveDraftBtn: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#213B2A',
+  },
+  saveDraftBtnText: {
+    color: '#213B2A',
     fontWeight: '700',
     fontSize: 15,
   },
-  speciesHint: {
-    fontSize: 11.5,
-    color: '#68776D',
-    lineHeight: 17,
-    marginTop: 4,
-    marginBottom: 10,
-    paddingHorizontal: 3,
+  saveSubmitBtn: {
+    backgroundColor: '#213B2A',
   },
-  speciesInfo: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1.2,
-    borderColor: '#E6ECE8',
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    marginBottom: 12,
-  },
-  speciesInfoRow: {
-    fontSize: 13,
-    color: '#1E2B22',
-    marginVertical: 2,
-  },
-  speciesInfoLabel: {
+  saveSubmitBtnText: {
+    color: '#FFFFFF',
     fontWeight: '700',
-    color: '#4E6254',
+    fontSize: 15,
   },
 });
