@@ -199,4 +199,4 @@ async function exportPdf() {
 }
 
 loadSummary().catch(showUnexpectedError);
-renderReport();
+renderReport().catch(showUnexpectedError);

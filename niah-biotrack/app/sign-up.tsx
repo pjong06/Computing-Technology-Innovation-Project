@@ -28,6 +28,18 @@ function passwordProblem(password: string): string {
   return '';
 }
 
+function isValidEmail(email: string): boolean {
+  const atIndex = email.indexOf('@');
+  const dotIndex = email.lastIndexOf('.', email.length - 2);
+  if (atIndex <= 0 || atIndex !== email.lastIndexOf('@')) return false;
+  if (dotIndex <= atIndex + 1 || dotIndex >= email.length - 1) return false;
+
+  for (let index = 0; index < email.length; index += 1) {
+    if (email[index].trim() === '') return false;
+  }
+  return true;
+}
+
 // "Create a free account": a visitor account. The database gives every account made
 // here the visitor role (source 'app'); nothing sent from the phone can change that.
 export default function SignUpScreen() {
@@ -57,7 +69,7 @@ export default function SignUpScreen() {
       setError('Fill in every field.');
       return;
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    if (!isValidEmail(cleanEmail)) {
       setError('Enter a valid email address.');
       return;
     }

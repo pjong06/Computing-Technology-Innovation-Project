@@ -32,11 +32,19 @@ export class IdentifyNetworkError extends Error {
 const MAX_IMAGE_SIZE =
   10 * 1024 * 1024;
 
-const API_BASE_URL =
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '/') end -= 1;
+  return value.slice(0, end);
+}
+
+const configuredApiBaseUrl =
   process.env
     .EXPO_PUBLIC_API_BASE_URL
-    ?.trim()
-    .replace(/\/+$/, '');
+    ?.trim();
+
+const API_BASE_URL =
+  configuredApiBaseUrl === undefined ? undefined : trimTrailingSlashes(configuredApiBaseUrl);
 
 function getUploadName(
   photo: ImagePicker.ImagePickerAsset
