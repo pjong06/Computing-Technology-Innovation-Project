@@ -95,7 +95,11 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    checkUserRole();
+    checkUserRole().catch((error: unknown) => {
+      console.error('Unable to check user role', error);
+      setRole('visitor');
+      setUserName('Park Visitor');
+    });
   }, []);
 
   // "Explore without an account". Any saved login is removed first, so a guest never
