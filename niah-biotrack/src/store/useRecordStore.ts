@@ -229,7 +229,7 @@ export interface PlantRecord {
    * Supabase/server identity.
    */
   serverId?: string;
-
+  plantName?: string;
   rowVersion?: number;
 
   tagCode:

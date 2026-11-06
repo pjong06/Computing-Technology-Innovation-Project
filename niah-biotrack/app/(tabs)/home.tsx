@@ -22,7 +22,6 @@ import { useProposalStore } from '../../src/store/useProposalStore';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
 
-// How many approved species the visitor Home shows under "Featured plants".
 const FEATURED_COUNT = 4;
 
 export default function HomeScreen() {
@@ -30,16 +29,12 @@ export default function HomeScreen() {
   const { isVisitor, userName, logout } = useAuthRole();
   const refreshReviewStatuses = useRecordStore((state) => state.refreshReviewStatuses);
 
-  // Staff: pick up the officer's decisions whenever Home is opened (read-only; does
-  // nothing offline). Sync now also does this after uploading.
   useFocusEffect(
     React.useCallback(() => {
       if (!isVisitor) void refreshReviewStatuses();
     }, [isVisitor, refreshReviewStatuses])
   );
 
-  // Visitor Home: the first approved species (public list, cached on the phone). Their
-  // details are loaded so the photos appear.
   const species = useSpeciesStore((state) => state.species);
   const imageUrisBySpeciesId = useSpeciesStore((state) => state.imageUrisBySpeciesId);
   const loadSpecies = useSpeciesStore((state) => state.loadSpecies);
@@ -56,8 +51,8 @@ export default function HomeScreen() {
     for (const item of featured) {
       if (!imageUrisBySpeciesId[item.id]) void loadSpeciesDetail(item.id);
     }
-    // featuredKey: run again only when the featured species change.
   }, [isVisitor, featuredKey]);
+
   const records = useRecordStore((state) => state.records);
   const syncAll = useRecordStore((state) => state.syncAll);
   const syncRecord = useRecordStore((state) => state.syncRecord);
@@ -65,10 +60,8 @@ export default function HomeScreen() {
   const refreshProposalStatuses = useProposalStore((state) => state.refreshProposalStatuses);
 
   const [syncingAll, setSyncingAll] = useState(false);
-  // IDs of records whose Retry is running, so each row can show its own spinner.
   const [retryingIds, setRetryingIds] = useState<string[]>([]);
 
-  // Same counts the Profile tab uses, worked out from the records on the phone.
   const summary = buildSyncSummary(records, syncingAll);
   const pendingCount = summary.pendingRecordCount;
   const failedCount = summary.failedRecordCount;
@@ -82,9 +75,7 @@ export default function HomeScreen() {
 
   const handleSyncNow = async () => {
     setSyncingAll(true);
-    // syncAll never throws: every problem comes back as a count.
     const { uploaded, failed: recordsFailed, skipped, photosUploaded, photoProblems } = await syncAll();
-    // Species proposals go up the same way, then their review status is refreshed.
     const proposalsResult = await syncAllProposals();
     await refreshProposalStatuses();
     setSyncingAll(false);
@@ -92,14 +83,11 @@ export default function HomeScreen() {
     const failed = recordsFailed + proposalsResult.failed;
     const parts = [`${uploaded} uploaded`];
     if (failed > 0) parts.push(`${failed} failed`);
-    // Only mention skipped records when there are some (they were already uploading).
     if (skipped > 0) parts.push(`${skipped} already uploading`);
-    // Photos: only mentioned when some went up, or some need the botanist (over 5 MB).
     if (photosUploaded > 0) parts.push(`${photosUploaded} ${photosUploaded === 1 ? 'photo' : 'photos'} uploaded`);
     if (photoProblems > 0) {
       parts.push(`${photoProblems} ${photoProblems === 1 ? 'photo' : 'photos'} over 5 MB (see the plant page)`);
     }
-    // Only mention proposals when some were sent or failed.
     if (proposalsResult.uploaded > 0) {
       parts.push(`${proposalsResult.uploaded} species ${proposalsResult.uploaded === 1 ? 'proposal' : 'proposals'} sent`);
     }
@@ -112,7 +100,6 @@ export default function HomeScreen() {
     });
   };
 
-  // A real upload of this one record (not just a status change).
   const handleRetry = async (id: string) => {
     setRetryingIds((ids) => [...ids, id]);
     const result = await syncRecord(id);
@@ -157,17 +144,6 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={[styles.roleBanner, isVisitor ? styles.roleBannerVisitor : styles.roleBannerBotanist]}>
-        <Ionicons
-          name={isVisitor ? 'eye-outline' : 'shield-checkmark-outline'}
-          size={15}
-          color={isVisitor ? '#0284C7' : '#2D6A4F'}
-        />
-        <Text style={[styles.roleBannerText, { color: isVisitor ? '#0369A1' : '#2D6A4F' }]}>
-          {isVisitor ? 'Visitor Mode: Read-Only Botanical Guide' : 'Authorized Staff: Full Research Access'}
-        </Text>
-      </View>
-
       <View style={styles.container}>
         <View style={styles.headerRow}>
           <View style={styles.headerLeft}>
@@ -181,7 +157,12 @@ export default function HomeScreen() {
               <Text style={styles.headerSubtitle}>Hello, {userName}</Text>
             </View>
           </View>
-          <TouchableOpacity onPress={handleProfilePress} style={styles.profileBtn}>
+          <TouchableOpacity
+            onPress={handleProfilePress}
+            style={styles.profileBtn}
+            accessibilityRole="button"
+            accessibilityLabel="User profile and settings"
+          >
             <Ionicons
               name={isVisitor ? 'compass-outline' : 'person-circle-outline'}
               size={32}
@@ -243,6 +224,8 @@ export default function HomeScreen() {
                 style={styles.scanCard}
                 activeOpacity={0.85}
                 onPress={() => router.push('/(tabs)/scan')}
+                accessibilityRole="button"
+                accessibilityLabel="Scan plant tag"
               >
                 <View style={styles.scanIconWrap}>
                   <Ionicons name="scan-outline" size={32} color="#284632" />
@@ -254,9 +237,11 @@ export default function HomeScreen() {
                 style={styles.newRecordCard}
                 activeOpacity={0.85}
                 onPress={() => router.push('/new-record' as any)}
+                accessibilityRole="button"
+                accessibilityLabel="Register a new plant"
               >
                 <Ionicons name="add-circle-outline" size={32} color="#FFFFFF" />
-                <Text style={styles.newRecordLabel}>New Record</Text>
+                <Text style={styles.newRecordLabel}>Register plant</Text>
               </TouchableOpacity>
             </View>
 
@@ -306,7 +291,7 @@ export default function HomeScreen() {
                         }
                       >
                         <View style={styles.plantIconCircle}>
-                          <Ionicons name="leaf" size={20} color="#2D6A4F" />
+                          <Ionicons name="leaf-outline" size={20} color="#2D6A4F" />
                         </View>
                         <View style={{ flex: 1, marginHorizontal: 12 }}>
                           <Text style={styles.speciesText}>
@@ -333,7 +318,6 @@ export default function HomeScreen() {
                           {retryingIds.includes(item.id) ? (
                             <ActivityIndicator size="small" color="#9B1C1C" />
                           ) : (
-                            // Disabled during "Sync now", which is already retrying this record.
                             <TouchableOpacity onPress={() => handleRetry(item.id)} disabled={syncingAll}>
                               <Text style={styles.retryBtn}>Retry</Text>
                             </TouchableOpacity>
@@ -360,7 +344,7 @@ export default function HomeScreen() {
                 </Text>
               </View>
               <View style={styles.visitorHeroIconCircle}>
-                <Ionicons name="camera" size={22} color="#FFFFFF" />
+                <Ionicons name="camera-outline" size={22} color="#FFFFFF" />
               </View>
             </TouchableOpacity>
 
@@ -388,7 +372,7 @@ export default function HomeScreen() {
                           <Image source={{ uri: photo }} style={styles.featuredPhoto} resizeMode="cover" />
                         ) : (
                           <View style={[styles.featuredPhoto, styles.featuredPlaceholder]}>
-                            <Text style={{ fontSize: 26 }}>🌿</Text>
+                            <Ionicons name="leaf-outline" size={26} color="#46654F" />
                           </View>
                         )}
                         <Text style={styles.featuredName} numberOfLines={1}>
@@ -420,17 +404,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#F6F8F6',
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
-  roleBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 7,
-    paddingHorizontal: 16,
-  },
-  roleBannerVisitor: { backgroundColor: '#E0F2FE' },
-  roleBannerBotanist: { backgroundColor: '#E8F5E9' },
-  roleBannerText: { fontSize: 12, fontWeight: '700' },
   container: { flex: 1, paddingHorizontal: 20, paddingTop: 12 },
   headerRow: {
     flexDirection: 'row',
@@ -497,7 +470,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
-  newRecordLabel: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
+  newRecordLabel: { fontSize: 14, fontWeight: '700', color: '#FFFFFF', textAlign: 'center' },
   routePill: {
     flexDirection: 'row',
     alignItems: 'center',

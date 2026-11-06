@@ -69,11 +69,13 @@ export default function RecordsScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
-        <Text style={styles.headerTitle}>My Records</Text>
+        {/* Title updated to 'My plants' */}
+        <Text style={styles.headerTitle}>My plants</Text>
 
+        {/* Placeholder updated to 'Search my plants' */}
         <TextInput
           style={styles.searchBar}
-          placeholder="Search my records"
+          placeholder="Search my plants"
           placeholderTextColor="#8C9A91"
           value={searchQuery}
           onChangeText={setSearchQuery}
@@ -112,11 +114,12 @@ export default function RecordsScreen() {
             <Text style={styles.emptySub}>
               Plants you record in the field will appear here even before they sync.
             </Text>
+            {/* Button text updated to '+ Register your first plant' */}
             <TouchableOpacity
               style={styles.primaryPillBtn}
               onPress={() => router.push('/new-record' as any)}
             >
-              <Text style={styles.primaryPillText}>+ Record your first plant</Text>
+              <Text style={styles.primaryPillText}>+ Register your first plant</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.secondaryPillBtn}
@@ -150,7 +153,6 @@ export default function RecordsScreen() {
                     <Text style={styles.recordMeta}>
                       {item.locationName} · {item.createdAt}
                     </Text>
-                    {/* The officer's decision (read back from the server), once submitted. */}
                     {item.reviewStatus && item.reviewStatus !== ReviewStatus.DRAFT ? (
                       <Text
                         style={[styles.reviewLine, { color: REVIEW_BADGE[item.reviewStatus].text }]}
