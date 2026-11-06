@@ -1,3 +1,23 @@
+const { createHash } = require('node:crypto');
+
+function logQrRequest(req, clientIp, rateLimited) {
+    if (process.env.QR_IP_DEBUG !== 'true') return;
+
+    const forwardedFor = req.headers?.['x-forwarded-for'];
+    const forwardedForEntries = (Array.isArray(forwardedFor) ? forwardedFor : [forwardedFor])
+        .filter(value => typeof value === 'string')
+        .flatMap(value => value.split(','))
+        .filter(value => value.trim()).length;
+    const ipHash = createHash('sha256').update(clientIp).digest('hex').slice(0, 10);
+    console.log(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        ipHash,
+        forwardedForEntries,
+        cfConnectingIpPresent: req.headers?.['cf-connecting-ip'] !== undefined,
+        rateLimited
+    }));
+}
+
 function createQrLimiter({ limit = 60, windowMs = 60000, maxClients = 10000, now = Date.now } = {}) {
     if (![limit, windowMs, maxClients].every(n => Number.isSafeInteger(n) && n > 0)) throw new Error('Invalid QR rate policy');
     const clients = new Map();
@@ -9,6 +29,7 @@ function createQrLimiter({ limit = 60, windowMs = 60000, maxClients = 10000, now
         let bucket = clients.get(key);
         if (!bucket) {
             if (clients.size >= maxClients) {
+                logQrRequest(req, key, true);
                 res.set('Retry-After', String(Math.ceil(windowMs / 1000)));
                 return res.status(503).json({ message: 'Please retry later' });
             }
@@ -16,7 +37,9 @@ function createQrLimiter({ limit = 60, windowMs = 60000, maxClients = 10000, now
             clients.set(key, bucket);
         }
         bucket.count++;
-        if (bucket.count > limit) {
+        const rateLimited = bucket.count > limit;
+        logQrRequest(req, key, rateLimited);
+        if (rateLimited) {
             res.set('Retry-After', String(Math.max(1, Math.ceil((bucket.until - time) / 1000))));
             return res.status(429).json({ message: 'Too many QR lookups; please retry later' });
         }

@@ -21,6 +21,64 @@ test('client separation, bounded state, expiry and invalid policy', () => {
     assert.equal(request('c'), 200);
 });
 
+test('QR diagnostics are disabled unless QR_IP_DEBUG is exactly true', () => {
+    const originalDebug = process.env.QR_IP_DEBUG;
+    const originalLog = console.log;
+    const logs = [];
+    console.log = line => logs.push(line);
+    try {
+        for (const value of [undefined, 'True', '1']) {
+            if (value === undefined) delete process.env.QR_IP_DEBUG;
+            else process.env.QR_IP_DEBUG = value;
+            createQrLimiter()(
+                { ip: '198.51.100.20', headers: {} },
+                { set() {}, status() { return this; }, json() {} },
+                () => {}
+            );
+        }
+        assert.deepEqual(logs, []);
+    } finally {
+        console.log = originalLog;
+        if (originalDebug === undefined) delete process.env.QR_IP_DEBUG;
+        else process.env.QR_IP_DEBUG = originalDebug;
+    }
+});
+
+test('QR diagnostics hash client IP and log only forwarding metadata', () => {
+    const originalDebug = process.env.QR_IP_DEBUG;
+    const originalLog = console.log;
+    const logs = [];
+    console.log = line => logs.push(line);
+    try {
+        process.env.QR_IP_DEBUG = 'true';
+        createQrLimiter({ limit: 1 })(
+            {
+                ip: '198.51.100.20',
+                headers: {
+                    'x-forwarded-for': '203.0.113.1, 203.0.113.2',
+                    'cf-connecting-ip': '203.0.113.3'
+                }
+            },
+            { set() {}, status() { return this; }, json() {} },
+            () => {}
+        );
+        assert.equal(logs.length, 1);
+        for (const rawIp of ['198.51.100.20', '203.0.113.1', '203.0.113.2', '203.0.113.3']) {
+            assert.equal(logs[0].includes(rawIp), false);
+        }
+        const diagnostic = JSON.parse(logs[0]);
+        assert.match(diagnostic.timestamp, /^\d{4}-\d{2}-\d{2}T/);
+        assert.match(diagnostic.ipHash, /^[a-f0-9]{10}$/);
+        assert.equal(diagnostic.forwardedForEntries, 2);
+        assert.equal(diagnostic.cfConnectingIpPresent, true);
+        assert.equal(diagnostic.rateLimited, false);
+    } finally {
+        console.log = originalLog;
+        if (originalDebug === undefined) delete process.env.QR_IP_DEBUG;
+        else process.env.QR_IP_DEBUG = originalDebug;
+    }
+});
+
 test('real HTTP limiter enforces window, ignores spoofed forwarding and recovers', async () => {
     let now = 0;
     const app = express();
