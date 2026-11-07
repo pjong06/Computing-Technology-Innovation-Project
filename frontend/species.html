@@ -139,22 +139,15 @@ main.wide { max-width: 1600px; }
   <h1>Species <span>catalogue</span></h1>
   <p class="lead">Search, filter and manage every plant species record.</p>
   <div class="bar">
-    <input id="search-box" class="grow" placeholder="Search by scientific or common name" oninput="drawSpeciesTable()">
-    <select id="status-filter" onchange="drawSpeciesTable()">
+    <input id="search-box" class="grow" placeholder="Search by scientific or common name" aria-label="Search by scientific or common name" oninput="drawSpeciesTable()">
+    <select id="status-filter" aria-label="Filter by conservation status" onchange="drawSpeciesTable()">
       <option value="">All conservation status</option>
-<<<<<<< Updated upstream
-      <option>Endangered</option>
-      <option>Vulnerable</option>
-      <option>Least Concern</option>
-      <option>Not Evaluated</option>
-=======
       <option>Critically Endangered (CR)</option>
       <option>Endangered (EN)</option>
       <option>Vulnerable (VU)</option>
       <option>Near Threatened (NT)</option>
       <option>Least Concern (LC)</option>
       <option>Not assessed</option>
->>>>>>> Stashed changes
     </select>
     <button class="btn" onclick="openEditorFor(-1)">Add species</button>
   </div>
