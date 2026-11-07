@@ -16,8 +16,7 @@ section{margin-top:34px;max-width:68ch}h2{font-size:18px;line-height:1.4;margin:
 const PUBLIC_FIELDS = ['scientific_name', 'common_name', 'local_name', 'description',
     'morphology', 'habitat', 'conservation_status', 'cultural_significance'];
 const STATUS_NAMES = { LC: 'Least Concern', NT: 'Near Threatened', VU: 'Vulnerable',
-    EN: 'Endangered', CR: 'Critically Endangered', EW: 'Extinct in the Wild', EX: 'Extinct',
-    DD: 'Data Deficient', NE: 'Not Evaluated' };
+    EN: 'Endangered', CR: 'Critically Endangered', NE: 'Not Evaluated' };
 
 function escapeHtml(value) {
     return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
