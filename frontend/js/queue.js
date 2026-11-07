@@ -403,15 +403,9 @@ function reviewObservation(id, result) {
   const observations = getObservations();
   const observation = findObservation(observations, id);
   let reason = '';
-  let message = null;
+  let message = '';
 
-  if (result === 'Rejected') {
-    reason = askRejectReason();
-    if (reason === null) {
-      return;
-    }
-    message = 'Observation rejected';
-  } else if (result === 'Approved') {
+  if (result === 'Approved') {
     const outcome = approvalOutcome(observation);
     let chosenStatus = '';
     if (outcome === 'new-species') {
@@ -426,6 +420,13 @@ function reviewObservation(id, result) {
       drawQueue();   // the catalogue could not be saved, so nothing was approved
       return;
     }
+  } else {
+    reason = askRejectReason();
+    if (reason === null) {
+      return;
+    }
+    message = 'Observation rejected';
+    result = 'Rejected';
   }
 
   observation.state = result;
