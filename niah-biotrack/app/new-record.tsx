@@ -57,6 +57,7 @@ import {
 
 import FormScrollView from '../src/components/FormScrollView';
 import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
+import SpeciesPicker, { type SpeciesChoice } from '../src/components/SpeciesPicker';
 
 const DONE_BAR_ID = 'new-record-done';
 const GPS_TIMEOUT_MS = 20_000;
@@ -119,9 +120,9 @@ export default function NewRecordScreen() {
 
   const isEditing = Boolean(existingRecord);
   const [photos, setPhotos] = useState<ImagePicker.ImagePickerAsset[]>(() => initialPhotos(existingRecord));
-  const [scientificName, setScientificName] = useState(existingRecord?.scientificName ?? '');
-  const [commonName, setCommonName] = useState(existingRecord?.commonName ?? '');
-  const [family, setFamily] = useState(existingRecord?.family ?? '');
+  const [speciesChoice, setSpeciesChoice] = useState<SpeciesChoice>(null);
+  const [speciesQuery, setSpeciesQuery] = useState(existingRecord?.scientificName ?? '');
+  const [speciesNotice, setSpeciesNotice] = useState('');
   const [height, setHeight] = useState(existingRecord?.height ?? '');
   const [diameter, setDiameter] = useState((existingRecord as PlantRecordWithOfflinePhotos)?.diameter ?? '');
   const [lifeStage, setLifeStage] = useState<LifeStage>(existingRecord?.observations?.[0]?.stage ?? 'Mature');
@@ -143,6 +144,7 @@ export default function NewRecordScreen() {
   const screenActive = useRef(true);
   const gpsRequestId = useRef(0);
   const identifyRequest = useRef<AbortController | null>(null);
+  const speciesSelectionInitialized = useRef(false);
   const [suggestions, setSuggestions] = useState<SpeciesSuggestion[]>([]);
   const [selectedSpecies, setSelectedSpecies] = useState<SpeciesSuggestion | null>(null);
   const [identifying, setIdentifying] = useState(false);
@@ -153,6 +155,8 @@ export default function NewRecordScreen() {
   photosRef.current = photos;
   const recordSaved = useRef(false);
   const originalPhotoUris = useRef(new Set(existingRecord?.photoUris ?? []));
+
+  const approvedSpecies = speciesChoice?.kind === 'species' ? speciesChoice.species : null;
 
   const clearError = (field: keyof FieldErrors) => {
     setErrors((prev) => (prev[field] ? { ...prev, [field]: undefined } : prev));
@@ -175,6 +179,30 @@ export default function NewRecordScreen() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (speciesSelectionInitialized.current) return;
+
+    if (!existingRecord) {
+      speciesSelectionInitialized.current = true;
+      return;
+    }
+
+    if (allSpecies.length === 0) return;
+
+    const match = allSpecies.find(
+      (species) =>
+        species.id === existingRecord.speciesId ||
+        species.scientific_name.trim().toLowerCase() === existingRecord.scientificName.trim().toLowerCase()
+    );
+
+    if (match) {
+      setSpeciesChoice({ kind: 'species', species: match });
+      setSpeciesQuery(match.scientific_name);
+    }
+
+    speciesSelectionInitialized.current = true;
+  }, [allSpecies, existingRecord]);
 
   const fetchLocation = async () => {
     const requestId = ++gpsRequestId.current;
@@ -270,13 +298,15 @@ export default function NewRecordScreen() {
       const next = await identifyPlant(identifyPhoto, req.signal);
       if (req.signal.aborted) return;
       setSuggestions(next);
-      if (next.length === 0) setIdentifyMessage('No species match found. You can enter details manually.');
+      if (next.length === 0) {
+        setIdentifyMessage('No species match found. Search the offline catalogue or save the record for later.');
+      }
     } catch (err) {
       if (req.signal.aborted) return;
       setIdentifyMessage(
         err instanceof IdentifyNetworkError
-          ? "Can't reach the AI server. You can enter details manually."
-          : 'Identification failed. Please enter details manually.'
+          ? "Can't reach the AI server. Search the offline catalogue or save the record for later."
+          : 'Identification failed. Search the offline catalogue or save the record for later.'
       );
     } finally {
       if (identifyRequest.current === req) {
@@ -288,10 +318,37 @@ export default function NewRecordScreen() {
 
   const selectSuggestion = (s: SpeciesSuggestion) => {
     setSelectedSpecies(s);
-    setScientificName(s.scientificName);
-    if (s.commonName) setCommonName(s.commonName);
-    if (s.family) setFamily(s.family);
+    const catalogueMatch = allSpecies.find(
+      (species) =>
+        species.scientific_name.trim().toLowerCase() === s.scientificName.trim().toLowerCase()
+    );
+
+    setSpeciesQuery(s.scientificName);
+
+    if (catalogueMatch) {
+      setSpeciesChoice({ kind: 'species', species: catalogueMatch });
+      setSpeciesNotice('AI suggestion matched an approved species in the offline catalogue.');
+    } else {
+      setSpeciesChoice(null);
+      setSpeciesNotice(
+        'This AI suggestion is not in the approved catalogue. Save for later, then confirm the species before submitting.'
+      );
+    }
+
     clearError('scientificName');
+  };
+
+  const handleSpeciesChange = (choice: SpeciesChoice) => {
+    setSpeciesChoice(choice);
+    setSelectedSpecies(null);
+    setSpeciesNotice('');
+    clearError('scientificName');
+
+    if (choice?.kind === 'species') {
+      setSpeciesQuery(choice.species.scientific_name);
+    } else {
+      setSpeciesQuery('');
+    }
   };
 
   const handleSave = async (submitForReview: boolean) => {
@@ -322,16 +379,14 @@ export default function NewRecordScreen() {
     const photoList = photoEntries.map((p) => p.uri);
     const nextErrors: FieldErrors = {};
     if (!photoList.length) nextErrors.photos = 'Add at least one photo (min. 1, max. 4).';
-    if (!scientificName.trim()) nextErrors.scientificName = 'Enter a scientific name.';
+    if (submitForReview && !approvedSpecies) {
+      nextErrors.scientificName = 'Select an approved species before submitting. You can save for later without one.';
+    }
     if (!locationName.trim()) nextErrors.locationName = 'Enter a location landmark.';
     if (!gpsFix) nextErrors.gps = 'A GPS fix is required. Wait for it, or tap Retry.';
 
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0 || !gpsFix) return;
-
-    const matchedSpecies = allSpecies.find(
-      (s) => s.scientific_name.trim().toLowerCase() === scientificName.trim().toLowerCase()
-    );
 
     // Prefer Number.parseFloat over global parseFloat (SonarCloud requirement)
     const heightNum = Number.parseFloat(height);
@@ -341,10 +396,12 @@ export default function NewRecordScreen() {
     const formattedDate = now.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
     const formattedTime = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 
+    const previousInitialVisit = existingRecord?.observations?.[0];
     const initialVisit: ObservationVisit = {
-      id: existingRecord?.observations?.[0]?.id || randomUUID(),
-      date: `${formattedDate} · ${formattedTime}`,
-      observedAt: now.toISOString(),
+      ...previousInitialVisit,
+      id: previousInitialVisit?.id || randomUUID(),
+      date: previousInitialVisit?.date || `${formattedDate} · ${formattedTime}`,
+      observedAt: previousInitialVisit?.observedAt || now.toISOString(),
       recordedBy: me?.full_name || me?.email || 'Field Staff',
       health: healthStatus,
       stage: lifeStage,
@@ -354,13 +411,17 @@ export default function NewRecordScreen() {
       notes: morphology.trim() || 'Initial registration record.',
       photoUris: photoList,
       syncStatus: submitForReview ? SyncStatus.NOT_UPLOADED : SyncStatus.LOCAL_ONLY,
+      reviewStatus: ReviewStatus.DRAFT,
+      reviewComment: null,
+      submissionRequested: submitForReview,
+      submittedForReview: false,
     };
 
     const recordData = {
-      scientificName: scientificName.trim(),
-      speciesId: matchedSpecies?.id ?? null,
-      commonName: commonName.trim(),
-      family: family.trim(),
+      scientificName: approvedSpecies?.scientific_name ?? '',
+      speciesId: approvedSpecies?.id ?? null,
+      commonName: approvedSpecies?.common_name ?? '',
+      family: approvedSpecies?.taxonomy?.family ?? '',
       height: height.trim() || undefined,
       diameter: diameter.trim() || undefined,
       morphology: morphology.trim() || undefined,
@@ -376,14 +437,14 @@ export default function NewRecordScreen() {
         ? [initialVisit, ...existingRecord.observations.slice(1)]
         : [initialVisit],
       recordStatus: submitForReview ? RecordStatus.COMPLETE : RecordStatus.DRAFT,
-      identificationStatus: scientificName.trim() ? IdentificationStatus.IDENTIFIED : IdentificationStatus.PENDING,
+      identificationStatus: approvedSpecies ? IdentificationStatus.IDENTIFIED : IdentificationStatus.PENDING,
       syncStatus: submitForReview ? SyncStatus.NOT_UPLOADED : SyncStatus.LOCAL_ONLY,
       reviewStatus: submitForReview ? ReviewStatus.PENDING : ReviewStatus.DRAFT,
     };
 
     const saved = existingRecord
-      ? await updateRecord(existingRecord.id, recordData as any)
-      : await addRecord(recordData as any);
+      ? await updateRecord(existingRecord.id, recordData)
+      : await addRecord(recordData);
 
     if (!saved) {
       Toast.show({ type: 'error', text1: 'Record not updated', text2: 'Only local drafts can be edited.' });
@@ -404,7 +465,18 @@ export default function NewRecordScreen() {
     });
 
     router.replace({ pathname: '/save-confirm', params: { id: saved.id } } as any);
-    if (saved.syncStatus === SyncStatus.NOT_UPLOADED) void syncRecord(saved.id);
+
+    if (saved.syncStatus === SyncStatus.NOT_UPLOADED) {
+      void syncRecord(saved.id).then((result) => {
+        if (!result.ok) {
+          Toast.show({
+            type: 'info',
+            text1: 'Saved on this device',
+            text2: `Upload pending: ${result.reason}`,
+          });
+        }
+      });
+    }
   };
 
   if (blocked) return null;
@@ -502,7 +574,9 @@ export default function NewRecordScreen() {
             {suggestions.length > 0 && (
               <View style={styles.suggestionsBlock}>
                 <Text style={styles.suggestionsTitle}>AI species suggestions</Text>
-                <Text style={styles.suggestionsHelp}>Select an AI suggestion to auto-fill the fields below.</Text>
+                <Text style={styles.suggestionsHelp}>
+                  Select a suggestion. Only a match in the approved catalogue can be submitted.
+                </Text>
                 {suggestions.map((s) => {
                   const selected = selectedSpecies?.rank === s.rank && selectedSpecies.scientificName === s.scientificName;
                   return (
@@ -515,8 +589,22 @@ export default function NewRecordScreen() {
                         <Text style={styles.suggestionName}>{s.rank}. {s.scientificName}</Text>
                         <Text style={styles.confidence}>{s.confidence.toFixed(1)}%</Text>
                       </View>
-                      {s.commonName && <Text style={styles.suggestionDetail}>Common: {s.commonName}</Text>}
-                      {s.family && <Text style={styles.suggestionDetail}>Family: {s.family}</Text>}
+                      {s.commonName && (
+                        <Text style={styles.suggestionDetail}>
+                          Common: {s.commonName}
+                        </Text>
+                      )}
+
+                      {s.family && (
+                        <Text style={styles.suggestionDetail}>
+                          Family: {s.family}
+                        </Text>
+                      )}
+
+                      <Text style={styles.suggestionDetail}>
+                        Confidence: {s.confidenceLevel}
+                        {selected ? ' · Selected' : ''}
+                      </Text>
                     </TouchableOpacity>
                   );
                 })}
@@ -525,41 +613,25 @@ export default function NewRecordScreen() {
           </View>
         )}
 
-        {/* Section 2: Botanical Details */}
+        {/* Section 2: Approved species selection */}
         <Text style={styles.sectionLabel}>SPECIES DETAILS</Text>
-        <Text style={styles.fieldLabel}>Scientific name *</Text>
-        <TextInput
-          style={[styles.input, errors.scientificName && styles.inputError]}
-          placeholder="e.g. Nepenthes bicalcarata"
-          placeholderTextColor="#8C9A91"
-          value={scientificName}
-          onChangeText={(text) => {
-            setScientificName(text);
+        <Text style={styles.fieldLabel}>Approved species</Text>
+        <Text style={styles.pickerHelp}>
+          Search the offline species catalogue. If you cannot confirm the species in the field, save the record for later.
+        </Text>
+        <SpeciesPicker
+          value={speciesChoice}
+          onChange={handleSpeciesChange}
+          query={speciesQuery}
+          onQueryChange={(text) => {
+            setSpeciesQuery(text);
+            setSpeciesNotice('');
             clearError('scientificName');
           }}
-          inputAccessoryViewID={DONE_BAR_ID}
+          hasError={Boolean(errors.scientificName)}
         />
         {errors.scientificName && <Text style={styles.errorText}>{errors.scientificName}</Text>}
-
-        <Text style={styles.fieldLabel}>Common name</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="e.g. Fanged Pitcher Plant"
-          placeholderTextColor="#8C9A91"
-          value={commonName}
-          onChangeText={setCommonName}
-          inputAccessoryViewID={DONE_BAR_ID}
-        />
-
-        <Text style={styles.fieldLabel}>Family</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="e.g. Nepenthaceae"
-          placeholderTextColor="#8C9A91"
-          value={family}
-          onChangeText={setFamily}
-          inputAccessoryViewID={DONE_BAR_ID}
-        />
+        {speciesNotice !== '' && <Text style={styles.speciesNotice}>{speciesNotice}</Text>}
 
         {/* Section 3: Measurements */}
         <View style={styles.measurementRow}>
@@ -724,7 +796,7 @@ export default function NewRecordScreen() {
             accessibilityRole="button"
             accessibilityLabel="Save plant record locally as draft"
           >
-            <Text style={styles.saveDraftBtnText}>Save</Text>
+            <Text style={styles.saveDraftBtnText}>Save for later</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -864,6 +936,8 @@ const styles = StyleSheet.create({
   confidence: { fontWeight: '700', color: '#46654F' },
   suggestionDetail: { fontSize: 12, color: '#68776D', marginTop: 3 },
   fieldLabel: { fontSize: 12.5, fontWeight: '700', color: '#213B2A', marginBottom: 6, marginTop: 6 },
+  pickerHelp: { fontSize: 12, color: '#68776D', lineHeight: 17, marginBottom: 8 },
+  speciesNotice: { fontSize: 12, color: '#46654F', lineHeight: 17, marginBottom: 10, paddingHorizontal: 4 },
   input: {
     backgroundColor: '#FFFFFF',
     minHeight: 48,

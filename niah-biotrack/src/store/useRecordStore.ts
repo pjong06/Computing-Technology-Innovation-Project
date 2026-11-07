@@ -703,8 +703,6 @@ interface RecordState {
       | 'tagCode'
       | 'createdAt'
       | 'createdAtIso'
-      | 'observations'
-      | 'reviewStatus'
       | 'reviewComment'
     >
   ) => Promise<PlantRecord>;
@@ -719,6 +717,7 @@ interface RecordState {
       | 'commonName'
       | 'family'
       | 'height'
+      | 'diameter'
       | 'morphology'
       | 'description'
       | 'locationName'
@@ -732,6 +731,8 @@ interface RecordState {
       | 'recordStatus'
       | 'identificationStatus'
       | 'syncStatus'
+      | 'reviewStatus'
+      | 'observations'
     >
   ) =>
     Promise<
@@ -906,9 +907,6 @@ export const useRecordStore =
               tagCode:
                 null,
 
-              reviewStatus:
-                ReviewStatus.DRAFT,
-
               reviewComment:
                 null,
 
@@ -927,8 +925,6 @@ export const useRecordStore =
               createdAtIso:
                 now.toISOString(),
 
-              observations:
-                [],
             };
 
             /*
@@ -942,6 +938,15 @@ export const useRecordStore =
               {
                 queuePlant:
                   true,
+
+                queueObservationIds:
+                  newRecord.observations
+                    .filter(
+                      (observation) =>
+                        newRecord.syncStatus !== SyncStatus.LOCAL_ONLY &&
+                        observation.syncStatus !== SyncStatus.UPLOADED
+                    )
+                    .map((observation) => observation.id),
               }
             );
 
