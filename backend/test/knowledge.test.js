@@ -10,9 +10,9 @@ const ID = '11111111-1111-4111-8111-111111111111';
 test('invalid resource IDs are rejected before database access', async t => {
   const { request, calls } = await setup(t);
   for (const [path, method] of [['/species/bad', 'GET'], ['/species/bad/manage', 'GET'],
-    ['/species/bad', 'DELETE'], ['/species/bad/photos', 'POST'],
-    [`/species/${ID}/photos/bad/primary`, 'PATCH'], [`/species/${ID}/photos/bad`, 'DELETE'],
-    [`/species/${ID}/photos/bad`, 'GET']]) {
+  ['/species/bad', 'DELETE'], ['/species/bad/photos', 'POST'],
+  [`/species/${ID}/photos/bad/primary`, 'PATCH'], [`/species/${ID}/photos/bad`, 'DELETE'],
+  [`/species/${ID}/photos/bad`, 'GET']]) {
     assert.equal((await request(path, method)).status, 400);
   }
   assert.equal(calls.length, 0);
@@ -74,7 +74,7 @@ test('create and update consistently reject empty or oversized optional text', a
   const { request, calls } = await setup(t);
   for (const method of ['POST', 'PATCH']) {
     for (const fields of [{ common_name: ' ' }, { common_name: 'a'.repeat(201) },
-      { conservation_status: 'a'.repeat(101) }, { description: 'a'.repeat(10001) }]) {
+    { conservation_status: 'a'.repeat(101) }, { description: 'a'.repeat(10001) }]) {
       assert.equal((await request(method === 'POST' ? '/species' : `/species/${ID}`, method,
         { scientific_name: 'Shorea', ...fields })).status, 400);
     }
@@ -97,10 +97,10 @@ for (const path of [`/species/${ID}`, `/species/${ID}/manage`]) {
 }
 
 for (const [path, method, body] of [['/species', 'GET'], ['/taxonomy', 'GET'],
-  ['/species/manage', 'GET'], [`/species/${ID}`, 'GET'], [`/species/${ID}/manage`, 'GET'],
-  ['/taxonomy', 'POST', { family: 'Family', genus: 'Genus' }],
-  ['/species', 'POST', { scientific_name: 'Example' }],
-  [`/species/${ID}`, 'PATCH', { scientific_name: 'Example' }], [`/species/${ID}`, 'DELETE']]) {
+['/species/manage', 'GET'], [`/species/${ID}`, 'GET'], [`/species/${ID}/manage`, 'GET'],
+['/taxonomy', 'POST', { family: 'Family', genus: 'Genus' }],
+['/species', 'POST', { scientific_name: 'Example' }],
+[`/species/${ID}`, 'PATCH', { scientific_name: 'Example' }], [`/species/${ID}`, 'DELETE']]) {
   test(`${method} ${path} hides database failure details`, async t => {
     const { request } = await setup(t, { data: null, error: { message: 'SECRET_DATABASE_DETAILS' } });
     const response = await request(path, method, body);
@@ -164,15 +164,29 @@ async function setup(t, result = { data: { id: ID }, error: null }, role = 'offi
     server.closeAllConnections();
   }));
   async function request(path, method = 'GET', body) {
-    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/knowledge${path}`, {
-      method,
-      ...(body === undefined ? {} : {
-        headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-      }),
-    });
-    return { status: response.status, body: await response.json() };
+    const isFormData = body instanceof FormData;
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.address().port}/api/knowledge${path}`,
+      {
+        method,
+        ...(body === undefined
+          ? {}
+          : isFormData
+            ? { body }
+            : {
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(body),
+            }),
+      }
+    );
+
+    return {
+      status: response.status,
+      body: await response.json(),
+    };
   }
-  return { calls, request };
+  return { calls, request, database };
 }
 
 for (const [role, status] of [[null, 401], ['botanist', 403], ['researcher', 403]]) {
@@ -204,9 +218,9 @@ test('officer creates species with trimmed text and server-controlled fields', a
 test('invalid species creation never queries the database', async t => {
   const { request, calls } = await setup(t);
   for (const body of [{}, [], { scientific_name: ' ' },
-    { scientific_name: 'x'.repeat(201) },
-    { scientific_name: 'Example', taxonomy_id: 'bad' },
-    { scientific_name: 'Example', common_name: 42 }]) {
+  { scientific_name: 'x'.repeat(201) },
+  { scientific_name: 'Example', taxonomy_id: 'bad' },
+  { scientific_name: 'Example', common_name: 42 }]) {
     assert.equal((await request('/species', 'POST', body)).status, 400);
   }
   assert.equal(calls.length, 0);
@@ -237,7 +251,7 @@ test('partial update clears nullable text without changing other fields', async 
 test('empty and invalid species updates never query the database', async t => {
   const { request, calls } = await setup(t);
   for (const body of [{}, { verification_status: 'approved' },
-    { common_name: '' }, { taxonomy_id: 'bad' }]) {
+  { common_name: '' }, { taxonomy_id: 'bad' }]) {
     assert.equal((await request(`/species/${ID}`, 'PATCH', body)).status, 400);
   }
   assert.equal((await request('/species/bad', 'PATCH', { common_name: 'Example' })).status, 400);
@@ -272,8 +286,8 @@ test('taxonomy creation trims required fields and supplies nullable fields', asy
 test('invalid taxonomy never queries the database', async t => {
   const { request, calls } = await setup(t);
   for (const body of [{}, { family: 'Example' },
-    { family: ' ', genus: 'Shorea' }, { family: 'Example', genus: 12 },
-    { family: 'Example', genus: 'x'.repeat(101) }]) {
+  { family: ' ', genus: 'Shorea' }, { family: 'Example', genus: 12 },
+  { family: 'Example', genus: 'x'.repeat(101) }]) {
     assert.equal((await request('/taxonomy', 'POST', body)).status, 400);
   }
   assert.equal(calls.length, 0);
@@ -289,5 +303,189 @@ test('officer photo upload requires a photo before querying', async t => {
   assert.deepEqual(await request(`/species/${ID}/photos`, 'POST'), {
     status: 400, body: { message: 'Photo is required' },
   });
+  assert.equal(calls.length, 0);
+});
+
+test('officer photo upload rejects files larger than 5 MiB', async t => {
+  const { request, calls } = await setup(t);
+  const form = new FormData();
+
+  form.append(
+    'photo',
+    new Blob([Buffer.alloc(5 * 1024 * 1024 + 1)], {
+      type: 'image/jpeg',
+    }),
+    'oversized.jpg'
+  );
+
+  const response = await request(
+    `/species/${ID}/photos`,
+    'POST',
+    form
+  );
+
+  assert.equal(response.status, 413);
+  assert.deepEqual(response.body, {
+    message: 'Could not receive photo',
+  });
+  assert.equal(calls.length, 0);
+});
+
+test('officer photo upload rejects multiple files', async t => {
+  const { request, calls } = await setup(t);
+  const form = new FormData();
+
+  for (const name of ['first.jpg', 'second.jpg']) {
+    form.append(
+      'photo',
+      new Blob(['test image'], { type: 'image/jpeg' }),
+      name
+    );
+  }
+
+  const response = await request(
+    `/species/${ID}/photos`,
+    'POST',
+    form
+  );
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(response.body, {
+    message: 'Could not receive photo',
+  });
+  assert.equal(calls.length, 0);
+});
+
+test('officer can upload one valid photo below 5 MiB', async t => {
+  const sharp = require('sharp');
+
+  // Simulate an approved species.
+  const { request, calls, database } = await setup(t, {
+    data: { id: ID, verification_status: 'approved' },
+    error: null,
+  });
+
+  const uploads = [];
+
+  // Simulate Storage without uploading to real Supabase.
+  database.storage = {
+    from(bucketName) {
+      assert.equal(bucketName, 'species-media');
+
+      return {
+        async upload(filePath, buffer, options) {
+          uploads.push({ filePath, buffer, options });
+          return { error: null };
+        },
+      };
+    },
+  };
+
+  // Generate a real, valid JPEG in memory.
+  const image = await sharp({
+    create: {
+      width: 20,
+      height: 20,
+      channels: 3,
+      background: { r: 30, g: 140, b: 60 },
+    },
+  })
+    .jpeg()
+    .toBuffer();
+
+  assert.ok(image.length < 5 * 1024 * 1024);
+
+  const form = new FormData();
+  form.append(
+    'photo',
+    new Blob([image], { type: 'image/jpeg' }),
+    'valid-photo.jpg'
+  );
+
+  const response = await request(
+    `/species/${ID}/photos`,
+    'POST',
+    form
+  );
+
+  assert.equal(response.status, 201);
+
+  // Verify that exactly one processed image was uploaded.
+  assert.equal(uploads.length, 1);
+
+  const uploaded = uploads[0];
+  assert.ok(uploaded.filePath.startsWith(`${ID}/`));
+  assert.ok(uploaded.filePath.endsWith('.jpg'));
+  assert.equal(uploaded.options.contentType, 'image/jpeg');
+  assert.equal(uploaded.options.upsert, false);
+
+  const metadata = await sharp(uploaded.buffer).metadata();
+  assert.equal(metadata.format, 'jpeg');
+
+  // Verify that the photo metadata was saved.
+  assert.ok(
+    calls.some(call =>
+      call[0] === 'from' && call[1] === 'species_media'
+    )
+  );
+
+  const insert = calls.find(call => call[0] === 'insert');
+  assert.ok(insert);
+  assert.equal(insert[1].species_id, ID);
+  assert.equal(insert[1].uploaded_by, ID);
+  assert.equal(insert[1].file_path, uploaded.filePath);
+  assert.equal(insert[1].media_type, 'image/jpeg');
+});
+
+test('officer photo upload rejects additional text fields', async t => {
+  const { request, calls } = await setup(t);
+  const form = new FormData();
+
+  form.append('caption', 'Unexpected field');
+
+  const response = await request(
+    `/species/${ID}/photos`,
+    'POST',
+    form
+  );
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(response.body, {
+    message: 'Could not receive photo',
+  });
+  assert.equal(calls.length, 0);
+});
+
+// ---- Officer species list: every state, with family and photos ----
+
+test('/species/manage can filter by review state and name, and returns family and photos', async t => {
+  const { request, calls } = await setup(t, { data: [], error: null, count: 0 });
+  const response = await request('/species/manage?status=archived&q=Nepenthes');
+  assert.equal(response.status, 200);
+  assert.ok(calls.some(c => c[0] === 'eq' && c[1] === 'verification_status' && c[2] === 'archived'));
+  assert.ok(calls.some(c => c[0] === 'or' && c[1].includes('scientific_name.ilike.%Nepenthes%')));
+  const columns = calls.find(c => c[0] === 'select')[1];
+  assert.match(columns, /taxonomy\(family, genus\)/);
+  assert.match(columns, /species_media\(id, is_primary\)/);
+  assert.match(columns, /conservation_status/);
+});
+
+test('/species/manage without filters lists every state', async t => {
+  const { request, calls } = await setup(t, { data: [], error: null, count: 0 });
+  assert.equal((await request('/species/manage')).status, 200);
+  assert.ok(!calls.some(c => c[0] === 'eq' && c[1] === 'verification_status'));
+});
+
+test('/species/manage rejects unknown states and unsafe searches before database access', async t => {
+  const { request, calls } = await setup(t);
+  for (const params of ['status=deleted', 'status=approved&status=pending', 'q=a,b', 'q=%25']) {
+    assert.equal((await request(`/species/manage?${params}`)).status, 400, params);
+  }
+  assert.equal(calls.length, 0);
+});
+
+test('/species/manage is for officers only', async t => {
+  const { request, calls } = await setup(t, undefined, 'botanist');
+  assert.equal((await request('/species/manage')).status, 403);
   assert.equal(calls.length, 0);
 });

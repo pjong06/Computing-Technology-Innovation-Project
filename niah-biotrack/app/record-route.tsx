@@ -22,11 +22,10 @@ const MAP_WIDTH = SCREEN_WIDTH - 32;
 const MAP_HEIGHT = 240;
 
 // Anti-Jitter Threshold Constants
-const MAX_ALLOWED_ACCURACY_M = 16;  // Ignore fixes with accuracy worse than ±16m
-const MIN_MOVEMENT_THRESHOLD_M = 3.5; // Must move >= 3.5m to register a new route node
-const MIN_WALKING_SPEED_MS = 0.35;    // Below ~1.2 km/h is treated as stationary
+const MAX_ALLOWED_ACCURACY_M = 50;    // Accept fixes up to ±50m under canopy
+const MIN_MOVEMENT_THRESHOLD_M = 1.8; // Must move >= 1.8m to eliminate stationary jitter
 
-interface BreadcrumbPoint {
+export interface BreadcrumbPoint {
   latitude: number;
   longitude: number;
   timestamp: number;
@@ -68,13 +67,13 @@ export default function RecordRouteScreen() {
   const [accuracyM, setAccuracyM] = useState<number | null>(null);
   const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbPoint[]>([]);
   const [waypoints, setWaypoints] = useState<WaypointMarker[]>([]);
-  const [isSimulating, setIsSimulating] = useState<boolean>(false);
 
   // Tracking and Timer Refs
+  const isPausedRef = useRef<boolean>(false);
   const locationSubscription = useRef<Location.LocationSubscription | null>(null);
   const timerInterval = useRef<ReturnType<typeof setInterval> | null>(null);
-  const simulatorInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastPointRef = useRef<BreadcrumbPoint | null>(null);
+  const totalDistanceRef = useRef<number>(0);
 
   // Timer runner
   useEffect(() => {
@@ -95,12 +94,11 @@ export default function RecordRouteScreen() {
   useEffect(() => {
     return () => {
       if (locationSubscription.current) locationSubscription.current.remove();
-      if (simulatorInterval.current) clearInterval(simulatorInterval.current);
       if (timerInterval.current) clearInterval(timerInterval.current);
     };
   }, []);
 
-  // Haversine formula
+  // Haversine distance formula
   const calculateDistance = (
     lat1: number,
     lon1: number,
@@ -123,7 +121,7 @@ export default function RecordRouteScreen() {
     return R * c;
   };
 
-  // Start Real Hardware GPS Tracking with Anti-Jitter Filtering
+  // Start Hardware GPS Tracking
   const startTracking = async () => {
     try {
       const servicesEnabled = await Location.hasServicesEnabledAsync();
@@ -146,10 +144,11 @@ export default function RecordRouteScreen() {
 
       setIsTracking(true);
       setIsPaused(false);
-      setIsSimulating(false);
+      isPausedRef.current = false;
       lastPointRef.current = null;
+      totalDistanceRef.current = 0;
+      setTotalDistanceM(0);
 
-      // Get initial position fix
       const initialFix = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
       });
@@ -166,26 +165,21 @@ export default function RecordRouteScreen() {
       lastPointRef.current = firstPoint;
       setBreadcrumbs([firstPoint]);
 
-      // Subscribe to active location updates with hardware throttle
       locationSubscription.current = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.High,
-          timeInterval: 2000,   // Check every 2 seconds
-          distanceInterval: 3,  // Hardware level: ignore movements below 3 meters
+          timeInterval: 1500,
+          distanceInterval: 1,
         },
         (loc) => {
+          if (isPausedRef.current) return;
+
           const acc = loc.coords.accuracy ? Math.round(loc.coords.accuracy) : null;
           setAccuracyM(acc);
 
-          // 1. ACCURACY GATE: Reject poor satellite fixes
           if (acc !== null && acc > MAX_ALLOWED_ACCURACY_M) {
             return;
           }
-
-          // 2. SPEED DEADBAND: Detect stationary device and zero false velocity
-          const rawSpeed = loc.coords.speed !== null && loc.coords.speed !== undefined ? loc.coords.speed : 0;
-          const isPhysicallyMoving = rawSpeed >= MIN_WALKING_SPEED_MS;
-          setCurrentSpeedKmh(isPhysicallyMoving ? Number((rawSpeed * 3.6).toFixed(1)) : 0);
 
           const newPoint: BreadcrumbPoint = {
             latitude: Number(loc.coords.latitude.toFixed(6)),
@@ -194,7 +188,6 @@ export default function RecordRouteScreen() {
             accuracy: acc,
           };
 
-          // Update current cursor position
           setCurrentCoord(newPoint);
 
           if (lastPointRef.current) {
@@ -205,11 +198,23 @@ export default function RecordRouteScreen() {
               newPoint.longitude
             );
 
-            // 3. SOFTWARE DEADBAND: Ignore jitter (< 3.5m) and reject GPS teleportation (> 35m in 2s)
-            if (delta >= MIN_MOVEMENT_THRESHOLD_M && delta <= 35) {
-              setTotalDistanceM((prev) => Math.round(prev + delta));
+            const timeDeltaSec = Math.max(1, (newPoint.timestamp - lastPointRef.current.timestamp) / 1000);
+            const maxAllowedJump = Math.max(30, 15 * timeDeltaSec);
+
+            if (delta >= MIN_MOVEMENT_THRESHOLD_M && delta <= maxAllowedJump) {
+              totalDistanceRef.current += delta;
+              setTotalDistanceM(Math.round(totalDistanceRef.current));
               setBreadcrumbs((prevTrail) => [...prevTrail, newPoint]);
               lastPointRef.current = newPoint;
+
+              const calculatedKmh = (delta / timeDeltaSec) * 3.6;
+              const rawSpeed =
+                loc.coords.speed !== null && loc.coords.speed !== undefined && loc.coords.speed > 0
+                  ? loc.coords.speed * 3.6
+                  : calculatedKmh;
+              setCurrentSpeedKmh(Number(rawSpeed.toFixed(1)));
+            } else if (delta < MIN_MOVEMENT_THRESHOLD_M) {
+              setCurrentSpeedKmh(0);
             }
           } else {
             lastPointRef.current = newPoint;
@@ -221,7 +226,7 @@ export default function RecordRouteScreen() {
       Toast.show({
         type: 'success',
         text1: 'GPS Route Active',
-        text2: 'Live path tracking initialized with drift filter.',
+        text2: 'Live path tracking initialized.',
       });
     } catch (err: any) {
       Alert.alert('GPS Error', err.message || 'Could not initialize GPS listener.');
@@ -229,69 +234,9 @@ export default function RecordRouteScreen() {
     }
   };
 
-  // Built-in Simulator (Allows testing visualization indoors/lab)
-  const startSimulation = () => {
-    if (locationSubscription.current) {
-      locationSubscription.current.remove();
-    }
-
-    setIsTracking(true);
-    setIsPaused(false);
-    setIsSimulating(true);
-
-    // Initial base coordinate (Niah Great Cave vicinity: 3.8150° N, 113.7710° E)
-    let simLat = 3.8150;
-    let simLng = 113.7710;
-    const startPoint: BreadcrumbPoint = {
-      latitude: simLat,
-      longitude: simLng,
-      timestamp: Date.now(),
-      accuracy: 3,
-    };
-
-    lastPointRef.current = startPoint;
-    setCurrentCoord(startPoint);
-    setAccuracyM(3);
-    setBreadcrumbs([startPoint]);
-    setCurrentSpeedKmh(3.8);
-
-    let stepCount = 0;
-    simulatorInterval.current = setInterval(() => {
-      stepCount++;
-      // Simulate walking a curving path
-      simLat += 0.00004 + Math.sin(stepCount / 4) * 0.00002;
-      simLng += 0.000035 + Math.cos(stepCount / 4) * 0.000025;
-
-      const simPoint: BreadcrumbPoint = {
-        latitude: Number(simLat.toFixed(6)),
-        longitude: Number(simLng.toFixed(6)),
-        timestamp: Date.now(),
-        accuracy: 3,
-      };
-
-      setCurrentCoord(simPoint);
-      if (lastPointRef.current) {
-        const delta = calculateDistance(
-          lastPointRef.current.latitude,
-          lastPointRef.current.longitude,
-          simPoint.latitude,
-          simPoint.longitude
-        );
-        setTotalDistanceM((prev) => Math.round(prev + delta));
-      }
-      lastPointRef.current = simPoint;
-      setBreadcrumbs((prev) => [...prev, simPoint]);
-    }, 1500);
-
-    Toast.show({
-      type: 'info',
-      text1: 'Simulation Mode Active',
-      text2: 'Generating test coordinates step-by-step.',
-    });
-  };
-
   const togglePauseResume = () => {
-    setIsPaused((prev) => !prev);
+    isPausedRef.current = !isPaused;
+    setIsPaused(!isPaused);
   };
 
   const handleTagPlantWaypoint = () => {
@@ -321,6 +266,24 @@ export default function RecordRouteScreen() {
     });
   };
 
+  // Log tree: transfers the current GPS location AND entire breadcrumb trail to the register form
+  const handleLogTree = () => {
+    if (!currentCoord) {
+      Alert.alert('GPS Pending', 'Acquiring GPS fix before registering plant...');
+      return;
+    }
+
+    router.push({
+      pathname: '/new-record',
+      params: {
+        latitude: currentCoord.latitude.toString(),
+        longitude: currentCoord.longitude.toString(),
+        accuracy: accuracyM ? accuracyM.toString() : '10',
+        route: JSON.stringify(breadcrumbs),
+      },
+    } as any);
+  };
+
   const handleFinishRoute = () => {
     Alert.alert(
       'Finish Route',
@@ -332,7 +295,6 @@ export default function RecordRouteScreen() {
           style: 'default',
           onPress: () => {
             if (locationSubscription.current) locationSubscription.current.remove();
-            if (simulatorInterval.current) clearInterval(simulatorInterval.current);
             setIsTracking(false);
             Toast.show({
               type: 'success',
@@ -361,26 +323,20 @@ export default function RecordRouteScreen() {
   };
 
   const getGpsQuality = () => {
-    if (isSimulating) {
-      return { label: 'Simulation Mode (Test)', color: '#0284C7', bg: '#E0F2FE' };
-    }
     if (accuracyM === null) {
       return { label: 'Searching...', color: '#68776D', bg: '#F0F4F1' };
     }
-    if (accuracyM <= 5) {
-      return { label: `High Precision (±${accuracyM}m)`, color: '#2D6A4F', bg: '#E8F5E9' };
+    if (accuracyM <= 10) {
+      return { label: `Strong Canopy Fix (±${accuracyM}m)`, color: '#2D6A4F', bg: '#E8F5E9' };
     }
-    if (accuracyM <= 15) {
-      return { label: `Acceptable (±${accuracyM}m)`, color: '#D97706', bg: '#FEF3C7' };
+    if (accuracyM <= 35) {
+      return { label: `Moderate Canopy Fix (±${accuracyM}m)`, color: '#D97706', bg: '#FEF3C7' };
     }
     return { label: `Weak Canopy Fix (±${accuracyM}m)`, color: '#DC2626', bg: '#FEE2E2' };
   };
 
   const gpsBadge = getGpsQuality();
 
-  // ==========================================
-  // REAL-TIME VECTOR MAP PROJECTION ALGORITHM
-  // ==========================================
   const mapData = useMemo(() => {
     if (breadcrumbs.length === 0) return null;
 
@@ -392,7 +348,6 @@ export default function RecordRouteScreen() {
     const minLng = Math.min(...lngs);
     const maxLng = Math.max(...lngs);
 
-    // Minimum bounding box span (ensures tight paths do not overscale)
     const latSpan = Math.max(maxLat - minLat, 0.00015);
     const lngSpan = Math.max(maxLng - minLng, 0.00015);
 
@@ -450,10 +405,15 @@ export default function RecordRouteScreen() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" />
 
-      {/* Top Header */}
+      {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.headerBackBtn} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={22} color="#213B2A" />
+        <TouchableOpacity
+          style={styles.headerBackBtn}
+          onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="arrow-back-outline" size={22} color="#213B2A" />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
           <Text style={styles.headerTitle}>Route Tracing</Text>
@@ -471,7 +431,7 @@ export default function RecordRouteScreen() {
           </Text>
         </View>
 
-        {/* REAL-TIME VECTOR TRAIL VISUALIZER CANVAS */}
+        {/* Vector Visualizer Canvas */}
         <View style={styles.mapCanvasCard}>
           <View style={styles.mapHeader}>
             <View style={styles.mapHeaderLeft}>
@@ -479,13 +439,12 @@ export default function RecordRouteScreen() {
               <Text style={styles.mapHeaderTitle}>TRANSECT VISUALIZER</Text>
             </View>
             <View style={styles.compassBadge}>
-              <Ionicons name="compass" size={14} color="#74C69D" />
+              <Ionicons name="compass-outline" size={14} color="#74C69D" />
               <Text style={styles.compassText}>N ↑</Text>
             </View>
           </View>
 
           <View style={styles.canvasContainer}>
-            {/* Topographic Background Grid */}
             <View style={styles.gridOverlay}>
               <View style={[styles.gridLineH, { top: '25%' }]} />
               <View style={[styles.gridLineH, { top: '50%' }]} />
@@ -495,7 +454,6 @@ export default function RecordRouteScreen() {
               <View style={[styles.gridLineV, { left: '75%' }]} />
             </View>
 
-            {/* Empty State */}
             {!mapData || mapData.points.length === 0 ? (
               <View style={styles.emptyMapNotice}>
                 <Ionicons name="navigate-outline" size={32} color="#40634E" />
@@ -506,7 +464,6 @@ export default function RecordRouteScreen() {
               </View>
             ) : (
               <>
-                {/* Render Connected Vector Line Segments */}
                 {mapData.segments.map((seg) => (
                   <View
                     key={seg.id}
@@ -522,7 +479,6 @@ export default function RecordRouteScreen() {
                   />
                 ))}
 
-                {/* Start Location Marker */}
                 {mapData.start && (
                   <View style={[styles.markerPin, { left: mapData.start.x - 10, top: mapData.start.y - 10 }]}>
                     <View style={styles.startBeacon}>
@@ -531,19 +487,14 @@ export default function RecordRouteScreen() {
                   </View>
                 )}
 
-                {/* Waypoint Pins */}
                 {mapData.waypoints.map((wp, idx) => (
-                  <View
-                    key={wp.id}
-                    style={[styles.markerPin, { left: wp.x - 9, top: wp.y - 9 }]}
-                  >
+                  <View key={wp.id} style={[styles.markerPin, { left: wp.x - 9, top: wp.y - 9 }]}>
                     <View style={styles.waypointBeacon}>
                       <Text style={styles.waypointBeaconText}>{idx + 1}</Text>
                     </View>
                   </View>
                 ))}
 
-                {/* Current Location (Pulsing Green Pointer) */}
                 {mapData.current && (
                   <View
                     style={[
@@ -560,7 +511,6 @@ export default function RecordRouteScreen() {
             )}
           </View>
 
-          {/* Scale & Coordinate Footer Strip */}
           <View style={styles.mapFooterStrip}>
             <Text style={styles.mapCoordText}>
               {currentCoord ? `${currentCoord.latitude}°, ${currentCoord.longitude}°` : '0.000000°, 0.000000°'}
@@ -594,7 +544,7 @@ export default function RecordRouteScreen() {
             </View>
 
             <View style={styles.hudSubMetric}>
-              <Ionicons name="trail-sign-outline" size={16} color="#74C69D" />
+              <Ionicons name="git-commit-outline" size={16} color="#74C69D" />
               <Text style={styles.hudSubMetricText}>
                 Waypoints: <Text style={styles.boldText}>{waypoints.length}</Text>
               </Text>
@@ -610,8 +560,13 @@ export default function RecordRouteScreen() {
               <Text style={styles.cardTitle}>Pinned Waypoints ({waypoints.length})</Text>
             </View>
             {isTracking && (
-              <TouchableOpacity style={styles.addWaypointBtn} onPress={handleTagPlantWaypoint}>
-                <Ionicons name="add" size={15} color="#2D6A4F" />
+              <TouchableOpacity
+                style={styles.addWaypointBtn}
+                onPress={handleTagPlantWaypoint}
+                accessibilityRole="button"
+                accessibilityLabel="Pin Specimen Waypoint"
+              >
+                <Ionicons name="add-outline" size={15} color="#2D6A4F" />
                 <Text style={styles.addWaypointBtnText}>Pin Specimen</Text>
               </TouchableOpacity>
             )}
@@ -641,20 +596,21 @@ export default function RecordRouteScreen() {
             </View>
           )}
         </View>
-
-        {/* Indoor Lab Testing Shortcut */}
-        {!isTracking && (
-          <TouchableOpacity style={styles.simBtn} onPress={startSimulation}>
-            <Ionicons name="flask-outline" size={16} color="#0284C7" />
-            <Text style={styles.simBtnText}>Test with Walk Simulator (Indoors/Lab)</Text>
-          </TouchableOpacity>
-        )}
       </ScrollView>
 
-      {/* Floating Action Controls */}
+      {/* Action Controls */}
       <View style={styles.actionDock}>
         {!isTracking ? (
-          <TouchableOpacity style={styles.startTrackingBtn} onPress={startTracking}>
+          <TouchableOpacity
+            style={styles.startTrackingBtn}
+            onPress={() => {
+              startTracking().catch((err) => {
+                console.error('Failed to start tracking:', err);
+              });
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Start Live GPS Recording"
+          >
             <Ionicons name="play" size={20} color="#FFFFFF" />
             <Text style={styles.actionBtnText}>Start Live GPS Recording</Text>
           </TouchableOpacity>
@@ -663,6 +619,8 @@ export default function RecordRouteScreen() {
             <TouchableOpacity
               style={[styles.pauseBtn, isPaused ? styles.resumeBtnStyle : styles.pauseBtnStyle]}
               onPress={togglePauseResume}
+              accessibilityRole="button"
+              accessibilityLabel={isPaused ? 'Resume tracking' : 'Pause tracking'}
             >
               <Ionicons
                 name={isPaused ? 'play' : 'pause'}
@@ -676,25 +634,20 @@ export default function RecordRouteScreen() {
 
             <TouchableOpacity
               style={styles.observeAtPinBtn}
-              onPress={() => {
-                if (!currentCoord) {
-                  Alert.alert('GPS Pending', 'Acquiring GPS fix...');
-                  return;
-                }
-                router.push({
-                  pathname: '/add-observation',
-                  params: {
-                    latitude: currentCoord.latitude.toString(),
-                    longitude: currentCoord.longitude.toString(),
-                  },
-                });
-              }}
+              onPress={handleLogTree}
+              accessibilityRole="button"
+              accessibilityLabel="Log Tree and attach current route"
             >
               <Ionicons name="leaf-outline" size={17} color="#FFFFFF" />
               <Text style={styles.actionBtnTextSmall}>Log Tree</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.finishBtn} onPress={handleFinishRoute}>
+            <TouchableOpacity
+              style={styles.finishBtn}
+              onPress={handleFinishRoute}
+              accessibilityRole="button"
+              accessibilityLabel="Finish and save route"
+            >
               <Ionicons name="stop" size={17} color="#FFFFFF" />
               <Text style={styles.actionBtnTextSmall}>Finish</Text>
             </TouchableOpacity>
@@ -1075,23 +1028,6 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     fontWeight: '600',
     color: '#8A998E',
-  },
-  simBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: '#F0F9FF',
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
-    marginBottom: 10,
-  },
-  simBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#0284C7',
   },
   actionDock: {
     position: 'absolute',

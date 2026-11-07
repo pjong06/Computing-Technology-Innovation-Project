@@ -885,6 +885,12 @@ table.big .btn {
 }
 
 /* IoT alert panel */
+
+.iot-main {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
 .alert-list {
   display: grid;
   gap: 12px;

@@ -1658,33 +1658,6 @@ function createStatusPill(
 
 /* Camera evidence */
 
-function getCameraState(
-  alertId
-) {
-  return (
-    cameraEvidenceState.get(
-      alertId
-    ) || {
-      status:
-        'idle',
-
-      evidence:
-        [],
-
-      latest:
-        null,
-
-      url:
-        null,
-
-      expiresAt:
-        0,
-
-      message:
-        '',
-    }
-  );
-}
 
 
 function setCameraState(
@@ -1748,35 +1721,52 @@ async function fetchCameraEvidence(
         : [];
 
     if (
-      evidence.length === 0
-    ) {
-      const emptyState = {
-        status:
-          'empty',
+  evidence.length === 0
+) {
+  const previous =
+    getCameraState(
+      alert.id
+    );
 
-        evidence:
-          [],
+  const retryCount =
+    (
+      previous.retryCount ||
+      0
+    ) + 1;
 
-        latest:
-          null,
+  const emptyState = {
+    status:
+      'empty',
 
-        url:
-          null,
+    evidence:
+      [],
 
-        expiresAt:
-          0,
+    latest:
+      null,
 
-        message:
-          '',
-      };
+    url:
+      null,
 
-      setCameraState(
-        alert.id,
-        emptyState
-      );
+    expiresAt:
+      0,
 
-      return emptyState;
-    }
+    message:
+      '',
+
+    retryCount,
+
+    nextRetryAt:
+      Date.now() +
+      5000,
+  };
+
+  setCameraState(
+    alert.id,
+    emptyState
+  );
+
+  return emptyState;
+}
 
     const latest =
       evidence[0];
@@ -1829,6 +1819,10 @@ async function fetchCameraEvidence(
 
       message:
         '',
+      retryCount:
+        0,
+      nextRetryAt:
+        0,
     };
 
     setCameraState(
@@ -1843,23 +1837,38 @@ async function fetchCameraEvidence(
       error
     );
 
-    const errorState = {
-      ...current,
+  const previous =
+    getCameraState(
+      alert.id
+    );
 
-      status:
-        'error',
+  const errorState = {
+    ...previous,
 
-      url:
-        null,
+    status:
+      'error',
 
-      expiresAt:
-        0,
+    url:
+      null,
 
-      message:
-        error instanceof Error
-          ? error.message
-          : 'Could not load camera evidence.',
-    };
+    expiresAt:
+      0,
+
+    message:
+      error instanceof Error
+        ? error.message
+        : 'Could not load camera evidence.',
+
+    retryCount:
+      (
+        previous.retryCount ||
+        0
+      ) + 1,
+
+    nextRetryAt:
+      Date.now() +
+      5000,
+  };
 
     setCameraState(
       alert.id,
@@ -1870,26 +1879,44 @@ async function fetchCameraEvidence(
   }
 }
 
-
 function cameraNeedsRefresh(
   state
 ) {
-  return (
+  if (
     state.status ===
-      'idle' ||
-    (
-      state.status ===
-        'ready' &&
-      (
-        !state.url ||
-        Date.now() >=
-          state.expiresAt -
-            3000
-      )
-    )
-  );
-}
+    'idle'
+  ) {
+    return true;
+  }
 
+  if (
+    state.status ===
+      'empty' ||
+    state.status ===
+      'error'
+  ) {
+    return (
+      state.retryCount <
+        3 &&
+      Date.now() >=
+        state.nextRetryAt
+    );
+  }
+
+  if (
+    state.status ===
+      'ready'
+  ) {
+    return (
+      !state.url ||
+      Date.now() >=
+        state.expiresAt -
+          3000
+    );
+  }
+
+  return false;
+}
 
 function queueCameraLoad(
   alert
@@ -1923,6 +1950,40 @@ function queueCameraLoad(
       renderAlerts();
     },
     0
+  );
+}
+
+function getCameraState(
+  alertId
+) {
+  return (
+    cameraEvidenceState.get(
+      alertId
+    ) || {
+      status:
+        'idle',
+
+      evidence:
+        [],
+
+      latest:
+        null,
+
+      url:
+        null,
+
+      expiresAt:
+        0,
+
+      message:
+        '',
+
+      retryCount:
+        0,
+
+      nextRetryAt:
+        0,
+    }
   );
 }
 
@@ -2203,8 +2264,120 @@ async function openFullPhoto(
   );
 }
 
-/* Alert actions */
+/* Delete alert */
 
+function canDeleteAlerts() {
+  const user =
+    typeof getCurrentUser ===
+      'function'
+      ? getCurrentUser()
+      : null;
+
+  return (
+    user?.role ===
+    'Conservation Officer'
+  );
+}
+
+
+async function deleteAlert(
+  alert
+) {
+  if (
+    alertActionsInProgress.has(
+      alert.id
+    )
+  ) {
+    return;
+  }
+
+  const status =
+    normalisePersistentStatus(
+      alert.alert_status
+    );
+
+  const cameraWarning =
+    isCameraAlert(alert)
+      ? '\n\nLinked camera evidence will also be deleted.'
+      : '';
+
+  const confirmed =
+    window.confirm(
+      `Permanently delete this ${status} threat alert?${cameraWarning}\n\nSensor telemetry will be kept.\n\nThis cannot be undone.`
+    );
+
+  if (!confirmed) {
+    return;
+  }
+
+  alertActionsInProgress.add(
+    alert.id
+  );
+
+  renderAlerts();
+
+  try {
+    const token =
+      await getAccessToken();
+
+    const result =
+      await requestIoT(
+        `/alerts/${encodeURIComponent(
+          alert.id
+        )}`,
+        token,
+        {
+          method:
+            'DELETE',
+        }
+      );
+
+    resolutionDrafts.delete(
+      alert.id
+    );
+
+    cameraEvidenceState.delete(
+      alert.id
+    );
+
+    if (
+      result.data
+        ?.camera_cleanup_pending
+    ) {
+      notify(
+        'Alert deleted. Camera cleanup needs attention.'
+      );
+    } else {
+      notify(
+        'Alert deleted permanently.'
+      );
+    }
+
+    await loadDashboard({
+      silent:
+        true,
+    });
+  } catch (error) {
+    console.error(
+      'Delete alert failed:',
+      error
+    );
+
+    notify(
+      error instanceof Error
+        ? error.message
+        : 'Could not delete alert.'
+    );
+  } finally {
+    alertActionsInProgress.delete(
+      alert.id
+    );
+
+    renderAlerts();
+  }
+}
+
+/* Alert actions */
 async function performAlertAction(
   alert,
   action,
@@ -3119,6 +3292,50 @@ if (
     refreshPhoto
   );
 
+  
+    if (canDeleteAlerts()) {
+  const deleteButton =
+    document.createElement(
+      'button'
+    );
+
+  deleteButton.type =
+    'button';
+
+  deleteButton.className =
+    'btn ghost';
+
+  deleteButton.style.color =
+  '#ff7b7b';
+
+  deleteButton.style.borderColor =
+    '#a83b3b';
+
+  deleteButton.style.background =
+    'rgba(168, 59, 59, 0.12)';
+
+  deleteButton.textContent =
+    busy
+      ? 'Working...'
+      : 'Delete alert';
+
+  deleteButton.disabled =
+    busy;
+
+  deleteButton.addEventListener(
+    'click',
+    () => {
+      void deleteAlert(
+        alert
+      );
+    }
+  );
+
+  actions.appendChild(
+    deleteButton
+  );
+}
+
   detailSide.appendChild(
     actions
   );
@@ -3419,6 +3636,52 @@ function renderCompactAlertRow(
       resolution
     );
   }
+
+  if (
+      canDeleteAlerts()
+    ) {
+      const deleteButton =
+        document.createElement(
+          'button'
+        );
+
+      deleteButton.type =
+        'button';
+
+      deleteButton.className =
+        'btn ghost small';
+
+      deleteButton.style.color =
+        '#ff7b7b';
+
+      deleteButton.style.borderColor =
+        '#a83b3b';
+
+      deleteButton.style.background =
+        'rgba(168, 59, 59, 0.12)';
+
+      deleteButton.textContent =
+        busy
+          ? 'Working...'
+          : 'Delete';
+
+      deleteButton.disabled =
+        busy;
+
+      deleteButton.addEventListener(
+        'click',
+        () => {
+          void deleteAlert(
+            alert
+          );
+        }
+      );
+
+      action.appendChild(
+        deleteButton
+      );
+    }
+
 
   row.appendChild(
     main

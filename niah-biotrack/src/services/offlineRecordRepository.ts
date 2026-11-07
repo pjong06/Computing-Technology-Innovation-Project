@@ -195,7 +195,9 @@ function observationPayload(
   observation: ObservationVisit
 ): Record<string, unknown> {
   return {
-    plant_client_record_id: record.id,
+    ...(record.serverId
+      ? { plant_id: record.serverId }
+      : { plant_client_record_id: record.id }),
     observed_at:
       observation.observedAt ??
       new Date().toISOString(),

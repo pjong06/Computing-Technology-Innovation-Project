@@ -18,62 +18,58 @@ import * as Location from 'expo-location';
 import type * as ImagePicker from 'expo-image-picker';
 import Toast from 'react-native-toast-message';
 import { randomUUID } from 'expo-crypto';
+import { Ionicons } from '@expo/vector-icons';
 
 import { useStaffOnly } from '../src/context/AuthRoleContext';
-
+import { useProfileStore } from '../src/store/useProfileStore';
 import {
   pickImageFromLibrary,
   takePhotoWithCamera,
   type PickImageResult,
 } from '../src/utils/imagePicker';
-
 import {
   savePhotoPermanently,
   deleteStoredPhoto,
 } from '../src/utils/photoStorage';
-
 import {
   IdentificationStatus,
   RecordStatus,
+  ReviewStatus,
   SyncStatus,
   useRecordStore,
+  type HealthStatus,
+  type LifeStage,
+  type ObservationVisit,
   type PlantPhotoType,
   type PlantRecord,
   type PhotoUpload,
 } from '../src/store/useRecordStore';
-
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
-
-import SpeciesPicker, {
-  type SpeciesChoice,
-} from '../src/components/SpeciesPicker';
-
 import {
   identifyPlant,
   IdentifyNetworkError,
   type SpeciesSuggestion,
 } from '../src/services/identifyPlant';
-
 import {
   formatCoordinates,
   describeAccuracy,
 } from '../src/utils/formatCoordinates';
 
-import {
-  conservationStatusCode,
-  conservationStatusLabel,
-} from '../src/utils/conservationStatus';
-
 import FormScrollView from '../src/components/FormScrollView';
 import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
+import SpeciesPicker, { type SpeciesChoice } from '../src/components/SpeciesPicker';
 
 const DONE_BAR_ID = 'new-record-done';
+const GPS_TIMEOUT_MS = 20_000;
+const DEFAULT_PHOTO_TYPES: PlantPhotoType[] = ['whole_plant', 'leaf', 'flower', 'bark'];
 
-const DEFAULT_PHOTO_TYPES: PlantPhotoType[] = [
-  'whole_plant',
-  'leaf',
-  'flower',
-  'bark',
+const LIFE_STAGES: LifeStage[] = ['Seedling', 'Sapling', 'Pole', 'Mature', 'Senescent'];
+const HEALTH_STATUSES: { label: HealthStatus; color: string; bg: string; border: string }[] = [
+  { label: 'Healthy', color: '#2D6A4F', bg: '#E8F5E9', border: '#A3D9A5' },
+  { label: 'Stressed', color: '#D97706', bg: '#FEF3C7', border: '#FCD34D' },
+  { label: 'Diseased', color: '#DC2626', bg: '#FEE2E2', border: '#FCA5A5' },
+  { label: 'Damaged', color: '#7C3AED', bg: '#F3E8FF', border: '#D8B4FE' },
+  { label: 'Dead', color: '#4B5563', bg: '#F3F4F6', border: '#D1D5DB' },
 ];
 
 interface OfflinePlantPhotoEntry {
@@ -90,28 +86,12 @@ type PlantRecordWithOfflinePhotos = PlantRecord & {
   diameter?: string;
 };
 
-function initialPhotos(
-  record: PlantRecord | undefined
-): ImagePicker.ImagePickerAsset[] {
+function initialPhotos(record: PlantRecord | undefined): ImagePicker.ImagePickerAsset[] {
   if (!record) return [];
-
-  const asset = (uri: string): ImagePicker.ImagePickerAsset =>
-    ({
-      uri,
-      width: 0,
-      height: 0,
-    } as ImagePicker.ImagePickerAsset);
-
-  const offlineRecord = record as PlantRecordWithOfflinePhotos;
-
-  if (offlineRecord.photoEntries && offlineRecord.photoEntries.length > 0) {
-    return offlineRecord.photoEntries.map((photo) => asset(photo.uri));
-  }
-
-  if (record.photoUris && record.photoUris.length > 0) {
-    return record.photoUris.map(asset);
-  }
-
+  const toAsset = (uri: string) => ({ uri, width: 0, height: 0 } as ImagePicker.ImagePickerAsset);
+  const offline = record as PlantRecordWithOfflinePhotos;
+  if (offline.photoEntries?.length) return offline.photoEntries.map((p) => toAsset(p.uri));
+  if (record.photoUris?.length) return record.photoUris.map(toAsset);
   return [];
 }
 
@@ -122,144 +102,74 @@ interface GpsFix {
 }
 
 type GpsStatus = 'acquiring' | 'ready' | 'unavailable' | 'timeout';
-
-const GPS_TIMEOUT_MS = 20_000;
-
-class GpsTimeoutError extends Error {}
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new GpsTimeoutError()), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      }
-    );
-  });
-}
-
-type FieldErrors = Partial<
-  Record<'photos' | 'scientificName' | 'locationName' | 'gps', string>
->;
+type FieldErrors = Partial<Record<'photos' | 'scientificName' | 'locationName' | 'gps', string>>;
 
 export default function NewRecordScreen() {
   const router = useRouter();
   const blocked = useStaffOnly();
-
+  const me = useProfileStore((state) => state.me);
   const { editId } = useLocalSearchParams<{ editId?: string }>();
 
   const existingRecord = useRecordStore((state) =>
-    editId ? state.records.find((record) => record.id === editId) : undefined
+    editId ? state.records.find((r) => r.id === editId) : undefined
   );
-
   const addRecord = useRecordStore((state) => state.addRecord);
   const updateRecord = useRecordStore((state) => state.updateRecord);
   const syncRecord = useRecordStore((state) => state.syncRecord);
-
-  const isEditing = Boolean(existingRecord);
-
-  const [photos, setPhotos] = useState<ImagePicker.ImagePickerAsset[]>(() =>
-    initialPhotos(existingRecord)
-  );
-
-  const [height, setHeight] = useState(existingRecord?.height ?? '');
-  const [diameter, setDiameter] = useState(
-    (existingRecord as PlantRecordWithOfflinePhotos)?.diameter ?? ''
-  );
-
-  const [speciesChoice, setSpeciesChoice] = useState<SpeciesChoice>(null);
-  const [speciesQuery, setSpeciesQuery] = useState(
-    existingRecord?.scientificName ?? ''
-  );
-  const [speciesNotice, setSpeciesNotice] = useState('');
   const allSpecies = useSpeciesStore((state) => state.species);
 
-  const [morphology, setMorphology] = useState(
-    existingRecord?.morphology ?? ''
-  );
-  const [locationName, setLocationName] = useState(
-    existingRecord?.locationName ?? ''
-  );
+  const isEditing = Boolean(existingRecord);
+  const [photos, setPhotos] = useState<ImagePicker.ImagePickerAsset[]>(() => initialPhotos(existingRecord));
+  const [speciesChoice, setSpeciesChoice] = useState<SpeciesChoice>(null);
+  const [speciesQuery, setSpeciesQuery] = useState(existingRecord?.scientificName ?? '');
+  const [speciesNotice, setSpeciesNotice] = useState('');
+  const [height, setHeight] = useState(existingRecord?.height ?? '');
+  const [diameter, setDiameter] = useState((existingRecord as PlantRecordWithOfflinePhotos)?.diameter ?? '');
+  const [lifeStage, setLifeStage] = useState<LifeStage>(existingRecord?.observations?.[0]?.stage ?? 'Mature');
+  const [healthStatus, setHealthStatus] = useState<HealthStatus>(existingRecord?.observations?.[0]?.health ?? 'Healthy');
+  const [morphology, setMorphology] = useState(existingRecord?.morphology ?? '');
+  const [locationName, setLocationName] = useState(existingRecord?.locationName ?? '');
 
   const [gpsFix, setGpsFix] = useState<GpsFix | null>(
-    existingRecord?.latitude !== undefined &&
-      existingRecord?.longitude !== undefined
-      ? {
-          latitude: existingRecord.latitude,
-          longitude: existingRecord.longitude,
-          accuracyM: existingRecord.gpsAccuracyM ?? null,
-        }
+    existingRecord?.latitude !== undefined && existingRecord?.longitude !== undefined
+      ? { latitude: existingRecord.latitude, longitude: existingRecord.longitude, accuracyM: existingRecord.gpsAccuracyM ?? null }
       : null
   );
-
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>(
-    existingRecord?.latitude !== undefined &&
-      existingRecord?.longitude !== undefined
-      ? 'ready'
-      : 'acquiring'
+    existingRecord?.latitude !== undefined && existingRecord?.longitude !== undefined ? 'ready' : 'acquiring'
   );
-
   const [gpsError, setGpsError] = useState('');
-  const screenActive = useRef(true);
-  const gpsRequestId = useRef(0);
   const [errors, setErrors] = useState<FieldErrors>({});
 
-  const clearError = (field: keyof FieldErrors) => {
-    setErrors((previous) =>
-      previous[field] ? { ...previous, [field]: undefined } : previous
-    );
-  };
-
+  const screenActive = useRef(true);
+  const gpsRequestId = useRef(0);
   const identifyRequest = useRef<AbortController | null>(null);
+  const speciesSelectionInitialized = useRef(false);
   const [suggestions, setSuggestions] = useState<SpeciesSuggestion[]>([]);
-  const [selectedSpecies, setSelectedSpecies] =
-    useState<SpeciesSuggestion | null>(null);
+  const [selectedSpecies, setSelectedSpecies] = useState<SpeciesSuggestion | null>(null);
   const [identifying, setIdentifying] = useState(false);
   const [identifyMessage, setIdentifyMessage] = useState('');
 
-  const identifyPhoto = photos.length > 0 ? photos[0] : null;
-
+  const identifyPhoto = photos[0] ?? null;
   const photosRef = useRef(photos);
   photosRef.current = photos;
-
   const recordSaved = useRef(false);
   const originalPhotoUris = useRef(new Set(existingRecord?.photoUris ?? []));
 
-  useEffect(() => {
-    if (!existingRecord || speciesChoice) return;
+  const approvedSpecies = speciesChoice?.kind === 'species' ? speciesChoice.species : null;
 
-    const match = allSpecies.find(
-      (species) =>
-        species.id === existingRecord.speciesId ||
-        species.scientific_name.trim().toLowerCase() ===
-          existingRecord.scientificName.trim().toLowerCase()
-    );
-
-    if (match) {
-      setSpeciesChoice({
-        kind: 'species',
-        species: match,
-      });
-    }
-  }, [allSpecies, existingRecord, speciesChoice]);
+  const clearError = (field: keyof FieldErrors) => {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: undefined } : prev));
+  };
 
   useEffect(() => {
     screenActive.current = true;
-
-    if (!gpsFix) {
-      void fetchLocation();
-    }
+    if (!gpsFix) void fetchLocation();
 
     return () => {
       screenActive.current = false;
       identifyRequest.current?.abort();
       identifyRequest.current = null;
-
       if (!recordSaved.current) {
         photosRef.current.forEach((asset) => {
           if (asset?.uri && !originalPhotoUris.current.has(asset.uri)) {
@@ -270,12 +180,35 @@ export default function NewRecordScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    if (speciesSelectionInitialized.current) return;
+
+    if (!existingRecord) {
+      speciesSelectionInitialized.current = true;
+      return;
+    }
+
+    if (allSpecies.length === 0) return;
+
+    const match = allSpecies.find(
+      (species) =>
+        species.id === existingRecord.speciesId ||
+        species.scientific_name.trim().toLowerCase() === existingRecord.scientificName.trim().toLowerCase()
+    );
+
+    if (match) {
+      setSpeciesChoice({ kind: 'species', species: match });
+      setSpeciesQuery(match.scientific_name);
+    }
+
+    speciesSelectionInitialized.current = true;
+  }, [allSpecies, existingRecord]);
+
   const fetchLocation = async () => {
     const requestId = ++gpsRequestId.current;
-    const isCurrent = () =>
-      screenActive.current && requestId === gpsRequestId.current;
+    const isCurrent = () => screenActive.current && requestId === gpsRequestId.current;
 
-    const markUnavailable = (reason: string) => {
+    const setUnavailable = (reason: string) => {
       if (!isCurrent()) return;
       setGpsFix(null);
       setGpsError(reason);
@@ -287,24 +220,17 @@ export default function NewRecordScreen() {
 
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        markUnavailable('Location permission is off for this app.');
-        return;
-      }
+      if (status !== 'granted') return setUnavailable('Location permission is off for this app.');
 
       const enabled = await Location.hasServicesEnabledAsync();
-      if (!enabled) {
-        markUnavailable('Location services are turned off on this device.');
-        return;
-      }
+      if (!enabled) return setUnavailable('Location services are turned off on this device.');
 
-      const location = await withTimeout(
-        Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.High,
-        }),
-        GPS_TIMEOUT_MS
+      const locationPromise = Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('GPS_TIMEOUT')), GPS_TIMEOUT_MS)
       );
 
+      const location = await Promise.race([locationPromise, timeoutPromise]);
       if (!isCurrent()) return;
 
       setGpsFix({
@@ -314,273 +240,188 @@ export default function NewRecordScreen() {
       });
       setGpsStatus('ready');
       clearError('gps');
-    } catch (error) {
-      if (error instanceof GpsTimeoutError) {
-        if (!isCurrent()) return;
+    } catch (err: any) {
+      if (!isCurrent()) return;
+      if (err?.message === 'GPS_TIMEOUT') {
         setGpsFix(null);
-        setGpsError('');
         setGpsStatus('timeout');
-        return;
+      } else {
+        setUnavailable('Could not get a GPS fix.');
       }
-      markUnavailable('Could not get a GPS fix.');
     }
-  };
-
-  const clearSuggestionFields = () => {
-    if (!selectedSpecies) return;
-    const name = selectedSpecies.scientificName;
-    setSpeciesChoice((choice) =>
-      choice?.kind === 'species' && choice.species.scientific_name === name
-        ? null
-        : choice
-    );
-    setSpeciesNotice('');
   };
 
   const handlePickResult = async (result: PickImageResult) => {
     if (result.status === 'picked') {
-      let permanentUri: string;
       try {
-        permanentUri = await savePhotoPermanently(result.asset.uri);
+        const permanentUri = await savePhotoPermanently(result.asset.uri);
+        if (!screenActive.current) return void deleteStoredPhoto(permanentUri);
+
+        setPhotos((prev) => (prev.length >= 4 ? prev : [...prev, { ...result.asset, uri: permanentUri }]));
+        clearError('photos');
       } catch {
-        Toast.show({
-          type: 'error',
-          text1: 'Photo not saved',
-          text2: 'The photo could not be stored on this device.',
-        });
-        return;
+        Toast.show({ type: 'error', text1: 'Photo not saved', text2: 'Could not store image locally.' });
       }
-
-      if (!screenActive.current) {
-        void deleteStoredPhoto(permanentUri);
-        return;
-      }
-
-      setPhotos((previous) => {
-        if (previous.length >= 4) return previous;
-        return [...previous, { ...result.asset, uri: permanentUri }];
-      });
-
-      clearError('photos');
-      return;
-    }
-
-    if (result.status === 'permission-denied') {
-      Toast.show({
-        type: 'error',
-        text1: 'Camera permission needed',
-        text2: 'Allow camera access for Expo Go in Settings.',
-      });
-      return;
-    }
-
-    if (result.status === 'error') {
-      Toast.show({
-        type: 'error',
-        text1: 'Could not open',
-        text2: 'The camera or photo library could not be opened.',
-      });
+    } else if (result.status === 'permission-denied') {
+      Toast.show({ type: 'error', text1: 'Permission needed', text2: 'Allow camera/photo access in Settings.' });
     }
   };
 
   const handleAddPhoto = () => {
     if (photos.length >= 4) {
-      Toast.show({
-        type: 'info',
-        text1: 'Maximum Limit Reached',
-        text2: 'You can attach up to 4 photos per plant record.',
-      });
+      Toast.show({ type: 'info', text1: 'Limit reached', text2: 'Maximum 4 photos allowed.' });
       return;
     }
-
     Alert.alert('Attach Plant Photo', 'Select image source', [
-      {
-        text: 'Take Photo',
-        onPress: async () => {
-          await handlePickResult(await takePhotoWithCamera());
-        },
-      },
-      {
-        text: 'Choose from Gallery',
-        onPress: async () => {
-          await handlePickResult(await pickImageFromLibrary());
-        },
-      },
+      { text: 'Take Photo', onPress: async () => handlePickResult(await takePhotoWithCamera()) },
+      { text: 'Choose from Gallery', onPress: async () => handlePickResult(await pickImageFromLibrary()) },
       { text: 'Cancel', style: 'cancel' },
     ]);
   };
 
   const removePhoto = (index: number) => {
-    const photo = photos[index];
-    if (photo && !originalPhotoUris.current.has(photo.uri)) {
-      void deleteStoredPhoto(photo.uri);
-    }
-    setPhotos((previous) => previous.filter((_, i) => i !== index));
-    clearSuggestionFields();
+    const p = photos[index];
+    if (p && !originalPhotoUris.current.has(p.uri)) void deleteStoredPhoto(p.uri);
+    setPhotos((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleIdentify = async () => {
     if (!identifyPhoto || identifying) return;
-
-    const request = new AbortController();
-    identifyRequest.current = request;
-
+    const req = new AbortController();
+    identifyRequest.current = req;
     setIdentifying(true);
     setIdentifyMessage('');
     setSuggestions([]);
-    clearSuggestionFields();
     setSelectedSpecies(null);
 
     try {
-      const nextSuggestions = await identifyPlant(
-        identifyPhoto,
-        request.signal
+      const next = await identifyPlant(identifyPhoto, req.signal);
+      if (req.signal.aborted) return;
+      setSuggestions(next);
+      if (next.length === 0) {
+        setIdentifyMessage('No species match found. Search the offline catalogue or save the record for later.');
+      }
+    } catch (err) {
+      if (req.signal.aborted) return;
+      setIdentifyMessage(
+        err instanceof IdentifyNetworkError
+          ? "Can't reach the AI server. Search the offline catalogue or save the record for later."
+          : 'Identification failed. Search the offline catalogue or save the record for later.'
       );
-
-      if (request.signal.aborted) return;
-      setSuggestions(nextSuggestions);
-
-      if (nextSuggestions.length === 0) {
-        setIdentifyMessage(
-          'No match found. Open the Species Reference to research the plant, or try another photo.'
-        );
-      }
-    } catch (error) {
-      if (request.signal.aborted) return;
-      if (error instanceof IdentifyNetworkError) {
-        setIdentifyMessage(
-          "Can't reach the AI server. You can still use the cached Species Reference, or try again when connected."
-        );
-      } else {
-        setIdentifyMessage(
-          error instanceof Error
-            ? error.message
-            : 'Identification failed. Please try again.'
-        );
-      }
     } finally {
-      if (identifyRequest.current === request) {
+      if (identifyRequest.current === req) {
         identifyRequest.current = null;
         setIdentifying(false);
       }
     }
   };
 
-  const selectSuggestion = (suggestion: SpeciesSuggestion) => {
-    clearSuggestionFields();
-    setSelectedSpecies(suggestion);
-
-    const wanted = suggestion.scientificName.trim().toLowerCase();
-    const match = allSpecies.find(
-      (species) => species.scientific_name.trim().toLowerCase() === wanted
+  const selectSuggestion = (s: SpeciesSuggestion) => {
+    setSelectedSpecies(s);
+    const catalogueMatch = allSpecies.find(
+      (species) =>
+        species.scientific_name.trim().toLowerCase() === s.scientificName.trim().toLowerCase()
     );
 
-    if (match) {
-      setSpeciesChoice({ kind: 'species', species: match });
-      setSpeciesNotice('');
+    setSpeciesQuery(s.scientificName);
+
+    if (catalogueMatch) {
+      setSpeciesChoice({ kind: 'species', species: catalogueMatch });
+      setSpeciesNotice('AI suggestion matched an approved species in the offline catalogue.');
     } else {
       setSpeciesChoice(null);
-      setSpeciesQuery(suggestion.scientificName);
       setSpeciesNotice(
-        `"${suggestion.scientificName}" isn't in the approved species list. Search for and select an approved species, or save this record for later.`
+        'This AI suggestion is not in the approved catalogue. Save for later, then confirm the species before submitting.'
       );
     }
+
     clearError('scientificName');
   };
 
   const handleSpeciesChange = (choice: SpeciesChoice) => {
-    if (!choice) setSpeciesQuery('');
     setSpeciesChoice(choice);
     setSelectedSpecies(null);
     setSpeciesNotice('');
     clearError('scientificName');
+
+    if (choice?.kind === 'species') {
+      setSpeciesQuery(choice.species.scientific_name);
+    } else {
+      setSpeciesQuery('');
+    }
   };
 
-  const handleLocationNameChange = (value: string) => {
-    setLocationName(value);
-    clearError('locationName');
-  };
-
-  const handleSave = async () => {
-    const identified = Boolean(speciesChoice);
-    const offlineRecord = existingRecord as
-      | PlantRecordWithOfflinePhotos
-      | undefined;
-
+  const handleSave = async (submitForReview: boolean) => {
+    const offlineRecord = existingRecord as PlantRecordWithOfflinePhotos | undefined;
     const photoMeta: Record<string, PhotoUpload> = {};
     const photoEntries: OfflinePlantPhotoEntry[] = [];
 
-    photos.forEach((asset, index) => {
+    photos.forEach((asset, idx) => {
       const uri = asset.uri;
-      const photoType = DEFAULT_PHOTO_TYPES[index] || 'whole_plant';
+      const photoType = DEFAULT_PHOTO_TYPES[idx] || 'whole_plant';
+      const prev = offlineRecord?.photoEntries?.find((p) => p.uri === uri);
+      const prevMeta = existingRecord?.photoMeta?.[uri];
+      const photoId = prev?.id ?? prevMeta?.id ?? randomUUID();
 
-      const previousEntry = offlineRecord?.photoEntries?.find(
-        (photo) => photo.uri === uri
-      );
-      const previousMeta = existingRecord?.photoMeta?.[uri];
-      const photoId = previousEntry?.id ?? previousMeta?.id ?? randomUUID();
-
-      let photoSyncStatus =
-        previousEntry?.syncStatus ??
-        (previousMeta?.uploaded
+      let status = prev?.syncStatus ?? (
+        prevMeta?.uploaded
           ? SyncStatus.UPLOADED
-          : identified
+          : submitForReview
           ? SyncStatus.NOT_UPLOADED
-          : SyncStatus.LOCAL_ONLY);
+          : SyncStatus.LOCAL_ONLY
+      );
+      if (submitForReview && status === SyncStatus.LOCAL_ONLY) status = SyncStatus.NOT_UPLOADED;
 
-      if (identified && photoSyncStatus === SyncStatus.LOCAL_ONLY) {
-        photoSyncStatus = SyncStatus.NOT_UPLOADED;
-      }
-
-      photoEntries.push({
-        id: photoId,
-        uri,
-        photoType,
-        syncStatus: photoSyncStatus,
-        serverId: previousEntry?.serverId,
-        lastError: previousEntry?.lastError,
-      });
-
-      photoMeta[uri] = {
-        ...(previousMeta && previousMeta.type === photoType
-          ? previousMeta
-          : {}),
-        id: photoId,
-        type: photoType,
-        uploaded: photoSyncStatus === SyncStatus.UPLOADED,
-      };
+      photoEntries.push({ id: photoId, uri, photoType, syncStatus: status, serverId: prev?.serverId, lastError: prev?.lastError });
+      photoMeta[uri] = { ...(prevMeta?.type === photoType ? prevMeta : {}), id: photoId, type: photoType, uploaded: status === SyncStatus.UPLOADED };
     });
 
-    const photoList = photoEntries.map((photo) => photo.uri);
+    const photoList = photoEntries.map((p) => p.uri);
     const nextErrors: FieldErrors = {};
-
-    if (photoList.length === 0) {
-      nextErrors.photos = 'Add at least one photo (min. 1, max. 4).';
+    if (!photoList.length) nextErrors.photos = 'Add at least one photo (min. 1, max. 4).';
+    if (submitForReview && !approvedSpecies) {
+      nextErrors.scientificName = 'Select an approved species before submitting. You can save for later without one.';
     }
-
-    if (!locationName.trim()) {
-      nextErrors.locationName = 'Enter a location landmark.';
-    }
-
-    if (!gpsFix) {
-      nextErrors.gps =
-        'A GPS fix is required. Wait for it, or tap the GPS card to retry.';
-    }
+    if (!locationName.trim()) nextErrors.locationName = 'Enter a location landmark.';
+    if (!gpsFix) nextErrors.gps = 'A GPS fix is required. Wait for it, or tap Retry.';
 
     setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0 || !gpsFix) return;
 
-    if (Object.keys(nextErrors).length > 0 || !gpsFix) {
-      return;
-    }
+    // Prefer Number.parseFloat over global parseFloat (SonarCloud requirement)
+    const heightNum = Number.parseFloat(height);
+    const diameterNum = Number.parseFloat(diameter);
 
-    const species =
-      speciesChoice?.kind === 'species' ? speciesChoice.species : null;
+    const now = new Date();
+    const formattedDate = now.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    const formattedTime = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+    const previousInitialVisit = existingRecord?.observations?.[0];
+    const initialVisit: ObservationVisit = {
+      ...previousInitialVisit,
+      id: previousInitialVisit?.id || randomUUID(),
+      date: previousInitialVisit?.date || `${formattedDate} · ${formattedTime}`,
+      observedAt: previousInitialVisit?.observedAt || now.toISOString(),
+      recordedBy: me?.full_name || me?.email || 'Field Staff',
+      health: healthStatus,
+      stage: lifeStage,
+      heightCm: Number.isFinite(heightNum) ? Math.round(heightNum * 100) : undefined,
+      diameterCm: Number.isFinite(diameterNum) ? diameterNum : undefined,
+      measurement: `Height ${height || '-'} m · Diameter ${diameter || '-'} cm`,
+      notes: morphology.trim() || 'Initial registration record.',
+      photoUris: photoList,
+      syncStatus: submitForReview ? SyncStatus.NOT_UPLOADED : SyncStatus.LOCAL_ONLY,
+      reviewStatus: ReviewStatus.DRAFT,
+      reviewComment: null,
+      submissionRequested: submitForReview,
+      submittedForReview: false,
+    };
 
     const recordData = {
-      scientificName: species?.scientific_name ?? '',
-      speciesId: species?.id ?? null,
-      commonName: species?.common_name ?? '',
-      family: species?.taxonomy?.family ?? '',
+      scientificName: approvedSpecies?.scientific_name ?? '',
+      speciesId: approvedSpecies?.id ?? null,
+      commonName: approvedSpecies?.common_name ?? '',
+      family: approvedSpecies?.taxonomy?.family ?? '',
       height: height.trim() || undefined,
       diameter: diameter.trim() || undefined,
       morphology: morphology.trim() || undefined,
@@ -588,51 +429,53 @@ export default function NewRecordScreen() {
       latitude: gpsFix.latitude,
       longitude: gpsFix.longitude,
       gpsAccuracyM: gpsFix.accuracyM,
-      gpsCoordination: formatCoordinates(
-        gpsFix.latitude,
-        gpsFix.longitude,
-        gpsFix.accuracyM
-      ),
+      gpsCoordination: formatCoordinates(gpsFix.latitude, gpsFix.longitude, gpsFix.accuracyM),
       photoUris: photoList,
       photoMeta,
       photoEntries,
-      recordStatus: identified ? RecordStatus.COMPLETE : RecordStatus.DRAFT,
-      identificationStatus: identified
-        ? IdentificationStatus.IDENTIFIED
-        : IdentificationStatus.PENDING,
-      syncStatus: identified ? SyncStatus.NOT_UPLOADED : SyncStatus.LOCAL_ONLY,
+      observations: existingRecord?.observations?.length
+        ? [initialVisit, ...existingRecord.observations.slice(1)]
+        : [initialVisit],
+      recordStatus: submitForReview ? RecordStatus.COMPLETE : RecordStatus.DRAFT,
+      identificationStatus: approvedSpecies ? IdentificationStatus.IDENTIFIED : IdentificationStatus.PENDING,
+      syncStatus: submitForReview ? SyncStatus.NOT_UPLOADED : SyncStatus.LOCAL_ONLY,
+      reviewStatus: submitForReview ? ReviewStatus.PENDING : ReviewStatus.DRAFT,
     };
 
     const saved = existingRecord
-      ? await updateRecord(existingRecord.id, recordData as any)
-      : await addRecord(recordData as any);
+      ? await updateRecord(existingRecord.id, recordData)
+      : await addRecord(recordData);
 
     if (!saved) {
-      Toast.show({
-        type: 'error',
-        text1: 'Record not updated',
-        text2: 'Only local drafts and returned records can be edited.',
-      });
+      Toast.show({ type: 'error', text1: 'Record not updated', text2: 'Only local drafts can be edited.' });
       return;
     }
 
     if (existingRecord) {
       originalPhotoUris.current.forEach((uri) => {
-        if (!photoList.includes(uri)) {
-          void deleteStoredPhoto(uri);
-        }
+        if (!photoList.includes(uri)) void deleteStoredPhoto(uri);
       });
     }
 
     recordSaved.current = true;
+    Toast.show({
+      type: 'success',
+      text1: submitForReview ? 'Submitted for review' : 'Draft saved',
+      text2: submitForReview ? 'Queued for officer review.' : 'Saved safely on this device.',
+    });
 
-    router.replace({
-      pathname: '/save-confirm',
-      params: { id: saved.id },
-    } as any);
+    router.replace({ pathname: '/save-confirm', params: { id: saved.id } } as any);
 
     if (saved.syncStatus === SyncStatus.NOT_UPLOADED) {
-      void syncRecord(saved.id);
+      void syncRecord(saved.id).then((result) => {
+        if (!result.ok) {
+          Toast.show({
+            type: 'info',
+            text1: 'Saved on this device',
+            text2: `Upload pending: ${result.reason}`,
+          });
+        }
+      });
     }
   };
 
@@ -642,60 +485,64 @@ export default function NewRecordScreen() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" />
 
-      {/* Screen Navigation Header */}
       <View style={styles.navRow}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.navSide}>
-          <Text style={styles.backChevron}>‹</Text>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.navSide}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="chevron-back-outline" size={28} color="#213B2A" />
         </TouchableOpacity>
-        <Text style={styles.navTitle}>
-          {isEditing ? 'Continue Plant Record' : 'New Plant Record'}
-        </Text>
+        <Text style={styles.navTitle}>{isEditing ? 'Edit plant record' : 'Register plant'}</Text>
         <View style={styles.navSide} />
       </View>
 
       <FormScrollView contentContainerStyle={styles.scrollContent}>
-        {/* ── SECTION 1: PHOTOS (PILL OUTLINE BUTTON) ── */}
+        {/* Section 1: Photos */}
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionLabel}>PHOTOS *</Text>
-          <Text style={styles.sectionSubLabel}>
-            {photos.length}/4 (min. 1 required)
-          </Text>
+          <Text style={styles.sectionSubLabel}>{photos.length}/4 (min. 1 required)</Text>
         </View>
 
-        {/* Thumbnail Previews */}
         {photos.length > 0 && (
           <View style={styles.thumbnailGrid}>
-            {photos.map((asset, index) => (
-              <View key={`${asset.uri}-${index}`} style={styles.thumbnailWrapper}>
+            {photos.map((asset, idx) => (
+              <View key={`${asset.uri}-${idx}`} style={styles.thumbnailWrapper}>
                 <Image source={{ uri: asset.uri }} style={styles.thumbnail} />
                 <TouchableOpacity
                   style={styles.removePhotoBtn}
-                  onPress={() => removePhoto(index)}
+                  onPress={() => removePhoto(idx)}
                   hitSlop={6}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove photo ${idx + 1}`}
                 >
-                  <Text style={styles.removePhotoText}>✕</Text>
+                  <Ionicons name="close-outline" size={15} color="#FFFFFF" />
                 </TouchableOpacity>
                 <View style={styles.photoBadge}>
-                  <Text style={styles.photoBadgeText}>#{index + 1}</Text>
+                  <Text style={styles.photoBadgeText}>#{idx + 1}</Text>
                 </View>
               </View>
             ))}
           </View>
         )}
 
-        {/* Pill Button styled like "+ Propose new species" */}
         {photos.length < 4 && (
           <TouchableOpacity
             style={styles.pillUploadBtn}
             onPress={handleAddPhoto}
             activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={photos.length === 0 ? 'Add plant photo' : 'Add another photo'}
           >
-            <Text style={styles.pillUploadBtnText}>
-              + {photos.length === 0 ? 'Add plant photo' : 'Add another photo'}
-            </Text>
+            <View style={styles.pillUploadContent}>
+              <Ionicons name={photos.length === 0 ? 'camera-outline' : 'add-outline'} size={20} color="#213B2A" />
+              <Text style={styles.pillUploadBtnText}>
+                {photos.length === 0 ? 'Add plant photo' : 'Add another photo'}
+              </Text>
+            </View>
           </TouchableOpacity>
         )}
-
         {errors.photos && <Text style={styles.errorText}>{errors.photos}</Text>}
 
         {/* AI Species Identification */}
@@ -706,6 +553,8 @@ export default function NewRecordScreen() {
               activeOpacity={0.85}
               onPress={() => void handleIdentify()}
               disabled={identifying}
+              accessibilityRole="button"
+              accessibilityLabel="Identify species with AI"
             >
               {identifying ? (
                 <View style={styles.loadingRow}>
@@ -713,68 +562,47 @@ export default function NewRecordScreen() {
                   <Text style={styles.identifyBtnText}>Analysing photo...</Text>
                 </View>
               ) : (
-                <Text style={styles.identifyBtnText}>
-                  Identify species with AI
-                </Text>
+                <View style={styles.identifyContentRow}>
+                  <Ionicons name="sparkles-outline" size={18} color="#FFFFFF" />
+                  <Text style={styles.identifyBtnText}>Identify species with AI</Text>
+                </View>
               )}
             </TouchableOpacity>
-
-            <Text style={styles.aiHint}>
-              Uses your primary photo (#{1}) · internet required
-            </Text>
-
-            {identifyMessage !== '' && (
-              <Text style={styles.identifyMessage}>{identifyMessage}</Text>
-            )}
+            <Text style={styles.aiHint}>Uses your primary photo (#{1}) · internet required</Text>
+            {identifyMessage !== '' && <Text style={styles.identifyMessage}>{identifyMessage}</Text>}
 
             {suggestions.length > 0 && (
               <View style={styles.suggestionsBlock}>
-                <Text style={styles.suggestionsTitle}>
-                  AI species suggestions
-                </Text>
+                <Text style={styles.suggestionsTitle}>AI species suggestions</Text>
                 <Text style={styles.suggestionsHelp}>
-                  Select an approved AI suggestion, or use the Species Reference
-                  to research the plant yourself.
+                  Select a suggestion. Only a match in the approved catalogue can be submitted.
                 </Text>
-
-                {suggestions.map((suggestion) => {
-                  const selected =
-                    selectedSpecies?.rank === suggestion.rank &&
-                    selectedSpecies.scientificName ===
-                      suggestion.scientificName;
-
+                {suggestions.map((s) => {
+                  const selected = selectedSpecies?.rank === s.rank && selectedSpecies.scientificName === s.scientificName;
                   return (
                     <TouchableOpacity
-                      key={`${suggestion.rank}-${suggestion.scientificName}`}
-                      style={[
-                        styles.suggestionCard,
-                        selected && styles.selectedSuggestionCard,
-                      ]}
-                      onPress={() => selectSuggestion(suggestion)}
+                      key={`${s.rank}-${s.scientificName}`}
+                      style={[styles.suggestionCard, selected && styles.selectedSuggestionCard]}
+                      onPress={() => selectSuggestion(s)}
                     >
                       <View style={styles.suggestionHeader}>
-                        <Text style={styles.suggestionName}>
-                          {suggestion.rank}. {suggestion.scientificName}
-                        </Text>
-                        <Text style={styles.confidence}>
-                          {suggestion.confidence.toFixed(1)}%
-                        </Text>
+                        <Text style={styles.suggestionName}>{s.rank}. {s.scientificName}</Text>
+                        <Text style={styles.confidence}>{s.confidence.toFixed(1)}%</Text>
                       </View>
-
-                      {suggestion.commonName && (
+                      {s.commonName && (
                         <Text style={styles.suggestionDetail}>
-                          Common name: {suggestion.commonName}
+                          Common: {s.commonName}
                         </Text>
                       )}
 
-                      {suggestion.family && (
+                      {s.family && (
                         <Text style={styles.suggestionDetail}>
-                          Family: {suggestion.family}
+                          Family: {s.family}
                         </Text>
                       )}
 
                       <Text style={styles.suggestionDetail}>
-                        Confidence: {suggestion.confidenceLevel}
+                        Confidence: {s.confidenceLevel}
                         {selected ? ' · Selected' : ''}
                       </Text>
                     </TouchableOpacity>
@@ -785,57 +613,27 @@ export default function NewRecordScreen() {
           </View>
         )}
 
-        {/* Section 2: Species Details */}
+        {/* Section 2: Approved species selection */}
         <Text style={styles.sectionLabel}>SPECIES DETAILS</Text>
-
-        <Text style={styles.fieldLabel}>Confirmed species</Text>
+        <Text style={styles.fieldLabel}>Approved species</Text>
+        <Text style={styles.pickerHelp}>
+          Search the offline species catalogue. If you cannot confirm the species in the field, save the record for later.
+        </Text>
         <SpeciesPicker
           value={speciesChoice}
           onChange={handleSpeciesChange}
           query={speciesQuery}
-          onQueryChange={setSpeciesQuery}
-          hasError={!!errors.scientificName}
+          onQueryChange={(text) => {
+            setSpeciesQuery(text);
+            setSpeciesNotice('');
+            clearError('scientificName');
+          }}
+          hasError={Boolean(errors.scientificName)}
         />
+        {errors.scientificName && <Text style={styles.errorText}>{errors.scientificName}</Text>}
+        {speciesNotice !== '' && <Text style={styles.speciesNotice}>{speciesNotice}</Text>}
 
-        <Text style={styles.speciesHint}>
-          Select an approved species when you are confident. If the species
-          cannot be confirmed in the field, you can save this record locally and
-          continue later.
-        </Text>
-
-        {speciesChoice && (
-          <View style={styles.speciesInfo}>
-            <Text style={styles.speciesInfoRow}>
-              <Text style={styles.speciesInfoLabel}>Common name: </Text>
-              {speciesChoice.species.common_name || 'Not recorded'}
-            </Text>
-            <Text style={styles.speciesInfoRow}>
-              <Text style={styles.speciesInfoLabel}>Family: </Text>
-              {speciesChoice.species.taxonomy?.family || 'Not recorded'}
-            </Text>
-            <Text style={styles.speciesInfoRow}>
-              <Text style={styles.speciesInfoLabel}>
-                Conservation status:{' '}
-              </Text>
-              {(() => {
-                const code = conservationStatusCode(
-                  speciesChoice.species.conservation_status
-                );
-                return `${code} (${conservationStatusLabel(code)})`;
-              })()}
-            </Text>
-          </View>
-        )}
-
-        {speciesNotice !== '' && (
-          <Text style={styles.identifyMessage}>{speciesNotice}</Text>
-        )}
-
-        {errors.scientificName && (
-          <Text style={styles.errorText}>{errors.scientificName}</Text>
-        )}
-
-        {/* Section 3: Split Height & Diameter */}
+        {/* Section 3: Measurements */}
         <View style={styles.measurementRow}>
           <View style={styles.halfCol}>
             <Text style={styles.fieldLabel}>Height (m)</Text>
@@ -849,12 +647,11 @@ export default function NewRecordScreen() {
               inputAccessoryViewID={DONE_BAR_ID}
             />
           </View>
-
           <View style={styles.halfCol}>
-            <Text style={styles.fieldLabel}>Diameter (m)</Text>
+            <Text style={styles.fieldLabel}>Diameter (cm)</Text>
             <TextInput
               style={styles.input}
-              placeholder="e.g. 0.4"
+              placeholder="e.g. 40"
               placeholderTextColor="#8C9A91"
               keyboardType="decimal-pad"
               value={diameter}
@@ -864,8 +661,49 @@ export default function NewRecordScreen() {
           </View>
         </View>
 
-        {/* Field Notes */}
-        <Text style={styles.fieldLabel}>Field notes</Text>
+        {/* Section 4: Observation Condition */}
+        <Text style={styles.fieldLabel}>Life Stage</Text>
+        <View style={styles.chipGrid}>
+          {LIFE_STAGES.map((stage) => {
+            const selected = lifeStage === stage;
+            return (
+              <TouchableOpacity
+                key={stage}
+                style={[styles.chip, selected && styles.chipSelected]}
+                onPress={() => setLifeStage(stage)}
+              >
+                <View style={styles.chipContent}>
+                  {selected && <Ionicons name="checkmark-outline" size={14} color="#FFFFFF" style={styles.chipIcon} />}
+                  <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{stage}</Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        <Text style={[styles.fieldLabel, { marginTop: 14 }]}>Health Status</Text>
+        <View style={styles.chipGrid}>
+          {HEALTH_STATUSES.map((item) => {
+            const selected = healthStatus === item.label;
+            return (
+              <TouchableOpacity
+                key={item.label}
+                style={[
+                  styles.healthChip,
+                  { backgroundColor: item.bg, borderColor: item.border },
+                  selected && { borderColor: item.color, borderWidth: 2 },
+                ]}
+                onPress={() => setHealthStatus(item.label)}
+              >
+                <View style={[styles.statusDot, { backgroundColor: item.color }]} />
+                <Text style={[styles.healthChipText, { color: item.color }]}>{item.label}</Text>
+                {selected && <Ionicons name="checkmark-outline" size={14} color={item.color} style={{ marginLeft: 4 }} />}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        <Text style={[styles.fieldLabel, { marginTop: 14 }]}>Field notes</Text>
         <TextInput
           style={[styles.input, { height: 76, textAlignVertical: 'top' }]}
           placeholder="e.g. 3 pitchers, lower leaves damaged, growing on limestone"
@@ -876,125 +714,101 @@ export default function NewRecordScreen() {
           inputAccessoryViewID={DONE_BAR_ID}
         />
 
-        {/* Section 4: Location & GPS Coordinates */}
-        <Text style={styles.sectionLabel}>LOCATION</Text>
-
+        {/* Section 5: Location & Unified GPS Card */}
+        <Text style={[styles.sectionLabel, { marginTop: 18 }]}>LOCATION</Text>
         <Text style={styles.fieldLabel}>Location landmark *</Text>
         <TextInput
           style={[styles.input, errors.locationName && styles.inputError]}
           placeholder="e.g. left of boardwalk, 50 m past cave entrance"
           placeholderTextColor="#8C9A91"
           value={locationName}
-          onChangeText={handleLocationNameChange}
+          onChangeText={(v) => {
+            setLocationName(v);
+            clearError('locationName');
+          }}
           returnKeyType="done"
         />
-
-        {errors.locationName && (
-          <Text style={styles.errorText}>{errors.locationName}</Text>
-        )}
+        {errors.locationName && <Text style={styles.errorText}>{errors.locationName}</Text>}
 
         <Text style={styles.fieldLabel}>GPS coordinates *</Text>
+        <View style={[styles.gpsCard, (gpsStatus === 'timeout' || gpsStatus === 'unavailable') && styles.gpsCardError]}>
+          {gpsStatus === 'acquiring' && (
+            <>
+              <View style={styles.loadingRow}>
+                <ActivityIndicator color="#213B2A" />
+                <Text style={styles.gpsStatusPending}>Acquiring GPS fix...</Text>
+              </View>
+              <Text style={styles.gpsDetails}>Takes longer under dense canopy. Gives up after 20 seconds.</Text>
+            </>
+          )}
 
-        {gpsStatus === 'acquiring' && (
-          <View style={styles.gpsCard}>
-            <View style={styles.loadingRow}>
-              <ActivityIndicator color="#213B2A" />
-              <Text style={styles.gpsStatusPending}>Acquiring GPS fix...</Text>
-            </View>
-            <Text style={styles.gpsDetails}>
-              This can take longer under dense canopy. Gives up after 20 seconds.
-            </Text>
-            <TouchableOpacity
-              style={styles.refreshGpsBtn}
-              onPress={() => void fetchLocation()}
-            >
-              <Text style={styles.refreshGpsBtnText}>Retry</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {gpsStatus === 'timeout' && (
-          <View style={[styles.gpsCard, styles.gpsCardError]}>
-            <Text style={styles.gpsStatusError}>
-              Couldn't get a GPS fix – move to an open spot
-            </Text>
-            <Text style={styles.gpsDetails}>
-              No fix after 20 seconds. Step away from dense canopy or rock walls,
-              then retry.
-            </Text>
-            <TouchableOpacity
-              style={styles.refreshGpsBtn}
-              onPress={() => void fetchLocation()}
-            >
-              <Text style={styles.refreshGpsBtnText}>Retry</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {gpsStatus === 'unavailable' && (
-          <TouchableOpacity
-            style={[styles.gpsCard, styles.gpsCardError]}
-            activeOpacity={0.8}
-            onPress={() => void fetchLocation()}
-          >
-            <Text style={styles.gpsStatusError}>
-              GPS unavailable – tap to retry
-            </Text>
-            {gpsError !== '' && (
-              <Text style={styles.gpsDetails}>{gpsError}</Text>
-            )}
-          </TouchableOpacity>
-        )}
-
-        {gpsStatus === 'ready' && gpsFix && (
-          <View style={styles.gpsCard}>
-            <Text style={styles.gpsStatusBadge}>
-              {describeAccuracy(gpsFix.accuracyM)}
-            </Text>
-            <Text style={styles.gpsCoords}>
-              {formatCoordinates(gpsFix.latitude, gpsFix.longitude, null)}
-            </Text>
-            <Text style={styles.gpsDetails}>
-              {gpsFix.accuracyM === null
-                ? 'The device did not report accuracy for this fix.'
-                : `Accuracy ±${Math.round(gpsFix.accuracyM)} m`}
-            </Text>
-            <TouchableOpacity
-              style={styles.refreshGpsBtn}
-              onPress={() => void fetchLocation()}
-            >
-              <Text style={styles.refreshGpsBtnText}>
-                Update to current location
+          {gpsStatus === 'ready' && gpsFix && (
+            <>
+              <View style={styles.gpsHeaderRow}>
+                <Ionicons name="location-outline" size={18} color="#215A36" />
+                <Text style={styles.gpsStatusBadge}>{describeAccuracy(gpsFix.accuracyM)}</Text>
+              </View>
+              <Text style={styles.gpsCoords}>{formatCoordinates(gpsFix.latitude, gpsFix.longitude, null)}</Text>
+              <Text style={styles.gpsDetails}>
+                {gpsFix.accuracyM === null ? 'Accuracy not reported' : `Accuracy ±${Math.round(gpsFix.accuracyM)} m`}
               </Text>
-            </TouchableOpacity>
-          </View>
-        )}
+            </>
+          )}
 
-        {errors.gps && !gpsFix && (
-          <Text style={[styles.errorText, styles.gpsErrorText]}>
-            {errors.gps}
-          </Text>
-        )}
+          {(gpsStatus === 'timeout' || gpsStatus === 'unavailable') && (
+            <>
+              <View style={styles.gpsHeaderRow}>
+                <Ionicons name="location-outline" size={18} color="#9B1C1C" />
+                <Text style={styles.gpsStatusError}>
+                  {gpsStatus === 'timeout' ? 'GPS timed out – step into an open area' : 'GPS unavailable'}
+                </Text>
+              </View>
+              <Text style={styles.gpsDetails}>{gpsError || 'No fix obtained. Move away from rock walls and retry.'}</Text>
+            </>
+          )}
 
+          <TouchableOpacity
+            style={styles.refreshGpsBtn}
+            onPress={() => void fetchLocation()}
+            accessibilityRole="button"
+            accessibilityLabel="Refresh GPS location"
+          >
+            <View style={styles.refreshContent}>
+              <Ionicons name="refresh-outline" size={14} color="#213B2A" />
+              <Text style={styles.refreshGpsBtnText}>
+                {gpsStatus === 'ready' ? 'Update location' : 'Retry'}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        {errors.gps && !gpsFix && <Text style={[styles.errorText, styles.gpsErrorText]}>{errors.gps}</Text>}
         {Object.values(errors).some(Boolean) && (
-          <Text style={styles.errorSummary}>
-            Fix the highlighted fields above to save.
-          </Text>
+          <Text style={styles.errorSummary}>Fix the highlighted fields above to save.</Text>
         )}
 
-        <TouchableOpacity
-          style={styles.saveBtn}
-          activeOpacity={0.85}
-          onPress={() => void handleSave()}
-        >
-          <Text style={styles.saveBtnText}>
-            {speciesChoice
-              ? isEditing
-                ? 'Save completed record'
-                : 'Save record'
-              : 'Save for later'}
-          </Text>
-        </TouchableOpacity>
+        {/* Section 6: Action Buttons */}
+        <View style={styles.bottomActionsRow}>
+          <TouchableOpacity
+            style={[styles.actionBtn, styles.saveDraftBtn]}
+            activeOpacity={0.85}
+            onPress={() => void handleSave(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Save plant record locally as draft"
+          >
+            <Text style={styles.saveDraftBtnText}>Save for later</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionBtn, styles.saveSubmitBtn]}
+            activeOpacity={0.85}
+            onPress={() => void handleSave(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Save and submit plant record for officer review"
+          >
+            <Text style={styles.saveSubmitBtnText}>Save and submit</Text>
+          </TouchableOpacity>
+        </View>
       </FormScrollView>
 
       <KeyboardDoneBar nativeID={DONE_BAR_ID} />
@@ -1015,22 +829,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 10,
   },
-  backChevron: {
-    fontSize: 32,
-    color: '#213B2A',
-  },
-  navTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#1E2B22',
-  },
-  navSide: {
-    width: 40,
-  },
-  scrollContent: {
-    paddingHorizontal: 20,
-    paddingBottom: 40,
-  },
+  navTitle: { fontSize: 17, fontWeight: '700', color: '#1E2B22' },
+  navSide: { width: 40, justifyContent: 'center' },
+  scrollContent: { paddingHorizontal: 20, paddingBottom: 40 },
   sectionHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1038,50 +839,21 @@ const styles = StyleSheet.create({
     marginTop: 14,
     marginBottom: 8,
   },
-  sectionLabel: {
-    fontSize: 11.5,
-    fontWeight: '800',
-    color: '#7D8C81',
-    letterSpacing: 0.8,
-    marginTop: 14,
-    marginBottom: 8,
-  },
-  sectionSubLabel: {
-    fontSize: 11.5,
-    color: '#88988D',
-  },
-  thumbnailGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 8,
-  },
-  thumbnailWrapper: {
-    width: 74,
-    height: 74,
-    borderRadius: 12,
-    position: 'relative',
-  },
-  thumbnail: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 12,
-  },
+  sectionLabel: { fontSize: 11.5, fontWeight: '800', color: '#7D8C81', letterSpacing: 0.8, marginTop: 14, marginBottom: 8 },
+  sectionSubLabel: { fontSize: 11.5, color: '#88988D' },
+  thumbnailGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 8 },
+  thumbnailWrapper: { width: 74, height: 74, borderRadius: 12, position: 'relative' },
+  thumbnail: { width: '100%', height: '100%', borderRadius: 12 },
   removePhotoBtn: {
     position: 'absolute',
-    top: -5,
-    right: -5,
+    top: -6,
+    right: -6,
     backgroundColor: '#DC2626',
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  removePhotoText: {
-    color: '#FFF',
-    fontSize: 11,
-    fontWeight: '800',
   },
   photoBadge: {
     position: 'absolute',
@@ -1092,11 +864,7 @@ const styles = StyleSheet.create({
     paddingVertical: 1,
     borderRadius: 4,
   },
-  photoBadgeText: {
-    color: '#FFF',
-    fontSize: 9,
-    fontWeight: '700',
-  },
+  photoBadgeText: { color: '#FFF', fontSize: 9, fontWeight: '700' },
   pillUploadBtn: {
     height: 48,
     borderRadius: 24,
@@ -1108,21 +876,35 @@ const styles = StyleSheet.create({
     marginTop: 6,
     marginBottom: 10,
   },
-  pillUploadBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#213B2A',
+  pillUploadContent: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  pillUploadBtnText: { fontSize: 14, fontWeight: '700', color: '#213B2A' },
+  measurementRow: { flexDirection: 'row', gap: 12 },
+  halfCol: { flex: 1 },
+  chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 },
+  chip: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    backgroundColor: '#F0F4F1',
+    borderWidth: 1,
+    borderColor: '#DFE7E1',
   },
-  measurementRow: {
+  chipSelected: { backgroundColor: '#213B2A', borderColor: '#213B2A' },
+  chipContent: { flexDirection: 'row', alignItems: 'center' },
+  chipIcon: { marginRight: 4 },
+  chipText: { fontSize: 13, fontWeight: '600', color: '#49594D' },
+  chipTextSelected: { color: '#FFFFFF', fontWeight: '700' },
+  healthChip: {
     flexDirection: 'row',
-    gap: 12,
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 18,
+    borderWidth: 1,
   },
-  halfCol: {
-    flex: 1,
-  },
-  aiSection: {
-    marginBottom: 16,
-  },
+  statusDot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
+  healthChipText: { fontSize: 12.5, fontWeight: '700' },
+  aiSection: { marginBottom: 16 },
   identifyBtn: {
     backgroundColor: '#46654F',
     minHeight: 46,
@@ -1131,46 +913,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
   },
-  disabledBtn: {
-    opacity: 0.65,
-  },
-  loadingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  identifyBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 14,
-  },
-  aiHint: {
-    fontSize: 11.5,
-    color: '#7E8F83',
-    marginTop: 6,
-    textAlign: 'center',
-  },
-  identifyMessage: {
-    fontSize: 12.5,
-    color: '#7A5134',
-    lineHeight: 18,
-    marginTop: 10,
-    paddingHorizontal: 4,
-  },
-  suggestionsBlock: {
-    marginTop: 12,
-  },
-  suggestionsTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#213B2A',
-    marginBottom: 2,
-  },
-  suggestionsHelp: {
-    fontSize: 11.5,
-    color: '#68776D',
-    marginBottom: 8,
-  },
+  disabledBtn: { opacity: 0.65 },
+  loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  identifyContentRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  identifyBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
+  aiHint: { fontSize: 11.5, color: '#7E8F83', marginTop: 6, textAlign: 'center' },
+  identifyMessage: { fontSize: 12.5, color: '#7A5134', lineHeight: 18, marginTop: 10, paddingHorizontal: 4 },
+  suggestionsBlock: { marginTop: 12 },
+  suggestionsTitle: { fontSize: 14, fontWeight: '700', color: '#213B2A', marginBottom: 2 },
+  suggestionsHelp: { fontSize: 11.5, color: '#68776D', marginBottom: 8 },
   suggestionCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
@@ -1179,38 +930,14 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 8,
   },
-  selectedSuggestionCard: {
-    backgroundColor: '#EEF5F0',
-    borderColor: '#213B2A',
-    borderWidth: 2,
-  },
-  suggestionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  suggestionName: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#213B2A',
-  },
-  confidence: {
-    fontWeight: '700',
-    color: '#46654F',
-  },
-  suggestionDetail: {
-    fontSize: 12,
-    color: '#68776D',
-    marginTop: 3,
-  },
-  fieldLabel: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#213B2A',
-    marginBottom: 6,
-    marginTop: 6,
-  },
+  selectedSuggestionCard: { backgroundColor: '#EEF5F0', borderColor: '#213B2A', borderWidth: 2 },
+  suggestionHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
+  suggestionName: { flex: 1, fontSize: 14, fontWeight: '700', color: '#213B2A' },
+  confidence: { fontWeight: '700', color: '#46654F' },
+  suggestionDetail: { fontSize: 12, color: '#68776D', marginTop: 3 },
+  fieldLabel: { fontSize: 12.5, fontWeight: '700', color: '#213B2A', marginBottom: 6, marginTop: 6 },
+  pickerHelp: { fontSize: 12, color: '#68776D', lineHeight: 17, marginBottom: 8 },
+  speciesNotice: { fontSize: 12, color: '#46654F', lineHeight: 17, marginBottom: 10, paddingHorizontal: 4 },
   input: {
     backgroundColor: '#FFFFFF',
     minHeight: 48,
@@ -1222,26 +949,10 @@ const styles = StyleSheet.create({
     borderColor: '#E6ECE8',
     marginBottom: 8,
   },
-  inputError: {
-    borderColor: '#E59A9A',
-  },
-  errorText: {
-    fontSize: 12,
-    color: '#9B1C1C',
-    marginTop: -2,
-    marginBottom: 10,
-    paddingHorizontal: 4,
-  },
-  gpsErrorText: {
-    marginTop: -16,
-  },
-  errorSummary: {
-    fontSize: 12.5,
-    color: '#9B1C1C',
-    fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: 10,
-  },
+  inputError: { borderColor: '#E59A9A' },
+  errorText: { fontSize: 12, color: '#9B1C1C', marginTop: -2, marginBottom: 10, paddingHorizontal: 4 },
+  gpsErrorText: { marginTop: -16 },
+  errorSummary: { fontSize: 12.5, color: '#9B1C1C', fontWeight: '700', textAlign: 'center', marginBottom: 10 },
   gpsCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 18,
@@ -1250,38 +961,13 @@ const styles = StyleSheet.create({
     borderColor: '#E6ECE8',
     marginBottom: 24,
   },
-  gpsCardError: {
-    borderColor: '#F0C2C2',
-    backgroundColor: '#FFF8F8',
-  },
-  gpsStatusBadge: {
-    color: '#215A36',
-    fontWeight: '700',
-    fontSize: 12,
-    marginBottom: 4,
-  },
-  gpsStatusPending: {
-    color: '#213B2A',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  gpsStatusError: {
-    color: '#9B1C1C',
-    fontWeight: '700',
-    fontSize: 14,
-    marginBottom: 4,
-  },
-  gpsCoords: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#1E2B22',
-    marginBottom: 4,
-  },
-  gpsDetails: {
-    fontSize: 11.5,
-    color: '#7E8F83',
-    marginBottom: 12,
-  },
+  gpsCardError: { borderColor: '#F0C2C2', backgroundColor: '#FFF8F8' },
+  gpsHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  gpsStatusBadge: { color: '#215A36', fontWeight: '700', fontSize: 12 },
+  gpsStatusPending: { color: '#213B2A', fontWeight: '700', fontSize: 13 },
+  gpsStatusError: { color: '#9B1C1C', fontWeight: '700', fontSize: 14 },
+  gpsCoords: { fontSize: 14, fontWeight: '800', color: '#1E2B22', marginBottom: 4 },
+  gpsDetails: { fontSize: 11.5, color: '#7E8F83', marginBottom: 12 },
   refreshGpsBtn: {
     alignSelf: 'flex-start',
     backgroundColor: '#EDF5EF',
@@ -1289,48 +975,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 16,
   },
-  refreshGpsBtnText: {
-    color: '#213B2A',
-    fontWeight: '700',
-    fontSize: 12,
-  },
-  saveBtn: {
-    backgroundColor: '#213B2A',
-    height: 52,
-    borderRadius: 26,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  saveBtnText: {
-    color: '#FFF',
-    fontWeight: '700',
-    fontSize: 15,
-  },
-  speciesHint: {
-    fontSize: 11.5,
-    color: '#68776D',
-    lineHeight: 17,
-    marginTop: 4,
-    marginBottom: 10,
-    paddingHorizontal: 3,
-  },
-  speciesInfo: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1.2,
-    borderColor: '#E6ECE8',
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    marginBottom: 12,
-  },
-  speciesInfoRow: {
-    fontSize: 13,
-    color: '#1E2B22',
-    marginVertical: 2,
-  },
-  speciesInfoLabel: {
-    fontWeight: '700',
-    color: '#4E6254',
-  },
+  refreshContent: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  refreshGpsBtnText: { color: '#213B2A', fontWeight: '700', fontSize: 12 },
+  bottomActionsRow: { flexDirection: 'row', gap: 12, marginTop: 18 },
+  actionBtn: { flex: 1, height: 52, borderRadius: 26, justifyContent: 'center', alignItems: 'center' },
+  saveDraftBtn: { backgroundColor: '#FFFFFF', borderWidth: 1.5, borderColor: '#213B2A' },
+  saveDraftBtnText: { color: '#213B2A', fontWeight: '700', fontSize: 15 },
+  saveSubmitBtn: { backgroundColor: '#213B2A' },
+  saveSubmitBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 15 },
 });

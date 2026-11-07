@@ -4,6 +4,7 @@ drawMenu('map.html');
 
 let map = null;
 let markerLayer = null;
+let plants = [];
 
 // Creates the Leaflet map with its three map styles: satellite, street and topographic.
 function createMap() {
@@ -18,7 +19,7 @@ function createMap() {
 
   const placeNames = L.tileLayer(esri + 'Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 19,
-    attribution: 'Labels &copy; Esri'
+    attribution: 'Tiles &copy; Esri'
   });
   const satellite = L.layerGroup([imagery, placeNames]);
 
@@ -36,113 +37,110 @@ function createMap() {
   markerLayer = L.layerGroup().addTo(map);
 }
 
-// Returns the colour of the dot for a conservation status.
-function markerColor(status) {
-  if (status === 'Endangered') {
-    return '#c0392b';
-  }
-  if (status === 'Vulnerable') {
-    return '#e0a800';
-  }
-  return '#3d8b4f';
+function escapePopupText(value) {
+  return String(value).replace(/[&<>"']/g, character => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[character]);
 }
 
-// Builds the small box that opens when a dot is clicked. It has an Edit record button.
-function makePopup(species, index) {
-  const box = document.createElement('div');
-
-  const title = document.createElement('b');
-  title.textContent = species.sci;
-  box.appendChild(title);
-
-  const info = document.createElement('div');
-  info.textContent = species.com + ' · ' + species.status;
-  box.appendChild(info);
-
-  const place = document.createElement('div');
-  place.textContent = species.loc + ' (' + species.gps + ')';
-  box.appendChild(place);
-
-  const button = document.createElement('button');
-  button.textContent = 'Edit record';
-  button.onclick = function () {
-    openEditorFor(index);
-  };
-  box.appendChild(button);
-
-  return box;
+function displayVisitDate(value) {
+  if (!value) {
+    return 'None';
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
 }
 
-// Checks a species against the map's search box and status filter.
-function speciesPassesMapFilter(species, searchText, chosenStatus) {
-  const names = (species.sci + ' ' + species.com).toLowerCase();
-  if (names.includes(searchText) === false) {
-    return false;
-  }
-  if (chosenStatus !== '' && species.status !== chosenStatus) {
-    return false;
-  }
-  return true;
+function makePopup(plant) {
+  const species = plant.species;
+  const scientificName = species && species.scientific_name ? species.scientific_name : 'Unknown species';
+  const commonName = species && species.common_name ? species.common_name : 'Unknown species';
+  return '<strong><em>' + escapePopupText(scientificName) + '</em></strong>' +
+    '<div>Common name: ' + escapePopupText(commonName) + '</div>' +
+    '<div>Tag: ' + escapePopupText(plant.tag || 'No tag') + '</div>' +
+    '<div>Status: ' + escapePopupText(plant.status || 'Not recorded') + '</div>' +
+    '<div>Landmark: ' + escapePopupText(plant.landmark || 'Not recorded') + '</div>' +
+    '<div>Last visit: ' + escapePopupText(displayVisitDate(plant.last_visit)) + '</div>';
 }
 
-// Draws one dot for every species that matches the filters.
-// If zoomToFit is true, the map zooms so that all the dots can be seen.
+function fillSpeciesFilter() {
+  const select = document.getElementById('map-species');
+  const selectedSpecies = select.value;
+  const speciesById = new Map();
+  plants.forEach(plant => {
+    if (plant.species && plant.species.id) {
+      speciesById.set(plant.species.id, plant.species);
+    }
+  });
+
+  select.replaceChildren(new Option('All species', ''));
+  [...speciesById.entries()]
+    .sort((left, right) => (left[1].scientific_name || '').localeCompare(right[1].scientific_name || ''))
+    .forEach(([id, species]) => {
+      const label = species.scientific_name || species.common_name || 'Unknown species';
+      select.add(new Option(label, id));
+    });
+  if (selectedSpecies && speciesById.has(selectedSpecies)) {
+    select.value = selectedSpecies;
+  }
+}
+
 function drawMarkers(zoomToFit) {
   if (map === null) {
     return;
   }
+
   markerLayer.clearLayers();
-
-  const searchText = document.getElementById('map-search').value.toLowerCase();
+  const chosenSpecies = document.getElementById('map-species').value;
   const chosenStatus = document.getElementById('map-status').value;
-  const list = getSpecies();
   const points = [];
-  let skipped = 0;
 
-  for (let i = 0; i < list.length; i++) {
-    const species = list[i];
-
-    if (speciesPassesMapFilter(species, searchText, chosenStatus) === false) {
-      continue;
+  plants.forEach(plant => {
+    const speciesId = plant.species ? plant.species.id : '';
+    const conservationStatus = plant.species ? plant.species.conservation_status : '';
+    if (chosenSpecies && speciesId !== chosenSpecies) {
+      return;
+    }
+    if (chosenStatus && conservationStatus !== chosenStatus) {
+      return;
     }
 
-    const gps = readGps(species.gps);
-    if (gps === null) {
-      skipped = skipped + 1;
-      continue;
-    }
-
-    const dot = L.circleMarker(gps, {
-      radius: 11,
+    const point = [plant.latitude, plant.longitude];
+    L.circleMarker(point, {
+      radius: 8,
       color: '#ffffff',
       weight: 2,
-      fillColor: markerColor(species.status),
+      fillColor: '#3d8b4f',
       fillOpacity: 0.9
-    });
-    dot.bindPopup(makePopup(species, i));
+    }).bindPopup(makePopup(plant)).addTo(markerLayer);
+    points.push(point);
+  });
 
-    if (species.loc) {
-      dot.bindTooltip(species.loc, {
-        permanent: true,
-        direction: 'right',
-        offset: [12, 0],
-        className: 'loc-label'
-      });
-    }
-
-    dot.addTo(markerLayer);
-    points.push(gps);
-  }
-
-  let message = 'Showing ' + points.length + ' species records on the map.';
-  if (skipped > 0) {
-    message = message + ' ' + skipped + ' without a valid GPS location are not shown.';
-  }
-  document.getElementById('map-message').textContent = message;
-
+  document.getElementById('map-message').textContent =
+    'Showing ' + points.length + ' plant' + (points.length === 1 ? '' : 's') + ' on the map.';
   if (zoomToFit && points.length > 0) {
     map.fitBounds(L.latLngBounds(points), { padding: [50, 50], maxZoom: 16 });
   }
+}
+
+function resetMapFilters() {
+  document.getElementById('map-species').value = '';
+  document.getElementById('map-status').value = '';
+  drawMarkers(true);
+}
+
+async function loadPlants() {
+  const result = await api('/officer/map/plants');
+  if (!result || !Array.isArray(result.data)) {
+    throw new Error('The plant locations response was invalid.');
+  }
+  plants = result.data;
+  fillSpeciesFilter();
+  drawMarkers(true);
 }
 
 if (typeof L === 'undefined') {
@@ -150,5 +148,9 @@ if (typeof L === 'undefined') {
     'The map could not load. Check your internet connection and refresh the page.';
 } else {
   createMap();
-  drawMarkers(true);
+  document.getElementById('map-message').textContent = 'Loading plant locations...';
+  loadPlants().catch(error => {
+    document.getElementById('map-message').textContent = 'Plant locations could not be loaded.';
+    showUnexpectedError(error);
+  });
 }

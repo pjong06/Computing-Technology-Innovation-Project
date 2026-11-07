@@ -57,14 +57,21 @@ interface SpeciesPage {
   };
 }
 
-const BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL?.trim().replace(/\/+$/, '');
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '/') end -= 1;
+  return value.slice(0, end);
+}
+
+const BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
+const NORMALIZED_BASE_URL = BASE_URL === undefined ? undefined : trimTrailingSlashes(BASE_URL);
 const REQUEST_TIMEOUT_MS = 15_000;
 
 function requireBaseUrl(): string {
-  if (!BASE_URL) {
+  if (!NORMALIZED_BASE_URL) {
     throw new Error('EXPO_PUBLIC_API_BASE_URL is not set');
   }
-  return BASE_URL;
+  return NORMALIZED_BASE_URL;
 }
 
 async function fetchJson<T>(path: string): Promise<T> {

@@ -8,21 +8,73 @@ const SUPABASE_KEY = 'sb_publishable_4L1RojeFv6wLAsFNX2q3KQ_hjanSuTo';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { storageKey: 'niah_supabase_auth' } });
 window.sb = sb;
 
-// Gives back the login token, or null if nobody is logged in.
+const SESSION_EXPIRED_MESSAGE = 'Your session expired, please log in again.';
+
+// Gives back a login token that is still valid, or null if nobody is logged in or the
+// login can't be renewed. A token that runs out within a minute is renewed first, so a
+// request never leaves with a token that expires on the way.
 window.getOfficerAccessToken = async function () {
   const result = await sb.auth.getSession();
-  return result.data.session ? result.data.session.access_token : null;
+  let session = result.data.session;
+  if (!session) {
+    return null;
+  }
+  const now = Math.floor(Date.now() / 1000);
+  if (session.expires_at && session.expires_at - 60 <= now) {
+    const renewed = await sb.auth.refreshSession();
+    if (renewed.error || !renewed.data.session) {
+      return null;
+    }
+    session = renewed.data.session;
+  }
+  return session.access_token;
 };
 
-// Calls the backend
+// The login can't be renewed: forget it and go to the login page, which shows why.
+// On the login page itself nothing happens (the page shows its own error).
+async function sendToLoginExpired() {
+  if (OPEN_PAGES.indexOf(thisPageName()) !== -1) {
+    return;
+  }
+  localStorage.removeItem(SESSION_KEY);
+  rememberToast(SESSION_EXPIRED_MESSAGE);
+  try {
+    await sb.auth.signOut({ scope: 'local' });
+  } catch (error) {
+    // Already signed out: nothing to undo.
+  }
+  location.replace('login.html');
+}
+
+// Calls the backend with the officer's login token. If the backend says the token is no
+// longer valid (401), the login is renewed once and the request sent again; if that
+// fails too, the person is sent to the login page.
 async function api(path, options) {
   options = options || {};
-  const token = await window.getOfficerAccessToken();
-  const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers);
-  if (token) {
-    headers.Authorization = 'Bearer ' + token;
+
+  async function send(token) {
+    // A photo upload (FormData) sets its own content type; everything else is JSON.
+    const isForm = typeof FormData !== 'undefined' && options.body instanceof FormData;
+    const headers = Object.assign(isForm ? {} : { 'Content-Type': 'application/json' }, options.headers);
+    if (token) {
+      headers.Authorization = 'Bearer ' + token;
+    }
+    return fetch('/api' + path, Object.assign({}, options, { headers: headers }));
   }
-  const response = await fetch('/api' + path, Object.assign({}, options, { headers: headers }));
+
+  let response = await send(await window.getOfficerAccessToken());
+  if (response.status === 401) {
+    // A 401 means the request was refused before it did anything, so sending it again is safe.
+    const renewed = await sb.auth.refreshSession();
+    if (!renewed.error && renewed.data.session) {
+      response = await send(renewed.data.session.access_token);
+    }
+    if (response.status === 401) {
+      await sendToLoginExpired();
+      throw new Error(SESSION_EXPIRED_MESSAGE);
+    }
+  }
+
   const body = await response.json().catch(function () { return {}; });
   if (response.ok === false) {
     throw new Error(body.message || ('Request failed (' + response.status + ')'));
@@ -30,13 +82,108 @@ async function api(path, options) {
   return body;
 }
 
+// ---------- The real species catalogue (/api/knowledge) ----------
+// The same species table the mobile app reads. Officers manage it; botanists propose.
 
-const SPECIES_KEY = 'niah_species';
-const OBSERVATIONS_KEY = 'niah_observations';
+// Conservation status as stored in species.conservation_status (IUCN codes), with the
+// words the pages show. An empty status is "Not assessed".
+const STATUS_LABELS = {
+  CR: 'Critically Endangered',
+  EN: 'Endangered',
+  VU: 'Vulnerable',
+  NT: 'Near Threatened',
+  LC: 'Least Concern',
+  DD: 'Data Deficient'
+};
+const NOT_ASSESSED = 'Not assessed';
+
+// The words for a stored status. Older rows that already hold the words keep them.
+function statusLabel(code) {
+  if (!code) {
+    return NOT_ASSESSED;
+  }
+  return STATUS_LABELS[code] || code;
+}
+
+// Reads every page of a paged list (?page=&page_size=100) and returns all the rows.
+async function fetchAllPages(path) {
+  const joiner = path.indexOf('?') === -1 ? '?' : '&';
+  let rows = [];
+  let page = 1;
+  let totalPages = 1;
+  do {
+    const result = await api(path + joiner + 'page=' + page + '&page_size=100');
+    rows = rows.concat(result.data || []);
+    totalPages = result.pagination ? result.pagination.total_pages : 1;
+    page = page + 1;
+  } while (page <= totalPages);
+  return rows;
+}
+
+// Every taxonomy row (family and genus). Used for the Family box and to link a species.
+async function loadTaxonomy() {
+  return fetchAllPages('/knowledge/taxonomy');
+}
+
+// The taxonomy row for this family, using the genus (first word of the scientific name).
+// Creates it when it doesn't exist yet. Returns its id, or null when no family is given.
+async function taxonomyIdFor(taxonomy, family, scientificName) {
+  const wantedFamily = family.trim();
+  if (wantedFamily === '') {
+    return null;
+  }
+  const genus = scientificName.trim().split(/\s+/)[0];
+  const same = function (a, b) { return String(a || '').toLowerCase() === String(b || '').toLowerCase(); };
+  for (let i = 0; i < taxonomy.length; i++) {
+    if (same(taxonomy[i].family, wantedFamily) && same(taxonomy[i].genus, genus)) {
+      return taxonomy[i].id;
+    }
+  }
+  try {
+    const created = await api('/knowledge/taxonomy', {
+      method: 'POST',
+      body: JSON.stringify({ kingdom: 'Plantae', family: wantedFamily, genus: genus })
+    });
+    taxonomy.push(created.data);
+    return created.data.id;
+  } catch (error) {
+    // Made at the same moment by someone else: read the list again and use theirs.
+    const fresh = await loadTaxonomy();
+    for (let i = 0; i < fresh.length; i++) {
+      if (same(fresh[i].family, wantedFamily) && same(fresh[i].genus, genus)) {
+        return fresh[i].id;
+      }
+    }
+    throw error;
+  }
+}
+
+// A one-minute link to the species' main photo (or its first one), or null when it has none.
+async function speciesPhotoUrl(species) {
+  const photos = species.species_media || [];
+  if (photos.length === 0) {
+    return null;
+  }
+  let chosen = photos[0];
+  for (let i = 0; i < photos.length; i++) {
+    if (photos[i].is_primary) {
+      chosen = photos[i];
+    }
+  }
+  const result = await api('/knowledge/species/' + species.id + '/photos/' + chosen.id);
+  return result.url || null;
+}
+
+// Opens the species editor for this species id, or for a new species when id is ''.
+function openSpeciesEditor(id) {
+  writeStorage(EDIT_KEY, id || '');
+  location.href = 'editor.html';
+}
+
+
 const USERS_KEY = 'niah_users';
 const EDIT_KEY = 'niah_editing';
 const TOAST_KEY = 'niah_toast';
-const VERSION_KEY = 'niah_data_version';
 const SESSION_KEY = 'niah_session';
 // Suspended botanists are told to contact the officer at this email.
 const OFFICER_CONTACT_EMAIL = 'georgetanyonghan@gmail.com';
@@ -46,20 +193,10 @@ function svgPicture(svg) {
   return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
 }
 
-const PICTURE_RAFFLESIA = svgPicture('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56"><rect width="56" height="56" fill="#3b4a2a"/><circle cx="28" cy="13" r="10" fill="#e0623a"/><circle cx="28" cy="13" r="10" fill="#e0623a" transform="rotate(72 28 28)"/><circle cx="28" cy="13" r="10" fill="#e0623a" transform="rotate(144 28 28)"/><circle cx="28" cy="13" r="10" fill="#e0623a" transform="rotate(216 28 28)"/><circle cx="28" cy="13" r="10" fill="#e0623a" transform="rotate(288 28 28)"/><circle cx="28" cy="28" r="11" fill="#f0a070"/><circle cx="28" cy="28" r="6" fill="#7a2410"/></svg>');
-const PICTURE_SHOREA = svgPicture('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56"><rect width="56" height="56" fill="#cfe3c4"/><rect x="25" y="26" width="6" height="28" fill="#6b4a2f"/><circle cx="28" cy="20" r="14" fill="#4f8a4f"/><circle cx="18" cy="26" r="9" fill="#5b9a58"/><circle cx="38" cy="26" r="9" fill="#5b9a58"/></svg>');
-const PICTURE_NEPENTHES = svgPicture('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56"><rect width="56" height="56" fill="#1f3a2a"/><path d="M28 6c-9 0-12 10-12 20 0 9 5 16 12 16s12-7 12-16C40 16 37 6 28 6z" fill="#e8962e"/><ellipse cx="28" cy="8" rx="9" ry="3.5" fill="#a85d12"/><path d="M28 42v10" stroke="#7fae8f" stroke-width="3"/></svg>');
-const PICTURE_DIPTEROCARPUS = svgPicture('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56"><rect width="56" height="56" fill="#6aa05a"/><path d="M10 46C10 22 26 8 46 10 46 32 34 46 10 46z" fill="#2f6b3a"/><path d="M12 44L38 18" stroke="#a9d49a" stroke-width="2"/></svg>');
 const PICTURE_BLANK = svgPicture('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56"><rect width="56" height="56" fill="#6aa05a"/><path d="M10 46C10 22 26 8 46 10 46 32 34 46 10 46z" fill="#2f6b3a"/><path d="M12 44L38 18" stroke="#a9d49a" stroke-width="2"/></svg>');
 
-// ---------- Saved data lives in the database ----------
-// Each page has its own table with one column for each detail:
-//   Species catalogue and editor -> website_species
-//   Observation queue and rejected -> website_observations
-//   User & role admin -> website_users (one row for each real login account)
-// Only the data version is kept in the table web_data.
-// Everything else (the login copy, the editor shortcut, the pop-up message) stays in this browser.
-const DATABASE_KEYS = [SPECIES_KEY, OBSERVATIONS_KEY, USERS_KEY, VERSION_KEY];
+// User administration is stored in website_users; page state stays in this browser.
+const DATABASE_KEYS = [USERS_KEY];
 const AUTH_STORAGE_KEY = 'niah_supabase_auth';
 const NOT_LOGGED_IN = 'You are not logged in.';
 let databaseCache = {};     // the saved values, as text, loaded when the page opens
@@ -69,63 +206,12 @@ let databaseSaved = {};     // what each list looked like when it was last loade
 let databaseIds = {};       // the ids each list had when it was last loaded or saved
 let databasePrints = {};    // a fingerprint of each record (by id) when its list was last loaded or saved
 
-// Turns text like "14 Sep 2026, 3:42 PM" into a date and time the database understands.
-// Returns null when the text is empty or not in that form.
-function whenTextToIso(text) {
-  const match = /^(\d{1,2}) (\w{3}) (\d{4}), (\d{1,2}):(\d{2}) (AM|PM)$/.exec(text || '');
-  if (match === null) {
-    return null;
-  }
-  const month = MONTHS.indexOf(match[2]);
-  if (month === -1) {
-    return null;
-  }
-  let hour = parseInt(match[4], 10) % 12;
-  if (match[6] === 'PM') {
-    hour = hour + 12;
-  }
-  const date = new Date(parseInt(match[3], 10), month, parseInt(match[1], 10), hour, parseInt(match[5], 10));
-  return date.toISOString();
-}
-
-// Works out the saved date and time of a species: from the "when" text, or else from the plain date.
-function savedTime(whenText, dateText) {
-  const fromText = whenTextToIso(whenText);
-  if (fromText !== null) {
-    return fromText;
-  }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateText || '')) {
-    return new Date(dateText + 'T00:00:00').toISOString();
-  }
-  return null;
-}
-
-// The lists that have their own table in the database.
-// text = [name used by the pages, column in the table]
-// times = [column, text like "14 Sep 2026, 3:42 PM", plain date like "2026-09-14"]
-// flags = [name used by the pages, column] for yes/no values
-// picture = true when the pages show a picture for each record. A record without a saved photo
-// shows the default picture of its plant type.
+// text = [name used by the page, column in the table]
+// flags = [name used by the page, column] for yes/no values
 const LIST_TABLES = [
   {
-    key: SPECIES_KEY, path: '/species', picture: true,
-    text: [['sci', 'scientific_name'], ['com', 'common_name'], ['fam', 'family'], ['status', 'conservation_status'],
-      ['loc', 'location_name'], ['gps', 'gps'], ['desc', 'description'], ['obsId', 'observation_id'], ['photo', 'photo']],
-    times: [['first_recorded', 'firstWhen', 'firstDate'], ['last_updated', 'when', 'date']],
-    flags: []
-  },
-  {
-    key: OBSERVATIONS_KEY, path: '/observations', picture: true,
-    text: [['sci', 'scientific_name'], ['com', 'common_name'], ['fam', 'family'], ['by', 'observed_by'],
-      ['loc', 'location_name'], ['gps', 'gps'], ['notes', 'notes'], ['photo', 'photo'],
-      ['state', 'state'], ['reason', 'reject_reason']],
-    times: [['observed_at', 'when', 'date']],
-    flags: []
-  },
-  {
-    key: USERS_KEY, path: '/users',
+    key: USERS_KEY,
     text: [['name', 'name'], ['username', 'username'], ['email', 'email'], ['role', 'role']],
-    times: [],
     flags: [['active', 'active']]
   }
 ];
@@ -140,22 +226,7 @@ function findListTable(key) {
   return null;
 }
 
-// Returns the default picture of a species or observation, chosen by the first word of its
-// scientific name (the genus). Rafflesia gets the flower, Shorea the tree, Nepenthes the pitcher
-// plant and Dipterocarpus the leaf. Any other plant gets the blank leaf.
-const GENUS_PICTURES = {
-  rafflesia: PICTURE_RAFFLESIA,
-  shorea: PICTURE_SHOREA,
-  nepenthes: PICTURE_NEPENTHES,
-  dipterocarpus: PICTURE_DIPTEROCARPUS
-};
-function fallbackPicture(scientificName) {
-  const genus = String(scientificName || '').trim().toLowerCase().split(' ')[0];
-  return GENUS_PICTURES[genus] || PICTURE_BLANK;
-}
-
-// Turns an item used by the pages (a species, an observation or a user) into one row of its table.
-// Anything the table has no column for goes into "extra", so nothing is lost.
+// Turns a user item into a database row. Unmapped fields are preserved in "extra".
 function itemToRow(item, table) {
   const row = { id: item.id };
   const used = { id: true, passwordHash: true };
@@ -164,15 +235,6 @@ function itemToRow(item, table) {
     const value = item[table.text[i][0]];
     row[table.text[i][1]] = (value === undefined || value === null) ? '' : String(value);
     used[table.text[i][0]] = true;
-  }
-  // The default pictures are not saved. Only photos uploaded by users are.
-  if (row.photo !== undefined && row.photo.indexOf('data:image/svg+xml') === 0) {
-    row.photo = '';
-  }
-  for (let i = 0; i < table.times.length; i++) {
-    row[table.times[i][0]] = savedTime(item[table.times[i][1]], item[table.times[i][2]]);
-    used[table.times[i][1]] = true;
-    used[table.times[i][2]] = true;
   }
   for (let i = 0; i < table.flags.length; i++) {
     row[table.flags[i][1]] = item[table.flags[i][0]] !== false;
@@ -190,7 +252,7 @@ function itemToRow(item, table) {
   return row;
 }
 
-// Turns one row of a table back into an item used by the pages.
+// Turns one user row back into an item used by the page.
 function rowToItem(row, table) {
   const item = Object.assign({}, row.extra || {});
   item.id = row.id;
@@ -199,16 +261,8 @@ function rowToItem(row, table) {
     const value = row[table.text[i][1]];
     item[table.text[i][0]] = (value === undefined || value === null) ? '' : value;
   }
-  for (let i = 0; i < table.times.length; i++) {
-    const saved = row[table.times[i][0]] ? new Date(row[table.times[i][0]]) : null;
-    item[table.times[i][2]] = saved ? isoDate(saved) : '';
-    item[table.times[i][1]] = saved ? whenText(saved) : '';
-  }
   for (let i = 0; i < table.flags.length; i++) {
     item[table.flags[i][0]] = row[table.flags[i][1]] !== false;
-  }
-  if (table.picture === true && !item.photo) {
-    item.photo = fallbackPicture(item.sci);
   }
   return item;
 }
@@ -294,19 +348,20 @@ function getTokenNow() {
   }
   const fresh = JSON.parse(request.responseText);
   fresh.expires_at = now + fresh.expires_in;
-  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(fresh));
+  // Keep what the stored session already had (e.g. the user), so the Supabase library
+  // still recognises it, and only replace the renewed tokens.
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(Object.assign({}, session, fresh)));
   return fresh.access_token;
 }
 
-// Talks to the backend and waits for the answer, so the pages can stay as they are.
-// Returns { ok: true, data: ... } or { ok: false, message: '...' }.
-function databaseRequest(method, path, body) {
+// Calls the website-users API and returns { ok, data } or { ok: false, message }.
+function databaseRequest(method, body) {
   const token = getTokenNow();
   if (token === null) {
     return { ok: false, message: NOT_LOGGED_IN };
   }
   const request = new XMLHttpRequest();
-  request.open(method, '/api/web-data' + path, false);
+  request.open(method, '/api/web-data/users', false);
   request.setRequestHeader('Content-Type', 'application/json');
   request.setRequestHeader('Authorization', 'Bearer ' + token);
   try {
@@ -325,37 +380,32 @@ function databaseRequest(method, path, body) {
   } catch (error) {
     reply = {};
   }
+  if (request.status === 401) {
+    // The backend refused the login token ("Invalid or expired token").
+    return { ok: false, message: SESSION_EXPIRED_MESSAGE, expired: true };
+  }
   if (request.status < 200 || request.status >= 300) {
     return { ok: false, message: reply.message || ('Database error ' + request.status) };
   }
   return { ok: true, data: reply.data };
 }
 
-// Loads the saved values from the database when a page opens.
+// Loads website users when a page opens.
 function loadFromDatabase() {
   if (OPEN_PAGES.indexOf(thisPageName()) !== -1) {
     return;
   }
-  const result = databaseRequest('GET', '', undefined);
-  if (result.ok === false) {
-    databaseProblem = result.message;
-    if (result.message === NOT_LOGGED_IN) {
-      // The login has run out, so forget the saved copy and the page sends the person to the login page.
-      localStorage.removeItem(SESSION_KEY);
-    }
-    return;
-  }
-  const version = result.data[VERSION_KEY];
-  if (version !== undefined) {
-    databaseCache[VERSION_KEY] = JSON.stringify(version);
-  }
-
-  // The species, observations and users come from their own tables.
   for (let i = 0; i < LIST_TABLES.length; i++) {
     const table = LIST_TABLES[i];
-    const listResult = databaseRequest('GET', table.path, undefined);
+    const listResult = databaseRequest('GET');
     if (listResult.ok === false) {
       databaseProblem = listResult.message;
+      if (listResult.message === NOT_LOGGED_IN || listResult.expired) {
+        if (readStorage(SESSION_KEY) !== null) {
+          rememberToast(SESSION_EXPIRED_MESSAGE);
+        }
+        localStorage.removeItem(SESSION_KEY);
+      }
       return;
     }
     const items = listResult.data.map(function (row) {
@@ -377,7 +427,7 @@ function reloadFromDatabase(key) {
   if (table === null) {
     return false;
   }
-  const listResult = databaseRequest('GET', table.path, undefined);
+  const listResult = databaseRequest('GET');
   if (listResult.ok === false) {
     return false;
   }
@@ -418,60 +468,55 @@ function writeStorage(key, value) {
     }
   }
 
+  const table = findListTable(key);
+  if (table === null) {
+    return false;
+  }
+
   databaseCache[key] = JSON.stringify(value);
   if (databaseReady === false) {
-    // The login and password pages have no database data. Anywhere else this is a problem.
+    // The login and password pages do not load database data.
     return OPEN_PAGES.indexOf(thisPageName()) !== -1;
   }
 
-  const table = findListTable(key);
-  if (table !== null) {
-    // Nothing changed since the list was loaded, so there is nothing to save.
-    if (listFingerprint(value, table) === databaseSaved[key]) {
-      return true;
-    }
-    // Send only the records that are new or changed since the list was loaded or saved.
-    // position keeps the order of the full list.
-    const known = databasePrints[key] || {};
-    const rows = [];
-    const sentAt = [];
-    for (let i = 0; i < value.length; i++) {
-      const row = itemToRow(value[i], table);
-      if (value[i].id && known[value[i].id] === JSON.stringify(row)) {
-        continue;
-      }
-      row.position = i;
-      rows.push(row);
-      sentAt.push(i);
-    }
-    // Only the records this page really deleted are removed from the database.
-    const nowIds = idsOf(value);
-    const removed = (databaseIds[key] || []).filter(function (id) {
-      return nowIds.indexOf(id) === -1;
-    });
-    const saved = databaseRequest('PUT', table.path, { rows: rows, removed: removed });
-    if (saved.ok === false) {
-      showToast('Could not save to the database: ' + saved.message);
-      return false;
-    }
-    // The database gives every new species and user its id. Put the saved records back in the list.
-    const savedItems = value.slice();
-    for (let k = 0; k < sentAt.length; k++) {
-      savedItems[sentAt[k]] = rowToItem(saved.data[k], table);
-    }
-    databaseCache[key] = JSON.stringify(savedItems);
-    databaseSaved[key] = listFingerprint(savedItems, table);
-    databaseIds[key] = idsOf(savedItems);
-    databasePrints[key] = rowPrints(savedItems, table);
+  // Nothing changed since the list was loaded, so there is nothing to save.
+  if (listFingerprint(value, table) === databaseSaved[key]) {
     return true;
   }
-
-  const toSend = value;
-  const result = databaseRequest('PUT', '/' + key, { value: toSend });
-  if (result.ok === false) {
-    showToast('Could not save to the database: ' + result.message);
+  // Send only the records that are new or changed since the list was loaded or saved.
+  // position keeps the order of the full list.
+  const known = databasePrints[key] || {};
+  const rows = [];
+  const sentAt = [];
+  for (let i = 0; i < value.length; i++) {
+    const row = itemToRow(value[i], table);
+    if (value[i].id && known[value[i].id] === JSON.stringify(row)) {
+      continue;
+    }
+    row.position = i;
+    rows.push(row);
+    sentAt.push(i);
+  }
+  // Only the records this page really deleted are removed from the database.
+  const nowIds = idsOf(value);
+  const removed = (databaseIds[key] || []).filter(function (id) {
+    return nowIds.indexOf(id) === -1;
+  });
+  const saved = databaseRequest('PUT', { rows: rows, removed: removed });
+  if (saved.ok === false) {
+    showToast('Could not save to the database: ' + saved.message);
     return false;
   }
+
+  // The database gives new users their ids. Put the saved records back in the list.
+  const savedItems = value.slice();
+  for (let k = 0; k < sentAt.length; k++) {
+    savedItems[sentAt[k]] = rowToItem(saved.data[k], table);
+  }
+  databaseCache[key] = JSON.stringify(savedItems);
+  databaseSaved[key] = listFingerprint(savedItems, table);
+  databaseIds[key] = idsOf(savedItems);
+  databasePrints[key] = rowPrints(savedItems, table);
   return true;
 }
 
@@ -631,29 +676,6 @@ function findByScientificName(list, scientificName) {
   return null;
 }
 
-// Returns the saved list of species records (empty when there are none, or when the
-// database could not be loaded; see showDatabaseProblem). Records without dates get
-// empty ones here, in memory only: reading never writes.
-function getSpecies() {
-  const list = readStorage(SPECIES_KEY) || [];
-  for (let i = 0; i < list.length; i++) {
-    if (list[i].when === undefined) {
-      list[i].date = '';
-      list[i].when = '';
-    }
-    if (list[i].firstWhen === undefined) {
-      list[i].firstDate = list[i].date;
-      list[i].firstWhen = list[i].when;
-    }
-  }
-  return list;
-}
-
-// Returns the saved list of observations (empty when there are none).
-function getObservations() {
-  return readStorage(OBSERVATIONS_KEY) || [];
-}
-
 // Makes a username from the start of an email, like "georgetanyonghan@gmail.com" -> "george".
 // A number is added if another user already has it.
 function makeUsernameFromEmail(email, list) {
@@ -742,18 +764,6 @@ function findUserByLogin(text) {
     return byUsername;
   }
   return findUserByEmail(text);
-}
-
-// Returns the next free observation id, like "NP-2026-0419".
-function nextObservationId(list) {
-  let highest = 0;
-  for (let i = 0; i < list.length; i++) {
-    const number = parseInt(list[i].id.split('-')[2], 10);
-    if (number > highest) {
-      highest = number;
-    }
-  }
-  return 'NP-2026-' + ('000' + (highest + 1)).slice(-4);
 }
 
 // Returns the user with this email, or null if there is none.
@@ -901,6 +911,9 @@ function showDatabaseProblem() {
 // Builds the left menu inside <nav id="menu"> and highlights the page we are on (activeFile).
 function drawMenu(activeFile) {
   const nav = document.getElementById('menu');
+  if (nav === null) {
+    return;
+  }
   showDatabaseProblem();
 
   const logo = document.createElement('img');
@@ -958,7 +971,10 @@ function drawMenu(activeFile) {
 
 // Hides the small pop-up message.
 function hideToast() {
-  document.getElementById('toast').classList.remove('on');
+  const toast = document.getElementById('toast');
+  if (toast) {
+    toast.classList.remove('on');
+  }
 }
 
 // Shows a small pop-up message for a few seconds.
@@ -971,6 +987,9 @@ function showUnexpectedError(error) {
 
 function showToast(message) {
   const toast = document.getElementById('toast');
+  if (toast === null) {
+    return;
+  }
   toast.textContent = message;
   toast.classList.add('on');
   setTimeout(hideToast, 3500);
@@ -990,16 +1009,9 @@ function showRememberedToast() {
   }
 }
 
-// Opens the editor page.
-// index is the position of the species in the list. Use -1 for a new species.
-function openEditorFor(index) {
-  writeStorage(EDIT_KEY, index);
-  location.href = 'editor.html';
-}
-
 // Returns the CSS class of the coloured pill for a conservation status.
 function statusClass(status) {
-  if (status === 'Endangered') {
+  if (status === 'Endangered' || status === 'Critically Endangered') {
     return 'pill e';
   }
   if (status === 'Vulnerable') {

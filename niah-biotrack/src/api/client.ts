@@ -2,8 +2,16 @@ import { fetch as expoFetch } from 'expo/fetch';
 import type { File } from 'expo-file-system';
 import { supabase } from '../lib/supabase';
 
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '/') end -= 1;
+  return value.slice(0, end);
+}
+
 // Trim spaces and any trailing "/" so small typos in .env.local don't break the address.
-export const BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL?.trim().replace(/\/+$/, '');
+const configuredBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
+export const BASE_URL =
+  configuredBaseUrl === undefined ? undefined : trimTrailingSlashes(configuredBaseUrl);
 
 const TIMEOUT_MS = 15000; // weak signal in the field
 const UPLOAD_TIMEOUT_MS = 60000; // photos are bigger; give a weak connection longer

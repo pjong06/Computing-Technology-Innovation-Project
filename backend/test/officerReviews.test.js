@@ -200,3 +200,87 @@ test('a decision on an observation that is no longer pending is refused (409)', 
   });
   assert.equal(db.calls.filter(c => c[1] === 'insert').length, 0);
 });
+
+// ---- Approving needs an approved species; database refusals are explained ----
+
+const pendingObservation = {
+  'observations:single': { data: { id: OBS, plant_id: PLANT, review_status: 'pending', deleted_at: null }, error: null },
+  'plants:single': { data: { id: PLANT, species_id: SPECIES }, error: null },
+};
+
+async function decide(tables, body) {
+  db = fakeDb(tables);
+  let result;
+  await withApp(async base => {
+    result = await call(`${base}/${OBS}/decision`, 'POST', body);
+  });
+  return result;
+}
+
+test('approving is refused with a clear reason when the species is not approved yet', async () => {
+  const result = await decide({
+    ...pendingObservation,
+    'species:single': { data: { id: SPECIES, scientific_name: 'Nepenthes ampullaria', verification_status: 'pending' }, error: null },
+  }, { decision: 'approved' });
+  assert.equal(result.status, 409);
+  assert.equal(result.body.code, 'species_not_approved');
+  assert.match(result.body.message, /Nepenthes ampullaria is not an approved species yet/);
+  assert.equal(db.calls.filter(c => c[1] === 'insert').length, 0);
+});
+
+test('approving is refused with a clear reason when the plant has no species', async () => {
+  const result = await decide({
+    ...pendingObservation,
+    'plants:single': { data: { id: PLANT, species_id: null }, error: null },
+  }, { decision: 'approved' });
+  assert.equal(result.status, 409);
+  assert.match(result.body.message, /has no species yet/);
+  assert.equal(db.calls.filter(c => c[1] === 'insert').length, 0);
+});
+
+test('approving a visit of an approved species saves the review', async () => {
+  const result = await decide({
+    ...pendingObservation,
+    'species:single': { data: { id: SPECIES, scientific_name: 'Nepenthes ampullaria', verification_status: 'approved' }, error: null },
+  }, { decision: 'approved' });
+  assert.equal(result.status, 201);
+  assert.deepEqual(db.calls.find(c => c[1] === 'insert'), ['observation_reviews', 'insert', {
+    observation_id: OBS, reviewer_id: OFFICER, decision: 'approved', comments: null,
+  }]);
+});
+
+test('rejecting needs a reason', async () => {
+  for (const comments of [undefined, '', '   ']) {
+    const result = await decide(pendingObservation, { decision: 'rejected', comments });
+    assert.equal(result.status, 400);
+    assert.equal(result.body.message, 'Please give a reason for rejecting this observation');
+  }
+});
+
+test('a rule raised by the database is shown as it is, not as a generic error', async () => {
+  const result = await decide({
+    ...pendingObservation,
+    'observation_reviews:insert': { data: null, error: { code: 'P0001', message: 'Observation must be Pending; approval requires an approved species' } },
+  }, { decision: 'rejected', comments: 'Blurry' });
+  assert.equal(result.status, 409);
+  assert.equal(result.body.message, 'Observation must be Pending; approval requires an approved species');
+});
+
+test('a permission refusal from the database says so in plain words', async () => {
+  const result = await decide({
+    ...pendingObservation,
+    'observation_reviews:insert': { data: null, error: { code: '42501', message: 'new row violates row-level security policy' } },
+  }, { decision: 'rejected', comments: 'Blurry' });
+  assert.equal(result.status, 403);
+  assert.match(result.body.message, /did not allow this review for your account/);
+  assert.doesNotMatch(result.body.message, /row-level security/);
+});
+
+test('an unexpected database error stays generic', async () => {
+  const result = await decide({
+    ...pendingObservation,
+    'observation_reviews:insert': { data: null, error: { code: 'XX000', message: 'SECRET_DATABASE_DETAILS' } },
+  }, { decision: 'rejected', comments: 'Blurry' });
+  assert.equal(result.status, 500);
+  assert.equal(result.body.message, 'Could not save observation review');
+});

@@ -7,7 +7,9 @@ require('dotenv').config({
 
 const express = require('express');
 const app = express();
-app.set('trust proxy', 1);
+// Render's observed route: client -> Cloudflare -> forwarding proxies -> app.
+// Revalidate this hop count if the ingress path changes; never expose a shorter path.
+app.set('trust proxy', 3);
 const PORT = process.env.PORT || 3000;
 
 // IMPORT ROUTES AND SERVICES
@@ -28,6 +30,7 @@ const syncRoutes = require('./routes/sync');
 const { publicClient } = require('./config/supabase');
 const { requireAuth, requireRole } = require('./middleware/auth');
 const { startMqttIngestion } = require('./services/mqttIngestionService');
+const officerMapRoutes = require('./routes/officerMap');
 
 // MIDDLEWARE
 
@@ -65,6 +68,8 @@ app.use('/api/officer/reviews', officerReviewRoutes);
 app.use('/api/web-data', webDataRoutes);
 
 app.use('/api/sync', requireAuth, requireRole('botanist'), syncRoutes);
+
+app.use('/api/officer/map', officerMapRoutes);
 
 // Public plant routes
 app.use(publicPlantRoutes);

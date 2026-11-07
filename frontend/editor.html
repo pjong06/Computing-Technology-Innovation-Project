@@ -16,26 +16,35 @@
 <main>
 <section class="page on">
   <h1 id="editor-title">Add <span>species record</span></h1>
-  <p class="lead">Changes appear in the catalogue and in the mobile Species Reference.</p>
-  <p class="lead" id="approval-note" hidden>Your changes are not published straight away. They are sent to the Observation approval queue for the conservation officer to approve or reject.</p>
+  <p class="lead" id="officer-note">Changes appear in the catalogue and in the mobile app's species list straight away.</p>
+  <p class="lead" id="approval-note" hidden>Your proposal is not published straight away. The conservation officer approves or rejects it on the Species catalogue page, and you see the decision in the mobile app.</p>
   <div class="card">
     <div class="form">
       <label>Scientific name<input id="f-sci"></label>
       <label>Common name<input id="f-com"></label>
-      <label>Family (taxonomy)<input id="f-fam"></label>
-      <label>Conservation status
-        <select id="f-status"><option>Least Concern</option><option>Vulnerable</option><option>Endangered</option></select>
+      <label>Family (taxonomy)<input id="f-fam" list="family-options" placeholder="e.g. Nepenthaceae"></label>
+      <datalist id="family-options"></datalist>
+      <label id="status-label">Conservation status
+        <select id="f-status">
+          <option value="">Not assessed</option>
+          <option value="CR">Critically Endangered</option>
+          <option value="EN">Endangered</option>
+          <option value="VU">Vulnerable</option>
+          <option value="NT">Near Threatened</option>
+          <option value="LC">Least Concern</option>
+          <option value="DD">Data Deficient</option>
+        </select>
       </label>
-      <label>Location name<input id="f-loc"></label>
-      <label>GPS (lat, lng)<input id="f-gps" placeholder="3.2247, 113.7631"></label>
+      <label>Local name<input id="f-local"></label>
+      <label>Habitat<input id="f-habitat" placeholder="e.g. Peat swamp forest edges"></label>
       <label class="full">Description<textarea id="f-desc"></textarea></label>
-      <label class="full">Botanical photograph
+      <label class="full" id="photo-label">Botanical photograph
         <div class="pv" id="photo-preview"></div>
         <input type="file" accept="image/*" onchange="previewPhoto(this)">
       </label>
     </div>
     <div class="acts">
-      <button class="btn" id="save-button" onclick="saveSpecies()">Save species</button>
+      <button class="btn" id="save-button" onclick="saveSpecies().catch(showUnexpectedError)">Save species</button>
       <button class="btn ghost" onclick="location.href='species.html'">Cancel</button>
     </div>
   </div>

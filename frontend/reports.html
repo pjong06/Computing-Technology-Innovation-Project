@@ -18,28 +18,28 @@
   <h1>Reports <span>& export</span></h1>
   <p class="lead">Summarise biodiversity records and export them for research and planning.</p>
   <div class="stats">
-    <div class="card"><b id="stat-species">4</b>Species recorded</div>
-    <div class="card"><b id="stat-endangered">2</b>Endangered</div>
-    <div class="card"><b id="stat-pending">3</b>Awaiting approval</div>
-    <div class="card"><b>42</b>Field records synced</div>
+    <div class="card"><b id="stat-species">—</b>Approved species</div>
+    <div class="card"><b id="stat-endangered">—</b>Critically endangered or endangered</div>
+    <div class="card"><b id="stat-pending">—</b>Observations awaiting approval</div>
+    <div class="card"><b id="stat-plants">—</b>Field records (plants)</div>
   </div>
   <div class="bar">
     <select id="report-type" aria-label="Report type" onchange="renderReport()">
       <option value="inventory">Species inventory</option>
-      <option value="status">Conservation status summary</option>
-      <option value="botanist">Observations by botanist</option>
+      <option value="botanist">Field observations</option>
+      <option value="locations">Plant locations</option>
     </select>
-    <input id="report-from" type="date" value="2026-09-01" aria-label="From date" onchange="renderReport()">
-    <input id="report-to" type="date" value="2026-09-30" aria-label="To date" onchange="renderReport()">
+    <input id="report-from" type="date" aria-label="From date" onchange="renderReport()">
+    <input id="report-to" type="date" aria-label="To date" onchange="renderReport()">
     <button class="btn" onclick="exportCsv()">Export CSV</button>
     <button class="btn ghost" onclick="exportPdf()">Export PDF</button>
   </div>
   <p class="muted" id="report-note"></p>
   <div class="card tw">
-    <table>
-      <thead id="report-head"></thead>
-      <tbody id="report-body"></tbody>
-    </table>
+   <table id="report-table">
+     <thead><tr><th scope="col">Report</th></tr></thead>
+     <tbody></tbody>
+   </table>
     <p class="muted" id="report-empty" hidden>No records match this report and date range.</p>
   </div>
 </section>

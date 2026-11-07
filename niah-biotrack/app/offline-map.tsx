@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Platform, StatusBar } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Location from 'expo-location';
+import { Ionicons } from '@expo/vector-icons';
 import { useRecordStore } from '../src/store/useRecordStore';
 import PlantNotFound from '../src/components/PlantNotFound';
 import { bearingDegrees, compassDirection, distanceMeters, formatDistance } from '../src/utils/geo';
@@ -31,7 +32,8 @@ export default function OfflineMapScreen() {
     let positionSub: Location.LocationSubscription | null = null;
     let headingSub: Location.LocationSubscription | null = null;
 
-    (async () => {
+    // Line 34: Defined and invoked with .catch() to resolve typescript:S9383 unhandled promise
+    const initLocationTracking = async () => {
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (!active) return;
@@ -68,12 +70,20 @@ export default function OfflineMapScreen() {
       } catch {
         if (active) setGps({ status: 'error', message: 'Could not get a GPS fix. Check that location is turned on.' });
       }
+
       // A subscription may finish starting after the screen was left.
       if (!active) {
         positionSub?.remove();
         headingSub?.remove();
       }
-    })();
+    };
+
+    initLocationTracking().catch((error) => {
+      console.error('Offline map location tracking error:', error);
+      if (active) {
+        setGps({ status: 'error', message: 'Could not get a GPS fix. Check that location is turned on.' });
+      }
+    });
 
     return () => {
       active = false;
@@ -97,7 +107,14 @@ export default function OfflineMapScreen() {
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
         <View style={styles.topRow}>
-          <TouchableOpacity onPress={() => router.back()}><Text style={styles.backChevron}>‹</Text></TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => router.back()}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            style={styles.backBtn}
+          >
+            <Ionicons name="chevron-back-outline" size={28} color="#213B2A" />
+          </TouchableOpacity>
           <Text style={styles.headerTag}>Navigate · GPS only</Text>
         </View>
 
@@ -157,7 +174,7 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F6F8F6', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
   container: { flex: 1, padding: 22, justifyContent: 'space-between' },
   topRow: { flexDirection: 'row', alignItems: 'center' },
-  backChevron: { fontSize: 32, color: '#213B2A', marginRight: 10 },
+  backBtn: { marginRight: 8, padding: 4 },
   headerTag: { fontSize: 13, color: '#5C7163', fontWeight: '600' },
   compassCard: { backgroundColor: '#FFFFFF', borderRadius: 28, padding: 24, alignItems: 'center', borderWidth: 1.2, borderColor: '#E6ECE8' },
   messageText: { fontSize: 14, color: '#4E6254', textAlign: 'center', lineHeight: 20 },

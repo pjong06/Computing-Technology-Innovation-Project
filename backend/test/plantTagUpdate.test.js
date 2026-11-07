@@ -25,6 +25,9 @@ function fakeDb({ owner = BOTANIST, update = { data: { id: PLANT, qr_code_value:
 }
 
 const patch = body => callRoute('/api/plants', plantRouter, { method: 'PATCH', path: `/${PLANT}`, body });
+const getByTag = () => callRoute('/api/plants', plantRouter, {
+  path: '/tag/NIAH-PLT-00042',
+});
 
 test('the owner can set a tag; it is cleaned to upper case', async () => {
   db = fakeDb();
@@ -80,4 +83,52 @@ test('other database errors stay generic', async () => {
   const result = await patch({ qr_code_value: 'NIAH-PLT-00042' });
   assert.equal(result.status, 500);
   assert.ok(!JSON.stringify(result.body).includes('SECRET'));
+});
+
+test('a botanist can look up their own server plant by tag', async () => {
+  db = fakePlantsDb({
+    row: {
+      id: PLANT,
+      client_record_id: '33333333-3333-4333-8333-333333333333',
+      registered_by: BOTANIST,
+      qr_code_value: 'NIAH-PLT-00042',
+      plant_status: 'pending',
+      species: { scientific_name: 'Shorea sp.', common_name: 'Shorea' },
+    },
+  });
+
+  const result = await getByTag();
+  assert.equal(result.status, 200);
+  assert.equal(result.body.data.plant_id, PLANT);
+  assert.equal(result.body.data.species.scientific_name, 'Shorea sp.');
+});
+
+test('a botanist cannot look up another botanist pending plant', async () => {
+  db = fakePlantsDb({
+    row: {
+      id: PLANT,
+      registered_by: OTHER,
+      qr_code_value: 'NIAH-PLT-00042',
+      plant_status: 'pending',
+    },
+  });
+
+  assert.equal((await getByTag()).status, 404);
+});
+
+test('a botanist can look up another botanist approved plant without owner details', async () => {
+  db = fakePlantsDb({
+    row: {
+      id: PLANT,
+      registered_by: OTHER,
+      qr_code_value: 'NIAH-PLT-00042',
+      plant_status: 'approved',
+      species: { scientific_name: 'Shorea sp.', common_name: 'Shorea' },
+    },
+  });
+
+  const result = await getByTag();
+  assert.equal(result.status, 200);
+  assert.equal(result.body.data.plant_id, PLANT);
+  assert.equal('registered_by' in result.body.data, false);
 });
