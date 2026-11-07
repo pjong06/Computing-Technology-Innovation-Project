@@ -403,16 +403,15 @@ function reviewObservation(id, result) {
   const observations = getObservations();
   const observation = findObservation(observations, id);
   let reason = '';
-  let message = 'Observation rejected';
+  let message = null;
 
   if (result === 'Rejected') {
     reason = askRejectReason();
     if (reason === null) {
       return;
     }
-  }
-
-  if (result === 'Approved') {
+    message = 'Observation rejected';
+  } else if (result === 'Approved') {
     const outcome = approvalOutcome(observation);
     let chosenStatus = '';
     if (outcome === 'new-species') {
