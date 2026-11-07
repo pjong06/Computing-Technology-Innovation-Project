@@ -72,6 +72,11 @@ const lists = {
 
 router.use(requireAuth);
 
+// Check whether the logged-in user is an officer.
+function isOfficer(req) {
+    return req.profile && req.profile.role === "officer";
+}
+
 // Cleans a piece of text and cuts it to a safe length.
 function textOf(value, maxLength) {
     if (typeof value !== "string") return "";
@@ -141,7 +146,7 @@ for (const [name, list] of Object.entries(lists)) {
     // Send the whole list to the website.
     router.get("/" + name, async (req, res) => {
         // Only the officer may see the user list. Everyone else gets an empty list.
-        if (list.officerOnly && (!req.profile || req.profile.role !== "officer")) {
+        if (list.officerOnly && !isOfficer(req)) {
             return res.json({ data: [] });
         }
         const { data, error } = await req.supabase
@@ -158,11 +163,12 @@ for (const [name, list] of Object.entries(lists)) {
 
     // Save changes: add new records, update changed ones and remove the ones the page deleted.
     router.put("/" + name, async (req, res) => {
-        const isOfficer = req.profile && req.profile.role === "officer";
-        const isSubmitter = !isOfficer && list.botanistMaySubmit && req.profile && req.profile.role === "botanist";
-        if (!isOfficer && !isSubmitter) {
-            return res.status(403).json({ message: "Only the officer can change the website data" });
-        }
+    // Only officers can change website data.
+    if (!isOfficer(req)) {
+        return res.status(403).json({
+            message: "Only the officer can change the website data"
+        });
+    }
         const incoming = req.body && req.body.rows;
         if (!Array.isArray(incoming) || incoming.length > 2000) {
             return res.status(400).json({ message: `A list of ${name} is required` });
