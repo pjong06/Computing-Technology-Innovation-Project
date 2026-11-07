@@ -416,13 +416,13 @@ function reviewObservation(id, result) {
       }
     }
     message = updateCatalogue(observation, outcome, chosenStatus);
-    if (message === null) {
+    if (message == null) {
       drawQueue();   // the catalogue could not be saved, so nothing was approved
       return;
     }
   } else {
     reason = askRejectReason();
-    if (reason === null) {
+    if (reason == null) {
       return;
     }
     message = 'Observation rejected';
