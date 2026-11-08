@@ -136,7 +136,7 @@ test('JSON parser reports invalid JSON as 400 and oversized JSON as 413', async 
 async function setup(t, result = { data: { id: ID }, error: null }, role = 'officer') {
   const calls = [];
   const query = {};
-  for (const method of ['select', 'eq', 'order', 'limit', 'range', 'or', 'is', 'insert', 'update', 'single', 'maybeSingle']) {
+  for (const method of ['select', 'eq', 'order', 'limit', 'range', 'or', 'is', 'insert', 'update', 'single', 'maybeSingle', 'delete']) {
     query[method] = (...args) => { calls.push([method, ...args]); return query; };
   }
   query.then = (resolve, reject) => (result instanceof Error ? Promise.reject(result) : Promise.resolve(result)).then(resolve, reject);
@@ -290,4 +290,55 @@ test('officer photo upload requires a photo before querying', async t => {
     status: 400, body: { message: 'Photo is required' },
   });
   assert.equal(calls.length, 0);
+});
+
+// ---- Officer species list: every state, with family and photos ----
+
+test('/species/manage can filter by review state and name, and returns family and photos', async t => {
+  const { request, calls } = await setup(t, { data: [], error: null, count: 0 });
+  const response = await request('/species/manage?status=archived&q=Nepenthes');
+  assert.equal(response.status, 200);
+  assert.ok(calls.some(c => c[0] === 'eq' && c[1] === 'verification_status' && c[2] === 'archived'));
+  assert.ok(calls.some(c => c[0] === 'or' && c[1].includes('scientific_name.ilike.%Nepenthes%')));
+  const columns = calls.find(c => c[0] === 'select')[1];
+  assert.match(columns, /taxonomy\(family, genus\)/);
+  assert.match(columns, /species_media\(id, is_primary\)/);
+  assert.match(columns, /conservation_status/);
+});
+
+test('/species/manage without filters lists every state', async t => {
+  const { request, calls } = await setup(t, { data: [], error: null, count: 0 });
+  assert.equal((await request('/species/manage')).status, 200);
+  assert.ok(!calls.some(c => c[0] === 'eq' && c[1] === 'verification_status'));
+});
+
+test('/species/manage rejects unknown states and unsafe searches before database access', async t => {
+  const { request, calls } = await setup(t);
+  for (const params of ['status=deleted', 'status=approved&status=pending', 'q=a,b', 'q=%25']) {
+    assert.equal((await request(`/species/manage?${params}`)).status, 400, params);
+  }
+  assert.equal(calls.length, 0);
+});
+
+test('/species/manage is for officers only', async t => {
+  const { request, calls } = await setup(t, undefined, 'botanist');
+  assert.equal((await request('/species/manage')).status, 403);
+  assert.equal(calls.length, 0);
+});
+
+test('a photo kept as a web link is returned as it is, without a storage link', async t => {
+  const link = 'https://static.example.org/photos/1/medium.jpg';
+  const { request } = await setup(t, { data: { file_path: link }, error: null }, null);
+  const response = await request(`/species/${ID}/photos/${ID}`);
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, { url: link, expires_in: 60 });
+});
+
+test('removing a photo kept as a web link does not touch the storage bucket', async t => {
+  const photo = { id: ID, file_path: 'https://static.example.org/photos/1/medium.jpg', is_primary: false };
+  const { request, calls } = await setup(t, { data: photo, error: null });
+  const response = await request(`/species/${ID}/photos/${ID}`, 'DELETE');
+  assert.equal(response.status, 200);
+  assert.equal(response.body.message, 'Photo removed');
+  assert.ok(calls.some(c => c[0] === 'from' && c[1] === 'species_media'));
 });
