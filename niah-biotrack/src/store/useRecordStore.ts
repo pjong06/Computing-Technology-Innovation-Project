@@ -42,6 +42,12 @@ import {
   runOutboxSync,
 } from '../services/syncEngine';
 
+import {
+  checkDiameterCm,
+  checkHeightMetres,
+  metresToCm,
+} from '../utils/units';
+
 /* =========================================================
  * ENUMS
  * ======================================================= */
@@ -671,6 +677,20 @@ function buildRegistrationVisit(
       record.height
         ? `${record.height} m`
         : 'Not recorded',
+
+    /*
+     * The plant's typed height (m) and diameter (cm),
+     * stored in cm like every other visit.
+     */
+    heightCm: (() => {
+      const height = checkHeightMetres(record.height);
+      return height.ok ? metresToCm(height.value) : undefined;
+    })(),
+
+    diameterCm: (() => {
+      const diameter = checkDiameterCm(record.diameter);
+      return diameter.ok ? diameter.value : undefined;
+    })(),
 
     notes:
       record.description?.trim() ||

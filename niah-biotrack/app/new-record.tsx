@@ -58,6 +58,7 @@ import {
 import FormScrollView from '../src/components/FormScrollView';
 import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
 import SpeciesPicker, { type SpeciesChoice } from '../src/components/SpeciesPicker';
+import { checkDiameterCm, checkHeightMetres, metresToCm } from '../src/utils/units';
 
 const DONE_BAR_ID = 'new-record-done';
 const GPS_TIMEOUT_MS = 20_000;
@@ -102,7 +103,7 @@ interface GpsFix {
 }
 
 type GpsStatus = 'acquiring' | 'ready' | 'unavailable' | 'timeout';
-type FieldErrors = Partial<Record<'photos' | 'scientificName' | 'locationName' | 'gps', string>>;
+type FieldErrors = Partial<Record<'photos' | 'scientificName' | 'locationName' | 'gps' | 'height' | 'diameter', string>>;
 
 export default function NewRecordScreen() {
   const router = useRouter();
@@ -384,13 +385,19 @@ export default function NewRecordScreen() {
     }
     if (!locationName.trim()) nextErrors.locationName = 'Enter a location landmark.';
     if (!gpsFix) nextErrors.gps = 'A GPS fix is required. Wait for it, or tap Retry.';
+    // Measurements are optional here, but when typed they must pass the same checks as
+    // Add Observation: height 0.01-100 m, diameter 0.1-500 cm.
+    const heightCheck = height.trim() ? checkHeightMetres(height) : null;
+    const diameterCheck = diameter.trim() ? checkDiameterCm(diameter) : null;
+    if (heightCheck && !heightCheck.ok) nextErrors.height = heightCheck.message;
+    if (diameterCheck && !diameterCheck.ok) nextErrors.diameter = diameterCheck.message;
 
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0 || !gpsFix) return;
 
-    // Prefer Number.parseFloat over global parseFloat (SonarCloud requirement)
-    const heightNum = Number.parseFloat(height);
-    const diameterNum = Number.parseFloat(diameter);
+    // Typed: height in metres, diameter in cm. Stored: both in cm (observations.height_cm).
+    const heightMetres = heightCheck?.ok ? heightCheck.value : undefined;
+    const diameterCm = diameterCheck?.ok ? diameterCheck.value : undefined;
 
     const now = new Date();
     const formattedDate = now.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -405,9 +412,9 @@ export default function NewRecordScreen() {
       recordedBy: me?.full_name || me?.email || 'Field Staff',
       health: healthStatus,
       stage: lifeStage,
-      heightCm: Number.isFinite(heightNum) ? Math.round(heightNum * 100) : undefined,
-      diameterCm: Number.isFinite(diameterNum) ? diameterNum : undefined,
-      measurement: `Height ${height || '-'} m · Diameter ${diameter || '-'} cm`,
+      heightCm: heightMetres === undefined ? undefined : metresToCm(heightMetres),
+      diameterCm,
+      measurement: `Height ${heightMetres ?? '-'} m · Diameter ${diameterCm ?? '-'} cm`,
       notes: morphology.trim() || 'Initial registration record.',
       photoUris: photoList,
       syncStatus: submitForReview ? SyncStatus.NOT_UPLOADED : SyncStatus.LOCAL_ONLY,
@@ -422,8 +429,8 @@ export default function NewRecordScreen() {
       speciesId: approvedSpecies?.id ?? null,
       commonName: approvedSpecies?.common_name ?? '',
       family: approvedSpecies?.taxonomy?.family ?? '',
-      height: height.trim() || undefined,
-      diameter: diameter.trim() || undefined,
+      height: heightMetres === undefined ? undefined : String(heightMetres),
+      diameter: diameterCm === undefined ? undefined : String(diameterCm),
       morphology: morphology.trim() || undefined,
       locationName: locationName.trim(),
       latitude: gpsFix.latitude,
@@ -643,9 +650,13 @@ export default function NewRecordScreen() {
               placeholderTextColor="#8C9A91"
               keyboardType="decimal-pad"
               value={height}
-              onChangeText={setHeight}
+              onChangeText={(text) => {
+                setHeight(text);
+                clearError('height');
+              }}
               inputAccessoryViewID={DONE_BAR_ID}
             />
+            {errors.height && <Text style={styles.errorText}>{errors.height}</Text>}
           </View>
           <View style={styles.halfCol}>
             <Text style={styles.fieldLabel}>Diameter (cm)</Text>
@@ -655,9 +666,13 @@ export default function NewRecordScreen() {
               placeholderTextColor="#8C9A91"
               keyboardType="decimal-pad"
               value={diameter}
-              onChangeText={setDiameter}
+              onChangeText={(text) => {
+                setDiameter(text);
+                clearError('diameter');
+              }}
               inputAccessoryViewID={DONE_BAR_ID}
             />
+            {errors.diameter && <Text style={styles.errorText}>{errors.diameter}</Text>}
           </View>
         </View>
 

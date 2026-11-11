@@ -32,6 +32,7 @@ import { describeTagLookup, lookupTag } from '../src/services/tagLookup';
 
 import FormScrollView from '../src/components/FormScrollView';
 import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
+import { checkDiameterCm, checkHeightMetres, metresToCm, parseMeasurement } from '../src/utils/units';
 
 const DONE_BAR_ID = 'add-observation-done';
 const GPS_TIMEOUT_MS = 20_000;
@@ -100,7 +101,8 @@ export default function AddObservationScreen() {
   const [plantTag, setPlantTag] = useState<string>(params.tagCode || '');
 
   // ── PART 1 & 2: SPLIT MEASUREMENT STATES ─────────────────────
-  const [heightCm, setHeightCm] = useState<string>('');
+  // Typed: height in metres, diameter in cm. Height is converted to cm when saved.
+  const [heightM, setHeightM] = useState<string>('');
   const [diameterCm, setDiameterCm] = useState<string>('');
 
   const [lifeStage, setLifeStage] = useState<LifeStage>('Mature');
@@ -135,7 +137,7 @@ export default function AddObservationScreen() {
     isFloat = false
   ) => {
     setter((previous) => {
-      const current = Number.parseFloat(previous) || 0;
+      const current = parseMeasurement(previous) ?? 0;
       const updated = Math.max(0, current + delta);
       return isFloat ? updated.toFixed(1) : Math.round(updated).toString();
     });
@@ -272,11 +274,15 @@ export default function AddObservationScreen() {
     }
 
     if (currentStep === 2) {
-      if (!heightCm.trim() || !diameterCm.trim()) {
+      // Same checks as Register plant: height 0.01-100 m, diameter 0.1-500 cm.
+      const heightCheck = checkHeightMetres(heightM);
+      const diameterCheck = checkDiameterCm(diameterCm);
+      const problem = heightCheck.ok ? diameterCheck : heightCheck;
+      if (!problem.ok) {
         Toast.show({
           type: 'error',
-          text1: 'Measurements Required',
-          text2: 'Both Height and Diameter values must be recorded.',
+          text1: 'Check the measurements',
+          text2: problem.message,
         });
         return;
       }
@@ -339,8 +345,10 @@ export default function AddObservationScreen() {
         hour12: true,
       });
 
-      const height = Number.parseFloat(heightCm);
-      const diameter = Number.parseFloat(diameterCm);
+      const heightCheck = checkHeightMetres(heightM);
+      const diameterCheck = checkDiameterCm(diameterCm);
+      const heightMetres = heightCheck.ok ? heightCheck.value : undefined;
+      const diameter = diameterCheck.ok ? diameterCheck.value : undefined;
 
       await addObservation(plant.id, {
         date: `${formattedDate} · ${formattedTime}`,
@@ -348,9 +356,9 @@ export default function AddObservationScreen() {
         recordedBy: me?.full_name || me?.email || 'Field Staff',
         health: healthStatus,
         stage: lifeStage,
-        measurement: `Height ${heightCm} cm · Diameter ${diameterCm} cm`,
-        heightCm: Number.isFinite(height) ? height : undefined,
-        diameterCm: Number.isFinite(diameter) ? diameter : undefined,
+        measurement: `Height ${heightMetres ?? '-'} m · Diameter ${diameter ?? '-'} cm`,
+        heightCm: heightMetres === undefined ? undefined : metresToCm(heightMetres),
+        diameterCm: diameter,
         notes: notes.trim() || 'Observation logged in field.',
         photoUris: storedPhotoUris,
         latitude: capturedLocation?.latitude,
@@ -510,61 +518,61 @@ export default function AddObservationScreen() {
               <View style={styles.cardHeaderBetween}>
                 <View style={styles.metricTitleGroup}>
                   <Text style={styles.metricPartPill}>PART 1</Text>
-                  <Text style={styles.cardTitle}>Tree Height (cm)</Text>
+                  <Text style={styles.cardTitle}>Height (m)</Text>
                 </View>
-                <Text style={styles.unitBadge}>Centimeters</Text>
+                <Text style={styles.unitBadge}>Metres</Text>
               </View>
 
               <View style={styles.stepperRow}>
                 <TouchableOpacity
                   style={styles.stepperActionBtn}
-                  onPress={() => adjustValue(setHeightCm, -10)}
-                >
-                  <Text style={styles.stepperActionText}>-10</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.stepperActionBtn}
-                  onPress={() => adjustValue(setHeightCm, -1)}
+                  onPress={() => adjustValue(setHeightM, -1, true)}
                 >
                   <Text style={styles.stepperActionText}>-1</Text>
                 </TouchableOpacity>
 
+                <TouchableOpacity
+                  style={styles.stepperActionBtn}
+                  onPress={() => adjustValue(setHeightM, -0.1, true)}
+                >
+                  <Text style={styles.stepperActionText}>-0.1</Text>
+                </TouchableOpacity>
+
                 <TextInput
                   style={styles.stepperInput}
-                  value={heightCm}
-                  onChangeText={setHeightCm}
-                  placeholder="0"
+                  value={heightM}
+                  onChangeText={setHeightM}
+                  placeholder="0.0"
                   placeholderTextColor="#A1B0A6"
-                  keyboardType="numeric"
+                  keyboardType="decimal-pad"
                   textAlign="center"
                   inputAccessoryViewID={DONE_BAR_ID}
                 />
 
                 <TouchableOpacity
                   style={styles.stepperActionBtn}
-                  onPress={() => adjustValue(setHeightCm, 1)}
+                  onPress={() => adjustValue(setHeightM, 0.1, true)}
                 >
-                  <Text style={styles.stepperActionText}>+1</Text>
+                  <Text style={styles.stepperActionText}>+0.1</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={styles.stepperActionBtn}
-                  onPress={() => adjustValue(setHeightCm, 10)}
+                  onPress={() => adjustValue(setHeightM, 1, true)}
                 >
-                  <Text style={styles.stepperActionText}>+10</Text>
+                  <Text style={styles.stepperActionText}>+1</Text>
                 </TouchableOpacity>
               </View>
             </View>
 
-            {/* PART 2: DIAMETER AT BREAST HEIGHT */}
+            {/* PART 2: DIAMETER (measured at breast height) */}
             <View style={styles.card}>
               <View style={styles.cardHeaderBetween}>
                 <View style={styles.metricTitleGroup}>
                   <Text style={styles.metricPartPill}>PART 2</Text>
-                  <Text style={styles.cardTitle}>Diameter at Breast Height (cm)</Text>
+                  <Text style={styles.cardTitle}>Diameter (cm)</Text>
                 </View>
-                <Text style={styles.unitBadge}>DBH</Text>
+                <Text style={styles.unitBadge}>Centimetres</Text>
               </View>
 
               <View style={styles.stepperRow}>
