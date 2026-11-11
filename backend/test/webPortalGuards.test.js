@@ -155,3 +155,21 @@ test('species catalogue controls match the JavaScript selectors and redraw on ch
   assert.match(html, /id="status-filter"[^>]*aria-label="Filter by conservation status"[^>]*onchange="drawSpeciesTable\(\)"/);
   assert.match(script, /const searchInput = document\.getElementById\('search-box'\)/);
 });
+
+test('the distribution map is officer-only in the menu, the page list and on the page itself', () => {
+  const shared = read('frontend/js/shared.js');
+  const map = read('frontend/js/map.js');
+  // Non-officers (botanists, and researchers, who sign in as Botanist on the web) may open
+  // only BOTANIST_PAGES, and the menu hides every page canOpen() refuses.
+  const botanistPages = shared.slice(shared.indexOf('const BOTANIST_PAGES'), shared.indexOf('];', shared.indexOf('const BOTANIST_PAGES')));
+  assert.doesNotMatch(botanistPages, /map\.html/);
+  assert.match(shared, /if \(user !== null && canOpen\(user, MENU\[i\]\.file\) === false\) \{\s*continue;/);
+  // Opening map.html directly sends a non-officer away with a message.
+  assert.match(shared, /if \(canOpen\(user, file\) === false\) \{\s*rememberToast\(OFFICER_ONLY_PAGE_MESSAGE\);\s*location\.replace\('species\.html'\);\s*return false;/);
+  assert.match(shared, /const pageAllowed = guardPages\(\);/);
+  // map.js asks for plant locations only when the page guard let this person stay.
+  const guard = map.indexOf('if (pageAllowed === false)');
+  assert.ok(guard !== -1, 'map.js must check pageAllowed');
+  assert.ok(guard < map.indexOf('loadPlants().catch'), 'map.js must check pageAllowed before loading plants');
+  assert.match(read('frontend/map.html'), /<script src="js\/shared\.js"><\/script>\s*<script src="js\/map\.js"><\/script>/);
+});
