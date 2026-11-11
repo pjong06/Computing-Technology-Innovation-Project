@@ -143,7 +143,10 @@ async function loadPlants() {
   drawMarkers(true);
 }
 
-if (typeof L === 'undefined') {
+if (pageAllowed === false) {
+  // Not an officer (or not logged in): shared.js is already sending them away, so the
+  // officer-only plant route is never called.
+} else if (typeof L === 'undefined') {
   document.getElementById('map-message').textContent =
     'The map could not load. Check your internet connection and refresh the page.';
 } else {
