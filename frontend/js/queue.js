@@ -62,12 +62,13 @@ function makeDetailCard(observation) {
   if (observation.life_stage) {
     addInfo(card, 'Stage', observation.life_stage);
   }
+  // Stored in cm; height is shown in metres (2 decimals), diameter in cm.
   const sizes = [];
   if (observation.height_cm !== null && observation.height_cm !== undefined) {
-    sizes.push('Height ' + observation.height_cm + ' cm');
+    sizes.push('Height ' + Math.round(Number(observation.height_cm)) / 100 + ' m');
   }
   if (observation.diameter_cm !== null && observation.diameter_cm !== undefined) {
-    sizes.push('Diameter ' + observation.diameter_cm + ' cm');
+    sizes.push('Diameter ' + Math.round(Number(observation.diameter_cm) * 100) / 100 + ' cm');
   }
   if (sizes.length > 0) {
     addInfo(card, 'Measurements', sizes.join(' · '));

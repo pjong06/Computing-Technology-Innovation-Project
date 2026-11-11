@@ -171,7 +171,7 @@ async function botanistReport(client, from, to) {
             { key: "botanist", label: "Botanist" },
             { key: "health_status", label: "Health" },
             { key: "life_stage", label: "Stage" },
-            { key: "height_cm", label: "Height (cm)" },
+            { key: "height_m", label: "Height (m)" },
             { key: "diameter_cm", label: "Diameter (cm)" },
             { key: "review_status", label: "Review status" },
         ],
@@ -184,8 +184,9 @@ async function botanistReport(client, from, to) {
                 botanist: profileById.get(item.observer_id)?.full_name || "Unknown",
                 health_status: item.health_status || "",
                 life_stage: item.life_stage || "",
-                height_cm: item.height_cm ?? "",
-                diameter_cm: item.diameter_cm ?? "",
+                // Stored in cm; reported in metres (2 decimals). Diameter stays in cm.
+                height_m: item.height_cm == null ? "" : Math.round(Number(item.height_cm)) / 100,
+                diameter_cm: item.diameter_cm == null ? "" : Math.round(Number(item.diameter_cm) * 100) / 100,
                 review_status: item.review_status || "",
             };
         }),

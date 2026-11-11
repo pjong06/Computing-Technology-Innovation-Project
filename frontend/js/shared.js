@@ -830,11 +830,13 @@ const OPEN_PAGES = [
 ];
 
 // Pages a botanist may open. Officers (and administrators) may open every page.
+// The Distribution map is not here: its data (/api/officer/map/plants) is officer-only.
 const BOTANIST_PAGES = [
-  'species.html', 
-  'editor.html', 
-  'map.html'
+  'species.html',
+  'editor.html'
 ];
+
+const OFFICER_ONLY_PAGE_MESSAGE = 'That page is for conservation officers only.';
 
 // Says if this user may open this page.
 function canOpen(user, file) {
@@ -863,19 +865,26 @@ function tellIfSuspended() {
 }
 
 // Sends visitors who are not logged in to the login page,
-// and sends botanists away from the pages they may not open.
+// and sends botanists away from the pages they may not open (with a message saying why).
+// Returns true when this person may stay on this page. Page scripts check pageAllowed
+// before calling the backend, so nothing is requested while the browser is leaving.
 function guardPages() {
   const file = thisPageName();
   if (OPEN_PAGES.indexOf(file) !== -1) {
-    return;
+    return true;
   }
   const user = getCurrentUser();
   if (user === null) {
     tellIfSuspended();
     location.replace('login.html');
-  } else if (canOpen(user, file) === false) {
-    location.replace('species.html');
+    return false;
   }
+  if (canOpen(user, file) === false) {
+    rememberToast(OFFICER_ONLY_PAGE_MESSAGE);
+    location.replace('species.html');
+    return false;
+  }
+  return true;
 }
 
 const MENU = [
@@ -1098,6 +1107,6 @@ function makeCell(text) {
 
 loadFromDatabase();
 
-guardPages();
+const pageAllowed = guardPages();
 
 showRememberedToast();

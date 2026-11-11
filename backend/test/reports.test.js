@@ -116,8 +116,8 @@ test('field observations include species, plant, botanist, health and review det
         observed_at: '2026-11-02T03:00:00Z',
         health_status: 'healthy',
         life_stage: 'flowering',
-        height_cm: 40,
-        diameter_cm: null,
+        height_cm: 250,
+        diameter_cm: 12.5,
         review_status: 'pending',
       }],
     },
@@ -136,10 +136,15 @@ test('field observations include species, plant, botanist, health and review det
     botanist: 'Aina Rahman',
     health_status: 'healthy',
     life_stage: 'flowering',
-    height_cm: 40,
-    diameter_cm: '',
+    height_m: 2.5,
+    diameter_cm: 12.5,
     review_status: 'pending',
   });
+  // Column headings (also used for CSV and PDF) state the units.
+  const labels = result.body.data.columns.map(column => column.label);
+  assert.ok(labels.includes('Height (m)'));
+  assert.ok(labels.includes('Diameter (cm)'));
+  assert.ok(!labels.includes('Height (cm)'));
 });
 
 test('plant locations use the map view and are officer-only', async () => {
