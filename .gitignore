@@ -1,2 +1,5 @@
 .temp/
 .branches/
+# Species photo licence check: working files (exports, review sheet, API cache)
+scripts/species-photos/*.csv
+scripts/species-photos/.cache/
