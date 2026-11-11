@@ -35,6 +35,7 @@ import { resolveStoredPhotoUri } from '../src/utils/photoStorage';
 import { formatCoordinates } from '../src/utils/formatCoordinates';
 import { fetchPlantQr, saveQrImage, type PlantQr } from '../src/api/plantQr';
 import { ApiError } from '../src/api/client';
+import { formatDiameterCm, formatHeightFromCm, parseMeasurement } from '../src/utils/units';
 
 const TAG_PROBLEM_TEXT: Record<'in_use' | 'locked', string> = {
   in_use:
@@ -48,12 +49,22 @@ const TAG_NOT_ON_SERVER_TEXT =
 
 const NOT_RECORDED = 'Not recorded';
 
-function formatDimension(dimension?: string) {
-  const value = dimension?.trim();
-  if (!value) {
-    return NOT_RECORDED;
-  }
-  return /^\d+(\.\d+)?$/.test(value) ? `${value} m` : value;
+// The plant's latest measured height and diameter: from the newest visit that has one
+// (stored in cm), otherwise from what was typed when the plant was registered
+// (height in m, diameter in cm). Height is shown in metres, diameter in centimetres.
+function latestHeight(record: { height?: string; observations: ObservationVisit[] }): string {
+  const visit = record.observations.find((observation) => observation.heightCm !== undefined);
+  const fromVisit = formatHeightFromCm(visit?.heightCm);
+  if (fromVisit) return fromVisit;
+  const typed = parseMeasurement(record.height);
+  return typed === null ? NOT_RECORDED : `${typed} m`;
+}
+
+function latestDiameter(record: { diameter?: string; observations: ObservationVisit[] }): string {
+  const visit = record.observations.find((observation) => observation.diameterCm !== undefined);
+  const fromVisit = formatDiameterCm(visit?.diameterCm);
+  if (fromVisit) return fromVisit;
+  return formatDiameterCm(parseMeasurement(record.diameter)) ?? NOT_RECORDED;
 }
 
 function visitChips(observation: ObservationVisit): string[] {
@@ -71,14 +82,14 @@ function visitChips(observation: ObservationVisit): string[] {
     observation.heightCm !== undefined ||
     observation.diameterCm !== undefined
   ) {
-    if (observation.heightCm !== undefined) {
-      chips.push(
-        `Height ${Number((observation.heightCm / 100).toFixed(2))} m`
-      );
+    const height = formatHeightFromCm(observation.heightCm);
+    if (height) {
+      chips.push(`Height ${height}`);
     }
 
-    if (observation.diameterCm !== undefined) {
-      chips.push(`Diameter ${observation.diameterCm} cm`);
+    const diameter = formatDiameterCm(observation.diameterCm);
+    if (diameter) {
+      chips.push(`Diameter ${diameter}`);
     }
   } else {
     const measurement = observation.measurement?.trim();
@@ -524,12 +535,12 @@ export default function PlantDetailScreen() {
             <DetailRow label="Common name" value={matched.commonName} />
             <DetailRow label="Family" value={matched.family} />
             <DetailRow
-              label="Height"
-              value={formatDimension(matched.height)}
+              label="Height (m)"
+              value={latestHeight(matched)}
             />
             <DetailRow
-              label="Diameter"
-              value={formatDimension((matched as any).diameter)}
+              label="Diameter (cm)"
+              value={latestDiameter(matched)}
             />
             <DetailRow
               label="Plant tag"
