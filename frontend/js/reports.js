@@ -68,10 +68,27 @@ function makeReportCell(column, value) {
   return td;
 }
 
+// The report table's header and body (reports.html: <table id="report-table"> with a
+// <thead> and a <tbody>). Returns null when the page doesn't have them.
+function reportTableParts() {
+  const table = document.getElementById('report-table');
+  if (table === null || table.tHead === null || table.tBodies.length === 0) {
+    return null;
+  }
+  return { head: table.tHead, body: table.tBodies[0] };
+}
+
+const REPORT_TABLE_MISSING = 'The report table is missing from this page, so the report cannot be shown. Reload the page, or tell the system administrator.';
+
 function drawReport(report) {
+  const parts = reportTableParts();
+  if (parts === null) {
+    document.getElementById('report-note').textContent = REPORT_TABLE_MISSING;
+    return;
+  }
   document.getElementById('report-note').textContent = report.note || '';
-  const head = document.getElementById('report-head');
-  const body = document.getElementById('report-body');
+  const head = parts.head;
+  const body = parts.body;
   head.replaceChildren();
   body.replaceChildren();
 
@@ -95,9 +112,14 @@ async function renderReport() {
   const requestNumber = ++reportRequestNumber;
   currentReport = null;
   currentReportKey = '';
+  const parts = reportTableParts();
+  if (parts === null) {
+    document.getElementById('report-note').textContent = REPORT_TABLE_MISSING;
+    return;
+  }
   document.getElementById('report-note').textContent = 'Loading report...';
-  document.getElementById('report-head').replaceChildren();
-  document.getElementById('report-body').replaceChildren();
+  parts.head.replaceChildren();
+  parts.body.replaceChildren();
   document.getElementById('report-empty').hidden = true;
 
   try {
