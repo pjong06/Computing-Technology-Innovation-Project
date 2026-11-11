@@ -173,3 +173,18 @@ test('the distribution map is officer-only in the menu, the page list and on the
   assert.ok(guard < map.indexOf('loadPlants().catch'), 'map.js must check pageAllowed before loading plants');
   assert.match(read('frontend/map.html'), /<script src="js\/shared\.js"><\/script>\s*<script src="js\/map\.js"><\/script>/);
 });
+
+test('every element reports.js reads exists in reports.html, and the table has a head and body', () => {
+  const html = read('frontend/reports.html');
+  const script = read('frontend/js/reports.js');
+  const htmlIds = new Set(Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]));
+  const scriptIds = Array.from(script.matchAll(/getElementById\(['"]([^'"]+)['"]\)/g), match => match[1]);
+  assert.ok(scriptIds.length > 0);
+  for (const id of scriptIds) {
+    assert.ok(htmlIds.has(id), `reports.js reads #${id}, which is missing from reports.html`);
+  }
+  // reports.js fills the table's <thead> and first <tbody>, so both must be inside #report-table.
+  assert.match(html, /<table id="report-table">\s*<thead>[\s\S]*<\/thead>\s*<tbody>[\s\S]*<\/tbody>\s*<\/table>/);
+  // A missing table shows a message instead of throwing.
+  assert.match(script, /if \(parts === null\) \{\s*document\.getElementById\('report-note'\)\.textContent = REPORT_TABLE_MISSING;/);
+});
