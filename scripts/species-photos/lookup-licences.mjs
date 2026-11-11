@@ -3,6 +3,9 @@
 //
 // Reads the list exported by matching-queries.sql (Q5), asks the public iNaturalist API
 // for each photo's licence and credit, and writes a review CSV for an officer.
+// When the original photo can't be used, it suggests up to 3 allowed alternatives:
+// first the taxon's own photos, then photos from research-grade observations of that
+// taxon (Borneo first, then Malaysia, then anywhere).
 //
 // It only reads the input CSV and its own cache folder, and only calls the public
 // iNaturalist API (no login). It never reads .env files or any secret, and never
@@ -28,6 +31,15 @@ const MAX_ATTEMPTS = 4;           // first try + 3 retries
 const BATCH_SIZE = 30;            // taxa per /v1/taxa/<ids> call
 const MAX_ALTERNATIVES = 3;
 const REQUEST_TIMEOUT_MS = 30000;
+const OBSERVATIONS_PER_PLACE = 10; // observations read per place when looking for alternatives
+
+// Where to look for observation photos, in order. Place ids checked against
+// GET /v1/places/autocomplete: 6876 = Borneo (the island), 7155 = Malaysia (the country).
+const OBSERVATION_PLACES = [
+  { id: 6876, label: 'Borneo' },
+  { id: 7155, label: 'Malaysia' },
+  { id: null, label: 'anywhere' },
+];
 
 // ---------- Command line ----------
 
@@ -152,7 +164,7 @@ async function findTaxon(scientificName) {
   return exact.find(taxon => taxon.is_active !== false) || exact[0] || null;
 }
 
-// Every photo of these taxa, by taxon id: { id, licence, attribution, imageUrl, pageUrl }.
+// Every photo of these taxa, by taxon id: { id, licence, attribution, imageUrl, pageUrl, source }.
 async function photosOfTaxa(taxonIds) {
   const photosByTaxon = new Map();
   for (let i = 0; i < taxonIds.length; i += BATCH_SIZE) {
@@ -168,6 +180,9 @@ async function photosOfTaxa(taxonIds) {
           attribution: photo.attribution || '',
           imageUrl: photo.medium_url || photo.url || '',
           pageUrl: `https://www.inaturalist.org/photos/${photo.id}`,
+          source: 'taxon_photo',
+          photographer: '',
+          observationUrl: '',
         });
       };
       add(taxon.default_photo);
@@ -176,6 +191,47 @@ async function photosOfTaxa(taxonIds) {
     }
   }
   return photosByTaxon;
+}
+
+// Allowed photos from research-grade observations of this taxon, up to `wanted`, skipping
+// the ids in `skip`. Looks in Borneo first, then Malaysia, then anywhere, and stops as soon
+// as it has enough. Parameters checked against the live API: taxon_id, quality_grade,
+// photo_license (comma list), place_id, photos, per_page. photo_license only keeps
+// observations with at least one such photo, so each PHOTO's own licence_code is checked
+// again here (an observation's licence can differ from its photos' licences).
+async function observationAlternatives(taxonId, wanted, skip) {
+  const found = [];
+  const seen = new Set(skip);
+  for (const place of OBSERVATION_PLACES) {
+    if (found.length >= wanted) break;
+    const placeFilter = place.id ? `&place_id=${place.id}` : '';
+    const url = `${API}/observations?taxon_id=${taxonId}&quality_grade=research` +
+      `&photo_license=cc0,cc-by,cc-by-sa&photos=true&per_page=${OBSERVATIONS_PER_PLACE}${placeFilter}`;
+    const body = await getJson(url);
+    for (const observation of body.results || []) {
+      for (const photo of observation.photos || []) {
+        if (found.length >= wanted) break;
+        const id = photo && photo.id ? String(photo.id) : '';
+        const licence = photo.license_code ? String(photo.license_code).toLowerCase() : null;
+        if (!id || seen.has(id) || !ALLOWED_LICENCES.has(licence) || photo.hidden) continue;
+        if (Array.isArray(photo.flags) && photo.flags.length > 0) continue; // flagged on iNaturalist
+        seen.add(id);
+        found.push({
+          id,
+          licence,
+          attribution: photo.attribution || '',
+          // The search returns the small "square" size; the same file exists as "medium".
+          imageUrl: (photo.url || '').replace('/square.', '/medium.'),
+          pageUrl: `https://www.inaturalist.org/photos/${id}`,
+          source: `observation, ${place.label}`,
+          // A CC0 photo's attribution is just "no rights reserved", so keep the name too.
+          photographer: (observation.user && (observation.user.name || observation.user.login)) || '',
+          observationUrl: observation.uri || `https://www.inaturalist.org/observations/${observation.id}`,
+        });
+      }
+    }
+  }
+  return found;
 }
 
 // Why a licence is or isn't allowed, in the words used in the review CSV.
@@ -191,9 +247,10 @@ const OUTPUT_COLUMNS = [
   'species_id', 'scientific_name', 'inat_taxon_id',
   'original_photo_id', 'original_licence', 'original_attribution', 'original_image_url', 'original_page_url',
   'allowed', 'reason',
-  'alt1_id', 'alt1_licence', 'alt1_attribution', 'alt1_url', 'alt1_page_url',
-  'alt2_id', 'alt2_licence', 'alt2_attribution', 'alt2_url', 'alt2_page_url',
-  'alt3_id', 'alt3_licence', 'alt3_attribution', 'alt3_url', 'alt3_page_url',
+  ...[1, 2, 3].flatMap(n => [
+    `alt${n}_id`, `alt${n}_licence`, `alt${n}_attribution`, `alt${n}_photographer`,
+    `alt${n}_url`, `alt${n}_page_url`, `alt${n}_source`, `alt${n}_observation_url`,
+  ]),
   'officer_choice', 'officer_name', 'officer_notes',
 ];
 
@@ -248,8 +305,15 @@ async function main() {
     console.warn(`  photo lookup failed: ${error.message} (re-run to resume)`);
   }
 
-  // 3. One review line per input row.
-  const records = inputRows.map(row => {
+  // 3. One review line per input row. (async: alternatives may need more API calls)
+  const observationAltsByTaxon = new Map(); // one search per taxon, shared by its rows
+  let observationLookupFailures = 0;
+  const records = [];
+  for (const row of inputRows) {
+    records.push(await reviewRow(row));
+  }
+
+  async function reviewRow(row) {
     const record = {
       species_id: row.species_id,
       scientific_name: row.scientific_name,
@@ -278,22 +342,44 @@ async function main() {
     }
 
     // Alternatives only when the original can't be used. They are suggestions: an officer
-    // must pick one in officer_choice before anything is imported.
+    // must pick one in officer_choice before anything is imported. Taxon photos first,
+    // then observation photos when the taxon has fewer than 3 allowed photos.
     if (record.allowed === 'no') {
       const alternatives = photos
         .filter(photo => photo.id !== row.inat_photo_id && ALLOWED_LICENCES.has(photo.licence))
         .slice(0, MAX_ALTERNATIVES);
+      if (alternatives.length < MAX_ALTERNATIVES) {
+        const taxonKey = String(taxon.id);
+        if (!observationAltsByTaxon.has(taxonKey)) {
+          // Skip every taxon photo, so the same photo never appears twice.
+          const skip = photos.map(photo => photo.id);
+          try {
+            observationAltsByTaxon.set(taxonKey, await observationAlternatives(taxon.id, MAX_ALTERNATIVES, skip));
+          } catch (error) {
+            observationLookupFailures += 1;
+            console.warn(`  observation search failed for ${row.scientific_name}: ${error.message} (re-run to resume)`);
+            observationAltsByTaxon.set(taxonKey, []);
+          }
+        }
+        for (const photo of observationAltsByTaxon.get(taxonKey)) {
+          if (alternatives.length >= MAX_ALTERNATIVES) break;
+          if (photo.id !== row.inat_photo_id) alternatives.push(photo);
+        }
+      }
       alternatives.forEach((photo, index) => {
         const prefix = `alt${index + 1}_`;
         record[prefix + 'id'] = photo.id;
         record[prefix + 'licence'] = photo.licence;
         record[prefix + 'attribution'] = photo.attribution;
+        record[prefix + 'photographer'] = photo.photographer;
         record[prefix + 'url'] = photo.imageUrl;
         record[prefix + 'page_url'] = photo.pageUrl;
+        record[prefix + 'source'] = photo.source;
+        record[prefix + 'observation_url'] = photo.observationUrl;
       });
     }
     return record;
-  });
+  }
 
   writeFileSync(OUTPUT, toCsv(OUTPUT_COLUMNS, records));
 
@@ -305,8 +391,17 @@ async function main() {
   console.log(`  allowed: ${count(r => r.allowed === 'yes')}`);
   console.log(`  not allowed: ${count(r => r.allowed === 'no')}`);
   console.log(`    with at least one allowed alternative: ${count(r => r.allowed === 'no' && r.alt1_id)}`);
+  console.log(`    with 3 alternatives: ${count(r => r.allowed === 'no' && r.alt3_id)}`);
+  const sources = {};
+  for (const record of records) {
+    for (const n of [1, 2, 3]) {
+      const source = record[`alt${n}_source`];
+      if (source) sources[source] = (sources[source] || 0) + 1;
+    }
+  }
+  console.log(`  alternatives by source: ${JSON.stringify(sources)}`);
   console.log(`  by reason: ${JSON.stringify(reasons)}`);
-  if (failedNames.size > 0 || photoLookupError) {
+  if (failedNames.size > 0 || photoLookupError || observationLookupFailures > 0) {
     console.log('\nSome lookups failed. Run the script again: finished requests are cached and not repeated.');
     process.exitCode = 2;
   }

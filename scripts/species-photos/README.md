@@ -35,7 +35,13 @@ This step **doesn't import anything**: the migration, import script and UI come 
 
 ### How the script behaves
 - **Rate:** at most **1 request per second**, one at a time, with the User-Agent `NiahBioTrack-species-photo-licence-check/1.0 (...)`. About 174 species is about 180 requests, roughly 3-4 minutes.
-- **What it calls:** only `GET https://api.inaturalist.org/v1/taxa?q=<name>` (find the species) and `GET https://api.inaturalist.org/v1/taxa/<up to 30 ids>` (that species' photos with licence and credit). iNaturalist has no "one photo by id" endpoint.
+- **What it calls:** only these public endpoints. iNaturalist has no "one photo by id" endpoint.
+  - `GET https://api.inaturalist.org/v1/taxa?q=<name>` finds the species.
+  - `GET https://api.inaturalist.org/v1/taxa/<up to 30 ids>` gives that species' own photos with licence and credit.
+  - `GET https://api.inaturalist.org/v1/observations?taxon_id=<id>&quality_grade=research&photo_license=cc0,cc-by,cc-by-sa&photos=true&per_page=10[&place_id=...]` is used only when the original isn't allowed **and** the species has fewer than 3 allowed photos of its own. It looks in **Borneo** (`place_id=6876`) first, then **Malaysia** (`7155`), then anywhere, and stops once it has 3. That's at most 3 extra requests per species.
+- **Observation photo rules:**
+  - Each photo's **own** `license_code` decides whether it's allowed. An observation's licence can differ from its photos', so the observation's licence is never used.
+  - Photos that iNaturalist has hidden or flagged are skipped.
 - **Errors:**
   - HTTP 429, 5xx and network errors are retried up to 3 times, waiting 60 s, 120 s, 180 s or as long as `Retry-After` asks;
   - other errors are not retried, and the row is marked `lookup_failed`.
@@ -57,7 +63,15 @@ This step **doesn't import anything**: the migration, import script and UI come 
 | `original_page_url` | The photo's page on iNaturalist (link to it in the credit) |
 | `allowed` | `yes` only for CC0, CC BY or CC BY-SA. Everything else is `no` |
 | `reason` | Why: see below |
-| `alt1_*` … `alt3_*` | Only when `allowed = no`: up to 3 **allowed** photos of the same species. Each has `id`, `licence`, `attribution`, `url` (image) and `page_url` (iNaturalist page) |
+| `alt1_*` … `alt3_*` | Only when `allowed = no`: up to 3 **allowed** photos of the same species. The species' own photos come first, then observation photos. Each has the 8 columns below |
+| `altN_id` | iNaturalist photo id |
+| `altN_licence` | That photo's own licence: `cc0`, `cc-by` or `cc-by-sa` |
+| `altN_attribution` | iNaturalist's credit text for the photo. For CC0 photos this is just "no rights reserved" |
+| `altN_photographer` | The observer's name (or user name) for observation photos, used in the credit because CC0 credit text has no name. Blank for the species' own photos, whose credit text already names the photographer |
+| `altN_url` | The image (medium size) |
+| `altN_page_url` | The photo's page on iNaturalist (link to it in the credit) |
+| `altN_source` | Where it came from: `taxon_photo` (the species' own photos on iNaturalist), or `observation, Borneo` / `observation, Malaysia` / `observation, anywhere` (a research-grade observation found in that area) |
+| `altN_observation_url` | For observation photos: the observation's page, to check it really is this species. Blank for the species' own photos |
 | `officer_choice` | Filled in by an officer: `original` (only when `allowed = yes`), `alt1`, `alt2`, `alt3` or `none` |
 | `officer_name` | Who made the choice |
 | `officer_notes` | Optional, e.g. "alt1 shows the pitcher clearly" |
@@ -73,5 +87,6 @@ This step **doesn't import anything**: the migration, import script and UI come 
 
 **Rules for the officer:**
 - **Alternatives:** an alternative is only used if an officer chooses it in `officer_choice`. Nothing is picked automatically.
-- **Check the photo:** open the `page_url` to confirm the photo really shows this species and the licence on the page matches.
+- **Check the photo:** open the `page_url` (and `observation_url` for observation photos) to confirm the photo really shows this species and the licence on the page matches.
+  - Research-grade observations of a species can include its subspecies or varieties, so check the name on the observation page.
 - **Credits** will show the photographer, the licence (linked to the Creative Commons licence page) and "via iNaturalist" (linked to `page_url`).
