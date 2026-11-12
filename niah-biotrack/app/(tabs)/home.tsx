@@ -18,6 +18,7 @@ import Toast from 'react-native-toast-message';
 import { useAuthRole } from '../../src/context/AuthRoleContext';
 import { useRecordStore, SyncStatus, IdentificationStatus } from '../../src/store/useRecordStore';
 import { buildSyncSummary } from '../../src/services/syncSummary';
+import { resumePausedRecordRetries } from '../../src/services/offlineDatabase';
 import { useProposalStore } from '../../src/store/useProposalStore';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
@@ -102,14 +103,20 @@ export default function HomeScreen() {
 
   const handleRetry = async (id: string) => {
     setRetryingIds((ids) => [...ids, id]);
-    const result = await syncRecord(id);
-    setRetryingIds((ids) => ids.filter((x) => x !== id));
-
-    Toast.show(
-      result.ok
-        ? { type: 'success', text1: 'Record uploaded', position: 'bottom' }
-        : { type: 'error', text1: 'Upload failed', text2: result.reason, position: 'bottom' }
-    );
+    try {
+      const record = useRecordStore.getState().records.find((item) => item.id === id);
+      await resumePausedRecordRetries(id, record?.observations.map((visit) => visit.id) ?? []);
+      const result = await syncRecord(id);
+      Toast.show(
+        result.ok
+          ? { type: 'success', text1: 'Record uploaded', position: 'bottom' }
+          : { type: 'error', text1: 'Upload failed', text2: result.reason, position: 'bottom' }
+      );
+    } catch {
+      Toast.show({ type: 'error', text1: 'Could not retry this record. Please try again.' });
+    } finally {
+      setRetryingIds((ids) => ids.filter((x) => x !== id));
+    }
   };
 
   const getStatusBadge = (status: SyncStatus) => {
@@ -314,7 +321,7 @@ export default function HomeScreen() {
 
                       {item.syncStatus === SyncStatus.FAILED && (
                         <View style={styles.errorSubRow}>
-                          <Text style={styles.errorSubText}>Upload failed</Text>
+                          <Text style={styles.errorSubText}>{item.syncError || 'Upload failed'}</Text>
                           {retryingIds.includes(item.id) ? (
                             <ActivityIndicator size="small" color="#9B1C1C" />
                           ) : (
@@ -526,7 +533,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginTop: 4,
   },
-  errorSubText: { fontSize: 11, color: '#9B1C1C' },
+  errorSubText: { flex: 1, fontSize: 11, color: '#9B1C1C' },
   retryBtn: { fontSize: 11, fontWeight: '700', color: '#9B1C1C', textDecorationLine: 'underline' },
   emptyContainer: { alignItems: 'center', paddingVertical: 30 },
   emptyTitle: { fontSize: 15, fontWeight: '700', color: '#1E2B22', marginBottom: 4 },

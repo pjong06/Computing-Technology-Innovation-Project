@@ -1,11 +1,11 @@
 import { ApiError, apiFetch } from '../api/client';
+import { isSyncOffline, requestSyncRetry } from './syncRetry';
 import {
   applySyncOperationResult,
+  claimOutboxOperations,
   getReadyOutboxOperations,
   getUploadedPlantsQueuedAsCreate,
-  markOperationsProcessing,
   rebaseQueuedCreateAsUpdate,
-  retryFailedOperations,
   setLastSuccessfulSync,
   type OutboxOperation,
   type SyncOperationResult,
@@ -71,29 +71,23 @@ async function adoptServerVersions(): Promise<void> {
 }
 
 async function runPush(): Promise<SyncRunResult> {
-  await retryFailedOperations();
+  if (await isSyncOffline()) {
+    return { processed: 0, succeeded: 0, failed: 0, conflicts: 0, remaining: false, error: 'Waiting for an internet connection.' };
+  }
   await adoptServerVersions();
 
   let processed = 0;
   let succeeded = 0;
   let failed = 0;
   let conflicts = 0;
+  let remaining = false;
 
   while (true) {
-    const operations = await getReadyOutboxOperations(50);
-    if (operations.length === 0) {
-      if (processed > 0) await setLastSuccessfulSync();
-      return {
-        processed,
-        succeeded,
-        failed,
-        conflicts,
-        remaining: false,
-      };
-    }
-
+    const queued = await getReadyOutboxOperations(50);
+    if (queued.length === 0) break;
+    const operations = await claimOutboxOperations(queued.map((operation) => operation.operationId));
+    if (operations.length === 0) continue;
     const operationIds = operations.map((operation) => operation.operationId);
-    await markOperationsProcessing(operationIds);
 
     let response: PushResponse;
     try {
@@ -106,34 +100,39 @@ async function runPush(): Promise<SyncRunResult> {
         error instanceof ApiError
           ? error.message
           : 'Synchronization failed unexpectedly.';
+      const status = error instanceof ApiError ? error.status : 0;
+      const retryable = isRetryableStatus(status);
 
       for (const operation of operations) {
         await applySyncOperationResult({
           operation_id: operation.operationId,
-          status: 'retry',
+          status: retryable ? 'retry' : 'failed',
           message,
+          retryAfterMs: error instanceof ApiError ? error.retryAfterMs : undefined,
         });
       }
 
       return {
-        processed,
+        processed: processed + operations.length,
         succeeded,
-        failed,
+        failed: failed + operations.length,
         conflicts,
-        remaining: true,
+        remaining: retryable,
         error: message,
       };
     }
 
+    const expected = new Set(operationIds);
     const received = new Set<string>();
-    for (const result of response.results ?? []) {
-      if (!result.operation_id) continue;
+    for (const result of response?.results ?? []) {
+      if (!expected.has(result.operation_id) || received.has(result.operation_id)) continue;
       received.add(result.operation_id);
       await applySyncOperationResult(result);
       processed += 1;
       if (result.status === 'success') succeeded += 1;
       else if (result.status === 'conflict') conflicts += 1;
       else failed += 1;
+      if (result.status === 'retry') remaining = true;
     }
 
     // A missing result must not strand an operation in Processing.
@@ -144,27 +143,26 @@ async function runPush(): Promise<SyncRunResult> {
         status: 'retry',
         message: 'The server did not return a result for this operation.',
       });
+      processed += 1;
       failed += 1;
-    }
-
-    // Stop after permanent failures/conflicts so the UI can show attention is
-    // required instead of immediately looping over the same batch.
-    if (failed > 0 || conflicts > 0) {
-      return {
-        processed,
-        succeeded,
-        failed,
-        conflicts,
-        remaining: true,
-      };
+      remaining = true;
     }
   }
+
+  if (succeeded > 0 && failed === 0 && conflicts === 0) await setLastSuccessfulSync();
+  return { processed, succeeded, failed, conflicts, remaining };
 }
 
+export function isRetryableStatus(status: number): boolean {
+  return status === 0 || status === 408 || status === 429 || status >= 500;
+}
 export function runOutboxSync(): Promise<SyncRunResult> {
   if (activeSync) return activeSync;
 
-  activeSync = runPush().finally(() => {
+  activeSync = runPush().then((result) => {
+    if (result.remaining) requestSyncRetry();
+    return result;
+  }).finally(() => {
     activeSync = null;
   });
   return activeSync;

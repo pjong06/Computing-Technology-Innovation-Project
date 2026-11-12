@@ -40,7 +40,10 @@ import {
 
 import {
   runOutboxSync,
+  isRetryableStatus,
+  type SyncRunResult,
 } from '../services/syncEngine';
+import { requestSyncRetry } from '../services/syncRetry';
 
 import {
   checkDiameterCm,
@@ -228,6 +231,7 @@ export type TagProblem =
   | 'locked';
 
 export interface PlantRecord {
+  syncError?: string;
   /*
    * Stable local UUID.
    */
@@ -359,6 +363,7 @@ export type SyncResult =
         reason: string;
       }
   ) & {
+    retryable?: boolean;
     photosUploaded?:
       number;
 
@@ -367,6 +372,7 @@ export type SyncResult =
   };
 
 export interface SyncAllResult {
+  retryable: boolean;
   uploaded: number;
 
   failed: number;
@@ -785,7 +791,8 @@ interface RecordState {
     >;
 
   syncRecord: (
-    id: string
+    id: string,
+    outboxRun?: SyncRunResult
   ) =>
     Promise<SyncResult>;
 
@@ -1225,7 +1232,8 @@ export const useRecordStore =
 
         syncRecord:
           async (
-            id
+            id,
+            outboxRun
           ) => {
             const original =
               get().records.find(
@@ -1331,7 +1339,10 @@ export const useRecordStore =
                * ======================================= */
 
               const run =
-                await runOutboxSync();
+                outboxRun && plantMetadataStatus !== null &&
+                  plantMetadataStatus !== 'local_only' && queueObservationIds.length === 0
+                  ? outboxRun
+                  : await runOutboxSync();
 
               let refreshedRecords =
                 await loadOrMigrateRecords(
@@ -1358,19 +1369,6 @@ export const useRecordStore =
 
                   reason:
                     'Record not found after synchronization',
-                };
-              }
-
-              if (run.error) {
-                return {
-                  ok: false,
-
-                  reason:
-                    run.error,
-
-                  photosUploaded,
-
-                  photoProblems,
                 };
               }
 
@@ -1437,7 +1435,7 @@ export const useRecordStore =
                         ? "This plant can't be changed after submission, so the tag was not saved on the server"
                         : hasConflict
                       ? 'A newer server version exists. This record needs conflict review.'
-                      : 'The server rejected part of this record. Review it and try again.',
+                      : refreshed.syncError ?? 'The server rejected part of this record. Review it and try again.',
 
                   photosUploaded,
 
@@ -1463,7 +1461,8 @@ export const useRecordStore =
                   ok: false,
 
                   reason:
-                    'Some metadata operations are still waiting to upload.',
+                    refreshed.syncError ?? run.error ?? 'Some metadata operations are still waiting to upload.',
+                  retryable: run.remaining,
 
                   photosUploaded,
 
@@ -1559,11 +1558,13 @@ export const useRecordStore =
               if (
                 photoRun.error
               ) {
+                if (photoRun.retryable) requestSyncRetry();
                 return {
                   ok: false,
 
                   reason:
                     photoRun.error,
+                  retryable: photoRun.retryable,
 
                   photosUploaded,
 
@@ -2089,6 +2090,8 @@ export const useRecordStore =
                 photoProblems,
               };
             } catch (error) {
+              const retryable = error instanceof ApiError && isRetryableStatus(error.status);
+              if (retryable) requestSyncRetry();
               const reason =
                 error instanceof
                   ApiError
@@ -2102,6 +2105,7 @@ export const useRecordStore =
                 ok: false,
 
                 reason,
+                retryable,
 
                 photosUploaded,
 
@@ -2335,7 +2339,8 @@ export const useRecordStore =
              * records[], but their delete operation
              * still exists in the outbox.
              */
-            await runOutboxSync();
+            const outboxRun = await runOutboxSync();
+            let retryable = outboxRun.remaining;
 
             const refreshedRecords =
               await loadOrMigrateRecords(
@@ -2417,8 +2422,10 @@ export const useRecordStore =
 
               const result =
                 await get().syncRecord(
-                  id
+                  id,
+                  outboxRun
                 );
+              retryable ||= result.retryable === true;
 
               if (
                 result.ok
@@ -2446,6 +2453,7 @@ export const useRecordStore =
             await get().refreshReviewStatuses();
 
             return {
+              retryable,
               uploaded,
 
               failed,

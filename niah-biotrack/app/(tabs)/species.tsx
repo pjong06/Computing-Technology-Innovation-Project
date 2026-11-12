@@ -130,7 +130,11 @@ export default function SpeciesScreen() {
                     </TouchableOpacity>
                   )}
                   {p.syncStatus === SyncStatus.FAILED && retryingId !== p.id && (
-                    <TouchableOpacity onPress={() => removeProposal(p.id)} hitSlop={8}>
+                    <TouchableOpacity onPress={() => {
+                      void removeProposal(p.id).catch(() => {
+                        Toast.show({ type: 'error', text1: 'Could not remove the proposal.' });
+                      });
+                    }} hitSlop={8}>
                       <Text style={[styles.proposalAction, styles.proposalRemove]}>Remove</Text>
                     </TouchableOpacity>
                   )}

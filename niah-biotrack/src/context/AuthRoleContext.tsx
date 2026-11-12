@@ -117,8 +117,8 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
   // see the previous user's records and photos (and could upload them as their own).
   // Screens must warn about unsynced data BEFORE calling this; it deletes it.
   const logout = async () => {
+    await useProposalStore.getState().clearProposals();
     useRecordStore.getState().clearAllData(); // records, routes, draft route
-    useProposalStore.getState().clearProposals(); // species proposals
     deleteAllStoredPhotos();
     await AsyncStorage.removeItem('niah_is_guest_visitor');
     // Works offline too, and forgets the cached account details.
