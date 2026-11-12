@@ -1,7 +1,7 @@
 import { randomUUID } from 'expo-crypto';
 import * as SQLite from 'expo-sqlite';
 
-export type SyncEntityType = 'plant' | 'observation';
+export type SyncEntityType = 'plant' | 'observation' | 'proposal';
 export type SyncOperationType = 'create' | 'update' | 'delete';
 
 export type LocalSyncStatus =
@@ -63,6 +63,8 @@ export interface SyncOperationResult {
   row_version?: number;
   message?: string;
   code?: string;
+  snapshot?: Record<string, unknown>;
+  retryAfterMs?: number;
 }
 
 interface LocalEntityRow {
@@ -86,12 +88,29 @@ interface OutboxRow {
   status: OutboxStatus;
   attempts: number;
   last_error: string | null;
+  retry_count: number;
+  next_retry_at: number | null;
   created_at: string;
   updated_at: string;
 }
 
 const DATABASE_NAME = 'niah-biotrack.db';
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 3;
+const RETRY_DELAYS_MS = [30_000, 120_000, 300_000];
+
+const READY_DEPENDENCIES = `
+  AND (
+    entity_type <> 'observation'
+    OR operation_type <> 'create'
+    OR json_extract(payload_json, '$.plant_client_record_id') IS NULL
+    OR EXISTS (
+      SELECT 1 FROM local_entities AS plant
+      WHERE plant.entity_type = 'plant'
+        AND plant.client_record_id = json_extract(sync_outbox.payload_json, '$.plant_client_record_id')
+        AND plant.server_id IS NOT NULL
+    )
+  )
+`;
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 let initializationPromise: Promise<void> | null = null;
@@ -120,13 +139,10 @@ export async function initializeOfflineDatabase(): Promise<void> {
   initializationPromise = (async () => {
     const db = await getDatabase();
 
-    await db.execAsync(`
-      PRAGMA journal_mode = WAL;
-      PRAGMA foreign_keys = ON;
-
+    const tables = `
       CREATE TABLE IF NOT EXISTS local_entities (
         entity_type TEXT NOT NULL
-          CHECK (entity_type IN ('plant', 'observation')),
+          CHECK (entity_type IN ('plant', 'observation', 'proposal')),
 
         client_record_id TEXT NOT NULL,
         server_id TEXT,
@@ -154,7 +170,7 @@ export async function initializeOfflineDatabase(): Promise<void> {
         operation_id TEXT PRIMARY KEY NOT NULL,
 
         entity_type TEXT NOT NULL
-          CHECK (entity_type IN ('plant', 'observation')),
+          CHECK (entity_type IN ('plant', 'observation', 'proposal')),
 
         operation_type TEXT NOT NULL
           CHECK (operation_type IN ('create', 'update', 'delete')),
@@ -186,7 +202,24 @@ export async function initializeOfflineDatabase(): Promise<void> {
         state_value TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+    `;
 
+    await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
+    await db.withExclusiveTransactionAsync(async (transaction) => {
+      const version = await transaction.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+      if (version?.user_version === 1) {
+        await transaction.execAsync(`
+          ALTER TABLE local_entities RENAME TO local_entities_v1;
+          ALTER TABLE sync_outbox RENAME TO sync_outbox_v1;
+          ${tables}
+          INSERT INTO local_entities SELECT * FROM local_entities_v1;
+          INSERT INTO sync_outbox SELECT * FROM sync_outbox_v1;
+          DROP TABLE local_entities_v1;
+          DROP TABLE sync_outbox_v1;
+        `);
+      }
+      await transaction.execAsync(`
+      ${tables}
       CREATE INDEX IF NOT EXISTS idx_local_entities_status
         ON local_entities(sync_status);
 
@@ -196,8 +229,21 @@ export async function initializeOfflineDatabase(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_sync_outbox_entity
         ON sync_outbox(entity_type, client_record_id, created_at);
 
-      PRAGMA user_version = ${DATABASE_VERSION};
-    `);
+      `);
+      if ((version?.user_version ?? 0) < DATABASE_VERSION) {
+        await transaction.execAsync(`
+          ALTER TABLE sync_outbox ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE sync_outbox ADD COLUMN next_retry_at INTEGER;
+          UPDATE sync_outbox SET next_retry_at = 0 WHERE status = 'retry';
+          PRAGMA user_version = ${DATABASE_VERSION};
+        `);
+      }
+      // The previous process may have stopped before storing a response.
+      await transaction.execAsync(`
+        UPDATE sync_outbox SET status = 'retry', next_retry_at = COALESCE(next_retry_at, 0)
+        WHERE status = 'processing';
+      `);
+    });
   })();
 
   try {
@@ -274,6 +320,14 @@ export async function saveEntityAndQueue(
     );
 
     if (!input.operationType || !input.payload) {
+      if (input.entityType === 'proposal' && input.syncStatus === 'uploaded') {
+        await transaction.runAsync(
+          `UPDATE sync_outbox SET status = 'complete', last_error = NULL, updated_at = ?
+            WHERE entity_type = 'proposal' AND client_record_id = ?`,
+          timestamp,
+          input.clientRecordId
+        );
+      }
       if (input.syncStatus === 'local_only') {
         await transaction.runAsync(
           `
@@ -457,38 +511,60 @@ export async function getLocalEntities<T = Record<string, unknown>>(
 }
 
 export async function getReadyOutboxOperations(
-  limit = 50
+  limit = 50,
+  queue: 'records' | 'proposals' = 'records',
+  proposalId: string | null = null
 ): Promise<OutboxOperation[]> {
   await initializeOfflineDatabase();
 
   const db = await getDatabase();
 
-  /*
-   * A previous app shutdown may leave an operation as processing. It is safe
-   * to retry because the server stores operation_id for idempotency.
-   */
-  await db.runAsync(
-    `
-      UPDATE sync_outbox
-      SET status = 'retry',
-          updated_at = ?
-      WHERE status = 'processing'
-    `,
-    nowIso()
-  );
-
   const rows = await db.getAllAsync<OutboxRow>(
     `
       SELECT *
       FROM sync_outbox
-      WHERE status IN ('pending', 'retry')
-      ORDER BY created_at ASC
+      WHERE (status = 'pending' OR (status = 'retry' AND next_retry_at <= ?))
+        AND (entity_type = 'proposal') = ?
+        AND (? IS NULL OR client_record_id = ?)
+        ${READY_DEPENDENCIES}
+      ORDER BY created_at ASC, rowid ASC
       LIMIT ?
     `,
+    Date.now(),
+    queue === 'proposals' ? 1 : 0,
+    proposalId,
+    proposalId,
     limit
   );
 
-  return rows.map((row) => ({
+  return rows.map(toOutboxOperation);
+}
+
+export async function getNextOutboxRetryAt(): Promise<number | null> {
+  await initializeOfflineDatabase();
+  const db = await getDatabase();
+  const row = await db.getFirstAsync<{ next_at: number | null }>(`
+    SELECT MIN(next_retry_at) AS next_at FROM sync_outbox
+    WHERE status = 'retry' AND next_retry_at IS NOT NULL
+    ${READY_DEPENDENCIES}
+  `);
+  return row?.next_at ?? null;
+}
+
+export async function resumePausedRecordRetries(plantId: string, observationIds: string[]): Promise<void> {
+  await initializeOfflineDatabase();
+  const db = await getDatabase();
+  await db.runAsync(`
+    UPDATE sync_outbox SET retry_count = 0, next_retry_at = 0
+    WHERE status = 'retry' AND next_retry_at IS NULL AND (
+      (entity_type = 'plant' AND client_record_id = ?) OR
+      (entity_type = 'observation' AND client_record_id IN (SELECT value FROM json_each(?)))
+    )
+  `, plantId, JSON.stringify(observationIds));
+}
+
+function toOutboxOperation(row: OutboxRow): OutboxOperation {
+  return {
     operationId: row.operation_id,
     entityType: row.entity_type,
     operationType: row.operation_type,
@@ -500,37 +576,41 @@ export async function getReadyOutboxOperations(
     lastError: row.last_error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-  }));
+  };
 }
 
-export async function markOperationsProcessing(
+export async function claimOutboxOperations(
   operationIds: string[]
-): Promise<void> {
-  if (operationIds.length === 0) {
-    return;
-  }
+): Promise<OutboxOperation[]> {
+  if (operationIds.length === 0) return [];
 
   await initializeOfflineDatabase();
 
   const db = await getDatabase();
   const timestamp = nowIso();
+  const claimed: OutboxOperation[] = [];
 
   await db.withExclusiveTransactionAsync(async (transaction) => {
     for (const operationId of operationIds) {
-      await transaction.runAsync(
+      const row = await transaction.getFirstAsync<OutboxRow>(
         `
           UPDATE sync_outbox
           SET status = 'processing',
               attempts = attempts + 1,
               updated_at = ?
           WHERE operation_id = ?
-            AND status IN ('pending', 'retry')
+            AND (status = 'pending' OR (status = 'retry' AND next_retry_at <= ?))
+            ${READY_DEPENDENCIES}
+          RETURNING *
         `,
         timestamp,
-        operationId
+        operationId,
+        Date.now()
       );
+      if (row) claimed.push(toOutboxOperation(row));
     }
   });
+  return claimed;
 }
 
 export async function applySyncOperationResult(
@@ -551,7 +631,7 @@ export async function applySyncOperationResult(
       result.operation_id
     );
 
-    if (!operation) {
+    if (operation?.status !== 'processing') {
       return;
     }
 
@@ -590,6 +670,7 @@ export async function applySyncOperationResult(
           UPDATE local_entities
           SET server_id = COALESCE(?, server_id),
               row_version = COALESCE(?, row_version),
+              snapshot_json = COALESCE(?, snapshot_json),
               sync_status = ?,
               updated_at = ?
           WHERE entity_type = ?
@@ -597,6 +678,7 @@ export async function applySyncOperationResult(
         `,
         result.server_id ?? null,
         result.row_version ?? null,
+        result.snapshot ? JSON.stringify(result.snapshot) : null,
         laterOperation ? 'pending' : 'uploaded',
         timestamp,
         operation.entity_type,
@@ -613,9 +695,13 @@ export async function applySyncOperationResult(
           ? 'conflict'
           : 'failed';
 
+    const delay = RETRY_DELAYS_MS[operation.retry_count];
+    const nextRetryAt = result.status === 'retry' && delay !== undefined
+      ? Date.now() + Math.max(delay, result.retryAfterMs ?? 0)
+      : null;
     const localStatus: LocalSyncStatus =
       result.status === 'retry'
-        ? 'pending'
+        ? (nextRetryAt === null ? 'failed' : 'pending')
         : result.status === 'conflict'
           ? 'conflict'
           : 'failed';
@@ -625,6 +711,8 @@ export async function applySyncOperationResult(
         UPDATE sync_outbox
         SET status = ?,
             last_error = ?,
+            retry_count = ?,
+            next_retry_at = ?,
             updated_at = ?
         WHERE operation_id = ?
       `,
@@ -634,6 +722,8 @@ export async function applySyncOperationResult(
       result.code && TAG_REFUSAL_CODES.has(result.code)
         ? result.code
         : (result.message ?? result.code ?? 'Synchronization failed'),
+      operation.retry_count + (result.status === 'retry' && nextRetryAt !== null ? 1 : 0),
+      nextRetryAt,
       timestamp,
       result.operation_id
     );
@@ -654,8 +744,34 @@ export async function applySyncOperationResult(
   });
 }
 
+export async function removeLocalProposal(id: string): Promise<void> {
+  await initializeOfflineDatabase();
+  const db = await getDatabase();
+  await db.withExclusiveTransactionAsync(async (transaction) => {
+    await transaction.runAsync(
+      "DELETE FROM sync_outbox WHERE entity_type = 'proposal' AND client_record_id = ?",
+      id
+    );
+    await transaction.runAsync(
+      "DELETE FROM local_entities WHERE entity_type = 'proposal' AND client_record_id = ?",
+      id
+    );
+  });
+}
+
+export async function clearLocalProposals(): Promise<void> {
+  await initializeOfflineDatabase();
+  const db = await getDatabase();
+  await db.withExclusiveTransactionAsync(async (transaction) => {
+    await transaction.execAsync(`
+      DELETE FROM sync_outbox WHERE entity_type = 'proposal';
+      DELETE FROM local_entities WHERE entity_type = 'proposal';
+    `);
+  });
+}
+
 // Server codes for a plant tag it refused (backend/src/routes/sync.js). They come
-// back as 'conflict', which retryFailedOperations leaves alone: sending the same
+// back as 'conflict', which the outbox leaves alone: sending the same
 // tag again would fail the same way. Attaching another tag queues a new operation.
 export type TagRefusalCode = 'tag_in_use' | 'plant_locked';
 
@@ -786,31 +902,28 @@ export async function rebaseQueuedCreateAsUpdate(
   });
 }
 
-export async function retryFailedOperations(): Promise<void> {
+export async function getRecordSyncErrors(): Promise<Map<string, string>> {
   await initializeOfflineDatabase();
 
   const db = await getDatabase();
 
-  await db.runAsync(
-    `
-      UPDATE sync_outbox
-      SET status = 'retry',
-          last_error = NULL,
-          updated_at = ?
-      WHERE status = 'failed'
-    `,
-    nowIso()
-  );
-
-  await db.runAsync(
-    `
-      UPDATE local_entities
-      SET sync_status = 'pending',
-          updated_at = ?
-      WHERE sync_status = 'failed'
-    `,
-    nowIso()
-  );
+  const rows = await db.getAllAsync<{ entity_type: string; client_record_id: string; last_error: string | null }>(`
+    SELECT entity_type, client_record_id, status, last_error
+    FROM sync_outbox
+    WHERE entity_type IN ('plant', 'observation')
+      AND rowid = (
+        SELECT MAX(latest.rowid)
+        FROM sync_outbox AS latest
+        WHERE latest.entity_type = sync_outbox.entity_type
+          AND latest.client_record_id = sync_outbox.client_record_id
+      )
+      AND status IN ('failed', 'conflict', 'retry')
+  `);
+  const errors = new Map<string, string>();
+  for (const row of rows) {
+    if (row.last_error) errors.set(`${row.entity_type}:${row.client_record_id}`, row.last_error);
+  }
+  return errors;
 }
 
 export async function getSyncCursor(): Promise<number> {

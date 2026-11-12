@@ -1,11 +1,21 @@
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { randomUUID } from 'expo-crypto';
 import { ApiError } from '../api/client';
-import { createProposal, fetchMyProposals, type ServerProposal } from '../api/speciesProposals';
+import { createProposal, fetchMyProposals, type ProposalPayload, type ServerProposal } from '../api/speciesProposals';
+import {
+  applySyncOperationResult,
+  claimOutboxOperations,
+  clearLocalProposals,
+  getLocalEntities,
+  getReadyOutboxOperations,
+  removeLocalProposal,
+  saveEntityAndQueue,
+  type OutboxOperation,
+} from '../services/offlineDatabase';
 import { SyncStatus } from './useRecordStore';
 import { useSpeciesStore } from './useSpeciesStore';
+import { isSyncOffline, requestSyncRetry } from '../services/syncRetry';
 
 // The officer's decision on a proposal. Only 'approved' species reach the species list
 // and the New Record picker (those read approved species only). 'archived' = an officer
@@ -29,10 +39,96 @@ export interface SpeciesProposal {
   // is open to botanists (POST /species/:id/photos is officer-only today).
 }
 
-export type ProposalSyncResult = { ok: true } | { ok: false; reason: string };
+export type ProposalSyncResult = { ok: true } | { ok: false; reason: string; retryable?: boolean };
 
-// Proposals currently uploading, so Retry and Sync now never send one twice at once.
-const uploadsInProgress = new Set<string>();
+const LEGACY_KEY = 'niah-species-proposals';
+let proposalWork: Promise<unknown> = Promise.resolve();
+
+function serialize<T>(work: () => Promise<T>): Promise<T> {
+  const next = proposalWork.then(work);
+  proposalWork = next.catch(() => {});
+  return next;
+}
+
+function saveProposal(proposal: SpeciesProposal, queue: boolean) {
+  return saveEntityAndQueue({
+    entityType: 'proposal',
+    clientRecordId: proposal.id,
+    serverId: proposal.serverId,
+    syncStatus: queue ? 'pending' : 'uploaded',
+    snapshot: { ...proposal },
+    operationType: queue ? 'create' : undefined,
+    payload: queue ? {
+      client_record_id: proposal.id,
+      scientific_name: proposal.scientificName,
+      common_name: proposal.commonName,
+      local_name: proposal.localName,
+      family: proposal.family,
+      description: proposal.description,
+      habitat: proposal.habitat,
+    } : undefined,
+  });
+}
+
+async function readProposals(): Promise<SpeciesProposal[]> {
+  const legacy = await AsyncStorage.getItem(LEGACY_KEY);
+  if (legacy !== null) {
+    const { state } = JSON.parse(legacy) as { state?: { proposals?: SpeciesProposal[] } };
+    if (!Array.isArray(state?.proposals)) throw new Error('Could not read saved species proposals.');
+    const existing = new Set((await getLocalEntities('proposal')).map((row) => row.clientRecordId));
+    for (const proposal of state.proposals) {
+      if (existing.has(proposal.id)) continue;
+      await saveProposal(proposal, proposal.syncStatus !== SyncStatus.UPLOADED);
+      existing.add(proposal.id);
+    }
+    // Each entry and its outbox operation are committed before removing the old copy.
+    await AsyncStorage.removeItem(LEGACY_KEY);
+  }
+
+  const rows = await getLocalEntities<SpeciesProposal>('proposal');
+  return rows.map((row) => ({
+    ...row.snapshot,
+    serverId: row.serverId ?? undefined,
+    syncStatus: row.syncStatus === 'uploaded'
+      ? SyncStatus.UPLOADED
+      : row.syncStatus === 'failed' || row.syncStatus === 'conflict'
+        ? SyncStatus.FAILED
+        : SyncStatus.NOT_UPLOADED,
+  }));
+}
+
+async function uploadProposal(operation: OutboxOperation, proposal: SpeciesProposal): Promise<ProposalSyncResult> {
+  if (await isSyncOffline()) return { ok: false, reason: 'Waiting for an internet connection.' };
+  const [claimed] = await claimOutboxOperations([operation.operationId]);
+  if (!claimed) return { ok: false, reason: 'No upload is queued for this proposal.' };
+  let saved: ServerProposal;
+  try {
+    saved = await createProposal(claimed.payload as unknown as ProposalPayload);
+  } catch (error) {
+    const status = error instanceof ApiError ? error.status : 0;
+    const retryable = status === 0 || status === 408 || status === 429 || status >= 500;
+    const reason = error instanceof ApiError ? error.message : 'Could not upload the proposal. Try again later.';
+    await applySyncOperationResult({
+      operation_id: operation.operationId,
+      status: retryable ? 'retry' : 'failed',
+      message: reason,
+      retryAfterMs: error instanceof ApiError ? error.retryAfterMs : undefined,
+    });
+    if (retryable) requestSyncRetry();
+    return { ok: false, reason, retryable };
+  }
+  await applySyncOperationResult({
+    operation_id: operation.operationId,
+    status: 'success',
+    server_id: saved.id,
+    snapshot: {
+      ...proposal,
+      review: reviewFromServer(saved.verification_status),
+      reviewComment: saved.review_comment,
+    },
+  });
+  return { ok: true };
+}
 
 function reviewFromServer(status: string): ProposalReview {
   if (status === 'approved' || status === 'rejected' || status === 'archived') return status;
@@ -41,23 +137,32 @@ function reviewFromServer(status: string): ProposalReview {
 
 interface ProposalState {
   proposals: SpeciesProposal[];
+  hydrateOfflineProposals: () => Promise<void>;
   addProposal: (
     data: Pick<SpeciesProposal, 'scientificName' | 'commonName' | 'localName' | 'family' | 'description' | 'habitat'>
-  ) => SpeciesProposal;
-  removeProposal: (id: string) => void;
+  ) => Promise<SpeciesProposal>;
+  removeProposal: (id: string) => Promise<void>;
   syncProposal: (id: string) => Promise<ProposalSyncResult>;
-  syncAllProposals: () => Promise<{ uploaded: number; failed: number }>;
+  syncAllProposals: () => Promise<{ uploaded: number; failed: number; retryable: boolean }>;
   refreshProposalStatuses: () => Promise<void>;
-  clearProposals: () => void;
+  clearProposals: () => Promise<void>;
 }
 
-export const useProposalStore = create<ProposalState>()(
-  persist(
-    (set, get) => ({
+export const useProposalStore = create<ProposalState>()((set) => {
+    const reload = async () => {
+      const proposals = await readProposals();
+      set({ proposals });
+      return proposals;
+    };
+    return {
       proposals: [],
+      hydrateOfflineProposals: () => serialize(async () => {
+        await reload();
+      }),
 
       // Saved on the phone first, so proposing works without signal.
-      addProposal: (data) => {
+      addProposal: (data) => serialize(async () => {
+        await reload();
         const proposal: SpeciesProposal = {
           ...data,
           id: randomUUID(),
@@ -65,74 +170,59 @@ export const useProposalStore = create<ProposalState>()(
           syncStatus: SyncStatus.NOT_UPLOADED,
           review: 'pending',
         };
+        await saveProposal(proposal, true);
         set((state) => ({ proposals: [proposal, ...state.proposals] }));
         return proposal;
-      },
+      }),
 
       // Only a proposal the server hasn't seen can be removed (e.g. one the server
       // refused as a duplicate); after upload only an officer can change it.
-      removeProposal: (id) =>
-        set((state) => ({
-          proposals: state.proposals.filter((p) => p.id !== id || p.syncStatus === SyncStatus.UPLOADED),
-        })),
+      removeProposal: (id) => serialize(async () => {
+        const proposals = await reload();
+        const proposal = proposals.find((item) => item.id === id);
+        if (!proposal || proposal.syncStatus === SyncStatus.UPLOADED) return;
+        await removeLocalProposal(id);
+        await reload();
+      }),
 
       // Uploads one proposal. Never throws: the screen gets a message it can show.
-      syncProposal: async (id) => {
-        const proposal = get().proposals.find((p) => p.id === id);
+      syncProposal: (id) => serialize<ProposalSyncResult>(async () => {
+        const proposals = await reload();
+        const proposal = proposals.find((p) => p.id === id);
         if (!proposal) return { ok: false, reason: 'Proposal not found' };
         if (proposal.syncStatus === SyncStatus.UPLOADED) return { ok: true };
-        if (uploadsInProgress.has(id)) return { ok: false, reason: 'This proposal is already uploading' };
-
-        const update = (changes: Partial<SpeciesProposal>) =>
-          set((state) => ({ proposals: state.proposals.map((p) => (p.id === id ? { ...p, ...changes } : p)) }));
-
-        uploadsInProgress.add(id);
-        try {
-          const saved = await createProposal({
-            client_record_id: proposal.id,
-            scientific_name: proposal.scientificName,
-            common_name: proposal.commonName || undefined,
-            local_name: proposal.localName || undefined,
-            family: proposal.family || undefined,
-            description: proposal.description || undefined,
-            habitat: proposal.habitat || undefined,
-          });
-          update({
-            serverId: saved.id,
-            syncStatus: SyncStatus.UPLOADED,
-            review: reviewFromServer(saved.verification_status),
-            reviewComment: saved.review_comment,
-          });
-          return { ok: true };
-        } catch (error) {
-          update({ syncStatus: SyncStatus.FAILED });
-          // e.g. 409 "A species with this scientific name already exists or is already proposed"
-          if (error instanceof ApiError) return { ok: false, reason: error.message };
-          return { ok: false, reason: 'Upload failed unexpectedly. Please try again.' };
-        } finally {
-          uploadsInProgress.delete(id);
-        }
-      },
+        if (proposal.syncStatus === SyncStatus.FAILED) await saveProposal(proposal, true);
+        const [operation] = await getReadyOutboxOperations(1, 'proposals', id);
+        if (!operation) return { ok: false, reason: 'No upload is queued for this proposal.' };
+        const result = await uploadProposal(operation, proposal);
+        await reload();
+        return result;
+      }).catch(() => ({ ok: false, reason: 'Could not read or update the proposal on this phone.' })),
 
       // One at a time, like syncAll for records.
-      syncAllProposals: async () => {
-        const ids = get()
-          .proposals.filter((p) => p.syncStatus !== SyncStatus.UPLOADED)
-          .map((p) => p.id);
+      syncAllProposals: () => serialize(async () => {
+        const proposals = await reload();
         let uploaded = 0;
         let failed = 0;
-        for (const id of ids) {
-          if (uploadsInProgress.has(id)) continue;
-          const result = await get().syncProposal(id);
+        let retryable = false;
+        for (const operation of await getReadyOutboxOperations(-1, 'proposals')) {
+          const proposal = proposals.find((item) => item.id === operation.clientRecordId);
+          if (!proposal) continue;
+          const result = await uploadProposal(operation, proposal);
           if (result.ok) uploaded += 1;
-          else failed += 1;
+          else {
+            failed += 1;
+            retryable ||= result.retryable === true;
+          }
         }
-        return { uploaded, failed };
-      },
+        await reload();
+        return { uploaded, failed, retryable };
+      }).catch(() => ({ uploaded: 0, failed: 1, retryable: false })),
 
       // Reads the officer's decisions from the server. Quietly does nothing offline:
       // the phone keeps showing the last known status.
-      refreshProposalStatuses: async () => {
+      refreshProposalStatuses: () => serialize(async () => {
+        const local = await reload();
         let mine: ServerProposal[];
         try {
           mine = await fetchMyProposals();
@@ -140,56 +230,38 @@ export const useProposalStore = create<ProposalState>()(
           return;
         }
 
-        const local = get().proposals;
         const newlyApproved = mine.some((server) => {
           const known = local.find((p) => p.serverId === server.id || p.id === server.client_record_id);
           return server.verification_status === 'approved' && known?.review !== 'approved';
         });
 
-        set((state) => {
-          const updated = state.proposals.map((p) => {
-            const server = mine.find((s) => s.id === p.serverId || s.client_record_id === p.id);
-            return server
-              ? {
-                  ...p,
-                  serverId: server.id,
-                  syncStatus: SyncStatus.UPLOADED,
-                  review: reviewFromServer(server.verification_status),
-                  reviewComment: server.review_comment,
-                }
-              : p;
-          });
-          // Proposals sent from this account before (e.g. before logging out or
-          // reinstalling) are shown too, so the botanist sees every decision.
-          const missing = mine
-            .filter((s) => !updated.some((p) => p.serverId === s.id))
-            .map<SpeciesProposal>((s) => ({
-              id: s.client_record_id ?? s.id,
-              serverId: s.id,
-              scientificName: s.scientific_name,
-              commonName: s.common_name ?? undefined,
-              localName: s.local_name ?? undefined,
-              family: s.proposed_family ?? undefined,
-              description: s.description ?? undefined,
-              habitat: s.habitat ?? undefined,
-              createdAt: new Date().toISOString(),
-              syncStatus: SyncStatus.UPLOADED,
-              review: reviewFromServer(s.verification_status),
-              reviewComment: s.review_comment,
-            }));
-          return { proposals: [...updated, ...missing] };
-        });
+        for (const server of mine) {
+          const known = local.find((p) => p.serverId === server.id || p.id === server.client_record_id);
+          await saveProposal({
+            id: known?.id ?? server.client_record_id ?? server.id,
+            serverId: server.id,
+            scientificName: server.scientific_name,
+            commonName: server.common_name ?? undefined,
+            localName: server.local_name ?? undefined,
+            family: server.proposed_family ?? undefined,
+            description: server.description ?? undefined,
+            habitat: server.habitat ?? undefined,
+            createdAt: known?.createdAt ?? new Date().toISOString(),
+            syncStatus: SyncStatus.UPLOADED,
+            review: reviewFromServer(server.verification_status),
+            reviewComment: server.review_comment,
+          }, false);
+        }
+        await reload();
 
         // An approved species now belongs in the cached list (and the New Record picker).
         if (newlyApproved) void useSpeciesStore.getState().loadSpecies();
-      },
+      }).catch((error: unknown) => console.warn('Could not refresh species proposals', error)),
 
-      clearProposals: () => set({ proposals: [] }),
-    }),
-    {
-      name: 'niah-species-proposals',
-      storage: createJSONStorage(() => AsyncStorage),
-      version: 1,
-    }
-  )
-);
+      clearProposals: () => serialize(async () => {
+        await clearLocalProposals();
+        await AsyncStorage.removeItem(LEGACY_KEY);
+        set({ proposals: [] });
+      }),
+    };
+});

@@ -19,6 +19,7 @@ const UPLOAD_TIMEOUT_MS = 60000; // photos are bigger; give a weak connection lo
 // An error from a backend call. status 0 = never reached the server.
 export class ApiError extends Error {
   status: number;
+  retryAfterMs?: number;
   // The server's machine-readable reason when it sends one, e.g. 'photos_locked'.
   code?: string;
   constructor(message: string, status: number, code?: string) {
@@ -27,6 +28,12 @@ export class ApiError extends Error {
     this.status = status;
     this.code = code;
   }
+}
+
+function readRetryAfter(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const delay = /^\d+$/.test(value) ? Number(value) * 1_000 : Date.parse(value) - Date.now();
+  return Number.isFinite(delay) ? Math.max(0, delay) : undefined;
 }
 
 interface ApiOptions {
@@ -82,7 +89,9 @@ export async function apiFetch<T>(path: string, options: ApiOptions = {}): Promi
 
     if (!response.ok) {
       const { message, code } = (json as { message?: string; code?: string } | null) ?? {};
-      throw new ApiError(message ?? `Server returned ${response.status}`, response.status, code);
+      const error = new ApiError(message ?? `Server returned ${response.status}`, response.status, code);
+      error.retryAfterMs = readRetryAfter(response.headers.get('Retry-After'));
+      throw error;
     }
 
     return json as T;

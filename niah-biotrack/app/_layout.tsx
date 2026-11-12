@@ -7,6 +7,7 @@ import { StatusBar } from 'react-native';
 import Toast from 'react-native-toast-message';
 
 import { AuthRoleProvider } from '../src/context/AuthRoleContext';
+import { useProposalStore } from '../src/store/useProposalStore';
 
 import {
   initializeOfflineDatabase,
@@ -51,6 +52,10 @@ export default function RootLayout() {
         await useRecordStore
           .getState()
           .hydrateOfflineRecords();
+
+        await useProposalStore.getState().hydrateOfflineProposals().catch((error: unknown) => {
+          console.warn('Could not read saved species proposals', error);
+        });
 
         if (!cancelled) {
           stopAutoSync =

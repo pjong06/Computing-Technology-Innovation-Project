@@ -104,14 +104,19 @@ export default function ProposeSpeciesScreen() {
     }
 
     setSaving(true);
-    const proposal = addProposal({
+    const proposal = await addProposal({
       scientificName: name,
       commonName: commonName.trim() || undefined,
       localName: localName.trim() || undefined,
       family: family.trim() || undefined,
       description: description.trim() || undefined,
       habitat: habitat.trim() || undefined,
-    });
+    }).catch(() => null);
+    if (!proposal) {
+      setSaving(false);
+      setError('Could not save the proposal on this phone. Try again.');
+      return;
+    }
     // Try to send it now; if there's no signal it stays saved and goes up later.
     const result = await syncProposal(proposal.id);
     setSaving(false);
