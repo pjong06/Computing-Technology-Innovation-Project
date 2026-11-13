@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  Local review page for species reference photos. Open this file directly in a browser
+  (no server, no packages, no external scripts). It reads the CSV you pick, shows each
+  species' photo candidates, and writes the reviewed CSV to your Downloads.
+
+  Each species can keep several photos (a small gallery) with exactly one main photo.
+
+  It sends nothing anywhere: the policy below blocks every network request except loading
+  the candidate images from iNaturalist's own image hosts (exactly the URLs in the CSV).
+-->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src https://inaturalist-open-data.s3.amazonaws.com https://static.inaturalist.org; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Species photo review</title>
+<style>
+  :root {
+    --ink: #1e2b22; --mute: #5b6b60; --line: #d9e2dc; --bg: #f6f8f6; --card: #ffffff;
+    --green: #2f6b3a; --mint: #e4f2e7; --amber: #8c5e03; --red: #9b1c1c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: var(--bg); }
+  header { position: sticky; top: 0; z-index: 2; background: var(--card); border-bottom: 1px solid var(--line); padding: 12px 20px; }
+  header h1 { font-size: 18px; margin: 0 0 8px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+  .bar label { display: flex; gap: 6px; align-items: center; }
+  input[type="text"], textarea { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+  button { font: inherit; padding: 7px 14px; border: 0; border-radius: 6px; background: var(--green); color: #fff; cursor: pointer; }
+  button.secondary { background: #fff; color: var(--green); border: 1px solid var(--green); padding: 5px 12px; }
+  button.danger { background: #fff; color: var(--red); border: 1px solid var(--red); padding: 5px 12px; }
+  button.danger.on { background: #fde2e2; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #progress { font-weight: 600; }
+  #message { color: var(--amber); }
+  main { padding: 16px 20px 60px; max-width: 1200px; margin: 0 auto; }
+  .species { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+  .species.done { border-left: 5px solid var(--green); }
+  .species h2 { font-size: 17px; margin: 0; font-style: italic; }
+  .meta { color: var(--mute); font-size: 13px; margin: 2px 0 10px; }
+  .badge { display: inline-block; font-size: 12px; font-style: normal; padding: 1px 8px; border-radius: 10px; background: var(--mint); color: var(--green); margin-left: 8px; vertical-align: middle; }
+  .badge.todo { background: #fdf3dc; color: var(--amber); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+  .candidates { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .candidate { border: 2px solid var(--line); border-radius: 8px; padding: 8px; background: #fff; }
+  .candidate.kept { border-color: var(--green); background: var(--mint); }
+  .candidate.main { box-shadow: 0 0 0 3px var(--green); }
+  .candidate img { display: block; width: 100%; height: 170px; object-fit: cover; border-radius: 5px; background: var(--bg); }
+  .controls { display: flex; gap: 14px; align-items: center; margin-top: 6px; font-weight: 600; }
+  .controls label { display: flex; gap: 5px; align-items: center; cursor: pointer; }
+  .controls label.disabled { color: var(--mute); cursor: default; font-weight: 400; }
+  .licence { margin-left: auto; font-weight: 600; }
+  .candidate .small { font-size: 12.5px; color: var(--mute); overflow-wrap: anywhere; }
+  .candidate a { font-size: 12.5px; color: var(--green); }
+  .empty { color: var(--red); margin: 4px 0 0; }
+  .note { width: 100%; margin-top: 10px; min-height: 38px; }
+  .hint { color: var(--mute); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Species photo review</h1>
+  <div class="bar">
+    <label>Your name <input type="text" id="officer-name" placeholder="e.g. George Tan" autocomplete="name"></label>
+    <label>CSV file <input type="file" id="csv-file" accept=".csv,text/csv"></label>
+    <label><input type="checkbox" id="only-todo"> Show only not yet reviewed</label>
+    <span id="progress">No file loaded</span>
+    <button type="button" id="download" disabled>Download reviewed CSV</button>
+    <span id="message" role="status"></span>
+  </div>
+  <p class="hint">Pick <b>species-photo-review-by-species.csv</b>. For every species, tick <b>Keep</b> on each photo to use
+    and choose one <b>Main</b> photo, or press <b>None of these</b>. Choices are kept in this browser, so a refresh doesn't
+    lose them (pick the file again after a refresh). Open the iNaturalist links to check the plant and the licence.</p>
+</header>
+<main id="list"></main>
+
+<script>
+'use strict';
+
+const STORAGE_KEY = 'niah-species-photo-review-v1';
+const OUTPUT_NAME = 'species-photo-review-by-species-REVIEWED.csv';
+const MAX_CANDIDATES = 6;
+const ALLOWED_LICENCES = { 'cc0': 'CC0', 'cc-by': 'CC BY', 'cc-by-sa': 'CC BY-SA' };
+const IMAGE_HOSTS = ['inaturalist-open-data.s3.amazonaws.com', 'static.inaturalist.org'];
+const LINK_HOSTS = ['www.inaturalist.org', 'inaturalist.org'];
+const REQUIRED_COLUMNS = ['species_id', 'scientific_name', 'officer_choice', 'officer_name', 'officer_notes'];
+// Written by the download (added to the header if the loaded file doesn't have them yet).
+const OUTPUT_COLUMNS = ['officer_choice', 'main_choice', 'chosen_photo_ids', 'main_photo_id', 'officer_name', 'officer_notes'];
+const OLD_COLUMNS = ['chosen_photo_id']; // single-photo version; replaced by chosen_photo_ids
+
+let header = [];      // the CSV's columns, kept for the download
+let species = [];     // one object per CSV row
+let saved = loadSaved();
+
+// ---------- Decisions ----------
+// A decision is { kept: ['cand1', ...], main: 'cand1' | '', none: true | false, notes: '' }.
+// Older saves held one choice ({ choice: 'cand2' } or { choice: 'none' }): that photo becomes
+// kept and main, so earlier work isn't lost.
+
+function normalise(decision) {
+  const value = decision || {};
+  if (Array.isArray(value.kept)) {
+    const kept = value.kept.filter(key => /^cand[1-9]$/.test(key));
+    const main = kept.indexOf(value.main) !== -1 ? value.main : (kept[0] || '');
+    return { kept: kept, main: main, none: Boolean(value.none) && kept.length === 0, notes: value.notes || '' };
+  }
+  if (value.choice === 'none') return { kept: [], main: '', none: true, notes: value.notes || '' };
+  if (/^cand[1-9]$/.test(value.choice || '')) {
+    return { kept: [value.choice], main: value.choice, none: false, notes: value.notes || '' };
+  }
+  return { kept: [], main: '', none: false, notes: value.notes || '' };
+}
+
+function isReviewed(decision) {
+  return decision.none || (decision.kept.length > 0 && decision.kept.indexOf(decision.main) !== -1);
+}
+
+// ---------- Saved progress (this browser only) ----------
+
+function loadSaved() {
+  try {
+    const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    const decisions = {};
+    Object.keys(value.decisions || {}).forEach(id => { decisions[id] = normalise(value.decisions[id]); });
+    return { version: 2, name: value.name || '', decisions: decisions };
+  } catch (error) {
+    return { version: 2, name: '', decisions: {} };
+  }
+}
+
+function store() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+  } catch (error) {
+    showMessage('Progress could not be saved in this browser. Download the CSV before closing.');
+  }
+}
+
+function decisionFor(row) {
+  return normalise(saved.decisions[row.species_id]);
+}
+
+function saveDecision(row, decision) {
+  saved.decisions[row.species_id] = Object.assign(normalise(decision), { at: new Date().toISOString() });
+  store();
+}
+
+// ---------- CSV ----------
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let quoted = false;
+  const source = text.replace(/^﻿/, '');
+  for (let i = 0; i < source.length; i++) {
+    const char = source[i];
+    if (quoted) {
+      if (char === '"' && source[i + 1] === '"') { field += '"'; i++; }
+      else if (char === '"') quoted = false;
+      else field += char;
+    } else if (char === '"') quoted = true;
+    else if (char === ',') { row.push(field); field = ''; }
+    else if (char === '\n' || char === '\r') {
+      if (char === '\r' && source[i + 1] === '\n') i++;
+      row.push(field); rows.push(row); row = []; field = '';
+    } else field += char;
+  }
+  if (field !== '' || row.length > 0) { row.push(field); rows.push(row); }
+  return rows.filter(r => r.some(value => value.trim() !== ''));
+}
+
+function csvValue(value) {
+  const text = value === null || value === undefined ? '' : String(value);
+  return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+}
+
+// ---------- Safety: only show URLs that point at iNaturalist ----------
+
+function safeUrl(value, hosts) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && hosts.indexOf(url.hostname) !== -1 ? url.href : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+// ---------- Drawing ----------
+
+function candidatesOf(row) {
+  const list = [];
+  for (let n = 1; n <= MAX_CANDIDATES; n++) {
+    const id = row['cand' + n + '_id'];
+    if (!id) continue;
+    list.push({
+      key: 'cand' + n,
+      id: id,
+      licence: row['cand' + n + '_licence'],
+      attribution: row['cand' + n + '_attribution'],
+      photographer: row['cand' + n + '_photographer'],
+      url: row['cand' + n + '_url'],
+      pageUrl: row['cand' + n + '_page_url'],
+      source: row['cand' + n + '_source'],
+      observationUrl: row['cand' + n + '_observation_url'],
+    });
+  }
+  return list;
+}
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function link(href, text) {
+  const a = el('a', '', text);
+  a.href = href;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  return a;
+}
+
+function sourceText(source) {
+  if (source === 'taxon_photo') return 'Taxon photo (iNaturalist species page)';
+  if (source && source.indexOf('observation, ') === 0) return 'Observation, ' + source.slice('observation, '.length);
+  if (source === 'original (old website)') return 'Original photo from the old website';
+  return source || 'Unknown source';
+}
+
+function drawCandidate(row, candidate, decision) {
+  const kept = decision.kept.indexOf(candidate.key) !== -1;
+  const isMain = kept && decision.main === candidate.key;
+  const box = el('div', 'candidate' + (kept ? ' kept' : '') + (isMain ? ' main' : ''));
+
+  const image = safeUrl(candidate.url, IMAGE_HOSTS);
+  if (image) {
+    const img = el('img');
+    img.src = image;
+    img.alt = 'Candidate photo ' + candidate.id + ' of ' + row.scientific_name;
+    img.loading = 'lazy';
+    img.referrerPolicy = 'no-referrer';
+    box.appendChild(img);
+  } else {
+    box.appendChild(el('div', 'small', 'Image not shown: its address is not an iNaturalist image.'));
+  }
+
+  const controls = el('div', 'controls');
+  const keepLabel = el('label');
+  const keep = el('input');
+  keep.type = 'checkbox';
+  keep.checked = kept;
+  keep.setAttribute('aria-label', 'Keep ' + candidate.key + ' for ' + row.scientific_name);
+  keep.addEventListener('change', () => setKept(row, candidate.key, keep.checked));
+  keepLabel.appendChild(keep);
+  keepLabel.appendChild(el('span', '', 'Keep'));
+  controls.appendChild(keepLabel);
+
+  // Only a kept photo can be the main one.
+  const mainLabel = el('label', kept ? '' : 'disabled');
+  const main = el('input');
+  main.type = 'radio';
+  main.name = 'main-' + row.species_id;
+  main.checked = isMain;
+  main.disabled = !kept;
+  main.setAttribute('aria-label', 'Main photo ' + candidate.key + ' for ' + row.scientific_name);
+  main.addEventListener('change', () => setMain(row, candidate.key));
+  mainLabel.appendChild(main);
+  mainLabel.appendChild(el('span', '', 'Main'));
+  controls.appendChild(mainLabel);
+
+  controls.appendChild(el('span', 'licence', ALLOWED_LICENCES[candidate.licence] || ('Licence: ' + candidate.licence)));
+  box.appendChild(controls);
+
+  const credit = candidate.photographer
+    ? candidate.photographer + ' (' + candidate.attribution + ')'
+    : candidate.attribution;
+  box.appendChild(el('div', 'small', credit || 'No credit text'));
+  box.appendChild(el('div', 'small', sourceText(candidate.source)));
+
+  const links = el('div', 'small');
+  const page = safeUrl(candidate.pageUrl, LINK_HOSTS);
+  if (page) links.appendChild(link(page, 'Photo on iNaturalist'));
+  const observation = safeUrl(candidate.observationUrl, LINK_HOSTS);
+  if (observation) {
+    links.appendChild(document.createTextNode(' · '));
+    links.appendChild(link(observation, 'Observation'));
+  }
+  box.appendChild(links);
+  return box;
+}
+
+function statusText(decision) {
+  if (decision.none) return 'Reviewed: none';
+  if (isReviewed(decision)) return 'Reviewed: ' + decision.kept.length + ' kept';
+  if (decision.kept.length > 0) return 'Choose a main photo';
+  return 'Not yet reviewed';
+}
+
+function drawSpecies(row) {
+  const decision = decisionFor(row);
+  const card = el('section', 'species' + (isReviewed(decision) ? ' done' : ''));
+  card.dataset.speciesId = row.species_id;
+
+  const title = el('h2', '', row.scientific_name);
+  title.appendChild(el('span', 'badge' + (isReviewed(decision) ? '' : ' todo'), statusText(decision)));
+  card.appendChild(title);
+
+  const candidates = candidatesOf(row);
+  card.appendChild(el('div', 'meta', candidates.length + ' candidate(s)' +
+    (row.old_photo_reasons ? ' · old photo: ' + row.old_photo_reasons.split(';').join(', ') : '')));
+
+  const actions = el('div', 'actions');
+  if (candidates.length > 0) {
+    const keepAll = el('button', 'secondary', 'Keep all');
+    keepAll.type = 'button';
+    keepAll.addEventListener('click', () => keepAllOf(row, candidates));
+    actions.appendChild(keepAll);
+  }
+  const none = el('button', 'danger' + (decision.none ? ' on' : ''), decision.none ? 'None of these ✓' : 'None of these');
+  none.type = 'button';
+  none.setAttribute('aria-pressed', decision.none ? 'true' : 'false');
+  none.addEventListener('click', () => chooseNone(row));
+  actions.appendChild(none);
+  card.appendChild(actions);
+
+  if (candidates.length === 0) {
+    card.appendChild(el('p', 'empty', 'No usable photo was found. Press "None of these": this species needs an SFC photo.'));
+  } else {
+    const grid = el('div', 'candidates');
+    candidates.forEach(candidate => grid.appendChild(drawCandidate(row, candidate, decision)));
+    card.appendChild(grid);
+  }
+
+  const note = el('textarea', 'note');
+  note.placeholder = 'Optional note, e.g. "candidate 2 shows the flower clearly"';
+  note.value = decision.notes || '';
+  note.setAttribute('aria-label', 'Note for ' + row.scientific_name);
+  note.addEventListener('input', () => {
+    const current = decisionFor(row);
+    current.notes = note.value;
+    saveDecision(row, current);
+  });
+  card.appendChild(note);
+  return card;
+}
+
+// Redraws one species card in place (keeps it on screen even in "not yet reviewed" mode).
+function redrawSpecies(row) {
+  const old = document.querySelector('[data-species-id="' + CSS.escape(row.species_id) + '"]');
+  if (old) old.replaceWith(drawSpecies(row));
+  updateProgress();
+}
+
+function drawList() {
+  const list = document.getElementById('list');
+  list.replaceChildren();
+  const onlyTodo = document.getElementById('only-todo').checked;
+  species
+    .filter(row => !onlyTodo || !isReviewed(decisionFor(row)))
+    .forEach(row => list.appendChild(drawSpecies(row)));
+  if (list.children.length === 0 && species.length > 0) {
+    list.appendChild(el('p', 'hint', 'Every species has been reviewed. Download the reviewed CSV.'));
+  }
+  updateProgress();
+}
+
+// ---------- Changing a decision ----------
+
+function setKept(row, key, keep) {
+  const decision = decisionFor(row);
+  decision.none = false;
+  if (keep && decision.kept.indexOf(key) === -1) decision.kept.push(key);
+  if (!keep) decision.kept = decision.kept.filter(k => k !== key);
+  decision.kept.sort((a, b) => Number(a.slice(4)) - Number(b.slice(4)));
+  // The first kept photo becomes main; if the main photo is un-kept, the next kept one takes over.
+  if (decision.kept.indexOf(decision.main) === -1) decision.main = decision.kept[0] || '';
+  saveDecision(row, decision);
+  redrawSpecies(row);
+}
+
+function setMain(row, key) {
+  const decision = decisionFor(row);
+  if (decision.kept.indexOf(key) === -1) return;
+  decision.main = key;
+  saveDecision(row, decision);
+  redrawSpecies(row);
+}
+
+// Ticks every candidate and makes candidate 1 main. Only ever runs when clicked.
+function keepAllOf(row, candidates) {
+  const decision = decisionFor(row);
+  decision.kept = candidates.map(candidate => candidate.key);
+  decision.main = decision.kept[0] || '';
+  decision.none = false;
+  saveDecision(row, decision);
+  redrawSpecies(row);
+}
+
+// "None of these": clears every kept photo.
+function chooseNone(row) {
+  const decision = decisionFor(row);
+  decision.kept = [];
+  decision.main = '';
+  decision.none = true;
+  saveDecision(row, decision);
+  redrawSpecies(row);
+}
+
+function updateProgress() {
+  const done = species.filter(row => isReviewed(decisionFor(row))).length;
+  document.getElementById('progress').textContent = species.length
+    ? done + '/' + species.length + ' reviewed'
+    : 'No file loaded';
+  document.getElementById('download').disabled = species.length === 0;
+}
+
+function showMessage(text) {
+  document.getElementById('message').textContent = text;
+}
+
+// ---------- Loading and downloading ----------
+
+// Reads the officer columns of a reviewed CSV row back into a decision.
+function decisionFromCsv(row) {
+  const choice = (row.officer_choice || '').trim();
+  if (!choice) return null;
+  if (choice === 'none') return normalise({ kept: [], none: true, notes: row.officer_notes });
+  const kept = choice.split(';').map(key => key.trim()).filter(key => /^cand[1-9]$/.test(key) && row[key + '_id']);
+  if (kept.length === 0) return null;
+  return normalise({ kept: kept, main: (row.main_choice || '').trim(), none: false, notes: row.officer_notes });
+}
+
+function loadCsv(text) {
+  const rows = parseCsv(text);
+  if (rows.length === 0) {
+    showMessage('That file is empty.');
+    return;
+  }
+  const names = rows[0].map(name => name.trim().toLowerCase());
+  const missing = REQUIRED_COLUMNS.filter(column => names.indexOf(column) === -1);
+  if (missing.length > 0) {
+    showMessage('This is not the by-species review file (missing: ' + missing.join(', ') + ').');
+    return;
+  }
+  species = rows.slice(1).map(values => {
+    const row = {};
+    names.forEach((name, index) => { row[name] = values[index] === undefined ? '' : values[index]; });
+    return row;
+  });
+  // The download writes the new officer columns; the old single-photo column is dropped.
+  header = names.filter(name => OLD_COLUMNS.indexOf(name) === -1 && OUTPUT_COLUMNS.indexOf(name) === -1)
+    .concat(OUTPUT_COLUMNS);
+
+  // A reviewed file fills in choices this browser doesn't have yet.
+  let restored = 0;
+  species.forEach(row => {
+    if (saved.decisions[row.species_id]) return;
+    const decision = decisionFromCsv(row);
+    if (decision) {
+      saved.decisions[row.species_id] = decision;
+      restored += 1;
+    }
+  });
+  if (!saved.name) {
+    const named = species.find(row => row.officer_name);
+    if (named) {
+      saved.name = named.officer_name;
+      document.getElementById('officer-name').value = saved.name;
+    }
+  }
+  store();
+  showMessage(restored > 0 ? 'Restored ' + restored + ' reviewed species from the file.' : '');
+  drawList();
+}
+
+function download() {
+  const name = document.getElementById('officer-name').value.trim();
+  if (!name) {
+    showMessage('Type your name at the top first.');
+    document.getElementById('officer-name').focus();
+    return;
+  }
+  const todo = species.filter(row => !isReviewed(decisionFor(row))).length;
+  if (todo > 0 && !confirm(todo + ' species are not reviewed yet. Download anyway?')) return;
+
+  const lines = [header.map(csvValue).join(',')];
+  species.forEach(row => {
+    const decision = decisionFor(row);
+    const reviewed = isReviewed(decision);
+    const out = Object.assign({}, row);
+    if (decision.none) {
+      out.officer_choice = 'none';
+      out.main_choice = '';
+      out.chosen_photo_ids = '';
+      out.main_photo_id = '';
+    } else if (reviewed) {
+      // Main photo first, then the others in candidate order.
+      const ordered = [decision.main].concat(decision.kept.filter(key => key !== decision.main));
+      out.officer_choice = decision.kept.join(';');
+      out.main_choice = decision.main;
+      out.chosen_photo_ids = ordered.map(key => row[key + '_id']).join(';');
+      out.main_photo_id = row[decision.main + '_id'] || '';
+    } else {
+      out.officer_choice = '';
+      out.main_choice = '';
+      out.chosen_photo_ids = '';
+      out.main_photo_id = '';
+    }
+    out.officer_name = reviewed ? name : '';
+    out.officer_notes = decision.notes || '';
+    lines.push(header.map(column => csvValue(out[column])).join(','));
+  });
+
+  const blob = new Blob(['﻿' + lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = OUTPUT_NAME;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  showMessage('Saved ' + OUTPUT_NAME + ' to your Downloads.');
+}
+
+document.getElementById('officer-name').value = saved.name;
+document.getElementById('officer-name').addEventListener('input', event => {
+  saved.name = event.target.value;
+  store();
+});
+document.getElementById('only-todo').addEventListener('change', drawList);
+document.getElementById('download').addEventListener('click', download);
+document.getElementById('csv-file').addEventListener('change', event => {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => loadCsv(String(reader.result));
+  reader.onerror = () => showMessage('The file could not be read.');
+  reader.readAsText(file, 'utf-8');
+});
+</script>
+</body>
+</html>

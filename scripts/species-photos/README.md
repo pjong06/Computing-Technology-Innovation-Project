@@ -13,7 +13,12 @@ This step **doesn't import anything**: the migration, import script and UI come 
 | `matching-queries.sql` | Read-only SQL for the Supabase SQL Editor. Q1-Q4 give counts and unmatched names; Q5 exports the input list. |
 | `lookup-licences.mjs` | One-off Node script that asks the public iNaturalist API for each photo's licence and credit. |
 | `species-photo-list.csv` | **Input** you export from Q5. Ignored by git. |
-| `species-photo-review.csv` | **Output** for an officer to review. Ignored by git. |
+| `species-photo-review.csv` | **Output** of the licence check: one row per species + old photo. Ignored by git. |
+| `csv.mjs` | Small CSV reader/writer shared by the scripts. |
+| `make-by-species.mjs` | Turns `species-photo-review.csv` into `species-photo-review-by-species.csv`: one row per species with its best candidates. Offline. |
+| `species-photo-review-by-species.csv` | One row per species, for `review.html`. Ignored by git. |
+| `review.html` | Local review page: open it in a browser, load the by-species CSV, choose which photos to keep for each species and which is the main one, download the reviewed CSV. |
+| `species-photo-review-by-species-REVIEWED.csv` | What `review.html` downloads, with the officer's choices. Ignored by git. |
 | `.cache/` | Saved API answers, so a stopped run can resume. Ignored by git; delete it to start fresh. |
 
 ## How to run
@@ -31,7 +36,13 @@ This step **doesn't import anything**: the migration, import script and UI come 
    - `--output <file>`: review CSV (default `scripts/species-photos/species-photo-review.csv`)
    - `--cache <dir>`: cache folder (default `scripts/species-photos/.cache`)
 
-4. Open `species-photo-review.csv` in Excel or Google Sheets. An officer fills in `officer_choice` for every row (see below).
+4. Make the per-species file (offline, instant):
+
+   ```bash
+   node scripts/species-photos/make-by-species.mjs
+   ```
+
+5. An officer reviews it in `review.html` (next section).
 
 ### How the script behaves
 - **Rate:** at most **1 request per second**, one at a time, with the User-Agent `NiahBioTrack-species-photo-licence-check/1.0 (...)`. About 174 species is about 180 requests, roughly 3-4 minutes.
@@ -48,6 +59,54 @@ This step **doesn't import anything**: the migration, import script and UI come 
 - **Resume:** every successful answer is saved in `.cache/`. If the run stops (Ctrl+C, no signal, rate limit), just run it again: finished requests aren't repeated.
 - **Exit code:** 0 when everything was looked up, 2 when some lookups failed (run again).
 - **Safety:** it reads only the input CSV and its own cache. No `.env`, no secrets, no login. It never touches our database or storage.
+
+## Reviewing in review.html
+
+1. Open `scripts/species-photos/review.html` in Chrome, Edge or Firefox by double-clicking it. No server or install is needed.
+2. Type your name at the top, and choose `species-photo-review-by-species.csv` with **CSV file**.
+3. For each species, keep a small gallery with one main photo:
+   - **Keep:** tick it on every photo to use. Kept photos get a green frame.
+   - **Main:** choose the main photo among the kept ones; it gets a thick frame. Only kept photos can be main. The first photo you keep becomes main automatically, and if you un-keep the main photo, the next kept one takes over.
+   - **Keep all:** ticks every candidate and makes candidate 1 main. It only acts on the species you click it for, never on others, so every species is still looked at.
+   - **None of these:** clears every kept photo for that species (for example when none shows the plant well, or there are no candidates).
+   - **Reviewed** means at least one kept photo with a main, or "None of these".
+   - **Add a note** if you like.
+   - **Check before choosing:** use **Photo on iNaturalist** and **Observation** to confirm the plant really is this species and the licence matches.
+   - **Order:** candidates are shown best first. Borneo observations come first, then the old website's photo if its licence is allowed, the species' own iNaturalist photos, then elsewhere in Malaysia, then anywhere.
+4. **Progress and filter:** progress shows as e.g. `37/162 reviewed`. Tick **Show only not yet reviewed** to hide the species you've done.
+5. **Saving:**
+   - Choices are saved in this browser as you go, so a refresh doesn't lose them. After a refresh, pick the CSV file again.
+   - Clearing the browser's site data deletes them, so download regularly.
+   - Choices saved by the earlier one-photo version of the page are converted automatically: that photo becomes kept and main.
+6. **Download reviewed CSV** saves `species-photo-review-by-species-REVIEWED.csv` to your Downloads. If you load a reviewed CSV again later, all its choices (kept photos, main photo and notes) are restored.
+
+**Privacy and safety:**
+- The page loads no scripts from the internet, and its security policy blocks every request except loading the candidate images.
+- Images come only from iNaturalist's image hosts (`inaturalist-open-data.s3.amazonaws.com`, `static.inaturalist.org`), and links only go to `www.inaturalist.org`. Anything else in the CSV is not shown.
+- Nothing you type or choose is sent anywhere.
+
+### By-species CSV columns
+
+| Column | Meaning |
+|---|---|
+| `species_id`, `scientific_name`, `inat_taxon_id` | The species (ours and iNaturalist's) |
+| `old_photo_ids` | The old website's photo ids for this species, separated by `;` |
+| `old_photo_reasons` | Why those couldn't be used, e.g. `unknown;cc-by-nc` |
+| `candidate_count` | How many candidates (0 means "needs an SFC photo") |
+| `candN_id`, `candN_licence`, `candN_attribution`, `candN_photographer`, `candN_url`, `candN_page_url`, `candN_source`, `candN_observation_url` | Candidate N (N = 1-6). These have the same meanings as the `altN_*` columns below, plus `original (old website)` as a possible `source` |
+| `officer_choice` | Filled by review.html: the kept candidates, e.g. `cand1;cand2;cand3`, or `none`. Blank = not reviewed yet |
+| `main_choice` | The main candidate, e.g. `cand1` (blank for `none`) |
+| `chosen_photo_ids` | iNaturalist photo ids of the kept photos, separated by `;`, **main first** |
+| `main_photo_id` | iNaturalist photo id of the main photo |
+| `officer_name` | Who reviewed it |
+| `officer_notes` | Optional note |
+
+The single-photo column `chosen_photo_id` from the first version is replaced by `chosen_photo_ids` and `main_photo_id`.
+
+**For the later import:**
+- **Every kept photo** (each id in `chosen_photo_ids`) becomes its own `species_media` row, with its licence and credit.
+- **The main one** (`main_photo_id`) is marked primary.
+- **SFC's own photos still take priority as main:** if a species already has (or later gets) an SFC photo, that photo is primary and the iNaturalist photos stay in the gallery as secondary reference photos.
 
 ## Review CSV columns
 

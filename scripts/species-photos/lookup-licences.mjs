@@ -19,6 +19,8 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, renameSync } from '
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { parseCsv, toCsv } from './csv.mjs';
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const API = 'https://api.inaturalist.org/v1';
 const USER_AGENT =
@@ -53,42 +55,7 @@ const OUTPUT = resolve(argument('--output', join(HERE, 'species-photo-review.csv
 const CACHE = resolve(argument('--cache', join(HERE, '.cache')));
 
 // ---------- CSV ----------
-
-// Parses CSV text (RFC 4180: quoted fields, "" inside quotes, CRLF or LF) into rows of strings.
-function parseCsv(text) {
-  const rows = [];
-  let row = [];
-  let field = '';
-  let quoted = false;
-  const source = text.replace(/^﻿/, '');
-  for (let i = 0; i < source.length; i++) {
-    const char = source[i];
-    if (quoted) {
-      if (char === '"' && source[i + 1] === '"') { field += '"'; i++; }
-      else if (char === '"') quoted = false;
-      else field += char;
-    } else if (char === '"') quoted = true;
-    else if (char === ',') { row.push(field); field = ''; }
-    else if (char === '\n' || char === '\r') {
-      if (char === '\r' && source[i + 1] === '\n') i++;
-      row.push(field); rows.push(row); row = []; field = '';
-    } else field += char;
-  }
-  if (field !== '' || row.length > 0) { row.push(field); rows.push(row); }
-  return rows.filter(r => r.some(value => value.trim() !== ''));
-}
-
-function csvValue(value) {
-  const text = value === null || value === undefined ? '' : String(value);
-  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
-
-function toCsv(header, records) {
-  const lines = [header.map(csvValue).join(',')];
-  for (const record of records) lines.push(header.map(column => csvValue(record[column])).join(','));
-  // The byte-order mark lets Excel show names like "Tomáš" correctly.
-  return '﻿' + lines.join('\r\n') + '\r\n';
-}
+// Shared with make-by-species.mjs (csv.mjs).
 
 // ---------- Polite HTTP with a cache (so a stopped run can resume) ----------
 
