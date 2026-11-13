@@ -118,8 +118,8 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
   // Screens must warn about unsynced data BEFORE calling this; it deletes it.
   const logout = async () => {
     try {
+      await useProposalStore.getState().clearProposals();
       await useRecordStore.getState().clearAllData(); // records, routes, draft route
-      useProposalStore.getState().clearProposals(); // species proposals
       deleteAllStoredPhotos();
       await AsyncStorage.removeItem('niah_is_guest_visitor');
     } catch {
