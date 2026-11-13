@@ -120,7 +120,7 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
     try {
       await useProposalStore.getState().clearProposals();
       await useRecordStore.getState().clearAllData(); // records, routes, draft route
-      deleteAllStoredPhotos();
+      await deleteAllStoredPhotos();
       await AsyncStorage.removeItem('niah_is_guest_visitor');
     } catch {
       console.error('Unable to clear local data while signing out.');
