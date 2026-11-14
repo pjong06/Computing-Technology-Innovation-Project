@@ -43,13 +43,25 @@ test('the rejected list reads real rejected reviews', () => {
   assert.doesNotMatch(rejected, /getObservations\(|writeStorage\(OBSERVATIONS_KEY/);
 });
 
+test('the distribution map loads real plants from the officer map API', () => {
+  const map = read('frontend/js/map.js');
+  assert.match(map, /api\('\/officer\/map\/plants'\)/);
+  assert.doesNotMatch(map, /web-data|website_species|getSpecies\(/);
+});
+
+test('reports.js does not load the old portal copy', () => {
+  const reports = read('frontend/js/reports.js');
+  assert.doesNotMatch(reports, /web-data|website_species|getSpecies\(|getObservations\(/);
+});
+
 // ---- User admin changes real permissions ----
 
 test('user changes are saved to website_users, which the database copies to profiles', () => {
   const shared = read('frontend/js/shared.js');
   const users = read('frontend/js/users.js');
   // USERS_KEY is saved through /api/web-data/users (website_users), not only in the browser.
-  assert.match(shared, /key: USERS_KEY, path: '\/users'/);
+  assert.match(shared, /key: USERS_KEY/);
+  assert.match(shared, /request\.open\(method, '\/api\/web-data\/users'/);
   assert.match(read('backend/src/routes/webData.js'), /website_users/);
   // The page shows the real account status and can activate pending accounts.
   assert.match(users, /from\('profiles'\)\.select\('id, account_status'\)/);
@@ -65,7 +77,30 @@ test('user changes are saved to website_users, which the database copies to prof
 test('only the officer can change website data on the server', () => {
   const webData = read('backend/src/routes/webData.js');
   assert.match(webData, /function isOfficer\(req\)/);
-  assert.match(webData, /router\.put\("\/:key", async \(req, res\) => \{\s*if \(!isOfficer\(req\)\)/);
+  assert.match(webData, /router\.get\("\/users", async \(req, res\) => \{/);
+  assert.match(webData, /router\.put\("\/users", async \(req, res\) => \{\s*if \(!isOfficer\(req\)\)/);
+  assert.doesNotMatch(webData, /website_species|website_observations|web_data|\/species|\/observations/);
+});
+
+test('frontend no longer references the removed portal-copy data', () => {
+  const frontendRoot = path.join(repoRoot, 'frontend');
+  const files = [];
+  function collectFiles(directory) {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        collectFiles(file);
+      } else if (/\.(?:html|js|css)$/.test(entry.name)) {
+        files.push(file);
+      }
+    }
+  }
+  collectFiles(frontendRoot);
+
+  const legacyData = /\/(?:api\/)?web-data\/(?:species|observations)\b|website_(?:species|observations)/i;
+  for (const file of files) {
+    assert.doesNotMatch(fs.readFileSync(file, 'utf8'), legacyData, path.relative(repoRoot, file));
+  }
 });
 
 // ---- No public sign-up, staff-only portal ----
@@ -75,4 +110,48 @@ test('the login page does not offer sign-up and keeps non-staff accounts out', (
   assert.match(login, /\['botanist', 'officer', 'researcher', 'admin'\]\.indexOf\(me\.role\) === -1/);
   assert.doesNotMatch(login, /Create an account/i);
   assert.doesNotMatch(read('frontend/users.html'), /sign-up page/i);
+});
+
+// ---- Expired logins are renewed, or the officer is sent to log in again ----
+
+test('api() renews an expiring login and sends the officer to log in when it cannot', () => {
+  const shared = read('frontend/js/shared.js');
+  assert.match(shared, /const SESSION_EXPIRED_MESSAGE = 'Your session expired, please log in again\.';/);
+  const getToken = shared.slice(shared.indexOf('window.getOfficerAccessToken'), shared.indexOf('async function sendToLoginExpired'));
+  assert.match(getToken, /sb\.auth\.refreshSession\(\)/);
+  const api = shared.slice(shared.indexOf('async function api('));
+  const apiBody = api.slice(0, api.indexOf('\n}\n'));
+  assert.match(apiBody, /response\.status === 401/);
+  assert.match(apiBody, /sendToLoginExpired\(\)/);
+  assert.match(shared, /location\.replace\('login\.html'\)/);
+});
+
+// ---- The species catalogue and editor use the real species table ----
+
+test('species.js and editor.js use /api/knowledge, not the old website copy', () => {
+  for (const file of ['frontend/js/species.js', 'frontend/js/editor.js']) {
+    const source = read(file);
+    assert.match(source, /\/knowledge\/species/, file);
+    assert.doesNotMatch(source, /web-data|getSpecies\(|SPECIES_KEY|getObservations\(|OBSERVATIONS_KEY/, file);
+  }
+  // Officers review botanists' proposals on the catalogue page; a rejection needs a reason.
+  const species = read('frontend/js/species.js');
+  assert.match(species, /'\/knowledge\/species\/proposals\/pending'/);
+  assert.match(species, /'\/knowledge\/species\/proposals\/' \+ proposal\.id \+ '\/review'/);
+  assert.match(species, /Please type a reason/);
+  // Botanists only propose.
+  assert.match(read('frontend/js/editor.js'), /'\/knowledge\/species\/proposals'/);
+});
+
+test('species catalogue controls match the JavaScript selectors and redraw on changes', () => {
+  const html = read('frontend/species.html');
+  const script = read('frontend/js/species.js');
+  const htmlIds = new Set(Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]));
+  const scriptIds = Array.from(script.matchAll(/getElementById\(['"]([^'"]+)['"]\)/g), match => match[1]);
+  for (const id of scriptIds) {
+    assert.ok(htmlIds.has(id), `species.js reads #${id}, which is missing from species.html`);
+  }
+  assert.match(html, /id="search-box"[^>]*aria-label="Search species by name"[^>]*oninput="drawSpeciesTable\(\)"/);
+  assert.match(html, /id="status-filter"[^>]*aria-label="Filter by conservation status"[^>]*onchange="drawSpeciesTable\(\)"/);
+  assert.match(script, /const searchInput = document\.getElementById\('search-box'\)/);
 });
