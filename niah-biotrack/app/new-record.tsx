@@ -109,7 +109,10 @@ export default function NewRecordScreen() {
   const router = useRouter();
   const blocked = useStaffOnly();
   const me = useProfileStore((state) => state.me);
-  const { editId } = useLocalSearchParams<{ editId?: string }>();
+  const { editId, speciesId: preselectedSpeciesId } = useLocalSearchParams<{
+    editId?: string;
+    speciesId?: string;
+  }>();
 
   const existingRecord = useRecordStore((state) =>
     editId ? state.records.find((r) => r.id === editId) : undefined
@@ -184,26 +187,38 @@ export default function NewRecordScreen() {
   useEffect(() => {
     if (speciesSelectionInitialized.current) return;
 
-    if (!existingRecord) {
+    if (existingRecord) {
+      if (allSpecies.length === 0) return;
+
+      const match = allSpecies.find(
+        (species) =>
+          species.id === existingRecord.speciesId ||
+          species.scientific_name.trim().toLowerCase() === existingRecord.scientificName.trim().toLowerCase()
+      );
+
+      if (match) {
+        setSpeciesChoice({ kind: 'species', species: match });
+        setSpeciesQuery(match.scientific_name);
+      }
+
       speciesSelectionInitialized.current = true;
       return;
     }
 
+    if (!preselectedSpeciesId) {
+      speciesSelectionInitialized.current = true;
+      return;
+    }
     if (allSpecies.length === 0) return;
 
-    const match = allSpecies.find(
-      (species) =>
-        species.id === existingRecord.speciesId ||
-        species.scientific_name.trim().toLowerCase() === existingRecord.scientificName.trim().toLowerCase()
-    );
-
+    const match = allSpecies.find((species) => species.id === preselectedSpeciesId);
     if (match) {
       setSpeciesChoice({ kind: 'species', species: match });
       setSpeciesQuery(match.scientific_name);
     }
 
     speciesSelectionInitialized.current = true;
-  }, [allSpecies, existingRecord]);
+  }, [allSpecies, existingRecord, preselectedSpeciesId]);
 
   const fetchLocation = async () => {
     const requestId = ++gpsRequestId.current;
