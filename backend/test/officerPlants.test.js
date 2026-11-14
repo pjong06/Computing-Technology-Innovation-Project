@@ -147,6 +147,15 @@ test('officer plant detail includes signed photos and observation history withou
       data: [],
       error: null,
     },
+    plant_map_points: {
+      single: {
+        id: PLANT_ID,
+        latitude: 3.2,
+        longitude: 113.7,
+      },
+      data: [],
+      error: null,
+    },
     species: {
       data: [{
         id: SPECIES_ID,
@@ -209,6 +218,11 @@ test('officer plant detail includes signed photos and observation history withou
   assert.equal(result.body.data.observations[0].observer_name, 'Field Observer');
   assert.equal(result.body.data.observations[0].reviewer_comment, 'Please recheck the measurements.');
   assert.doesNotMatch(JSON.stringify(result.body), /file_path|uploaded_by/);
+  const plantSelect = db.calls.find((call) => call[0] === 'plants' && call[1] === 'select');
+  assert.ok(plantSelect);
+  assert.doesNotMatch(plantSelect[2], /\blatitude\b|\blongitude\b/);
+  assert.ok(db.calls.some((call) => call[0] === 'plant_map_points' && call[1] === 'select' &&
+    call[2] === 'id, latitude, longitude'));
 });
 
 test('plant catalogue enforces officer access and validates paging before database access', async () => {
