@@ -159,21 +159,9 @@ async function taxonomyIdFor(taxonomy, family, scientificName) {
 }
 
 const SPECIES_PHOTO_LICENSES = {
-  'cc-by': {
-    label: 'CC BY 4.0',
-    shortLabel: 'CC BY',
-    url: 'https://creativecommons.org/licenses/by/4.0/'
-  },
-  'cc-by-sa': {
-    label: 'CC BY-SA 4.0',
-    shortLabel: 'CC BY-SA',
-    url: 'https://creativecommons.org/licenses/by-sa/4.0/'
-  },
-  cc0: {
-    label: 'CC0 1.0',
-    shortLabel: 'CC0',
-    url: 'https://creativecommons.org/publicdomain/zero/1.0/'
-  }
+  'cc-by': 'CC BY',
+  'cc-by-sa': 'CC BY-SA',
+  cc0: 'CC0'
 };
 
 function preferredSpeciesPhoto(photos) {
@@ -195,46 +183,14 @@ async function speciesPhoto(species) {
 function makeSpeciesPhotoCredit(photo, compact) {
   if (!photo || photo.source !== 'inaturalist') return null;
 
-  const licence = SPECIES_PHOTO_LICENSES[photo.licence_code] || {
-    label: 'Unknown licence',
-    shortLabel: 'Unknown licence',
-    url: ''
-  };
+  const licence = SPECIES_PHOTO_LICENSES[photo.licence_code] || 'Unknown licence';
   const name = photo.photographer?.trim() || photo.attribution?.trim() || 'Unknown photographer';
-  const fullCredit = `Photo: ${name}, ${licence.label} via iNaturalist`;
+  const fullCredit = `Photo: ${name}, ${licence} via iNaturalist`;
   const credit = document.createElement('div');
   credit.className = 'species-photo-credit' + (compact ? ' compact' : '');
   credit.title = fullCredit;
   credit.setAttribute('aria-label', fullCredit);
-  credit.appendChild(document.createTextNode(`Photo: ${name}, `));
-
-  if (licence.url) {
-    const licenceLink = document.createElement('a');
-    licenceLink.href = licence.url;
-    licenceLink.target = '_blank';
-    licenceLink.rel = 'noopener noreferrer';
-    licenceLink.textContent = compact ? licence.shortLabel : licence.label;
-    licenceLink.onclick = event => event.stopPropagation();
-    credit.appendChild(licenceLink);
-  } else {
-    credit.appendChild(document.createTextNode(compact ? licence.shortLabel : licence.label));
-  }
-
-  if (!compact) {
-    credit.appendChild(document.createTextNode(' via '));
-    if (photo.source_url) {
-      const sourceLink = document.createElement('a');
-      sourceLink.href = photo.source_url;
-      sourceLink.target = '_blank';
-      sourceLink.rel = 'noopener noreferrer';
-      sourceLink.textContent = 'iNaturalist';
-      sourceLink.onclick = event => event.stopPropagation();
-      credit.appendChild(sourceLink);
-    } else {
-      credit.appendChild(document.createTextNode('iNaturalist'));
-    }
-  }
-
+  credit.textContent = fullCredit;
   return credit;
 }
 
