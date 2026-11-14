@@ -164,6 +164,19 @@ test('the species catalogue and editor render iNaturalist photo credits', () => 
   assert.doesNotMatch(mobileCredit, /Linking|onPress|accessibilityRole|source_url|creativecommons\.org/);
 });
 
+test('web and mobile species screens do not use legacy reference-photo fields', () => {
+  const legacyFields = /reference_(?:image_url|observation_url|image_credit|image_license)/;
+  for (const file of [
+    'frontend/js/species.js',
+    'frontend/js/editor.js',
+    'frontend/js/shared.js',
+    'niah-biotrack/app/plant-info.tsx',
+    'niah-biotrack/app/species-reference/[id].tsx',
+  ]) {
+    assert.doesNotMatch(read(file), legacyFields, file);
+  }
+});
+
 test('species catalogue controls match the JavaScript selectors and redraw on changes', () => {
   const html = read('frontend/species.html');
   const script = read('frontend/js/species.js');

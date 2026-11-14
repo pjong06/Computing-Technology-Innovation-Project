@@ -3,6 +3,7 @@ const multer = require("multer");
 const sharp = require("sharp");
 const { randomUUID } = require("node:crypto");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { removeLegacyObservationSource } = require("../utils/speciesDescription");
 
 function parsePagination(query, defaultSize = 50) {
     const { page = "1", page_size = String(defaultSize) } = query;
@@ -22,16 +23,22 @@ function paginationMetadata(paging, count) {
 }
 
 function orderSpeciesMedia(data) {
-    const order = (species) => {
-        if (!species || !Array.isArray(species.species_media)) return species;
-        return {
+    const prepare = (species) => {
+        if (!species) return species;
+        const prepared = {
             ...species,
-            species_media: [...species.species_media].sort((a, b) =>
-                Number(b.source === "sfc") - Number(a.source === "sfc")
-            ),
+            ...(typeof species.description === "string"
+                ? { description: removeLegacyObservationSource(species.description) }
+                : {}),
         };
+        if (Array.isArray(species.species_media)) {
+            prepared.species_media = [...species.species_media].sort((a, b) =>
+                Number(b.source === "sfc") - Number(a.source === "sfc")
+            );
+        }
+        return prepared;
     };
-    return Array.isArray(data) ? data.map(order) : order(data);
+    return Array.isArray(data) ? data.map(prepare) : prepare(data);
 }
 
 function textLimit(field) {
@@ -146,10 +153,12 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
     const SPECIES_MEDIA_CREDIT_COLUMNS =
         "source, licence_code, attribution, photographer, source_url";
     const SPECIES_MEDIA_COLUMNS = `id, is_primary, ${SPECIES_MEDIA_CREDIT_COLUMNS}`;
-    const MANAGE_COLUMNS =
+    const SPECIES_EDITOR_COLUMNS =
         "id, scientific_name, common_name, local_name, species_category, conservation_status, " +
         "description, morphology, habitat, distribution_notes, cultural_significance, " +
-        `verification_status, taxonomy_id, taxonomy(family, genus), species_media(${SPECIES_MEDIA_COLUMNS})`;
+        "verification_status, taxonomy_id";
+    const MANAGE_COLUMNS =
+        `${SPECIES_EDITOR_COLUMNS}, taxonomy(family, genus), species_media(${SPECIES_MEDIA_COLUMNS})`;
     const SPECIES_STATUSES = ["approved", "pending", "rejected", "archived"];
 
     // Let officers find species in any state (approved, pending, rejected, archived).
@@ -554,7 +563,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
 
             const { data, error } = await req.supabase
                 .from("species")
-                .select(`*, species_media(${SPECIES_MEDIA_COLUMNS})`)
+                .select(MANAGE_COLUMNS)
                 .eq("id", id)
                 .maybeSingle();
 
@@ -626,7 +635,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         const { data, error } = await req.supabase
             .from("species")
             .insert(species)
-            .select()
+            .select(SPECIES_EDITOR_COLUMNS)
             .single();
 
         if (error?.code === "23505") {
@@ -646,7 +655,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             return res.status(500).json({ message: "Could not create species" });
         }
 
-        return res.status(201).json({ data });
+        return res.status(201).json({ data: orderSpeciesMedia(data) });
     });
 
     router.patch("/species/:id", authenticate, authorize("officer"), async (req, res) => {
@@ -723,7 +732,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             .from("species")
             .update(changes)
             .eq("id", req.params.id)
-            .select()
+            .select(SPECIES_EDITOR_COLUMNS)
             .maybeSingle();
 
         if (error?.code === "23505") {
@@ -745,7 +754,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
 
         if (!data) return res.status(404).json({ message: "Species not found" });
 
-        return res.json({ data });
+        return res.json({ data: orderSpeciesMedia(data) });
     });
 
     router.delete("/species/:id", authenticate, authorize("officer"), async (req, res) => {
