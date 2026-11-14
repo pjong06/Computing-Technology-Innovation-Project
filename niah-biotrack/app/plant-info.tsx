@@ -15,6 +15,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
 import { lookupPublicTag, describePublicTagLookup, type PublicTagLookupResult } from '../src/services/tagLookup';
 import { conservationStatusColors, plainConservationStatus } from '../src/utils/conservationStatus';
+import SpeciesPhotoCredit from '../src/components/SpeciesPhotoCredit';
+import { preferredSpeciesPhoto } from '../src/utils/speciesPhoto';
 
 // What the page shows, from either source. Never any location or coordinates.
 interface PlantFacts {
@@ -74,6 +76,7 @@ export default function PlantInfoScreen() {
   const detail = speciesId ? detailsById[speciesId] : undefined;
   const listItem = speciesId ? species.find((s) => s.id === speciesId) : undefined;
   const photo = speciesId ? imageUrisBySpeciesId[speciesId] : undefined;
+  const photoCredit = preferredSpeciesPhoto(detail?.species_media ?? listItem?.species_media);
 
   // The scanned plant's own public facts come first; the species fills any gaps.
   const facts: PlantFacts = {
@@ -112,7 +115,10 @@ export default function PlantInfoScreen() {
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
           {photo ? (
-            <Image source={{ uri: photo }} style={styles.photo} resizeMode="cover" accessibilityIgnoresInvertColors />
+            <>
+              <Image source={{ uri: photo }} style={styles.photo} resizeMode="cover" accessibilityIgnoresInvertColors />
+              <SpeciesPhotoCredit photo={photoCredit} />
+            </>
           ) : (
             <View style={[styles.photo, styles.photoPlaceholder]}>
               <Text style={styles.placeholderIcon}>🌿</Text>

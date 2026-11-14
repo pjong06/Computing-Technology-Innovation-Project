@@ -16,6 +16,8 @@ let proposalBusy = false;
 // Makes the big photo box of a card. The status pill sits on the photo.
 // The photo link is asked for after the card is drawn (the links last one minute).
 function makePlantPhoto(species) {
+  const photoArea = document.createElement('div');
+  photoArea.className = 'plant-photo-area';
   const box = document.createElement('div');
   box.className = 'plant-photo';
 
@@ -31,9 +33,11 @@ function makePlantPhoto(species) {
   img.src = PICTURE_BLANK;
   // Only approved species have photo links (the botanists' list holds approved species only).
   if (species.verification_status === 'approved' || viewerIsOfficer === false) {
-    speciesPhotoUrl(species).then(function (url) {
-      if (url) {
-        img.src = url;
+    speciesPhoto(species).then(function (photo) {
+      if (photo?.url) {
+        img.src = photo.url;
+        const credit = makeSpeciesPhotoCredit(photo, true);
+        if (credit) photoArea.appendChild(credit);
       }
     }).catch(function () {
       // No photo link: the blank leaf stays.
@@ -42,7 +46,8 @@ function makePlantPhoto(species) {
   box.appendChild(img);
 
   box.appendChild(makePill(statusLabel(species.conservation_status)));
-  return box;
+  photoArea.appendChild(box);
+  return photoArea;
 }
 
 // The family of a species (from its taxonomy row), or ''.

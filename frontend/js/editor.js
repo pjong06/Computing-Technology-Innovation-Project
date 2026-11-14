@@ -17,10 +17,12 @@ const me = getCurrentUser();
 const isBotanistUser = (me !== null && isBotanist(me));
 
 // Shows the chosen photo (or the blank leaf) in the preview box.
-function showPhoto(picture) {
+function showPhoto(picture, photo) {
   const preview = document.getElementById('photo-preview');
   preview.innerHTML = '';
   preview.appendChild(makeThumb(picture || PICTURE_BLANK, 'Species photo'));
+  const credit = makeSpeciesPhotoCredit(photo, false);
+  if (credit) preview.appendChild(credit);
 }
 
 // Fills the Family box's suggestions with the families already in the database.
@@ -104,9 +106,9 @@ async function startEditor() {
   hasSavedPhoto = Array.isArray(editing.species_media) && editing.species_media.length > 0;
   showPhoto(null);
   if (editing.verification_status === 'approved' && hasSavedPhoto) {
-    const url = await speciesPhotoUrl(editing).catch(function () { return null; });
-    if (url && newPhoto === null) {
-      showPhoto(url);
+    const photo = await speciesPhoto(editing).catch(function () { return null; });
+    if (photo?.url && newPhoto === null) {
+      showPhoto(photo.url, photo);
     }
   }
 }

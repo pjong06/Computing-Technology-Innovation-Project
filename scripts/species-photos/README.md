@@ -4,7 +4,7 @@ Steps 1-2 of `docs/species-photo-import-plan.md`.
 - Find which old website photos we may legally use.
 - Suggest allowed alternatives for the rest.
 
-This step **doesn't import anything**: the migration, import script and UI come later.
+This guide covers the photo licence review and optional import workflow. It does not change the app UI.
 
 ## What's here
 
@@ -19,6 +19,8 @@ This step **doesn't import anything**: the migration, import script and UI come 
 | `species-photo-review-by-species.csv` | One row per species, for `review.html`. Ignored by git. |
 | `review.html` | Local review page: open it in a browser, load the by-species CSV, choose which photos to keep for each species and which is the main one, download the reviewed CSV. |
 | `species-photo-review-by-species-REVIEWED.csv` | What `review.html` downloads, with the officer's choices. Ignored by git. |
+| `import-photos.mjs` | Dry-run-first importer for the officer-reviewed photos. |
+| `species-photo-import-results.csv` | Per-photo outcome report from an applied import. Ignored by git. |
 | `.cache/` | Saved API answers, so a stopped run can resume. Ignored by git; delete it to start fresh. |
 
 ## How to run
@@ -149,3 +151,64 @@ The single-photo column `chosen_photo_id` from the first version is replaced by 
 - **Check the photo:** open the `page_url` (and `observation_url` for observation photos) to confirm the photo really shows this species and the licence on the page matches.
   - Research-grade observations of a species can include its subspecies or varieties, so check the name on the observation page.
 - **Credits** will show the photographer, the licence (linked to the Creative Commons licence page) and "via iNaturalist" (linked to `page_url`).
+
+## Import reviewed photos
+
+Apply the `supabase/migrations/*_species_media_reference_sources.sql` migration in Supabase before running the importer. It adds source and attribution metadata to `species_media`, preserves existing rows as SFC photos, and adds a unique key for iNaturalist photo IDs. It does not change RLS.
+
+The importer reads `species-photo-review-by-species-REVIEWED.csv` by default. It considers only IDs in `chosen_photo_ids`, verifies that each selected candidate has an allowed licence and attribution, and uses `main_photo_id` as the main choice.
+
+### Dry run (default)
+
+From the repository root:
+
+```powershell
+node scripts/species-photos/import-photos.mjs
+```
+
+Dry run reads the reviewed CSV and prints a plan. It does not make network requests, contact Supabase, download images, or write files. It cannot check existing imports or SFC primary photos; those are checked during apply.
+
+Optional paths:
+
+```powershell
+node scripts/species-photos/import-photos.mjs --input path\to\reviewed.csv
+node scripts/species-photos/import-photos.mjs --help
+```
+
+Use `--limit N` to cap a dry run or apply to N photos. When the limit excludes
+photos, each chosen species' main photo is prioritized before additional photos:
+
+```powershell
+node scripts/species-photos/import-photos.mjs --limit 3
+```
+
+### Apply
+
+The script uses Node's built-in `fetch` for Supabase REST and Storage APIs, plus the existing `sharp` dependency in `backend/package.json` to re-encode JPEG/PNG/WebP input as a JPEG like the photo-upload route. No package is added. If backend dependencies are not installed yet, run `npm ci --prefix backend` first.
+
+Set the project URL and read the service-role key without echoing it:
+
+```powershell
+$env:SUPABASE_URL = 'https://<project-ref>.supabase.co'
+$secureKey = Read-Host -Prompt 'Supabase service-role key' -AsSecureString
+$env:SUPABASE_SERVICE_ROLE_KEY = [System.Net.NetworkCredential]::new('', $secureKey).Password
+```
+
+Then apply:
+
+```powershell
+node scripts/species-photos/import-photos.mjs --apply
+node scripts/species-photos/import-photos.mjs --apply --limit 3
+```
+
+Only `--apply` writes to Storage or `species_media`; it also writes the ignored `species-photo-import-results.csv` report. The service-role key is read only from the process environment and is never printed. The importer downloads only from `inaturalist-open-data.s3.amazonaws.com` or `static.inaturalist.org`, validates redirects and image contents, enforces a 5 MB limit, prefers the `large` URL variant with a `medium` fallback, and waits at least one second between download requests. All stored files use the existing `<species_id>/<uuid>.jpg` path pattern and JPEG content type.
+
+If a species has an SFC primary photo, imported photos are kept secondary. Otherwise, the reviewed main photo is made primary. Existing iNaturalist rows are skipped, and unique-index conflicts are treated as already imported.
+
+Remove the variables when finished:
+
+```powershell
+Remove-Item Env:SUPABASE_URL -ErrorAction SilentlyContinue
+Remove-Item Env:SUPABASE_SERVICE_ROLE_KEY -ErrorAction SilentlyContinue
+Remove-Variable secureKey -ErrorAction SilentlyContinue
+```
