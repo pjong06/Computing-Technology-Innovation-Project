@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Species record editor - Niah Biotrack</title>
+<title>Plants record editor - Niah Biotrack</title>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="icon" href="images/logo.png">
 <link rel="stylesheet" href="css/style.css">
@@ -15,30 +15,230 @@
 
 <main>
 <section class="page on">
-  <h1 id="editor-title">Add <span>species record</span></h1>
-  <p class="lead">Changes appear in the catalogue and in the mobile Species Reference.</p>
-  <p class="lead" id="approval-note" hidden>Your changes are not published straight away. They are sent to the Observation approval queue for the conservation officer to approve or reject.</p>
+  <h1 id="editor-title">Plants <span>record editor</span></h1>
+  <p class="lead" id="officer-note">Changes appear in the catalogue and in the mobile app's species list straight away.</p>
+  <p class="lead" id="approval-note" hidden>Your proposal is not published straight away. The conservation officer approves or rejects it on the Species and plants catalogue page, and you see the decision in the mobile app.</p>
   <div class="card">
     <div class="form">
       <label>Scientific name<input id="f-sci"></label>
       <label>Common name<input id="f-com"></label>
-      <label>Family (taxonomy)<input id="f-fam"></label>
-      <label>Conservation status
-        <select id="f-status"><option>Least Concern</option><option>Vulnerable</option><option>Endangered</option></select>
+      <label>Family (taxonomy)<input id="f-fam" list="family-options" placeholder="e.g. Nepenthaceae"></label>
+      <datalist id="family-options"></datalist>
+      <label id="status-label">Conservation status
+        <select id="f-status">
+          <option value="">Not assessed</option>
+          <option value="CR">Critically Endangered</option>
+          <option value="EN">Endangered</option>
+          <option value="VU">Vulnerable</option>
+          <option value="NT">Near Threatened</option>
+          <option value="LC">Least Concern</option>
+          <option value="DD">Data Deficient</option>
+        </select>
       </label>
-      <label>Location name<input id="f-loc"></label>
-      <label>GPS (lat, lng)<input id="f-gps" placeholder="3.2247, 113.7631"></label>
+      <label>Local name<input id="f-local" type="text" placeholder="Enter local plant name"></label>
+      <label>Habitat<input id="f-habitat" type="text" placeholder="e.g. Peat swamp forest edges"></label>
+      <div id="plant-location-fields" class="full">
+  <h3>Plant Location</h3>
+  <p class="lead">
+    Enter the GPS coordinates of the plant being registered.
+  </p>
+
+  <div class="form">
+    <label>
+      Latitude
+      <input
+        id="f-latitude"
+        type="number"
+        min="-90"
+        max="90"
+        step="any"
+        placeholder="e.g. 1.5258">
+    </label>
+
+    <label>
+      Longitude
+      <input
+        id="f-longitude"
+        type="number"
+        min="-180"
+        max="180"
+        step="any"
+        placeholder="e.g. 10.3542">
+    </label>
+
+    <label class="full">
+      Location description
+      <input
+        id="f-location"
+        type="text"
+        maxlength="500"
+        placeholder="Describe where the plant was found">
+    </label>
+  </div>
+</div>
+
       <label class="full">Description<textarea id="f-desc"></textarea></label>
-      <label class="full">Botanical photograph
-        <div class="pv" id="photo-preview"></div>
-        <input type="file" accept="image/*" onchange="previewPhoto(this)">
-      </label>
+    <div class="full" id="photo-label">
+      <label>Botanical photograph</label>
+
+      <div id="photo-preview"></div>
+
+      <p id="photo-readonly-note" class="lead" hidden>
+        This photograph is for viewing only and cannot be changed here.
+      </p>
+
+      <input
+        id="plant-photo-input"
+        type="file"
+        accept="image/*"
+        onchange="previewPhoto(this)"
+        hidden>
     </div>
+
     <div class="acts">
-      <button class="btn" id="save-button" onclick="saveSpecies()">Save species</button>
+      <button class="btn" id="save-button" onclick="saveSpecies().catch(showUnexpectedError)">Save plant</button>
+      <button class="btn ghost" id="delete-plant-button" onclick="deletePlant().catch(showUnexpectedError)" hidden>Delete</button>
       <button class="btn ghost" onclick="location.href='species.html'">Cancel</button>
     </div>
+
   </div>
+  </div>
+
+<!-- Observation history -->
+<div class="card" id="observation-history-card" hidden>
+  <h2>Observation History</h2>
+  <p id="observation-count">0 visits</p>
+  <div id="observation-history-list"></div>
+</div>
+
+
+<!-- Add plant observation section -->
+<div class="card" id="add-observation-card" hidden>
+  <h2>Add Plant Observation</h2>
+  <p class="lead">
+    Record a new field visit for this plant.
+  </p>
+
+  <form id="observation-form" class="form">
+
+    <label>
+      Scientific name
+      <input id="obs-scientific-name" readonly>
+    </label>
+
+    <label>
+      Common name
+      <input id="obs-common-name" readonly>
+    </label>
+
+    <label>
+      Family
+      <input id="obs-family" readonly>
+    </label>
+
+    <label>
+      Conservation status
+      <input id="obs-conservation-status" readonly>
+    </label>
+
+    <label>
+      Local name
+      <input id="obs-local-name" type="text" placeholder="Enter local plant name">
+    </label>
+
+    <label>
+      Habitat
+      <input id="obs-habitat" type="text" placeholder="Enter plant habitat">
+    </label>
+
+    <label>
+      Observation date and time
+      <input id="obs-date" type="datetime-local" required>
+    </label>
+
+    <label>
+      Field staff
+      <input id="obs-staff" readonly>
+    </label>
+
+    <label>
+      Tree height (cm)
+      <input id="obs-height" type="number"
+             min="0" step="0.1">
+    </label>
+
+    <label>
+      DBH / Diameter (cm)
+      <input id="obs-dbh" type="number"
+             min="0" step="0.1">
+    </label>
+
+    <label>
+      Life stage
+      <select id="obs-life-stage">
+        <option value="">Select life stage</option>
+        <option>Seedling</option>
+        <option>Sapling</option>
+        <option>Pole</option>
+        <option>Mature</option>
+        <option>Senescent</option>
+      </select>
+    </label>
+
+    <label>
+      Health status
+      <select id="obs-health-status">
+        <option value="">Select health status</option>
+        <option>Healthy</option>
+        <option>Stressed</option>
+        <option>Diseased</option>
+        <option>Damaged</option>
+        <option>Dead</option>
+      </select>
+    </label>
+
+    <label>
+      Latitude
+      <input id="obs-latitude" type="number"
+             min="-90" max="90" step="any">
+    </label>
+
+    <label>
+      Longitude
+      <input id="obs-longitude" type="number"
+             min="-180" max="180" step="any">
+    </label>
+
+    <label class="full">
+      Location name
+      <input id="obs-location"
+             placeholder="e.g. Niah National Park">
+    </label>
+
+    <label class="full">
+      Observation notes
+      <textarea id="obs-notes"
+                placeholder="Describe the plant's condition"></textarea>
+    </label>
+
+    <label class="full">
+      Observation photographs
+      <input id="obs-photos" type="file"
+             accept="image/*" multiple>
+    </label>
+
+    <div class="acts">
+      <button class="btn" type="submit">
+        Save Observation
+      </button>
+      <button class="btn ghost" type="reset">
+        Clear
+      </button>
+    </div>
+
+  </form>
+</div>
+
 </section>
 </main>
 </div>

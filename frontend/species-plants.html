@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Plants under a species - Niah Biotrack</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="images/logo.png">
+<link rel="stylesheet" href="css/style.css">
+<style>
+main.wide { max-width: 1600px; }
+
+.back-link {
+  display: inline-block;
+  margin-bottom: 14px;
+  color: var(--pri);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.back-link:hover { text-decoration: underline; }
+
+.species-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  align-items: flex-start;
+  margin-bottom: 28px;
+}
+
+.species-photo {
+  width: 260px;
+  height: 200px;
+  overflow: hidden;
+  background: var(--mint);
+  border-radius: 14px;
+}
+
+.species-photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.species-facts { flex: 1; min-width: 260px; }
+
+.species-facts h1 { margin: 0 0 4px; font-style: italic; }
+
+.species-facts .line { margin: 4px 0; color: var(--mute); }
+
+.species-facts .acts { margin-top: 14px; }
+
+
+/* Species image */
+.species-photo {
+  width: 260px;
+  height: 200px;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 14px;
+}
+
+.species-photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+/* Plant images */
+.plant-image {
+  display: block;
+  width: 100%;
+  height: 180px;
+  object-fit: cover;
+  object-position: center;
+  border-radius: 10px;
+  margin-bottom: 12px;
+}
+
+
+.plant-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.plant-row {
+  padding: 14px 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.plant-row .tag { font-weight: 700; font-size: 16px; overflow-wrap: anywhere; }
+
+.plant-row .line { margin: 4px 0 0; color: var(--mute); font-size: 14px; overflow-wrap: anywhere; }
+
+.plant-row .pill { margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+<nav id="menu"></nav>
+
+<main class="wide">
+<section class="page on">
+  <a class="back-link" href="species.html">&larr; Species and plants catalogue</a>
+
+  <div class="species-head" id="species-head" hidden>
+    <div class="species-photo"><img id="species-photo" alt=""></div>
+    <div class="species-facts">
+      <h1 id="species-title"></h1>
+      <p class="line" id="species-common"></p>
+      <p class="line" id="species-details"></p>
+      <p><span id="species-status"></span></p>
+      <div class="acts" id="species-actions"></div>
+    </div>
+  </div>
+
+  <h2>Plants under this <span>species</span></h2>
+  <p class="muted" id="plant-count">Loading plants...</p>
+  <div class="plant-list" id="plant-list"></div>
+  <p class="muted" id="no-plants" hidden>No matching plants were found.</p>
+</section>
+</main>
+</div>
+
+<div id="toast" role="status"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
+<script src="js/shared.js"></script>
+<script src="js/species-plants.js"></script>
+</body>
+</html>

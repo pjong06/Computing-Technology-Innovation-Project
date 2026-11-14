@@ -16,13 +16,45 @@
 <main>
 <section class="page on">
   <h1>User <span>& role admin</span></h1>
-  <p class="lead">Add a botanist here with a temporary password. Accounts made any other way stay <b>Pending approval</b> until you activate them. There is only one officer account.</p>
+  <p class="lead">Add a botanist here with a temporary password. Accounts made any other way stay <b>Pending approval</b> until you activate them.</p>
   <div class="bar">
-    <input id="new-username" class="grow" placeholder="Username">
-    <input id="new-email" class="grow" placeholder="Email">
-    <input id="new-password" class="grow" type="password" placeholder="Temporary password">
-    <button class="btn" onclick="addUser()">Add user</button>
-  </div>
+    <input
+      id="new-name"
+      type="text"
+      placeholder="Full name"
+      aria-label="Full name"
+    >
+
+    <input
+      id="new-username"
+      type="text"
+      placeholder="Username"
+      aria-label="Username"
+    >
+
+    <input
+      id="new-email"
+      type="email"
+      placeholder="Email"
+      aria-label="Email"
+    >
+
+    <input
+      id="new-password"
+      type="password"
+      placeholder="Temporary password"
+      aria-label="Temporary password"
+      autocomplete="new-password"
+    >
+
+    <select id="new-role" aria-label="Role">
+      <option value="Botanist">Botanist</option>
+    </select>
+
+    <button class="btn" type="button" onclick="addUser()">
+      Add user
+    </button>
+</div>
   <div class="card tw">
     <table>
       <thead><tr><th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Status</th><th></th></tr></thead>

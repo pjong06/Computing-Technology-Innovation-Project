@@ -8,6 +8,218 @@
 <link rel="icon" href="images/logo.png">
 <link rel="stylesheet" href="css/style.css">
 </head>
+
+
+<style>
+.review-section {
+  margin: 28px 0;
+}
+
+.review-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.review-header h2 {
+  margin: 0 0 6px;
+  color: #284b3a;
+}
+
+.review-header p {
+  margin: 0;
+  color: #75857b;
+  font-size: 14px;
+}
+
+.review-count {
+  background: #e7f1e9;
+  color: #315740;
+  border-radius: 20px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.review-layout {
+  display: grid;
+  grid-template-columns: minmax(250px, 340px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.review-sidebar,
+.review-detail {
+  background: white;
+  border: 1px solid #e4eae5;
+  border-radius: 16px;
+  padding: 18px;
+  min-width: 0;
+}
+
+.review-search {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid #dce5de;
+  border-radius: 10px;
+  margin-bottom: 14px;
+  font: inherit;
+}
+
+.review-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.review-list .btn {
+  width: 100%;
+  text-align: left;
+  border-radius: 10px;
+  padding: 13px 15px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  background: #f5f8f5;
+  color: #294b39;
+  border: 1px solid #e2e9e2;
+}
+
+.review-list .btn:hover,
+.review-list .btn.selected {
+  background: #e4efe6;
+  border-color: #81a38b;
+}
+
+.review-detail {
+  min-height: 300px;
+}
+
+.review-detail > .card {
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+.review-detail img {
+  display: block;
+  max-width: 100%;
+  border-radius: 12px;
+  margin: 14px 0;
+}
+
+.review-detail p {
+  line-height: 1.6;
+  margin: 12px 0;
+}
+
+.review-detail .btn {
+  margin: 12px 8px 0 0;
+}
+
+@media (max-width: 850px) {
+  .review-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .review-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .review-list {
+    max-height: 280px;
+  }
+}
+
+
+/* All three approval sections use the same layout */
+#queue-area,
+#proposal-area {
+  display: grid;
+  grid-template-columns: minmax(250px, 340px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+/* Keep hidden sections hidden */
+#queue-area[hidden],
+#proposal-area[hidden] {
+  display: none;
+}
+
+/* Scrollable lists */
+#queue-list,
+#proposal-list,
+#plant-review-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 600px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+/* List item appearance */
+#queue-list .q,
+#proposal-list .btn {
+  width: 100%;
+  text-align: left;
+  border-radius: 10px;
+  padding: 13px 15px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  background: #f5f8f5;
+  color: #294b39;
+  border: 1px solid #e2e9e2;
+}
+
+/* Hover and selected states */
+#queue-list .q:hover,
+#queue-list .q.on,
+#proposal-list .btn:hover {
+  background: #e4efe6;
+  border-color: #81a38b;
+}
+
+/* Detail panels */
+#queue-detail,
+#proposal-detail {
+  background: white;
+  border: 1px solid #e4eae5;
+  border-radius: 16px;
+  padding: 18px;
+  min-width: 0;
+}
+
+/* Prevent oversized photos */
+#queue-detail img,
+#proposal-detail img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 12px;
+}
+
+/* Mobile layout */
+@media (max-width: 850px) {
+  #queue-area,
+  #proposal-area {
+    grid-template-columns: 1fr;
+  }
+
+  #queue-list,
+  #proposal-list {
+    max-height: 280px;
+  }
+}
+
+</style>
+
+
 <body>
 <div class="app">
 
@@ -15,13 +227,40 @@
 
 <main>
 <section class="page on">
-  <h1>Observation <span>approval queue</span></h1>
-  <p class="lead" id="queue-count"></p>
-  <div class="split" id="queue-area">
-    <div id="queue-list"></div>
-    <div id="queue-detail"></div>
+<h1>Plant & Species <span>Approval Queue</span></h1>
+  <!-- Website botanist add plants -->
+  <h2>New Plant / Species Proposals</h2>
+    
+    <section class="review-section">
+      <div class="review-header">
+        <div>
+          <h2>Pending Plant Records</h2>
+          <p>Review plant registrations submitted by botanists.</p>
+        </div>
+        <span id="plant-review-count" class="review-count"></span>
+      </div>
+
+      <div class="review-layout" id="plant-review-area">
+        <div class="review-sidebar">
+          <div id="plant-review-list" class="review-list"></div>
+          <div id="plant-review-list" class="review-list"></div>
+        </div>
+
+        <div id="plant-review-detail" class="review-detail"></div>
+      </div>
+    </section>
+
+    <hr>
+
+  <p class="lead">
+    Review new species and plant records submitted by botanists.
+  </p>
+
+  <div class="split" id="proposal-area" hidden>
+    <div id="proposal-list"></div>
+    <div id="proposal-detail"></div>
   </div>
-  <div class="card" id="queue-empty" hidden>All caught up. New observations from the mobile app will appear here after they sync.</div>
+
 </section>
 </main>
 </div>

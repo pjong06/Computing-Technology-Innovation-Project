@@ -3,129 +3,63 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Species catalogue - Niah Biotrack</title>
+<title>Species and plants catalogue - Niah Biotrack</title>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="icon" href="images/logo.png">
 <link rel="stylesheet" href="css/style.css">
 <style>
-/* Species catalogue as a grid of plant cards: 4 in a row, big photos */
+/* Species and plants catalogue: every species is a word-only button */
 main.wide { max-width: 1600px; }
 
-.plant-grid {
+.species-buttons {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 12px;
 }
 
-.plant-card {
+a.species-link {
   display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  padding: 10px 16px;
 
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 14px;
 
-  cursor: pointer;
-  transition: box-shadow 0.15s, transform 0.15s;
-}
-
-.plant-card:hover {
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
-  transform: translateY(-2px);
-}
-
-.plant-photo {
-  position: relative;
-  height: 220px;
-  background: var(--mint);
-}
-
-.plant-photo img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.plant-photo .pill {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  padding: 3px 12px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
-}
-
-.plant-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 12px 14px 12px;
-}
-
-.plant-name {
   color: var(--ink);
-  font-size: 17px;
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: 700;
+  font-style: italic;
   line-height: 1.25;
+  text-align: center;
+  text-decoration: none;
   overflow-wrap: anywhere;
+
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.15s;
 }
 
-.plant-sci {
+a.species-link:hover,
+a.species-link:focus-visible {
+  background: var(--mint);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  transform: translateY(-1px);
+}
+
+a.species-link.archived {
   color: var(--mute);
-  font-size: 14px;
-  font-style: italic;
-  overflow-wrap: anywhere;
-}
-
-.plant-name.latin {
-  font-style: italic;
-}
-
-.plant-place {
-  display: -webkit-box;
-  line-clamp: 2;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-
-  margin-top: 6px;
-  color: var(--mute);
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-
-.plant-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: auto;
-  padding: 0 14px 14px;
-}
-
-.plant-actions .btn {
-  padding: 5px 14px;
-  font-size: 13px;
+  font-weight: 500;
 }
 
 #species-count {
   margin: 0 0 14px;
 }
 
-@media (max-width: 1000px) {
-  .plant-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-
-@media (max-width: 700px) {
-  .plant-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-}
-
-@media (max-width: 440px) {
-  .plant-grid { grid-template-columns: minmax(0, 1fr); }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .plant-card { transition: none; }
-  .plant-card:hover { transform: none; }
+  a.species-link { transition: none; }
+  a.species-link:hover { transform: none; }
 }
 </style>
 </head>
@@ -136,11 +70,11 @@ main.wide { max-width: 1600px; }
 
 <main class="wide">
 <section class="page on">
-  <h1>Species <span>catalogue</span></h1>
-  <p class="lead">Search, filter and manage every plant species record.</p>
+  <h1>Species and plants <span>catalogue</span></h1>
+  <p class="lead">Choose a species to see the plants recorded under it.</p>
   <div class="bar">
-    <input id="search-box" class="grow" placeholder="Search by scientific or common name" aria-label="Search by scientific or common name" oninput="drawSpeciesTable()">
-    <select id="status-filter" aria-label="Filter by conservation status" onchange="drawSpeciesTable()">
+    <input id="search-box" class="grow" placeholder="Search by scientific or common name" oninput="drawSpeciesTable()">
+    <select id="status-filter" onchange="drawSpeciesTable()">
       <option value="">All conservation status</option>
       <option>Critically Endangered (CR)</option>
       <option>Endangered (EN)</option>
@@ -149,11 +83,25 @@ main.wide { max-width: 1600px; }
       <option>Least Concern (LC)</option>
       <option>Not assessed</option>
     </select>
-    <button class="btn" onclick="openEditorFor(-1)">Add species</button>
+    <button class="btn" id="add-species" onclick="openSpeciesEditor('')">Add species</button>
   </div>
-  <p class="muted" id="species-count"></p>
-  <div class="plant-grid" id="species-grid"></div>
+  <p class="muted" id="species-count">Loading species...</p>
+  <div class="species-buttons" id="species-grid"></div>
   <p class="muted" id="no-species" hidden>No species match. Clear the search or add a new species.</p>
+</section>
+
+<section class="page on" id="my-proposals-section" hidden>
+  <h2>My <span>proposals</span></h2>
+  <p class="lead">Your submitted species proposals are stored in Supabase. The officer reviews each one before publication.</p>
+  <p class="muted" id="my-proposals-count">Loading your proposals...</p>
+  <div id="my-proposals-list"></div>
+</section>
+
+<section class="page on" id="proposals-section" hidden>
+  <h2>Species <span>proposals</span></h2>
+  <p class="lead">Species that botanists proposed from the field. Approve to add one to the catalogue and the mobile species list, or reject it with a reason the botanist will see.</p>
+  <p class="muted" id="proposals-count">Loading proposals...</p>
+  <div id="proposals-list"></div>
 </section>
 </main>
 </div>

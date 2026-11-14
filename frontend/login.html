@@ -1,36 +1,66 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Log in - Niah Biotrack</title>
+<title>Log in - Niah Ground-Truth</title>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="icon" href="images/logo.png">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
+
 <div class="auth-wrap">
-  <div class="card auth-card">
-    <img class="logo" src="images/logo.png" alt="Niah Biotrack logo">
-    <h1>Log <span>in</span></h1>
-    <p class="lead">Conservation officers and botanists, sign in with your username, email and password.</p>
+  <div class="card auth-card login-card">
 
-    <div class="form one">
-      <label>Username<input id="login-username" autocomplete="username" autocapitalize="none"></label>
-      <label>Email<input id="login-email" type="email" autocomplete="email"></label>
-      <label>Password<input id="login-password" type="password" autocomplete="current-password"></label>
+    <!-- Centered logo and name -->
+    <div class="login-brand">
+      <img class="logo" src="images/logo.png" alt="Niah Ground-Truth logo">
+      <h1>Niah Ground-Truth</h1>
+      <p>Biodiversity documentation system</p>
     </div>
-    <p class="auth-error" id="auth-error" role="alert" hidden></p>
-    <button class="btn" id="login-button" onclick="doLogin()">Log in</button>
 
-    <p class="muted"><a href="forgot-password.html">Forgot password?</a></p>
-   
+    <!-- Existing login form -->
+    <div class="form one">
+      <label>
+        Email
+        <input id="login-email" type="email"
+               placeholder="Your email"
+               autocomplete="email">
+      </label>
+
+      <label>
+        Password
+        <input id="login-password" type="password"
+               placeholder="Your password"
+               autocomplete="current-password">
+      </label>
+    </div>
+
+    <p class="auth-error" id="auth-error" role="alert" hidden></p>
+
+    <button class="btn login-button" id="login-button" onclick="doLogin()">
+      Log in
+    </button>
+
+    <p class="muted login-forgot">
+      <a href="forgot-password.html">Forgot password?</a>
+    </p>
+
+    <!-- Bottom text -->
+    <p class="login-footer">
+      Accounts are created by Sarawak Forestry Corporation.
+    </p>
+
   </div>
 </div>
 
 <div id="toast" role="status"></div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
 <script src="js/shared.js"></script>
 <script src="js/login.js"></script>
+
 </body>
 </html>
