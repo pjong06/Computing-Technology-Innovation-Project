@@ -700,6 +700,161 @@ table.big .pill {
   font-size: 15px;
 }
 
+
+/* Plant photo */
+#photo-label {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 12px;
+}
+
+#photo-preview {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+}
+
+#photo-preview .pv,
+#photo-preview .thumbbox {
+  display: block;
+  width: 320px;
+  height: auto;
+  max-width: 100%;
+}
+
+#photo-preview img,
+#photo-preview .thumbbox img,
+#photo-preview .thumb {
+  display: block !important;
+  position: static !important;
+  width: 320px !important;
+  height: 240px !important;
+  max-width: 100% !important;
+  object-fit: contain !important;
+  border-radius: 12px;
+}
+
+#plant-photo-input {
+  display: block;
+  width: 100%;
+  margin: 0;
+}
+
+#photo-label[hidden] {
+  display: none !important;
+}
+
+
+
+/* Botanical photograph box */
+#photo-preview {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  height: 300px !important;
+  min-height: 0 !important;
+  padding: 12px !important;
+  margin: 12px 0 !important;
+  border: 1px solid #dce5df !important;
+  border-radius: 16px !important;
+  background: #f8faf8 !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+}
+
+/* Image container */
+#photo-preview .pv,
+#photo-preview .thumbbox {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Plant image */
+#photo-preview img,
+#photo-preview .thumbbox img,
+#photo-preview .thumb {
+  display: block !important;
+  position: static !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  object-fit: contain !important;
+  border-radius: 12px !important;
+  margin: 0 !important;
+}
+
+/* Keep photo input below image */
+#plant-photo-input {
+  display: block !important;
+  position: static !important;
+  width: 100% !important;
+  margin-top: 12px !important;
+}
+
+/* Keep buttons below photo */
+#photo-label {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+  gap: 12px !important;
+}
+
+
+/* Observation history */
+#observation-history-card {
+  margin-top: 24px;
+  padding: 24px;
+}
+
+#observation-history-card[hidden] {
+  display: none !important;
+}
+
+#observation-count {
+  color: #718078;
+  margin-bottom: 16px;
+}
+
+.observation-entry {
+  background: #f8faf8;
+  border: 1px solid #e0e7e2;
+  border-left: 4px solid #305743;
+  border-radius: 14px;
+  padding: 18px;
+  margin-top: 16px;
+}
+
+.observation-entry h3 {
+  margin: 0 0 8px;
+  color: #294b3b;
+}
+
+.observation-entry p {
+  margin: 8px 0;
+}
+
+.observation-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.observation-tags span {
+  background: #edf4ee;
+  color: #305743;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+}
+
 /* Observation approval queue: medium-size list cards and detail card */
 
 .split {
@@ -885,6 +1040,12 @@ table.big .btn {
 }
 
 /* IoT alert panel */
+
+.iot-main {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
 .alert-list {
   display: grid;
   gap: 12px;
@@ -2160,4 +2321,105 @@ table.big .btn {
   color: var(--mute);
 
   font-size: 12px;
+}
+
+
+/* ==============================
+   LOGIN PAGE DESIGN
+   ============================== */
+
+.auth-wrap:has(.login-card) {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 30px 20px;
+  background: #f7f9f6;
+}
+
+.auth-card.login-card {
+  width: 100%;
+  max-width: 440px;
+  padding: 40px 35px;
+  text-align: left;
+  background: #ffffff;
+  border-radius: 20px;
+}
+
+/* Center logo and website name */
+.login-brand {
+  text-align: center;
+  margin-bottom: 35px;
+}
+
+.login-brand .logo {
+  display: block;
+  width: 110px;
+  height: 110px;
+  object-fit: contain;
+  margin: 0 auto 12px;
+}
+
+.login-brand h1 {
+  font-size: 29px;
+  font-weight: 700;
+  color: #203d2e;
+  margin: 0 0 6px;
+}
+
+.login-brand p {
+  color: #7b8580;
+  font-size: 14px;
+  margin: 0;
+}
+
+/* Login inputs */
+.login-card .form {
+  margin-bottom: 20px;
+}
+
+.login-card input {
+  width: 100%;
+  border-radius: 14px;
+}
+
+/* Login button */
+.login-card .login-button {
+  width: 100%;
+  background: #203d2e;
+  color: white;
+  border-radius: 30px;
+  padding: 14px;
+  font-weight: 600;
+}
+
+/* Forgot password */
+.login-forgot {
+  text-align: center;
+  margin-top: 18px;
+}
+
+.login-forgot a {
+  color: #203d2e;
+  font-weight: 600;
+}
+
+/* Bottom message */
+.login-footer {
+  text-align: center;
+  margin-top: 45px;
+  color: #89918b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* Mobile screen */
+@media (max-width: 600px) {
+  .auth-card.login-card {
+    padding: 30px 20px;
+  }
+
+  .login-brand h1 {
+    font-size: 25px;
+  }
 }
