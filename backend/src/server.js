@@ -31,6 +31,7 @@ const { publicClient } = require('./config/supabase');
 const { requireAuth, requireRole } = require('./middleware/auth');
 const { startMqttIngestion } = require('./services/mqttIngestionService');
 const officerMapRoutes = require('./routes/officerMap');
+const officerPlantsRoutes = require('./routes/officerPlants');
 
 // MIDDLEWARE
 
@@ -70,6 +71,7 @@ app.use('/api/web-data', webDataRoutes);
 app.use('/api/sync', requireAuth, requireRole('botanist'), syncRoutes);
 
 app.use('/api/officer/map', officerMapRoutes);
+app.use('/api/officer/plants', officerPlantsRoutes);
 
 // Public plant routes
 app.use(publicPlantRoutes);

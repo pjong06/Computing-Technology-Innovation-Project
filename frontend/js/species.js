@@ -12,6 +12,8 @@ let speciesList = [];   // the species shown in the grid, as the backend sent th
 let proposals = [];     // pending proposals (officers only)
 let taxonomyRows = [];  // used to link a family when approving a proposal
 let proposalBusy = false;
+let plantCountsBySpecies = new Map();
+let plantCountsLoaded = false;
 
 // Makes the big photo box of a card. The status pill sits on the photo.
 // The photo link is asked for after the card is drawn (the links last one minute).
@@ -124,6 +126,16 @@ function makePlantCard(species) {
 
   const buttons = document.createElement('div');
   buttons.className = 'plant-actions';
+  const viewPlants = document.createElement('a');
+  viewPlants.className = 'btn ghost';
+  viewPlants.href = 'plants.html?species=' + encodeURIComponent(species.id);
+  viewPlants.textContent = plantCountsLoaded
+    ? 'View plants (' + (plantCountsBySpecies.get(species.id) || 0) + ')'
+    : 'View plants';
+  viewPlants.onclick = function (event) {
+    event.stopPropagation();
+  };
+  buttons.appendChild(viewPlants);
   buttons.appendChild(editButton);
 
   if (species.verification_status === 'approved') {
@@ -224,6 +236,22 @@ async function loadSpecies() {
     return;
   }
   drawSpeciesTable();
+}
+
+async function loadPlantCounts() {
+  try {
+    const result = await api('/officer/plants/facets');
+    if (!Array.isArray(result?.data?.species_counts)) {
+      throw new Error('The plant counts response was invalid.');
+    }
+    plantCountsBySpecies = new Map(
+      result.data.species_counts.map(item => [item.species_id, item.count])
+    );
+    plantCountsLoaded = true;
+    drawSpeciesTable();
+  } catch (error) {
+    showToast('Plant counts could not be loaded. ' + error.message);
+  }
 }
 
 // ---------- Species proposals (officers) ----------
@@ -368,6 +396,7 @@ if (viewerIsOfficer === false) {
 
 loadSpecies().catch(showUnexpectedError);
 if (viewerIsOfficer) {
+  loadPlantCounts().catch(showUnexpectedError);
   const proposalsSection = document.getElementById('proposals-section');
   if (proposalsSection) {
     proposalsSection.hidden = false;
