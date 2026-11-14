@@ -850,7 +850,7 @@ const OPEN_PAGES = [
 ];
 
 // Pages a botanist may open. Officers (and administrators) may open every page.
-// The Distribution map is not here: its data (/api/officer/map/plants) is officer-only.
+// The Distribution map and Plant catalogue are not here; their data is officer-only.
 const BOTANIST_PAGES = [
   'species.html',
   'editor.html'
@@ -909,6 +909,7 @@ function guardPages() {
 
 const MENU = [
   { file: 'species.html', label: 'Species catalogue' },
+  { file: 'plants.html', label: 'Plant catalogue' },
   { file: 'editor.html', label: 'Species record editor' },
   { file: 'queue.html', label: 'Observation approval queue' },
   { file: 'rejected.html', label: 'Rejected observations' },

@@ -208,6 +208,47 @@ test('the distribution map is officer-only in the menu, the page list and on the
   assert.match(read('frontend/map.html'), /<script src="js\/shared\.js"><\/script>\s*<script src="js\/map\.js"><\/script>/);
 });
 
+test('the plant catalogue is officer-only, linked from the menu and its page controls exist', () => {
+  const shared = read('frontend/js/shared.js');
+  const botanistPages = shared.slice(
+    shared.indexOf('const BOTANIST_PAGES'),
+    shared.indexOf('];', shared.indexOf('const BOTANIST_PAGES'))
+  );
+  assert.doesNotMatch(botanistPages, /plants\.html|plant\.html/);
+
+  const menu = shared.slice(shared.indexOf('const MENU'), shared.indexOf('];', shared.indexOf('const MENU')));
+  const speciesPosition = menu.indexOf("file: 'species.html'");
+  const plantsPosition = menu.indexOf("file: 'plants.html'");
+  const editorPosition = menu.indexOf("file: 'editor.html'");
+  assert.ok(speciesPosition < plantsPosition && plantsPosition < editorPosition);
+  assert.match(menu, /file: 'plants\.html', label: 'Plant catalogue'/);
+
+  const catalogue = read('frontend/js/plants.js');
+  const detail = read('frontend/js/plant.js');
+  assert.match(catalogue, /if \(pageAllowed === false\)/);
+  assert.match(detail, /if \(pageAllowed === false\)/);
+  assert.match(catalogue, /api\('\/officer\/plants\?/);
+  assert.match(detail, /api\('\/officer\/plants\//);
+
+  for (const [htmlPath, scriptPath] of [
+    ['frontend/plants.html', 'frontend/js/plants.js'],
+    ['frontend/plant.html', 'frontend/js/plant.js'],
+  ]) {
+    const html = read(htmlPath);
+    const script = read(scriptPath);
+    const htmlIds = new Set(Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]));
+    const scriptIds = Array.from(script.matchAll(/byId\(['"]([^'"]+)['"]\)/g), match => match[1]);
+    assert.ok(scriptIds.length > 0);
+    for (const id of scriptIds) {
+      assert.ok(htmlIds.has(id), `${scriptPath} reads #${id}, which is missing from ${htmlPath}`);
+    }
+    assert.match(html, new RegExp(`<script src="js/${scriptPath.split('/').pop()}"></script>`));
+  }
+
+  assert.match(read('frontend/js/species.js'), /plants\.html\?species=/);
+  assert.match(read('frontend/js/species.js'), /View plants \(/);
+});
+
 test('every element reports.js reads exists in reports.html, and the table has a head and body', () => {
   const html = read('frontend/reports.html');
   const script = read('frontend/js/reports.js');
