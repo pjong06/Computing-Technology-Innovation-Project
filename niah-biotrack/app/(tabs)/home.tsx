@@ -234,23 +234,12 @@ export default function HomeScreen() {
                 activeOpacity={0.85}
                 onPress={() => router.push('/(tabs)/scan')}
                 accessibilityRole="button"
-                accessibilityLabel="Scan plant tag"
+                accessibilityLabel="Record observation"
               >
                 <View style={styles.scanIconWrap}>
                   <Ionicons name="scan-outline" size={32} color="#284632" />
                 </View>
-                <Text style={styles.scanCardLabel}>Scan Tag</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.newRecordCard}
-                activeOpacity={0.85}
-                onPress={() => router.push('/new-record' as any)}
-                accessibilityRole="button"
-                accessibilityLabel="Register a new plant"
-              >
-                <Ionicons name="add-circle-outline" size={32} color="#FFFFFF" />
-                <Text style={styles.newRecordLabel}>Register plant</Text>
+                <Text style={styles.scanCardLabel}>Record observation</Text>
               </TouchableOpacity>
             </View>
 
@@ -472,16 +461,6 @@ const styles = StyleSheet.create({
   },
   scanIconWrap: { marginBottom: 6 },
   scanCardLabel: { fontSize: 14.5, fontWeight: '700', color: '#284632' },
-  newRecordCard: {
-    flex: 1,
-    height: 120,
-    backgroundColor: '#284632',
-    borderRadius: 22,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 6,
-  },
-  newRecordLabel: { fontSize: 14, fontWeight: '700', color: '#FFFFFF', textAlign: 'center' },
   routePill: {
     flexDirection: 'row',
     alignItems: 'center',
