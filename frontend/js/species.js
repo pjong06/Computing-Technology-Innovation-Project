@@ -9,9 +9,6 @@ const viewer = getCurrentUser();
 const viewerIsOfficer = viewer !== null && isBotanist(viewer) === false;
 
 let speciesList = [];   // the species shown in the grid, as the backend sent them
-let proposals = [];     // pending proposals (officers only)
-let taxonomyRows = [];  // used to link a family when approving a proposal
-let proposalBusy = false;
 let plantCountsBySpecies = new Map();
 let plantCountsLoaded = false;
 
@@ -212,7 +209,7 @@ async function loadSpecies() {
   try {
     if (viewerIsOfficer) {
       const all = await fetchAllPages('/knowledge/species/manage');
-      // Pending and rejected species are proposals, shown in their own section below.
+      // Pending and rejected species are handled on the officer proposal page.
       speciesList = all.filter(function (species) {
         return species.verification_status === 'approved' || species.verification_status === 'archived';
       });
@@ -254,138 +251,6 @@ async function loadPlantCounts() {
   }
 }
 
-// ---------- Species proposals (officers) ----------
-
-// Makes one row for one proposal: what the botanist sent, and the Approve and Reject buttons.
-function makeProposalCard(proposal) {
-  const card = document.createElement('div');
-  card.className = 'card';
-
-  const title = document.createElement('h3');
-  title.style.marginTop = '0';
-  const name = document.createElement('i');
-  name.className = 'sci';
-  name.textContent = proposal.scientific_name;
-  title.appendChild(name);
-  card.appendChild(title);
-
-  addInfo(card, 'Proposed by', proposal.proposer_name || 'Botanist');
-  if (proposal.common_name) {
-    addInfo(card, 'Common name', proposal.common_name);
-  }
-  if (proposal.local_name) {
-    addInfo(card, 'Local name', proposal.local_name);
-  }
-  addInfo(card, 'Family', proposal.proposed_family || 'Not given');
-  if (proposal.habitat) {
-    addInfo(card, 'Habitat', proposal.habitat);
-  }
-  addInfo(card, 'Description', proposal.description || 'No description');
-
-  const approveButton = document.createElement('button');
-  approveButton.className = 'btn';
-  approveButton.textContent = 'Approve';
-  approveButton.disabled = proposalBusy;
-  approveButton.onclick = function () {
-    reviewProposal(proposal, 'approved').catch(showUnexpectedError);
-  };
-
-  const rejectButton = document.createElement('button');
-  rejectButton.className = 'btn red';
-  rejectButton.textContent = 'Reject';
-  rejectButton.disabled = proposalBusy;
-  rejectButton.onclick = function () {
-    reviewProposal(proposal, 'rejected').catch(showUnexpectedError);
-  };
-
-  const buttons = document.createElement('div');
-  buttons.className = 'acts';
-  buttons.appendChild(approveButton);
-  buttons.appendChild(rejectButton);
-  card.appendChild(buttons);
-  return card;
-}
-
-function drawProposals() {
-  const list = document.getElementById('proposals-list');
-  if (list === null) {
-    return;
-  }
-  list.innerHTML = '';
-  for (let i = 0; i < proposals.length; i++) {
-    list.appendChild(makeProposalCard(proposals[i]));
-  }
-  const count = document.getElementById('proposals-count');
-  if (count) {
-    count.textContent = proposals.length === 0
-      ? 'No proposals waiting. New ones from the mobile app appear here.'
-      : proposals.length + ' waiting for review';
-  }
-}
-
-// Approves (linking the proposed family) or rejects (with a reason) one proposal.
-async function reviewProposal(proposal, decision) {
-  if (proposalBusy) {
-    return;
-  }
-  const body = { decision: decision };
-  if (decision === 'rejected') {
-    const typed = prompt('Why are you rejecting ' + proposal.scientific_name + '? The botanist will see this reason.');
-    if (typed === null) {
-      return;
-    }
-    if (typed.trim() === '') {
-      showToast('Please type a reason');
-      return;
-    }
-    body.comment = typed.trim();
-  }
-
-  proposalBusy = true;
-  drawProposals();
-  try {
-    if (decision === 'approved' && proposal.proposed_family) {
-      // Link the family the botanist typed, so the species shows its family everywhere.
-      if (taxonomyRows.length === 0) {
-        taxonomyRows = await loadTaxonomy();
-      }
-      body.taxonomy_id = await taxonomyIdFor(taxonomyRows, proposal.proposed_family, proposal.scientific_name);
-    }
-    await api('/knowledge/species/proposals/' + proposal.id + '/review', {
-      method: 'PATCH',
-      body: JSON.stringify(body)
-    });
-    showToast(decision === 'approved'
-      ? proposal.scientific_name + ' approved. It now appears in the mobile app.'
-      : 'Proposal rejected');
-  } catch (error) {
-    showToast('Could not review the proposal: ' + error.message);
-  }
-  proposalBusy = false;
-  await loadProposals();
-  if (decision === 'approved') {
-    await loadSpecies();
-  }
-}
-
-async function loadProposals() {
-  try {
-    proposals = await fetchAllPages('/knowledge/species/proposals/pending');
-  } catch (error) {
-    proposals = [];
-    const list = document.getElementById('proposals-list');
-    if (list) {
-      list.innerHTML = '';
-    }
-    const count = document.getElementById('proposals-count');
-    if (count) {
-      count.textContent = 'Could not load the proposals: ' + error.message;
-    }
-    return;
-  }
-  drawProposals();
-}
-
 // Botanists propose instead of adding.
 if (viewerIsOfficer === false) {
   const addButton = document.getElementById('add-species');
@@ -397,9 +262,4 @@ if (viewerIsOfficer === false) {
 loadSpecies().catch(showUnexpectedError);
 if (viewerIsOfficer) {
   loadPlantCounts().catch(showUnexpectedError);
-  const proposalsSection = document.getElementById('proposals-section');
-  if (proposalsSection) {
-    proposalsSection.hidden = false;
-  }
-  loadProposals().catch(showUnexpectedError);
 }

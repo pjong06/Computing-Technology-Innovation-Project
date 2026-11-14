@@ -134,13 +134,59 @@ test('species.js and editor.js use /api/knowledge, not the old website copy', ()
     assert.match(source, /\/knowledge\/species/, file);
     assert.doesNotMatch(source, /web-data|getSpecies\(|SPECIES_KEY|getObservations\(|OBSERVATIONS_KEY/, file);
   }
-  // Officers review botanists' proposals on the catalogue page; a rejection needs a reason.
+  // Proposal reviews live on their own officer page; botanists only submit proposals.
   const species = read('frontend/js/species.js');
-  assert.match(species, /'\/knowledge\/species\/proposals\/pending'/);
-  assert.match(species, /'\/knowledge\/species\/proposals\/' \+ proposal\.id \+ '\/review'/);
-  assert.match(species, /Please type a reason/);
+  assert.doesNotMatch(species, /species\/proposals\/pending|reviewProposal/);
+  assert.doesNotMatch(read('frontend/species.html'), /proposals-section|proposals-list/);
+  const proposals = read('frontend/js/proposals.js');
+  assert.match(proposals, /'\/knowledge\/species\/proposals\/pending'/);
+  assert.doesNotMatch(species, /\/knowledge\/species\/proposals\/|review_comment/);
+  assert.match(proposals, /'\/knowledge\/species\/proposals\/' \+ proposal\.id \+ '\/review'/);
+  assert.match(proposals, /proposal\.created_at/);
+  assert.match(proposals, /proposal\.habitat/);
+  assert.match(read('frontend/proposals.html'), /id="reject-reason"/);
+  assert.doesNotMatch(proposals, /prompt\(/);
+  assert.match(proposals, /Proposed habitat \/ location note/);
+  assert.match(proposals, /No reference photo provided/);
   // Botanists only propose.
   assert.match(read('frontend/js/editor.js'), /'\/knowledge\/species\/proposals'/);
+});
+
+test('species proposals page is officer-only, guarded, and its controls match the page', () => {
+  const shared = read('frontend/js/shared.js');
+  const botanistPages = shared.slice(
+    shared.indexOf('const BOTANIST_PAGES'),
+    shared.indexOf('];', shared.indexOf('const BOTANIST_PAGES'))
+  );
+  assert.doesNotMatch(botanistPages, /proposals\.html/);
+  assert.match(shared, /file: 'proposals\.html', label: 'Species proposals'/);
+  assert.match(shared, /badge\.id = 'species-proposals-count'/);
+  assert.match(shared, /refreshSpeciesProposalMenuCount\(\)/);
+  assert.match(shared, /api\('\/knowledge\/species\/proposals\/pending\?page=1&page_size=1'\)/);
+
+  const html = read('frontend/proposals.html');
+  const script = read('frontend/js/proposals.js');
+  assert.match(script, /if \(pageAllowed === false\)/);
+  assert.match(script, /loadProposals\(\)\.catch/);
+  assert.match(html, /<dialog[^>]+id="reject-dialog"/);
+  assert.match(html, /<textarea[^>]+id="reject-reason" required/);
+
+  const htmlIds = new Set(Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]));
+  const scriptIds = Array.from(script.matchAll(/byId\(['"]([^'"]+)['"]\)/g), match => match[1]);
+  assert.ok(scriptIds.length > 0);
+  for (const id of scriptIds) {
+    assert.ok(htmlIds.has(id), `proposals.js reads #${id}, which is missing from proposals.html`);
+  }
+  assert.match(html, /<script src="js\/proposals\.js"><\/script>/);
+});
+
+test('approval queue labels pending first plant records and revisits', () => {
+  const queue = read('frontend/js/queue.js');
+  assert.match(queue, /observation\.plant\?\.plant_status === 'pending' \? 'New plant' : 'Revisit'/);
+  assert.match(queue, /visitKindBadge\(observation\)/);
+  const reviews = read('backend/src/routes/officerReviews.js');
+  assert.match(reviews, /species_id, plant_status/);
+  assert.match(reviews, /plant_status: plant\.plant_status/);
 });
 
 test('the species catalogue and editor render iNaturalist photo credits', () => {

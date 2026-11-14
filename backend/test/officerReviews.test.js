@@ -91,7 +91,10 @@ const observation = {
   life_stage: 'flowering', height_cm: 40, diameter_cm: null,
 };
 const details = {
-  plants: [{ id: PLANT, qr_code_value: 'NIAH-PLT-00001', location_description: 'Left of boardwalk', species_id: SPECIES }],
+  plants: [{
+    id: PLANT, qr_code_value: 'NIAH-PLT-00001', location_description: 'Left of boardwalk',
+    species_id: SPECIES, plant_status: 'pending',
+  }],
   species: [{ id: SPECIES, scientific_name: 'Nepenthes ampullaria', common_name: 'Pitcher plant' }],
   profiles: [{ id: BOTANIST, full_name: 'Aina Rahman' }],
 };
@@ -120,12 +123,14 @@ test('pending observations come with plant, species and botanist details', async
       observer_name: 'Aina Rahman',
       plant: {
         id: PLANT, tag_code: 'NIAH-PLT-00001', location_description: 'Left of boardwalk',
-        scientific_name: 'Nepenthes ampullaria', common_name: 'Pitcher plant',
+        plant_status: 'pending', scientific_name: 'Nepenthes ampullaria', common_name: 'Pitcher plant',
       },
     }]);
   });
   assert.ok(db.calls.some(c => c[0] === 'observations' && c[1] === 'eq' && c[2] === 'review_status' && c[3] === 'pending'));
   assert.ok(db.calls.some(c => c[0] === 'observations' && c[1] === 'is' && c[2] === 'deleted_at' && c[3] === null));
+  assert.ok(db.calls.some(c => c[0] === 'plants' && c[1] === 'select' &&
+    c[2] === 'id, qr_code_value, location_description, species_id, plant_status'));
 });
 
 test('a missing plant or profile leaves those fields empty instead of failing', async () => {

@@ -12,18 +12,33 @@ let photosById = {};   // short-lived photo links for each observation, once loa
 let busy = false;      // a decision is being saved
 
 // Makes one small card for the list on the left, with the first photo once it is loaded.
+function visitKind(observation) {
+  return observation.plant?.plant_status === 'pending' ? 'New plant' : 'Revisit';
+}
+
+function visitKindBadge(observation) {
+  const badge = document.createElement('span');
+  badge.className = 'review-kind ' +
+    (visitKind(observation) === 'New plant' ? 'new-plant' : 'revisit');
+  badge.textContent = visitKind(observation);
+  return badge;
+}
+
 function makeListCard(observation) {
   const photos = photosById[observation.id];
   const firstPhoto = photos && photos.length > 0 && photos[0].url ? photos[0].url : PICTURE_BLANK;
-  return makeObservationListCard(observation, observation.id === selectedId, firstPhoto, function () {
+  const card = makeObservationListCard(observation, observation.id === selectedId, firstPhoto, function () {
     selectedId = observation.id;
     drawQueue();
   });
+  card.insertBefore(visitKindBadge(observation), card.firstChild);
+  return card;
 }
 
 // Makes the big card on the right with the photos, the details and the buttons.
 function makeDetailCard(observation) {
   const card = makeObservationDetailCard(observation);
+  addInfo(card, 'Visit type', visitKind(observation));
 
   // Photos: loaded when the observation is opened (the links last one minute).
   const photos = photosById[observation.id];

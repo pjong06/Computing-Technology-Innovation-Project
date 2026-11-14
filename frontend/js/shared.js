@@ -909,6 +909,7 @@ function guardPages() {
 
 const MENU = [
   { file: 'species.html', label: 'Species catalogue' },
+  { file: 'proposals.html', label: 'Species proposals' },
   { file: 'plants.html', label: 'Plant catalogue' },
   { file: 'editor.html', label: 'Species record editor' },
   { file: 'queue.html', label: 'Observation approval queue' },
@@ -975,7 +976,21 @@ function drawMenu(activeFile) {
     }
     const link = document.createElement('a');
     link.href = MENU[i].file;
-    link.textContent = MENU[i].label;
+    if (MENU[i].file === 'proposals.html') {
+      link.appendChild(document.createTextNode(MENU[i].label));
+      const badge = document.createElement('span');
+      badge.id = 'species-proposals-count';
+      badge.className = 'menu-count';
+      badge.hidden = true;
+      link.appendChild(badge);
+      if (user !== null && isBotanist(user) === false && thisPageName() !== 'proposals.html') {
+        refreshSpeciesProposalMenuCount().catch(error => {
+          showToast('Pending proposal count could not be loaded. ' + error.message);
+        });
+      }
+    } else {
+      link.textContent = MENU[i].label;
+    }
     if (MENU[i].file === activeFile) {
       link.className = 'on';
     }
@@ -997,6 +1012,27 @@ function drawMenu(activeFile) {
   };
   who.appendChild(out);
   nav.appendChild(who);
+}
+
+function updateSpeciesProposalMenuCount(count) {
+  const badge = document.getElementById('species-proposals-count');
+  if (!badge) return;
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new Error('The pending proposal count was invalid.');
+  }
+  badge.textContent = String(count);
+  badge.hidden = count === 0;
+  badge.title = count + ' pending species proposal' + (count === 1 ? '' : 's');
+  badge.setAttribute('aria-label', badge.title);
+}
+
+async function refreshSpeciesProposalMenuCount() {
+  const result = await api('/knowledge/species/proposals/pending?page=1&page_size=1');
+  const count = result?.pagination?.total;
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new Error('The pending proposal count was unavailable.');
+  }
+  updateSpeciesProposalMenuCount(count);
 }
 
 // Hides the small pop-up message.
