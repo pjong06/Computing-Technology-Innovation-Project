@@ -428,10 +428,6 @@ tr.row:hover td {
   line-height: 1.4;
 }
 
-.species-photo-credit a {
-  color: var(--pri);
-}
-
 /* Flex / Spacing */
 
 .sp {

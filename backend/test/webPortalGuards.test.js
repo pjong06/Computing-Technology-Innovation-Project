@@ -149,6 +149,19 @@ test('the species catalogue and editor render iNaturalist photo credits', () => 
   assert.match(shared, /photo\.source !== 'inaturalist'/);
   assert.match(read('frontend/js/species.js'), /makeSpeciesPhotoCredit\(photo, true\)/);
   assert.match(read('frontend/js/editor.js'), /makeSpeciesPhotoCredit\(photo, false\)/);
+
+  const creditStart = shared.indexOf('function makeSpeciesPhotoCredit(');
+  const creditEnd = shared.indexOf('\n}', creditStart);
+  const creditRenderer = shared.slice(creditStart, creditEnd);
+  assert.match(creditRenderer, /credit\.textContent = fullCredit/);
+  assert.match(shared, /'cc-by': 'CC BY'/);
+  assert.match(shared, /'cc-by-sa': 'CC BY-SA'/);
+  assert.match(shared, /cc0: 'CC0'/);
+  assert.doesNotMatch(creditRenderer, /createElement\(['"]a['"]\)|\.href\s*=|source_url/);
+
+  const mobileCredit = read('niah-biotrack/src/components/SpeciesPhotoCredit.tsx');
+  assert.match(mobileCredit, /Photo: \$\{name\}, \$\{licence \?\? 'Unknown licence'\} via iNaturalist/);
+  assert.doesNotMatch(mobileCredit, /Linking|onPress|accessibilityRole|source_url|creativecommons\.org/);
 });
 
 test('species catalogue controls match the JavaScript selectors and redraw on changes', () => {
