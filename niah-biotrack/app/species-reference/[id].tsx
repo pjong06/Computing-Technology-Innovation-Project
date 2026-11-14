@@ -14,6 +14,8 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
+import SpeciesPhotoCredit from '../../src/components/SpeciesPhotoCredit';
+import { preferredSpeciesPhoto } from '../../src/utils/speciesPhoto';
 
 const STATUS_LABELS: Record<string, string> = {
   CR: 'Critically Endangered',
@@ -63,6 +65,7 @@ export default function SpeciesReferenceDetailScreen() {
   const imageUri = useSpeciesStore((state) =>
     id ? state.imageUrisBySpeciesId[id] : undefined
   );
+  const photoCredit = preferredSpeciesPhoto(detail?.species_media);
   const loadSpeciesDetail = useSpeciesStore(
     (state) => state.loadSpeciesDetail
   );
@@ -185,7 +188,10 @@ export default function SpeciesReferenceDetailScreen() {
         )}
 
         {imageUri ? (
-          <Image source={{ uri: imageUri }} style={styles.heroImage} resizeMode="cover" />
+          <>
+            <Image source={{ uri: imageUri }} style={styles.heroImage} resizeMode="cover" />
+            <SpeciesPhotoCredit photo={photoCredit} />
+          </>
         ) : (
           <View style={[styles.heroImage, styles.imagePlaceholder]}>
             <Text style={styles.placeholderIcon}>🌿</Text>

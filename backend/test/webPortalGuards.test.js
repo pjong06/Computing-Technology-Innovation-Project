@@ -143,6 +143,14 @@ test('species.js and editor.js use /api/knowledge, not the old website copy', ()
   assert.match(read('frontend/js/editor.js'), /'\/knowledge\/species\/proposals'/);
 });
 
+test('the species catalogue and editor render iNaturalist photo credits', () => {
+  const shared = read('frontend/js/shared.js');
+  assert.match(shared, /function makeSpeciesPhotoCredit\(photo, compact\)/);
+  assert.match(shared, /photo\.source !== 'inaturalist'/);
+  assert.match(read('frontend/js/species.js'), /makeSpeciesPhotoCredit\(photo, true\)/);
+  assert.match(read('frontend/js/editor.js'), /makeSpeciesPhotoCredit\(photo, false\)/);
+});
+
 test('species catalogue controls match the JavaScript selectors and redraw on changes', () => {
   const html = read('frontend/species.html');
   const script = read('frontend/js/species.js');

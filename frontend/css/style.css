@@ -396,8 +396,8 @@ tr.row:hover td {
 }
 
 .pv {
-  width: 96px;
-  height: 96px;
+  width: min(100%, 360px);
+  height: auto;
 }
 
 .pv .thumb {
@@ -406,6 +406,7 @@ tr.row:hover td {
 }
 
 .pv .thumbbox {
+  display: block;
   width: 96px;
   height: 96px;
 }
@@ -418,6 +419,17 @@ tr.row:hover td {
   border-radius: 12px;
 
   object-fit: cover;
+}
+
+.species-photo-credit {
+  margin: 4px 0;
+  color: var(--mute);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.species-photo-credit a {
+  color: var(--pri);
 }
 
 /* Flex / Spacing */

@@ -87,6 +87,50 @@ test('public species detail enforces approved status and excludes sensitive note
   assert.equal((await request(`/species/${ID}`)).status, 200);
   assert.ok(calls.some(c => c[0] === 'eq' && c[1] === 'verification_status' && c[2] === 'approved'));
   assert.doesNotMatch(calls.find(c => c[0] === 'select')[1], /distribution_notes|location/);
+  assert.match(calls.find(c => c[0] === 'select')[1], /source,\s*licence_code,\s*attribution,\s*photographer,\s*source_url/);
+});
+
+test('public species photo responses include attribution fields without internal paths', async t => {
+  const photo = {
+    file_path: `${ID}/reference.jpg`,
+    source: 'inaturalist',
+    licence_code: 'cc-by',
+    attribution: 'Photographer Name',
+    photographer: 'Photographer Name',
+    source_url: 'https://www.inaturalist.org/photos/123',
+    uploaded_by: ID,
+  };
+  const { request, calls } = await setup(t, { data: photo, error: null });
+  const response = await request(`/species/${ID}/photos/${ID}`);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, {
+    url: 'https://signed.example/photo.jpg',
+    expires_in: 60,
+    source: 'inaturalist',
+    licence_code: 'cc-by',
+    attribution: 'Photographer Name',
+    photographer: 'Photographer Name',
+    source_url: 'https://www.inaturalist.org/photos/123',
+  });
+  assert.match(calls.find(call => call[0] === 'select')[1], /source, licence_code, attribution, photographer, source_url/);
+});
+
+test('public species photos are ordered with SFC photos before references', async t => {
+  const photos = [
+    { id: 'reference', source: 'inaturalist', is_primary: true, licence_code: 'cc-by' },
+    { id: 'sfc', source: 'sfc', is_primary: false, licence_code: null },
+  ];
+  const { request, calls } = await setup(t, {
+    data: [{ id: ID, species_media: photos }],
+    error: null,
+    count: 1,
+  });
+  const response = await request('/species');
+
+  assert.deepEqual(response.body.data[0].species_media.map(photo => photo.source), ['sfc', 'inaturalist']);
+  const columns = calls.find(call => call[0] === 'select')[1];
+  assert.match(columns, /species_media\(id, is_primary, source, licence_code, attribution, photographer, source_url\)/);
 });
 
 for (const path of [`/species/${ID}`, `/species/${ID}/manage`]) {
@@ -140,7 +184,19 @@ async function setup(t, result = { data: { id: ID }, error: null }, role = 'offi
     query[method] = (...args) => { calls.push([method, ...args]); return query; };
   }
   query.then = (resolve, reject) => (result instanceof Error ? Promise.reject(result) : Promise.resolve(result)).then(resolve, reject);
-  const database = { from(table) { calls.push(['from', table]); return query; } };
+  const database = {
+    from(table) { calls.push(['from', table]); return query; },
+    storage: {
+      from(bucket) {
+        return {
+          async createSignedUrl(filePath, expiresIn) {
+            calls.push(['createSignedUrl', bucket, filePath, expiresIn]);
+            return { data: { signedUrl: 'https://signed.example/photo.jpg' }, error: null };
+          },
+        };
+      },
+    },
+  };
   const app = express();
   app.use(express.json());
   app.use(require("../src/middleware/jsonErrorHandler"));
@@ -466,7 +522,7 @@ test('/species/manage can filter by review state and name, and returns family an
   assert.ok(calls.some(c => c[0] === 'or' && c[1].includes('scientific_name.ilike.%Nepenthes%')));
   const columns = calls.find(c => c[0] === 'select')[1];
   assert.match(columns, /taxonomy\(family, genus\)/);
-  assert.match(columns, /species_media\(id, is_primary\)/);
+  assert.match(columns, /species_media\(id, is_primary, source, licence_code, attribution, photographer, source_url\)/);
   assert.match(columns, /conservation_status/);
 });
 

@@ -1,5 +1,6 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { fetchSpeciesPhotoUrl, type SpeciesDetail } from '../api/species';
+import { preferredSpeciesPhoto } from '../utils/speciesPhoto';
 
 const imageDirectory = new Directory(Paths.document, 'species-reference-images');
 
@@ -25,9 +26,7 @@ export function getCachedSpeciesImage(
 export async function cachePrimarySpeciesImage(
   detail: SpeciesDetail
 ): Promise<string | null> {
-  const primaryPhoto =
-    detail.species_media.find((media) => media.is_primary) ??
-    detail.species_media[0];
+  const primaryPhoto = preferredSpeciesPhoto(detail.species_media);
 
   if (!primaryPhoto) return null;
 

@@ -22,6 +22,8 @@ import { resumePausedRecordRetries } from '../../src/services/offlineDatabase';
 import { useProposalStore } from '../../src/store/useProposalStore';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
+import SpeciesPhotoCredit from '../../src/components/SpeciesPhotoCredit';
+import { preferredSpeciesPhoto } from '../../src/utils/speciesPhoto';
 
 const FEATURED_COUNT = 4;
 
@@ -368,6 +370,7 @@ export default function HomeScreen() {
                     const status = plainConservationStatus(item.conservation_status);
                     const colors = conservationStatusColors(status.code);
                     const photo = imageUrisBySpeciesId[item.id];
+                    const photoCredit = preferredSpeciesPhoto(item.species_media);
                     return (
                       <TouchableOpacity
                         key={item.id}
@@ -382,6 +385,7 @@ export default function HomeScreen() {
                             <Ionicons name="leaf-outline" size={26} color="#46654F" />
                           </View>
                         )}
+                        <SpeciesPhotoCredit photo={photoCredit} compact />
                         <Text style={styles.featuredName} numberOfLines={1}>
                           {item.common_name || item.scientific_name}
                         </Text>

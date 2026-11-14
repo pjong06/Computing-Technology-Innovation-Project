@@ -21,6 +21,19 @@ function paginationMetadata(paging, count) {
     };
 }
 
+function orderSpeciesMedia(data) {
+    const order = (species) => {
+        if (!species || !Array.isArray(species.species_media)) return species;
+        return {
+            ...species,
+            species_media: [...species.species_media].sort((a, b) =>
+                Number(b.source === "sfc") - Number(a.source === "sfc")
+            ),
+        };
+    };
+    return Array.isArray(data) ? data.map(order) : order(data);
+}
+
 function textLimit(field) {
     return ["common_name", "local_name"].includes(field) ? 200 :
         ["species_category", "conservation_status"].includes(field) ? 100 : 10000;
@@ -130,10 +143,13 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
 
     // Everything the officer's Species catalogue shows for one species, including its
     // family (from taxonomy) and its photos (so the page can ask for a photo link).
+    const SPECIES_MEDIA_CREDIT_COLUMNS =
+        "source, licence_code, attribution, photographer, source_url";
+    const SPECIES_MEDIA_COLUMNS = `id, is_primary, ${SPECIES_MEDIA_CREDIT_COLUMNS}`;
     const MANAGE_COLUMNS =
         "id, scientific_name, common_name, local_name, species_category, conservation_status, " +
         "description, morphology, habitat, distribution_notes, cultural_significance, " +
-        "verification_status, taxonomy_id, taxonomy(family, genus), species_media(id, is_primary)";
+        `verification_status, taxonomy_id, taxonomy(family, genus), species_media(${SPECIES_MEDIA_COLUMNS})`;
     const SPECIES_STATUSES = ["approved", "pending", "rejected", "archived"];
 
     // Let officers find species in any state (approved, pending, rejected, archived).
@@ -165,7 +181,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             return res.status(500).json({ message: "Could not load species" });
         }
 
-        return res.json({ data, pagination: paginationMetadata(paging, count) });
+        return res.json({ data: orderSpeciesMedia(data), pagination: paginationMetadata(paging, count) });
     });
 
     // ---- Species proposals ----
@@ -423,7 +439,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         const taxonomyJoin = family.trim() ? "taxonomy!inner(family)" : "taxonomy(family)";
         let query = supabase
             .from("species")
-            .select(`id, scientific_name, common_name, local_name, species_category, conservation_status, description, ${taxonomyJoin}, species_media(id, is_primary)`, { count: "exact" })
+            .select(`id, scientific_name, common_name, local_name, species_category, conservation_status, description, ${taxonomyJoin}, species_media(${SPECIES_MEDIA_COLUMNS})`, { count: "exact" })
             .eq("verification_status", "approved");
 
         if (q.trim()) {
@@ -450,7 +466,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         }
 
         return res.json({
-            data,
+            data: orderSpeciesMedia(data),
             pagination: {
                 page: pageNumber,
                 page_size: size,
@@ -496,7 +512,12 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         id,
         file_path,
         media_type,
-        is_primary
+        is_primary,
+        source,
+        licence_code,
+        attribution,
+        photographer,
+        source_url
     )
  `)
             .eq("id", id)
@@ -514,7 +535,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             return res.status(404).json({ message: "Species not found" });
         }
 
-        res.json({ data });
+        res.json({ data: orderSpeciesMedia(data) });
     });
 
     // Officers can inspect a species even after it has been archived.
@@ -533,7 +554,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
 
             const { data, error } = await req.supabase
                 .from("species")
-                .select("*")
+                .select(`*, species_media(${SPECIES_MEDIA_COLUMNS})`)
                 .eq("id", id)
                 .maybeSingle();
 
@@ -543,7 +564,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             }
             if (!data) return res.status(404).json({ message: "Species not found" });
 
-            return res.json({ data });
+            return res.json({ data: orderSpeciesMedia(data) });
         }
     );
 
@@ -833,7 +854,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
                     media_type: "image/jpeg",
                     is_primary: false,
                 })
-                .select("id, species_id, file_path, media_type, is_primary")
+                .select("id, species_id, file_path, media_type, is_primary, source, licence_code, attribution, photographer, source_url")
                 .single();
 
             if (saveError) {
@@ -879,9 +900,18 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
                 return res.status(500).json({ message: "Could not set primary photo" });
             }
 
-            return res.json({
-                data: { id: photoId, species_id: id, is_primary: true },
-            });
+            const { data: photo, error: photoError } = await req.supabase
+                .from("species_media")
+                .select(`id, species_id, is_primary, ${SPECIES_MEDIA_CREDIT_COLUMNS}`)
+                .eq("id", photoId)
+                .eq("species_id", id)
+                .maybeSingle();
+            if (photoError) {
+                console.error("Primary photo lookup error:", photoError);
+                return res.status(500).json({ message: "Could not load photo details" });
+            }
+            if (!photo) return res.status(404).json({ message: "Photo not found" });
+            return res.json({ data: photo });
         }
     );
 
@@ -965,7 +995,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         // Public readers can find photo records only for approved species.
         const { data: photo, error: lookupError } = await supabase
             .from("species_media")
-            .select("file_path")
+            .select("file_path, source, licence_code, attribution, photographer, source_url")
             .eq("id", req.params.photoId)
             .eq("species_id", req.params.id)
             .maybeSingle();
@@ -989,7 +1019,15 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         }
 
         res.set("Cache-Control", "no-store");
-        return res.json({ url: data.signedUrl, expires_in: 60 });
+        return res.json({
+            url: data.signedUrl,
+            expires_in: 60,
+            source: photo.source,
+            licence_code: photo.licence_code,
+            attribution: photo.attribution,
+            photographer: photo.photographer,
+            source_url: photo.source_url,
+        });
     });
 
     router.use((error, req, res, next) => {
