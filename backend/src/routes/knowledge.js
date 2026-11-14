@@ -334,7 +334,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
 
         const { data, error, count } = await req.supabase
             .from("species")
-            .select(`${PROPOSAL_COLUMNS}, proposed_by`, { count: "exact" })
+            .select(`${PROPOSAL_COLUMNS}, proposed_by, created_at`, { count: "exact" })
             .eq("verification_status", "pending")
             .order("scientific_name")
             .order("id")

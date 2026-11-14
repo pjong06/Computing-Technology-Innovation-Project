@@ -26,7 +26,7 @@ async function withReviewDetails(supabase, observations) {
     const { data: plants, error: plantError } = plantIds.length
         ? await supabase
             .from("plants")
-            .select("id, qr_code_value, location_description, species_id")
+            .select("id, qr_code_value, location_description, species_id, plant_status")
             .in("id", plantIds)
         : { data: [], error: null };
     if (plantError) throw plantError;
@@ -63,6 +63,7 @@ async function withReviewDetails(supabase, observations) {
                     id: plant.id,
                     tag_code: plant.qr_code_value || null,
                     location_description: plant.location_description || null,
+                    plant_status: plant.plant_status || null,
                     scientific_name: plantSpecies ? plantSpecies.scientific_name : null,
                     common_name: plantSpecies ? plantSpecies.common_name : null,
                 }

@@ -148,6 +148,19 @@ nav a.on {
   color: #fff;
 }
 
+.menu-count {
+  float: right;
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--er);
+  color: var(--ert);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) nav a.on {
     color: #10170f;
@@ -732,6 +745,25 @@ table.big .pill {
 
 .q .muted {
   font-size: 14px;
+}
+
+.review-kind {
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.review-kind.new-plant {
+  background: var(--wa);
+  color: var(--wat);
+}
+
+.review-kind.revisit {
+  background: var(--mint);
+  color: var(--ink);
 }
 
 .detail {
