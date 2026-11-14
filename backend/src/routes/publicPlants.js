@@ -1,5 +1,6 @@
 const express = require('express');
 const { TAG_PATTERN } = require('../services/qrService');
+const { removeLegacyObservationSource } = require('../utils/speciesDescription');
 
 const STYLES = `
 :root{color-scheme:light;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#20392d;background:#f3f4ec}
@@ -36,7 +37,9 @@ function documentHtml(title, content) {
 function publicPlantHtml(tag, row) {
     // Explicit allowlist: never serialize the RPC result, staff identity or coordinates into HTML.
     const plant = Object.fromEntries(PUBLIC_FIELDS.map(key => [key,
-        typeof row[key] === 'string' ? row[key].slice(0, 10000) : '']));
+        typeof row[key] === 'string'
+            ? (key === 'description' ? removeLegacyObservationSource(row[key]) : row[key]).slice(0, 10000)
+            : '']));
     const isDemo = Object.values(plant).some(value => /\bDEMO\b/i.test(value));
     const status = plant.conservation_status || 'Unknown';
     const sections = [['About this species', plant.description], ['Appearance', plant.morphology],

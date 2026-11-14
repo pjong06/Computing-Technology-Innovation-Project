@@ -91,7 +91,11 @@ function publicRouter(result, calls) {
 test('visitor page renders only allowed fields and escapes stored content', async t => {
   const calls = [];
   const row = { scientific_name: 'Shorea albida', common_name: '<script>alert(1)</script>',
-    description: 'Approved description', conservation_status: 'EN', habitat: 'Peat forest',
+    description: 'Approved description\nSource: iNaturalist observation https://www.inaturalist.org/observations/123',
+    reference_image_url: 'https://example.test/legacy.jpg',
+    reference_observation_url: 'https://example.test/observation',
+    reference_image_credit: 'Legacy photographer', reference_image_license: 'CC-BY-NC',
+    conservation_status: 'EN', habitat: 'Peat forest',
     latitude: 99.123456, longitude: 88.654321, location_description: 'SECRET_LOCATION',
     registered_by: 'SECRET_STAFF', access_token: 'SECRET_TOKEN' };
   const url = await start(t, publicRouter({ data: [row], error: null }, calls));
@@ -99,7 +103,7 @@ test('visitor page renders only allowed fields and escapes stored content', asyn
   assert.equal(response.status, 200);
   assert.match(html, /Shorea albida/); assert.match(html, /Endangered/);
   assert.match(html, /&lt;script&gt;/); assert.doesNotMatch(html, /<script>/);
-  assert.doesNotMatch(html, /99.123456|88.654321|SECRET_LOCATION|SECRET_STAFF|SECRET_TOKEN/);
+  assert.doesNotMatch(html, /99.123456|88.654321|SECRET_LOCATION|SECRET_STAFF|SECRET_TOKEN|legacy\.jpg|Legacy photographer|CC-BY-NC|iNaturalist observation/);
   assert.deepEqual(calls, [['public_plant_by_qr_v2', { p_qr: TAG }]]);
   assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.equal(response.headers.get('x-powered-by'), null);

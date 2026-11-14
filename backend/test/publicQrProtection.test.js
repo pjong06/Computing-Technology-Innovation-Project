@@ -267,3 +267,16 @@ test('location is LC-only, unknown is closed, unapproved nested fields are exclu
     }
     assert.equal(publicQrData({ conservation_status: 'LC', latitude: 0 }).latitude, 0);
 });
+
+test('public QR data strips legacy observation notes and excludes legacy photo fields', () => {
+    const data = publicQrData({
+        conservation_status: 'LC',
+        description: 'Species description.\nSource: iNaturalist observation https://www.inaturalist.org/observations/123',
+        reference_image_url: 'https://example.test/legacy.jpg',
+        reference_observation_url: 'https://example.test/observation',
+        reference_image_credit: 'Legacy photographer',
+        reference_image_license: 'CC-BY-NC',
+    });
+    assert.equal(data.description, 'Species description.');
+    assert.equal(Object.keys(data).some(key => key.startsWith('reference_')), false);
+});

@@ -87,7 +87,36 @@ test('public species detail enforces approved status and excludes sensitive note
   assert.equal((await request(`/species/${ID}`)).status, 200);
   assert.ok(calls.some(c => c[0] === 'eq' && c[1] === 'verification_status' && c[2] === 'approved'));
   assert.doesNotMatch(calls.find(c => c[0] === 'select')[1], /distribution_notes|location/);
+  assert.doesNotMatch(calls.find(c => c[0] === 'select')[1], /reference_(?:image|observation)_/);
   assert.match(calls.find(c => c[0] === 'select')[1], /source,\s*licence_code,\s*attribution,\s*photographer,\s*source_url/);
+});
+
+test('species responses remove a trailing legacy observation source', async t => {
+  const legacySource = 'Species description.\nSource: iNaturalist observation https://www.inaturalist.org/observations/123';
+  const { request } = await setup(t, {
+    data: { id: ID, description: legacySource, species_media: [] },
+    error: null,
+  });
+  const detail = await request(`/species/${ID}`);
+  assert.equal(detail.body.data.description, 'Species description.');
+});
+
+test('officer species reads and writes select only editor fields', async t => {
+  for (const [path, method, body] of [
+    [`/species/${ID}/manage`, 'GET'],
+    ['/species', 'POST', { scientific_name: 'Shorea example' }],
+    [`/species/${ID}`, 'PATCH', { common_name: 'Example' }],
+  ]) {
+    const { request, calls } = await setup(t, {
+      data: { id: ID, scientific_name: 'Shorea example', description: 'Species description.', species_media: [] },
+      error: null,
+    });
+    assert.ok([200, 201].includes((await request(path, method, body)).status));
+    const columns = calls.find(call => call[0] === 'select')[1];
+    assert.doesNotMatch(columns, /\*/);
+    assert.doesNotMatch(columns, /reference_(?:image|observation)_/);
+    assert.match(columns, /scientific_name/);
+  }
 });
 
 test('public species photo responses include attribution fields without internal paths', async t => {

@@ -1,4 +1,5 @@
 const { createHmac, randomBytes, randomUUID } = require('node:crypto');
+const { removeLegacyObservationSource } = require('../utils/speciesDescription');
 const diagnosticSalt = randomBytes(32);
 const processInstance = randomUUID();
 
@@ -74,7 +75,12 @@ function createQrLimiter({ limit = 60, windowMs = 60000, maxClients = 10000, now
 function publicQrData(row) {
     const fields = ['plant_id', 'qr_code_value', 'scientific_name', 'common_name', 'local_name',
         'description', 'morphology', 'habitat', 'conservation_status', 'cultural_significance'];
-    const data = Object.fromEntries(fields.map(key => [key, row[key] ?? null]));
+    const data = Object.fromEntries(fields.map(key => [
+        key,
+        key === 'description'
+            ? removeLegacyObservationSource(row[key] ?? null)
+            : row[key] ?? null
+    ]));
     for (const key of ['location_description', 'latitude', 'longitude']) {
         data[key] = row.conservation_status === 'LC' ? row[key] ?? null : null;
     }
