@@ -4,6 +4,7 @@ drawMenu('map.html');
 
 let map = null;
 let markerLayer = null;
+let plants = [];
 
 // Creates the Leaflet map with its three map styles: satellite, street and topographic.
 function createMap() {
@@ -18,7 +19,7 @@ function createMap() {
 
   const placeNames = L.tileLayer(esri + 'Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 19,
-    attribution: 'Labels &copy; Esri'
+    attribution: 'Tiles &copy; Esri'
   });
   const satellite = L.layerGroup([imagery, placeNames]);
 
@@ -34,121 +35,303 @@ function createMap() {
   satellite.addTo(map);
   L.control.layers({ 'Satellite': satellite, 'Street': street, 'Topographic': topo }).addTo(map);
   markerLayer = L.layerGroup().addTo(map);
+
+  const legend = L.control({ position: 'bottomright' });
+
+legend.onAdd = function () {
+  const div = L.DomUtil.create('div');
+
+  div.style.cssText = `
+    background: white;
+    padding: 12px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    font-size: 12px;
+    line-height: 24px;
+  `;
+
+  div.innerHTML = `
+    <strong>Conservation Status</strong><br>
+    RED - (CR)Critically Endangered<br>
+    ORANGE - (EN)Endangered<br>
+    YELLOW - (VU)Vulnerable<br>
+    BLUE - (NT)Near Threatened<br>
+    GREEN - (LC)Least Concern<br>
+    WHITE - (DD)Data Deficient
+  `;
+
+  return div;
+};
+
+legend.addTo(map);
 }
 
-// Returns the colour of the dot for a conservation status.
-function markerColor(status) {
-  if (status === 'Endangered') {
-    return '#c0392b';
-  }
-  if (status === 'Vulnerable') {
-    return '#e0a800';
-  }
-  return '#3d8b4f';
+function escapePopupText(value) {
+  return String(value).replace(/[&<>"']/g, character => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[character]);
 }
 
-// Builds the small box that opens when a dot is clicked. It has an Edit record button.
-function makePopup(species, index) {
-  const box = document.createElement('div');
+function displayVisitDate(value) {
+  if (!value) {
+    return 'None';
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+}
 
-  const title = document.createElement('b');
-  title.textContent = species.sci;
-  box.appendChild(title);
+function makePopup(plant) {
+  const species = plant.species || {};
 
-  const info = document.createElement('div');
-  info.textContent = species.com + ' · ' + species.status;
-  box.appendChild(info);
+  const scientificName =
+    species.scientific_name || 'Unknown species';
 
-  const place = document.createElement('div');
-  place.textContent = species.loc + ' (' + species.gps + ')';
-  box.appendChild(place);
+  const commonName =
+    species.common_name || 'Not recorded';
 
-  const button = document.createElement('button');
-  button.textContent = 'Edit record';
-  button.onclick = function () {
-    openEditorFor(index);
+  const conservationStatus =
+    species.conservation_status || 'Not assessed';
+
+  const latitude = Number(plant.latitude);
+  const longitude = Number(plant.longitude);
+
+  const gpsText =
+    Number.isFinite(latitude) && Number.isFinite(longitude)
+      ? latitude.toFixed(6) + ', ' + longitude.toFixed(6)
+      : 'Not recorded';
+
+  const details = document.createElement('div');
+
+  details.style.minWidth = '230px';
+
+  details.innerHTML = `
+    <h3 style="margin:0 0 10px">
+      ${escapePopupText(scientificName)}
+    </h3>
+
+    <p><strong>Common name:</strong>
+      ${escapePopupText(commonName)}</p>
+
+    <p><strong>Plant tag:</strong>
+      ${escapePopupText(plant.tag || 'No tag')}</p>
+
+    <p><strong>Conservation status:</strong>
+      ${escapePopupText(conservationStatus)}</p>
+
+    <p><strong>Plant status:</strong>
+      ${escapePopupText(plant.status || 'Not recorded')}</p>
+
+    <p><strong>Location:</strong>
+      ${escapePopupText(plant.landmark || 'Not recorded')}</p>
+
+    <p><strong>GPS:</strong>
+      ${escapePopupText(gpsText)}</p>
+
+    <p><strong>Last visit:</strong>
+      ${escapePopupText(displayVisitDate(plant.last_visit))}</p>
+  `;
+
+  if (plant.id) {
+    const button = document.createElement('button');
+
+    button.className = 'btn';
+    button.textContent = 'Edit Plant';
+    button.style.marginTop = '10px';
+
+    button.addEventListener('click', () => {
+      // Use the same URL format as your existing
+      // plant catalogue's Edit button.
+      window.location.href =
+        'editor.html?plant_id=' + encodeURIComponent(plant.id);
+    });
+
+    details.appendChild(button);
+  }
+
+  return details;
+}
+
+function fillSpeciesFilter() {
+  const select = document.getElementById('map-species');
+  const selectedSpecies = select.value;
+  const speciesById = new Map();
+  plants.forEach(plant => {
+    if (plant.species && plant.species.id) {
+      speciesById.set(plant.species.id, plant.species);
+    }
+  });
+
+  select.replaceChildren(new Option('All species', ''));
+  [...speciesById.entries()]
+    .sort((left, right) => (left[1].scientific_name || '').localeCompare(right[1].scientific_name || ''))
+    .forEach(([id, species]) => {
+      const label = species.scientific_name || species.common_name || 'Unknown species';
+      select.add(new Option(label, id));
+    });
+  if (selectedSpecies && speciesById.has(selectedSpecies)) {
+    select.value = selectedSpecies;
+  }
+}
+
+function normalizeConservationStatus(value) {
+  const status = String(value || '').trim().toUpperCase();
+
+  const statuses = {
+    'CR': 'CR',
+    'CRITICALLY ENDANGERED': 'CR',
+    'EN': 'EN',
+    'ENDANGERED': 'EN',
+    'VU': 'VU',
+    'VULNERABLE': 'VU',
+    'NT': 'NT',
+    'NEAR THREATENED': 'NT',
+    'LC': 'LC',
+    'LEAST CONCERN': 'LC',
+    'DD': 'DD',
+    'DATA DEFICIENT': 'DD'
   };
-  box.appendChild(button);
 
-  return box;
+  return statuses[status] || status;
 }
 
-// Checks a species against the map's search box and status filter.
-function speciesPassesMapFilter(species, searchText, chosenStatus) {
-  const names = (species.sci + ' ' + species.com).toLowerCase();
-  if (names.includes(searchText) === false) {
-    return false;
-  }
-  if (chosenStatus !== '' && species.status !== chosenStatus) {
-    return false;
-  }
-  return true;
+function getMarkerColor(status) {
+  const colors = {
+    CR: '#dc2626', // Red
+    EN: '#f97316', // Orange
+    VU: '#eab308', // Yellow
+    NT: '#3b82f6', // Blue
+    LC: '#22c55e', // Green
+    DD: '#6b7280'  // Grey
+  };
+
+  return colors[status] || '#6b7280';
 }
 
-// Draws one dot for every species that matches the filters.
-// If zoomToFit is true, the map zooms so that all the dots can be seen.
 function drawMarkers(zoomToFit) {
   if (map === null) {
     return;
   }
+
   markerLayer.clearLayers();
 
-  const searchText = document.getElementById('map-search').value.toLowerCase();
+  const chosenSpecies = document.getElementById('map-species').value;
   const chosenStatus = document.getElementById('map-status').value;
-  const list = getSpecies();
   const points = [];
-  let skipped = 0;
 
-  for (let i = 0; i < list.length; i++) {
-    const species = list[i];
+  plants.forEach(plant => {
+    const speciesId = plant.species ? plant.species.id : '';
+    const conservationStatus = plant.species
+      ? plant.species.conservation_status
+      : '';
 
-    if (speciesPassesMapFilter(species, searchText, chosenStatus) === false) {
-      continue;
+    if (chosenSpecies && speciesId !== chosenSpecies) {
+      return;
     }
 
-    const gps = readGps(species.gps);
-    if (gps === null) {
-      skipped = skipped + 1;
-      continue;
+    if (
+      chosenStatus &&
+      normalizeConservationStatus(conservationStatus) !==
+      normalizeConservationStatus(chosenStatus)
+    ) {
+      return;
     }
 
-    const dot = L.circleMarker(gps, {
-      radius: 11,
+    // Check GPS coordinates.
+    if (
+      plant.latitude === null ||
+      plant.latitude === undefined ||
+      plant.latitude === '' ||
+      plant.longitude === null ||
+      plant.longitude === undefined ||
+      plant.longitude === ''
+    ) {
+      return;
+    }
+
+    const latitude = Number(plant.latitude);
+    const longitude = Number(plant.longitude);
+
+    if (
+      !Number.isFinite(latitude) ||
+      !Number.isFinite(longitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      return;
+    }
+
+    const point = [latitude, longitude];
+
+    // Get conservation status from the plant's species.
+    const status = plant.species?.conservation_status || 'DD';
+
+    const markerColor = getMarkerColor(
+      normalizeConservationStatus(status)
+    );
+
+    L.circleMarker(point, {
+      radius: 8,
       color: '#ffffff',
       weight: 2,
-      fillColor: markerColor(species.status),
+      fillColor: markerColor,
       fillOpacity: 0.9
-    });
-    dot.bindPopup(makePopup(species, i));
+    })
+    .bindPopup(makePopup(plant))
+    .addTo(markerLayer);
 
-    if (species.loc) {
-      dot.bindTooltip(species.loc, {
-        permanent: true,
-        direction: 'right',
-        offset: [12, 0],
-        className: 'loc-label'
-      });
-    }
+    points.push(point);
+  });
 
-    dot.addTo(markerLayer);
-    points.push(gps);
-  }
-
-  let message = 'Showing ' + points.length + ' species records on the map.';
-  if (skipped > 0) {
-    message = message + ' ' + skipped + ' without a valid GPS location are not shown.';
-  }
-  document.getElementById('map-message').textContent = message;
+  document.getElementById('map-message').textContent =
+    'Showing ' + points.length + ' plant' +
+    (points.length === 1 ? '' : 's') + ' on the map.';
 
   if (zoomToFit && points.length > 0) {
-    map.fitBounds(L.latLngBounds(points), { padding: [50, 50], maxZoom: 16 });
+    map.fitBounds(L.latLngBounds(points), {
+      padding: [50, 50],
+      maxZoom: 16
+    });
   }
 }
+
+function resetMapFilters() {
+  document.getElementById('map-species').value = '';
+  document.getElementById('map-status').value = '';
+  drawMarkers(true);
+}
+
+async function loadPlants() {
+  const result = await api('/officer/map/plants');
+  if (!result || !Array.isArray(result.data)) {
+    throw new Error('The plant locations response was invalid.');
+  }
+  plants = result.data;
+  fillSpeciesFilter();
+  drawMarkers(true);
+}
+
+document.getElementById('map-species').addEventListener('change', function () {
+  drawMarkers(true);
+});
+
+document.getElementById('map-status').addEventListener('change', function () {
+  drawMarkers(true);
+});
 
 if (typeof L === 'undefined') {
   document.getElementById('map-message').textContent =
     'The map could not load. Check your internet connection and refresh the page.';
 } else {
   createMap();
-  drawMarkers(true);
+  document.getElementById('map-message').textContent = 'Loading plant locations...';
+  loadPlants().catch(error => {
+    document.getElementById('map-message').textContent = 'Plant locations could not be loaded.';
+    showUnexpectedError(error);
+  });
 }

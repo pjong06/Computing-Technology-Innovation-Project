@@ -1,443 +1,525 @@
-// queue.js - the Observation approval queue page.
+
+/* queue.js - Supabase-backed Observation Approval Queue */
 
 drawMenu('queue.html');
 
+let pending = [];
 let selectedId = null;
+let busy = false;
+const photoCache = new Map();
 
-// Returns only the observations that are still waiting for a decision.
-function getPending() {
-  const all = getObservations();
-  const pending = [];
-  for (let i = 0; i < all.length; i++) {
-    if (all[i].state === 'Pending') {
-      pending.push(all[i]);
-    }
-  }
-  return pending;
-}
-
-// Returns the observation with this id from the list, or null if there is none.
 function findObservation(list, id) {
-  for (let i = 0; i < list.length; i++) {
-    if (list[i].id === id) {
-      return list[i];
+  return list.find(item => item.id === id) || null;
+}
+
+function addInfo(parent, title, value) {
+  const p = document.createElement('p');
+  const b = document.createElement('b');
+  b.textContent = title;
+  p.appendChild(b);
+  p.appendChild(document.createElement('br'));
+  p.appendChild(document.createTextNode(String(value ?? '—')));
+  parent.appendChild(p);
+}
+
+function plantName(observation) {
+  return observation.plant?.scientific_name ||
+    observation.scientific_name ||
+    'Unidentified species';
+}
+
+function photoOf(observation) {
+  return photoCache.get(observation.id) ||
+    (typeof PICTURE_BLANK !== 'undefined' ? PICTURE_BLANK : '');
+}
+
+async function loadPhoto(observationId) {
+  if (photoCache.has(observationId)) return;
+
+  try {
+    const id = encodeURIComponent(observationId);
+    const result = await api(
+      '/officer/reviews/' + id + '/photos'
+    );
+
+    const photos = result.data || [];
+    const first = photos[0];
+
+    if (first) {
+      const url = first.signed_url ||
+        first.signedUrl ||
+        first.url ||
+        first.photo_url;
+
+      if (url) photoCache.set(observationId, url);
     }
+  } catch (error) {
+    console.warn('Photo unavailable:', error.message);
   }
-  return null;
 }
 
-// Returns the photo of an observation.
-// If it has none, the photo of the same species in the catalogue is used, or the blank picture.
-function observationPhoto(observation) {
-  if (observation.photo) {
-    return observation.photo;
-  }
-  const species = findByScientificName(getSpecies(), observation.sci);
-  if (species !== null) {
-    return species.photo;
-  }
-  return PICTURE_BLANK;
-}
-
-// Says what will happen to the catalogue if this observation is approved:
-// "new-species" = the species is not in the catalogue.
-// "new-location" = the species is in the catalogue, but not at this place.
-// "duplicate" = the species is already in the catalogue at this place.
-// "edit" = a botanist's change to a record that is in the catalogue (see findEditTarget).
-function approvalOutcome(observation) {
-  const list = getSpecies();
-  if (observation.kind === 'edit' && findEditTarget(list, observation) !== -1) {
-    return 'edit';
-  }
-  let speciesIsKnown = false;
-
-  for (let i = 0; i < list.length; i++) {
-    if (sameText(list[i].sci, observation.sci)) {
-      speciesIsKnown = true;
-      if (samePlace(list[i], observation)) {
-        return 'duplicate';
-      }
-    }
-  }
-
-  if (speciesIsKnown) {
-    return 'new-location';
-  }
-  return 'new-species';
-}
-
-// Returns the position of the catalogue record a botanist's edit is about, or -1 if it is gone.
-// The record is found by the scientific name and place it had when the botanist opened it.
-function findEditTarget(list, observation) {
-  const original = { gps: observation.origGps, loc: observation.origLoc };
-  for (let i = 0; i < list.length; i++) {
-    if (sameText(list[i].sci, observation.origSci) && samePlace(list[i], original)) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-// Returns a list of the changes a botanist made, like "Common name: Old -> New".
-function changesList(observation) {
-  const list = getSpecies();
-  const index = findEditTarget(list, observation);
-  const changes = [];
-  if (index === -1) {
-    return changes;
-  }
-  const old = list[index];
-  const fields = [
-    ['Scientific name', old.sci, observation.sci],
-    ['Common name', old.com, observation.com],
-    ['Family', old.fam, observation.fam],
-    ['Conservation status', old.status, observation.status],
-    ['Location', old.loc, observation.loc],
-    ['GPS', old.gps, observation.gps],
-    ['Description', old.desc, observation.notes]
-  ];
-  for (let i = 0; i < fields.length; i++) {
-    if (fields[i][1] !== fields[i][2]) {
-      changes.push(fields[i][0] + ': ' + fields[i][1] + ' -> ' + fields[i][2]);
-    }
-  }
-  if (observation.photo !== old.photo) {
-    changes.push('Photo: changed');
-  }
-  return changes;
-}
-
-// Returns the sentence that tells the officer what Approve will do.
-function outcomeText(outcome) {
-  if (outcome === 'edit') {
-    return 'A botanist asked to change this record. Approve to update it in the Species catalogue.';
-  }
-  if (outcome === 'new-species') {
-    return 'This species is not in the Species catalogue yet. Choose its conservation status below, then Approve to add it.';
-  }
-  if (outcome === 'new-location') {
-    return 'This species is already in the catalogue. A record for this new location will be added.';
-  }
-  return 'This species is already recorded at this location. Nothing new will be added.';
-}
-
-// Builds the new Species catalogue record from an approved observation.
-// status is chosen by the officer. A species already in the catalogue keeps its own details.
-function makeCatalogueRecord(observation, outcome, status) {
-  const now = new Date();
-
-  const record = {
-    sci: observation.sci,
-    com: '',
-    fam: '',
-    status: status,
-    loc: observation.loc,
-    gps: observation.gps,
-    desc: observation.notes,
-    photo: observationPhoto(observation),
-    date: isoDate(now),
-    when: whenText(now),
-    firstDate: observation.date,
-    firstWhen: observation.when,
-    obsId: observation.id
-  };
-
-  if (observation.com) {
-    record.com = observation.com;
-  }
-  if (observation.fam) {
-    record.fam = observation.fam;
-  }
-
-  if (outcome === 'new-location') {
-    const known = findByScientificName(getSpecies(), observation.sci);
-    record.sci = known.sci;
-    record.com = known.com;
-    record.fam = known.fam;
-    record.status = known.status;
-    record.desc = known.desc;
-  }
-  return record;
-}
-
-// Adds a bold title with a line of text under it to the card.
-function addInfo(parent, title, text) {
-  const paragraph = document.createElement('p');
-  const bold = document.createElement('b');
-  bold.textContent = title;
-  paragraph.appendChild(bold);
-  paragraph.appendChild(document.createElement('br'));
-  paragraph.appendChild(document.createTextNode(text));
-  parent.appendChild(paragraph);
-}
-
-// Makes one small card for the list on the left.
 function makeListCard(observation) {
   const card = document.createElement('div');
   card.className = 'q';
+
   if (observation.id === selectedId) {
     card.classList.add('on');
   }
-  card.onclick = function () {
+
+  card.onclick = () => {
     selectedId = observation.id;
     drawQueue();
   };
 
-  const bold = document.createElement('b');
-  const name = document.createElement('i');
-  name.className = 'sci';
-  name.textContent = observation.sci;
-  bold.appendChild(name);
-
-  const small = document.createElement('span');
-  small.className = 'muted';
-  small.textContent = observation.by + ' · ' + observation.when;
-
-  const text = document.createElement('div');
-  text.appendChild(bold);
-  text.appendChild(small);
-
   const row = document.createElement('div');
   row.className = 'sp';
-  row.appendChild(makeThumb(observationPhoto(observation), observation.sci, 'md'));
-  row.appendChild(text);
+
+  const picture = document.createElement('img');
+  picture.src = photoOf(observation);
+  picture.alt = 'Observation photo';
+  picture.style.width = '70px';
+  picture.style.height = '70px';
+  picture.style.objectFit = 'cover';
+
+  const details = document.createElement('div');
+
+  const name = document.createElement('b');
+  name.textContent = plantName(observation);
+
+  const small = document.createElement('div');
+  small.className = 'muted';
+  small.textContent =
+    (observation.observer_name || 'Botanist') +
+    ' · ' +
+    (observation.observed_at
+      ? new Date(observation.observed_at).toLocaleString()
+      : 'Unknown date');
+
+  details.appendChild(name);
+  details.appendChild(small);
+
+  row.appendChild(picture);
+  row.appendChild(details);
   card.appendChild(row);
 
   return card;
 }
 
-// Makes the big card on the right with the photo, the details and the Approve and Reject buttons.
 function makeDetailCard(observation) {
   const card = document.createElement('div');
   card.className = 'card detail';
 
   const title = document.createElement('h3');
-  title.style.marginTop = '0';
-  const name = document.createElement('i');
-  name.className = 'sci';
-  name.textContent = observation.sci;
-  title.appendChild(name);
+  title.textContent = plantName(observation);
   card.appendChild(title);
-
-  const record = document.createElement('p');
-  record.className = 'muted';
-  record.textContent = 'Record ' + observation.id;
-  card.appendChild(record);
 
   const picture = document.createElement('img');
   picture.className = 'obs-photo';
-  picture.src = observationPhoto(observation);
-  picture.alt = 'Photo of ' + observation.sci;
+  picture.src = photoOf(observation);
+  picture.alt = 'Observation photo';
   card.appendChild(picture);
 
-  if (observation.com) {
-    addInfo(card, 'Common name', observation.com);
-  }
-  if (observation.fam) {
-    addInfo(card, 'Family', observation.fam);
-  }
-  addInfo(card, 'Location', observation.loc + ' · ' + prettyGps(observation.gps));
-  addInfo(card, 'Recorded by', observation.by + ', ' + observation.when);
-  if (observation.kind === 'edit') {
-    const changes = changesList(observation);
-    if (changes.length === 0) {
-      addInfo(card, 'Requested changes', 'No changes found (the record may have been removed).');
-    } else {
-      addInfo(card, 'Requested changes', changes.join('\n'));
-    }
-  }
+  addInfo(card, 'Observation ID', observation.id);
+  addInfo(card, 'Plant ID', observation.plant_id);
+  addInfo(card, 'Scientific name', plantName(observation));
+  addInfo(card, 'Common name', observation.plant?.common_name);
+  addInfo(card, 'Recorded by', observation.observer_name);
+  addInfo(
+    card,
+    'Observed at',
+    observation.observed_at
+      ? new Date(observation.observed_at).toLocaleString()
+      : 'Unknown'
+  );
+  addInfo(card, 'Location', observation.plant?.location_description);
+  addInfo(card, 'Health status', observation.health_status);
+  addInfo(card, 'Life stage', observation.life_stage);
+  addInfo(card, 'Height (cm)', observation.height_cm);
+  addInfo(card, 'Diameter (cm)', observation.diameter_cm);
   addInfo(card, 'Notes', observation.notes);
-  addInfo(card, 'If approved', outcomeText(approvalOutcome(observation)));
-
-  if (approvalOutcome(observation) === 'new-species') {
-    const label = document.createElement('p');
-    const bold = document.createElement('b');
-    bold.textContent = 'Conservation status (required)';
-    label.appendChild(bold);
-    card.appendChild(label);
-
-    const select = document.createElement('select');
-    select.id = 'status-choice';
-    const choices = ['', 'Endangered', 'Vulnerable', 'Least Concern'];
-    for (let i = 0; i < choices.length; i++) {
-      const option = document.createElement('option');
-      option.value = choices[i];
-      if (choices[i] === '') {
-        option.textContent = 'Choose a status...';
-      } else {
-        option.textContent = choices[i];
-      }
-      select.appendChild(option);
-    }
-    if (observation.status) {
-      select.value = observation.status;
-    }
-    card.appendChild(select);
-  }
-
-  const approveButton = document.createElement('button');
-  approveButton.className = 'btn';
-  approveButton.textContent = 'Approve';
-  approveButton.onclick = function () {
-    reviewObservation(observation.id, 'Approved');
-  };
-
-  const rejectButton = document.createElement('button');
-  rejectButton.className = 'btn red';
-  rejectButton.textContent = 'Reject';
-  rejectButton.onclick = function () {
-    reviewObservation(observation.id, 'Rejected');
-  };
 
   const buttons = document.createElement('div');
   buttons.className = 'acts';
-  buttons.appendChild(approveButton);
-  buttons.appendChild(rejectButton);
+
+  const approve = document.createElement('button');
+  approve.className = 'btn';
+  approve.textContent = 'Approve';
+  approve.disabled = busy;
+  approve.onclick = () => reviewObservation(observation.id, 'approved');
+
+  const reject = document.createElement('button');
+  reject.className = 'btn red';
+  reject.textContent = 'Reject';
+  reject.disabled = busy;
+  reject.onclick = () => reviewObservation(observation.id, 'rejected');
+
+  buttons.appendChild(approve);
+  buttons.appendChild(reject);
   card.appendChild(buttons);
 
   return card;
 }
 
-// Draws the whole page: the count, the list on the left and the details on the right.
 function drawQueue() {
-  const pending = getPending();
+  const area = document.getElementById('queue-area');
+  const empty = document.getElementById('queue-empty');
+  const count = document.getElementById('queue-count');
+  const listBox = document.getElementById('queue-list');
+  const detailBox = document.getElementById('queue-detail');
+
+  count.textContent =
+    pending.length + ' field observation(s) waiting for review.';
 
   if (pending.length === 0) {
-    document.getElementById('queue-area').hidden = true;
-    document.getElementById('queue-empty').hidden = false;
-    document.getElementById('queue-count').textContent = '0 field observations waiting for review.';
+    area.hidden = true;
+    empty.hidden = false;
     return;
   }
-  document.getElementById('queue-area').hidden = false;
-  document.getElementById('queue-empty').hidden = true;
 
-  let word = 'observations';
-  if (pending.length === 1) {
-    word = 'observation';
-  }
-  document.getElementById('queue-count').textContent =
-    pending.length + ' field ' + word + ' waiting for review.';
+  area.hidden = false;
+  empty.hidden = true;
 
   let selected = findObservation(pending, selectedId);
-  if (selected === null) {
+
+  if (!selected) {
     selected = pending[0];
     selectedId = selected.id;
   }
 
-  const listBox = document.getElementById('queue-list');
   listBox.innerHTML = '';
-  for (let i = 0; i < pending.length; i++) {
-    listBox.appendChild(makeListCard(pending[i]));
-  }
-
-  const detailBox = document.getElementById('queue-detail');
   detailBox.innerHTML = '';
+
+  pending.forEach(observation => {
+    listBox.appendChild(makeListCard(observation));
+  });
+
   detailBox.appendChild(makeDetailCard(selected));
 }
 
-// Asks the officer why the observation is rejected. Returns the reason, or null if no reason was given.
-function askRejectReason() {
-  const typed = prompt('Why are you rejecting this observation? (saved with the record)');
-  if (typed === null) {
-    return null;
+async function loadQueue() {
+  document.getElementById('queue-count').textContent =
+    'Loading pending observations...';
+
+  try {
+    const result = await api('/officer/reviews/pending');
+    pending = result.data || [];
+
+    await Promise.all(
+      pending.map(item => loadPhoto(item.id))
+    );
+
+    drawQueue();
+  } catch (error) {
+    pending = [];
+
+    document.getElementById('queue-area').hidden = true;
+    document.getElementById('queue-empty').hidden = true;
+
+    document.getElementById('queue-count').textContent =
+      'Could not load observations: ' + error.message;
   }
-  const reason = typed.trim();
-  if (reason === '') {
-    showToast('Please type a reason');
-    return null;
-  }
-  return reason;
 }
 
-// Updates the catalogue for an approved observation. Returns the message to show, or null if it could not be saved.
-// A species that is already recorded at this place is not added again, only its Last updated is refreshed.
-function updateCatalogue(observation, outcome, status) {
-  const speciesList = getSpecies();
+async function reviewObservation(id, decision) {
+  if (busy) return;
 
-  if (outcome === 'edit') {
-    const index = findEditTarget(speciesList, observation);
-    const old = speciesList[index];
-    const now = new Date();
-    speciesList[index] = {
-      sci: observation.sci, com: observation.com, fam: observation.fam,
-      status: observation.status, loc: observation.loc, gps: observation.gps,
-      desc: observation.notes, photo: observationPhoto(observation),
-      date: isoDate(now), when: whenText(now),
-      firstDate: old.firstDate, firstWhen: old.firstWhen, obsId: old.obsId || ''
-    };
-    if (!writeStorage(SPECIES_KEY, speciesList)) {
-      return null;
+  const observation = findObservation(pending, id);
+  if (!observation) return;
+
+  let comments = '';
+
+  if (decision === 'rejected') {
+    const reason = prompt('Why are you rejecting this observation?');
+
+    if (reason === null) return;
+
+    comments = reason.trim();
+
+    if (!comments) {
+      showToast('Please enter a rejection reason.');
+      return;
     }
-    return 'Approved: species record updated';
-  }
 
-  if (outcome === 'duplicate') {
-    for (let i = 0; i < speciesList.length; i++) {
-      if (sameText(speciesList[i].sci, observation.sci) && samePlace(speciesList[i], observation)) {
-        const now = new Date();
-        speciesList[i].date = isoDate(now);
-        speciesList[i].when = whenText(now);
-      }
-    }
-    if (!writeStorage(SPECIES_KEY, speciesList)) {
-      return null;
-    }
-    return 'Approved: already in the catalogue (Last updated refreshed)';
-  }
-
-  speciesList.push(makeCatalogueRecord(observation, outcome, status));
-  if (!writeStorage(SPECIES_KEY, speciesList)) {
-    return null;
-  }
-
-  if (outcome === 'new-species') {
-    return 'Approved: new species added to the catalogue';
-  }
-  return 'Approved: new location added to the catalogue';
-}
-
-// Approves or rejects an observation. result is "Approved" or "Rejected".
-// Approve adds the plant to the Species catalogue. A new species needs a conservation status first.
-// Reject needs a typed reason and does not change the catalogue.
-function reviewObservation(id, result) {
-  const observations = getObservations();
-  const observation = findObservation(observations, id);
-  let reason = '';
-  let message = '';
-
-  if (result === 'Approved') {
-    const outcome = approvalOutcome(observation);
-    let chosenStatus = '';
-    if (outcome === 'new-species') {
-      chosenStatus = document.getElementById('status-choice').value;
-      if (chosenStatus === '') {
-        showToast('Choose a conservation status first');
-        return;
-      }
-    }
-    message = updateCatalogue(observation, outcome, chosenStatus);
-    if (message == null) {
-      drawQueue();   // the catalogue could not be saved, so nothing was approved
+    if (comments.length > 2000) {
+      showToast('Rejection reason must be 2000 characters or less.');
       return;
     }
   } else {
-    reason = askRejectReason();
-    if (reason == null) {
-      return;
-    }
-    message = 'Observation rejected';
-    result = 'Rejected';
+    if (!confirm('Approve this field observation?')) return;
   }
 
-  observation.state = result;
-  observation.reason = reason;
-  if (!writeStorage(OBSERVATIONS_KEY, observations)) {
-    drawQueue();
-    return;
-  }
-
-  showToast(message);
+  busy = true;
   drawQueue();
+
+  try {
+    await api(
+      '/officer/reviews/' + id + '/decision',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          decision,
+          comments
+        })
+      }
+    );
+
+    showToast(
+      decision === 'approved'
+        ? 'Observation approved successfully.'
+        : 'Observation rejected successfully.'
+    );
+
+    selectedId = null;
+    await loadQueue();
+
+
+  } catch (error) {
+    showToast('Could not save decision: ' + error.message);
+    console.error('Observation review failed:', error);
+
+  } finally {
+    busy = false;
+    drawQueue();
+  }
 }
 
-drawQueue();
+
+async function loadProposals() {
+  const area = document.getElementById('proposal-area');
+  const list = document.getElementById('proposal-list');
+  const detail = document.getElementById('proposal-detail');
+
+  try {
+    const result = await api('/knowledge/species/proposals/pending?page_size=100');
+    const proposals = result.data || [];
+
+    list.replaceChildren();
+    detail.replaceChildren();
+    area.hidden = proposals.length === 0;
+
+    function showProposal(proposal) {
+      detail.replaceChildren();
+
+      const card = document.createElement('div');
+      card.className = 'card';
+
+      const heading = document.createElement('h3');
+      heading.textContent = proposal.scientific_name;
+      card.appendChild(heading);
+
+      // Display the botanist's submitted photograph.
+      const proposalPhoto = document.createElement('img');
+      proposalPhoto.alt = 'Botanical photograph submitted for review';
+      proposalPhoto.style.width = '100%';
+      proposalPhoto.style.maxWidth = '420px';
+      proposalPhoto.style.maxHeight = '320px';
+      proposalPhoto.style.objectFit = 'contain';
+      proposalPhoto.style.borderRadius = '10px';
+      proposalPhoto.style.display = 'none';
+
+      const photoMessage = document.createElement('p');
+      photoMessage.textContent = 'Loading proposal photograph...';
+
+      card.appendChild(proposalPhoto);
+      card.appendChild(photoMessage);
+
+      api(
+        '/knowledge/species/proposals/' +
+        encodeURIComponent(proposal.id) +
+        '/photo-preview'
+      )
+      .then(result => {
+          // Do not display a photo for a proposal that is no longer selected.
+          if (!detail.contains(card)) return;
+
+          if (!result.data?.url) {
+              photoMessage.textContent = 'Photograph unavailable.';
+              return;
+          }
+
+          proposalPhoto.onload = () => {
+              photoMessage.hidden = true;
+          };
+
+          proposalPhoto.onerror = () => {
+              proposalPhoto.style.display = 'none';
+              photoMessage.textContent = 'Could not display photograph.';
+          };
+
+          proposalPhoto.src = result.data.url;
+          proposalPhoto.style.display = 'block';
+      })
+      .catch(error => {
+          if (!detail.contains(card)) return;
+          photoMessage.textContent =
+              'Photograph unavailable: ' + error.message;
+      });
+
+    const fields = {
+    'Scientific name': proposal.scientific_name,
+    'Common name': proposal.common_name,
+    'Local name': proposal.local_name,
+    'Family': proposal.proposed_family,
+    'Habitat': proposal.habitat,
+    'Description': proposal.description,
+    'Conservation status': proposal.conservation_status,
+    'Latitude': proposal.proposed_latitude,
+    'Longitude': proposal.proposed_longitude,
+    'Location description': proposal.proposed_location_description,
+    'Submitted by': proposal.proposer_name
+};
+
+      for (const [label, value] of Object.entries(fields)) {
+        const row = document.createElement('p');
+        const strong = document.createElement('strong');
+        strong.textContent = label + ': ';
+        row.append(strong, document.createTextNode(value ?? '—'));
+        card.appendChild(row);
+      }
+
+      for (const decision of ['approved', 'rejected']) {
+        const button = document.createElement('button');
+        button.className = 'btn';
+        button.textContent = decision === 'approved' ? 'Approve' : 'Reject';
+
+        button.onclick = async () => {
+          let comment = null;
+
+          if (decision === 'rejected') {
+            comment = prompt('Reason for rejection:');
+            if (comment === null) return;
+            comment = comment.trim();
+            if (!comment) return alert('Rejection reason is required.');
+          } else {
+            if (!confirm('Approve this species proposal?')) return;
+          }
+
+          button.disabled = true;
+
+          try {
+            await api(`/knowledge/species/proposals/${proposal.id}/review`, {
+              method: 'PATCH',
+              body: JSON.stringify({ decision, comment })
+            });
+
+            await loadProposals();
+          } catch (error) {
+            alert(error.message);
+            button.disabled = false;
+          }
+        };
+
+        card.appendChild(button);
+      }
+
+      detail.appendChild(card);
+    }
+
+    for (const proposal of proposals) {
+      const item = document.createElement('button');
+      item.className = 'btn';
+      item.textContent = proposal.scientific_name;
+      item.onclick = () => showProposal(proposal);
+      list.appendChild(item);
+    }
+
+    if (proposals.length > 0) {
+      showProposal(proposals[0]);
+    }
+
+  } catch (error) {
+    console.error('Could not load species proposals:', error);
+  }
+}
+
+loadProposals();
+
+
+async function loadPendingPlants() {
+  const list = document.getElementById("plant-review-list");
+  const detail = document.getElementById("plant-review-detail");
+  const count = document.getElementById("plant-review-count");
+
+  try {
+    const { data = [] } = await api("/plants/pending-review");
+
+    count.textContent = `${data.length} Pending`;
+    list.replaceChildren();
+    detail.replaceChildren();
+
+    function showPlant(plant) {
+      detail.replaceChildren();
+
+      const card = document.createElement("div");
+      card.className = "card";
+
+      const title = document.createElement("h3");
+      title.textContent = plant.species?.scientific_name || "Unknown species";
+      card.appendChild(title);
+      if (plant.photo_url) {
+        const photo = document.createElement("img");
+        photo.src = plant.photo_url;
+        photo.alt = "Plant photograph";
+        photo.style.width = "100%";
+        photo.style.maxHeight = "320px";
+        photo.style.objectFit = "contain";
+        card.appendChild(photo);
+      }
+
+      const fields = {
+        "Common name": plant.species?.common_name,
+        "Location": plant.location_description,
+        "Description": plant.description,
+        "Submitted": plant.registered_at
+          ? new Date(plant.registered_at).toLocaleString()
+          : "—"
+      };
+
+      for (const [name, value] of Object.entries(fields)) {
+        addInfo(card, name, value);
+      }
+
+      for (const decision of ["approved", "rejected"]) {
+        const button = document.createElement("button");
+        button.className = decision === "rejected" ? "btn red" : "btn";
+        button.textContent = decision === "approved" ? "Approve" : "Reject";
+
+        button.onclick = async () => {
+          if (!confirm(`${button.textContent} this plant?`)) return;
+
+          try {
+            await api(`/plants/${plant.id}/review`, {
+              method: "PATCH",
+              body: JSON.stringify({ decision })
+            });
+
+            showToast(`Plant ${decision} successfully.`);
+            await loadPendingPlants();
+          } catch (error) {
+            showToast(error.message);
+          }
+        };
+
+        card.appendChild(button);
+      }
+
+      detail.appendChild(card);
+    }
+
+    for (const plant of data) {
+      const button = document.createElement("button");
+      button.className = "btn";
+      button.textContent =
+        plant.species?.scientific_name || `Plant ${plant.id.slice(0, 8)}`;
+      button.onclick = () => showPlant(plant);
+      list.appendChild(button);
+    }
+
+    if (data.length) showPlant(data[0]);
+
+  } catch (error) {
+    count.textContent = "Could not load plants: " + error.message;
+  }
+}
+
+loadPendingPlants();

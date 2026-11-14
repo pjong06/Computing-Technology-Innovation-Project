@@ -4,22 +4,31 @@
 
 drawMenu('users.html');
 
-const ROLES = ['Botanist', 'Conservation Officer'];
-
 // The real account status of each user (profiles.account_status), by user id. Accounts
 // that signed themselves up are 'pending' until the officer activates them here.
 // Officers may read every profile (RLS policy "officers read profiles").
 let profileStatus = {};
 
+let profileRoles = {};
+
 async function loadProfileStatuses() {
   const result = await sb.from('profiles').select('id, account_status');
-  if (result.error) {
-    showToast('Could not load account statuses');
-    return;
+  const rolesResult = await sb.from('profiles').select('id, role');
+  if (result.error || rolesResult.error) {
+  console.error('Profile loading error:', result.error);
+  showToast('Could not load account statuses');
+  return;
   }
   profileStatus = {};
+  profileRoles = {};
+
   for (let i = 0; i < result.data.length; i++) {
-    profileStatus[result.data[i].id] = result.data[i].account_status;
+    const profile = result.data[i];
+
+    profileStatus[profile.id] = profile.account_status;
+  }
+  for (const profile of rolesResult.data || []) {
+    profileRoles[profile.id] = profile.role;
   }
 }
 
@@ -28,49 +37,9 @@ function isPending(user) {
   return !user.active && profileStatus[user.id] === 'pending';
 }
 
-// Counts the users who have the Conservation Officer role.
-function countOfficers(list) {
-  let count = 0;
-  for (let i = 0; i < list.length; i++) {
-    if (list[i].role === 'Conservation Officer') {
-      count++;
-    }
-  }
-  return count;
-}
-
-// Makes the drop-down that shows the role of a user. Changing it saves the new role.
-function makeRoleSelect(index) {
-  const users = getUsers();
-  const select = document.createElement('select');
-
-  for (let i = 0; i < ROLES.length; i++) {
-    const option = document.createElement('option');
-    option.textContent = ROLES[i];
-    select.appendChild(option);
-  }
-  select.value = users[index].role;
-
-  select.onchange = function () {
-    const list = getUsers();
-    const oldRole = list[index].role;
-
-    // There must always be exactly one officer.
-    if (select.value === 'Conservation Officer' && countOfficers(list) >= 1) {
-      showToast('There is only one officer account');
-      select.value = oldRole;
-      return;
-    }
-    if (oldRole === 'Conservation Officer') {
-      showToast('There must be one officer account');
-      select.value = oldRole;
-      return;
-    }
-    list[index].role = select.value;
-    writeStorage(USERS_KEY, list);
-    showToast('Role updated');
-  };
-  return select;
+function isOfficer(user) {
+  return profileRoles[user.id] === 'officer' ||
+         user.role === 'Conservation Officer';
 }
 
 // Makes one table row for one user. index is its position in the saved list.
@@ -81,19 +50,33 @@ function makeUserRow(user, index) {
   row.appendChild(makeCell(user.email));
 
   const roleCell = document.createElement('td');
-  roleCell.appendChild(makeRoleSelect(index));
+
+  const databaseRole = profileRoles[user.id];
+
+  roleCell.textContent =
+    databaseRole === 'officer'
+      ? 'Conservation Officer'
+      : databaseRole === 'botanist'
+        ? 'Botanist'
+        : user.role;
+
   row.appendChild(roleCell);
 
   const pill = document.createElement('span');
-  if (user.active) {
+  const status = profileStatus[user.id];
+
+  if (status === 'active') {
     pill.className = 'pill';
     pill.textContent = 'Active';
-  } else if (isPending(user)) {
+  } else if (status === 'pending') {
     pill.className = 'pill w';
     pill.textContent = 'Pending approval';
-  } else {
+  } else if (status === 'suspended') {
     pill.className = 'pill e';
     pill.textContent = 'Suspended';
+  } else {
+    pill.className = 'pill w';
+    pill.textContent = 'Unknown';
   }
   const statusCell = document.createElement('td');
   statusCell.appendChild(pill);
@@ -143,12 +126,13 @@ function drawUsers() {
 
 // Adds the user typed in the boxes. This makes a real login account with the Botanist role.
 async function addUser() {
+  const name = document.getElementById('new-name').value.trim();
   const username = document.getElementById('new-username').value.trim();
   const email = document.getElementById('new-email').value.trim();
   const password = document.getElementById('new-password').value;
-  if (username === '' || email === '' || password === '') {
-    showToast('Enter username, email and password');
-    return;
+  if (name === '' || username === '' || email === '' || password === '') {
+  showToast('Enter full name, username, email and password');
+  return;
   }
   const passwordIssue = passwordProblem(password);
   if (passwordIssue !== '') {
@@ -174,8 +158,8 @@ async function addUser() {
   const otherClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false, storageKey: 'niah_new_user' }
   });
-  const result = await createAccount(otherClient, username, email, password);
-  if (result.error) {
+  const result = await createAccount(otherClient, username, email, password, name);
+  if (result.error || rolesResult.error) {
     showToast(result.error.message);
     return;
   }
@@ -192,33 +176,35 @@ async function addUser() {
       break;
     }
   }
+  document.getElementById('new-name').value = '';
   document.getElementById('new-username').value = '';
   document.getElementById('new-email').value = '';
   document.getElementById('new-password').value = '';
   if (added === -1) {
-    showToast('Account created. Activate it in the list once it appears.');
-  } else {
-    list[added].active = true;
-    if (writeStorage(USERS_KEY, list)) {
-      showToast('User added and activated');
-    }
-  }
+  showToast('Signup submitted. Refresh the list after the account appears.');
+} else {
+  showToast('Account created. Check its approval status before activation.');
+}
   await loadProfileStatuses();
   drawUsers();
 }
 
 // Switches a user between Active and Suspended.
-function toggleUser(index) {
+async function toggleUser(index) {
   const list = getUsers();
-  if (list[index].role === 'Conservation Officer') {
+
+  if (isOfficer(list[index])) {
     showToast('The officer account cannot be suspended');
     return;
   }
+
   list[index].active = !list[index].active;
+
   if (writeStorage(USERS_KEY, list)) {
-    // The sync trigger has changed the profile; show its new status.
-    profileStatus[list[index].id] = list[index].active ? 'active' : 'suspended';
+    await loadProfileStatuses();
+    showToast('Account status updated');
   }
+
   drawUsers();
 }
 
@@ -226,7 +212,7 @@ function toggleUser(index) {
 function deleteUser(index) {
   const list = getUsers();
   const user = list[index];
-  if (user.role === 'Conservation Officer') {
+  if (isOfficer(user)) {
     showToast('The officer account cannot be deleted');
     return;
   }

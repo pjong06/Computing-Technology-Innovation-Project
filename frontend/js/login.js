@@ -24,29 +24,20 @@ function showSuspended() {
   box.hidden = false;
 }
 
-// Checks the username, email and password with Supabase. If they are right, logs in and opens the website.
+// Checks email and password with Supabase, then verifies the staff role with the backend.
 async function doLogin() {
-  const username = document.getElementById('login-username').value.trim();
   const email = document.getElementById('login-email').value.trim();
   const password = document.getElementById('login-password').value;
 
-  if (username === '' || email === '' || password === '') {
-    showAuthError('Enter your username, email and password.');
+  if (email === '' || password === '') {
+    showAuthError('Enter your email and password.');
     return;
   }
 
   // 1. Supabase checks the email and password.
   const result = await sb.auth.signInWithPassword({ email: email, password: password });
   if (result.error) {
-    showAuthError('Wrong username, email or password.');
-    return;
-  }
-
-  // 2. The username saved on the account must match what was typed.
-  const savedName = result.data.user.user_metadata.username;
-  if (savedName && sameText(savedName, username) === false) {
-    await sb.auth.signOut();
-    showAuthError('Wrong username, email or password.');
+    showAuthError('Wrong email or password.');
     return;
   }
 
@@ -58,7 +49,9 @@ async function doLogin() {
     await sb.auth.signOut();
     localStorage.removeItem(SESSION_KEY);
     if (/active staff profile required|active account required/i.test(error.message)) {
-      showAuthError('This account is waiting for an officer to activate it, or has been suspended. Contact the officer.');
+      showAuthError(
+        'This account is waiting for an officer to activate it, or has been suspended. '+'Please contact the officer at ' + OFFICER_CONTACT_EMAIL + '.'
+      );
     } else {
       showAuthError(error.message);
     }
@@ -75,7 +68,7 @@ async function doLogin() {
   }
 
   showAuthError('');
-  startSession(me, savedName || username);
+  startSession(me, me.full_name || me.email.split('@')[0]);
   goToHome();
 }
 
