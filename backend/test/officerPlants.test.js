@@ -141,12 +141,11 @@ test('officer plant detail includes signed photos and observation history withou
         plant_status: 'approved',
         registered_by: OFFICER_ID,
         registered_at: '2026-10-01T08:00:00Z',
-        latitude: 3.2,
-        longitude: 113.7,
       },
       data: [],
       error: null,
     },
+    plant_map_points: { single: { latitude: 3.2, longitude: 113.7 } },
     species: {
       data: [{
         id: SPECIES_ID,
@@ -201,6 +200,12 @@ test('officer plant detail includes signed photos and observation history withou
   const result = await callRoute('/api/officer/plants', router, { path: `/${PLANT_ID}` });
   assert.equal(result.status, 200);
   assert.equal(result.body.data.latitude, 3.2);
+  assert.equal(result.body.data.longitude, 113.7);
+  const plantSelect = db.calls.find(call => call[0] === 'plants' && call[1] === 'select');
+  assert.doesNotMatch(plantSelect[2], /latitude|longitude/);
+  assert.ok(db.calls.some(call =>
+    call[0] === 'plant_map_points' && call[1] === 'eq' && call[2] === 'id' && call[3] === PLANT_ID
+  ));
   assert.equal(result.body.data.registered_by, 'Registered By');
   assert.equal(result.body.data.photos.length, 1);
   assert.match(result.body.data.photos[0].url, /^https:\/\/signed\.example\//);
@@ -210,6 +215,17 @@ test('officer plant detail includes signed photos and observation history withou
   assert.equal(result.body.data.observations[0].reviewer_comment, 'Please recheck the measurements.');
   assert.doesNotMatch(JSON.stringify(result.body), /file_path|uploaded_by/);
 });
+
+test('officer plant detail loads when no map coordinates are recorded', async () => {
+  role = 'officer';
+  db = fakeDb({ plants: { single: { id: PLANT_ID } } });
+
+  const result = await callRoute('/api/officer/plants', router, { path: `/${PLANT_ID}` });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.data.latitude, null);
+  assert.equal(result.body.data.longitude, null);
+});
+
 
 test('plant catalogue enforces officer access and validates paging before database access', async () => {
   for (const disallowedRole of ['botanist', 'visitor']) {
