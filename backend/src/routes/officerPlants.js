@@ -18,8 +18,6 @@ const PHOTO_URL_TTL_SECONDS = 60;
 const PLANT_COLUMNS =
     "id, qr_code_value, species_id, location_description, plant_status, " +
     "registered_by, registered_at";
-const PLANT_DETAIL_COLUMNS =
-    `${PLANT_COLUMNS}, latitude, longitude`;
 const SPECIES_COLUMNS = "id, scientific_name, common_name, conservation_status";
 const OBSERVATION_COLUMNS =
     "id, plant_id, observer_id, observed_at, height_cm, diameter_cm, " +
@@ -81,6 +79,19 @@ async function loadProfileNames(supabase, profileIds) {
         .select("id, full_name")
         .in("id", profileIds));
     return new Map(rows.map((row) => [row.id, row.full_name || null]));
+}
+
+async function loadPlantCoordinates(supabase, plantId) {
+    const { data, error } = await supabase
+        .from("plant_map_points")
+        .select("id, latitude, longitude")
+        .eq("id", plantId)
+        .maybeSingle();
+    if (error) throw error;
+    return {
+        latitude: data?.latitude ?? null,
+        longitude: data?.longitude ?? null,
+    };
 }
 
 async function loadObservations(supabase, plantIds) {
@@ -323,17 +334,18 @@ router.get("/:id", async (req, res) => {
     try {
         const { data: plant, error: plantError } = await req.supabase
             .from("plants")
-            .select(PLANT_DETAIL_COLUMNS)
+            .select(PLANT_COLUMNS)
             .eq("id", id)
             .maybeSingle();
         if (plantError) throw plantError;
         if (!plant) return res.status(404).json({ message: "Plant not found" });
 
-        const [speciesById, profileNames, observations, photos] = await Promise.all([
+        const [speciesById, profileNames, observations, photos, coordinates] = await Promise.all([
             loadSpeciesById(req.supabase, plant.species_id ? [plant.species_id] : []),
             loadProfileNames(req.supabase, plant.registered_by ? [plant.registered_by] : []),
             loadObservations(req.supabase, [plant.id]),
             loadPlantPhotos(req.supabase, [plant.id], false),
+            loadPlantCoordinates(req.supabase, plant.id),
         ]);
         const observationIds = uniqueIds(observations, "id");
         const observerIds = uniqueIds(observations, "observer_id");
@@ -371,8 +383,8 @@ router.get("/:id", async (req, res) => {
                 registered_at: plant.registered_at || null,
                 last_observation_at: summary.last,
                 observation_count: summary.count,
-                latitude: plant.latitude ?? null,
-                longitude: plant.longitude ?? null,
+                latitude: coordinates.latitude,
+                longitude: coordinates.longitude,
                 photo_thumbnail: primaryPhoto ? publicPhoto(primaryPhoto, photoUrls) : null,
                 photos: photos.map((photo) => publicPhoto(photo, photoUrls)),
                 observations: observations.map((observation) => ({
