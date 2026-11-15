@@ -116,6 +116,9 @@ function renderPlant(plant) {
   byId('plant-tag').textContent = plant.tag_code || 'No tag code';
   byId('plant-title').textContent = plant.species?.common_name || plant.species?.scientific_name || 'Plant';
   byId('plant-species').textContent = plant.species?.scientific_name || 'Species not recorded';
+  byId('plant-source').textContent = plant.data_source === 'inaturalist'
+    ? `Source: iNaturalist observation · Observer: ${plant.source_observer || 'Unknown'} · Licence: ${plant.source_licence || 'Unknown'}`
+    : 'Source: Field record (registered in the app)';
   const status = plantStatus(plant.plant_status);
   const statusElement = byId('plant-status');
   statusElement.textContent = status.label;

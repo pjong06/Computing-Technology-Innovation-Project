@@ -44,12 +44,20 @@ function publicPlantHtml(tag, row) {
     const status = plant.conservation_status || 'Unknown';
     const sections = [['About this species', plant.description], ['Appearance', plant.morphology],
         ['Habitat', plant.habitat], ['Cultural significance', plant.cultural_significance]];
+    const sourceLine = row.data_source === 'inaturalist'
+        ? `<p class="notice">Source: iNaturalist observation by ${escapeHtml(
+            typeof row.source_observer === 'string' ? row.source_observer.slice(0, 200) : 'Unknown'
+        )} (${escapeHtml(
+            typeof row.source_licence === 'string' ? row.source_licence.slice(0, 100) : 'Unknown'
+        )})</p>`
+        : '';
     return documentHtml(plant.scientific_name || 'Plant information',
         `<div class="tag">${escapeHtml(tag)}</div>` +
         (isDemo ? '<aside class="demo"><strong>Demonstration record</strong><br>Not real research data. Approved status is for demonstration only and does not represent officer review.</aside>' : '') +
         `<h1>${escapeHtml(plant.scientific_name || 'Plant information')}</h1>` +
         (plant.common_name ? `<p class="common">${escapeHtml(plant.common_name)}</p>` : '') +
         (plant.local_name ? `<p class="local">Local name: ${escapeHtml(plant.local_name)}</p>` : '') +
+        sourceLine +
         `<div class="status">Conservation status: ${escapeHtml(STATUS_NAMES[status] || status)}</div>` +
         sections.filter(([, value]) => value.trim()).map(([label, value]) =>
             `<section><h2>${label}</h2><p>${escapeHtml(value)}</p></section>`).join('') +

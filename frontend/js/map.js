@@ -62,11 +62,15 @@ function makePopup(plant) {
   const species = plant.species;
   const scientificName = species && species.scientific_name ? species.scientific_name : 'Unknown species';
   const commonName = species && species.common_name ? species.common_name : 'Unknown species';
+  const sourceLine = plant.data_source === 'inaturalist'
+    ? `Source: iNaturalist observation · Observer: ${plant.source_observer || 'Unknown'} · Licence: ${plant.source_licence || 'Unknown'}`
+    : 'Source: Field record (registered in the app)';
   return '<strong><em>' + escapePopupText(scientificName) + '</em></strong>' +
     '<div>Common name: ' + escapePopupText(commonName) + '</div>' +
     '<div>Tag: ' + escapePopupText(plant.tag || 'No tag') + '</div>' +
     '<div>Status: ' + escapePopupText(plant.status || 'Not recorded') + '</div>' +
     '<div>Landmark: ' + escapePopupText(plant.landmark || 'Not recorded') + '</div>' +
+    '<div>' + escapePopupText(sourceLine) + '</div>' +
     '<div>Last visit: ' + escapePopupText(displayVisitDate(plant.last_visit)) + '</div>';
 }
 

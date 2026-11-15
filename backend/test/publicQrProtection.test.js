@@ -276,7 +276,15 @@ test('public QR data strips legacy observation notes and excludes legacy photo f
         reference_observation_url: 'https://example.test/observation',
         reference_image_credit: 'Legacy photographer',
         reference_image_license: 'CC-BY-NC',
+        data_source: 'inaturalist',
+        source_observer: 'Aina Rahman',
+        source_licence: 'CC0',
+        source_url: 'https://www.inaturalist.org/observations/123',
     });
     assert.equal(data.description, 'Species description.');
+    assert.equal(data.data_source, 'inaturalist');
+    assert.equal(data.source_observer, 'Aina Rahman');
+    assert.equal(data.source_licence, 'CC0');
+    assert.equal(data.source_url, undefined);
     assert.equal(Object.keys(data).some(key => key.startsWith('reference_')), false);
 });

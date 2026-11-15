@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const express = require('express');
 const { mockAuth, callRoute } = require('./helpers/routeTestKit');
 
 const SPECIES_ID = '44444444-4444-4444-8444-444444444444';
@@ -51,6 +52,21 @@ function fakeDb(tables = {}, counts = {}) {
 
 function get(path) {
   return callRoute('/api/reports', router, { path });
+}
+
+async function getExport(t, path) {
+  const app = express();
+  app.disable('x-powered-by');
+  app.use('/api/reports', router);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => { server.close(); server.closeAllConnections(); });
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/reports${path}`);
+  return {
+    status: response.status,
+    contentType: response.headers.get('content-type'),
+    body: Buffer.from(await response.arrayBuffer()),
+  };
 }
 
 test('report summary returns real table counts and is officer-only', async () => {
@@ -121,7 +137,12 @@ test('field observations include species, plant, botanist, health and review det
         review_status: 'pending',
       }],
     },
-    plants: { data: [{ id: PLANT_ID, species_id: SPECIES_ID, qr_code_value: 'NIAH-PLT-1' }] },
+    plants: { data: [{
+      id: PLANT_ID,
+      species_id: SPECIES_ID,
+      qr_code_value: 'NIAH-PLT-1',
+      data_source: 'inaturalist',
+    }] },
     profiles: { data: [{ id: '22222222-2222-4222-8222-222222222222', full_name: 'Aina Rahman' }] },
     species: { data: [{ id: SPECIES_ID, scientific_name: 'Nepenthes ampullaria' }] },
   });
@@ -133,6 +154,7 @@ test('field observations include species, plant, botanist, health and review det
     observed_at: '2026-11-02',
     scientific_name: 'Nepenthes ampullaria',
     plant_tag: 'NIAH-PLT-1',
+    source: 'iNaturalist',
     botanist: 'Aina Rahman',
     health_status: 'healthy',
     life_stage: 'flowering',
@@ -144,7 +166,31 @@ test('field observations include species, plant, botanist, health and review det
   const labels = result.body.data.columns.map(column => column.label);
   assert.ok(labels.includes('Height (m)'));
   assert.ok(labels.includes('Diameter (cm)'));
+  assert.ok(labels.includes('Source'));
   assert.ok(!labels.includes('Height (cm)'));
+  assert.ok(db.calls.some(call => call[0] === 'plants' && call[1] === 'is' &&
+    call[2] === 'deleted_at' && call[3] === null));
+});
+
+test('field observations for soft-deleted plants are omitted', async () => {
+  role = 'officer';
+  db = fakeDb({
+    observations: {
+      data: [{
+        id: OBSERVATION_ID,
+        plant_id: PLANT_ID,
+        observer_id: '22222222-2222-4222-8222-222222222222',
+        observed_at: '2026-11-02T03:00:00Z',
+      }],
+    },
+    plants: { data: [] },
+  });
+
+  const result = await get('/botanist');
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.data.rows, []);
+  assert.ok(db.calls.some(call => call[0] === 'plants' && call[1] === 'is' &&
+    call[2] === 'deleted_at' && call[3] === null));
 });
 
 test('plant locations use the map view and are officer-only', async () => {
@@ -160,6 +206,7 @@ test('plant locations use the map view and are officer-only', async () => {
         location_description: 'Trail entrance',
         latitude: 3.2,
         longitude: 113.7,
+        data_source: 'inaturalist',
       }],
     },
     species: { data: [{ id: SPECIES_ID, scientific_name: 'Nepenthes ampullaria' }] },
@@ -170,20 +217,62 @@ test('plant locations use the map view and are officer-only', async () => {
   assert.deepEqual(result.body.data.rows[0], {
     scientific_name: 'Nepenthes ampullaria',
     plant_tag: 'NIAH-PLT-1',
+    source: 'iNaturalist',
     landmark: 'Trail entrance',
     latitude: 3.2,
     longitude: 113.7,
     plant_status: 'healthy',
   });
   assert.ok(db.calls.some(call => call[0] === 'plant_map_points'));
+  assert.ok(db.calls.some(call => call[0] === 'plant_map_points' && call[1] === 'select' &&
+    call[2].includes('data_source')));
   assert.ok(db.calls.some(call => call[0] === 'plants' && call[1] === 'lte' &&
     call[2] === 'created_at' && call[3] === '2026-10-31T23:59:59.999Z'));
+  assert.ok(db.calls.some(call => call[0] === 'plants' && call[1] === 'is' &&
+    call[2] === 'deleted_at' && call[3] === null));
 
   role = 'visitor';
   db = fakeDb();
   assert.equal((await get('/locations')).status, 403);
   assert.equal(db.calls.length, 0);
   role = 'officer';
+});
+
+test('plant source is included in CSV and PDF exports', async t => {
+  role = 'officer';
+  const tables = {
+    plants: {
+      data: [{
+        id: PLANT_ID,
+        created_at: '2026-10-12T00:00:00Z',
+      }],
+    },
+    plant_map_points: {
+      data: [{
+        id: PLANT_ID,
+        species_id: SPECIES_ID,
+        qr_code_value: 'NIAH-PLT-1',
+        plant_status: 'approved',
+        data_source: 'inaturalist',
+        latitude: 3.2,
+        longitude: 113.7,
+      }],
+    },
+    species: { data: [{ id: SPECIES_ID, scientific_name: 'Nepenthes ampullaria' }] },
+  };
+
+  db = fakeDb(tables);
+  const csv = await getExport(t, '/locations?format=csv');
+  assert.equal(csv.status, 200);
+  assert.match(csv.contentType, /text\/csv/);
+  assert.match(csv.body.toString('utf8'), /"Source"/);
+  assert.match(csv.body.toString('utf8'), /"iNaturalist"/);
+
+  db = fakeDb(tables);
+  const pdf = await getExport(t, '/locations?format=pdf');
+  assert.equal(pdf.status, 200);
+  assert.match(pdf.contentType, /application\/pdf/);
+  assert.equal(pdf.body.subarray(0, 4).toString(), '%PDF');
 });
 
 test('report database errors return a generic message', async () => {

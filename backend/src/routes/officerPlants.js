@@ -17,7 +17,7 @@ const PHOTO_URL_TTL_SECONDS = 60;
 
 const PLANT_COLUMNS =
     "id, qr_code_value, species_id, location_description, plant_status, " +
-    "registered_by, registered_at";
+    "registered_by, registered_at, data_source, source_observer, source_licence";
 const SPECIES_COLUMNS = "id, scientific_name, common_name, conservation_status";
 const OBSERVATION_COLUMNS =
     "id, plant_id, observer_id, observed_at, height_cm, diameter_cm, " +
@@ -170,19 +170,22 @@ router.get("/facets", async (req, res) => {
     try {
         const counts = new Map();
         const statuses = new Set();
+        const dataSources = new Set();
         const profileIds = new Set();
         let start = 0;
         let rows;
         do {
             rows = throwOnError(await req.supabase
                 .from("plants")
-                .select("species_id, registered_by, plant_status")
+                .select("species_id, registered_by, plant_status, data_source")
+                .is("deleted_at", null)
                 .order("id", { ascending: true })
                 .range(start, start + RELATED_PAGE_SIZE - 1));
             for (const row of rows) {
                 if (row.species_id) counts.set(row.species_id, (counts.get(row.species_id) || 0) + 1);
                 if (row.registered_by) profileIds.add(row.registered_by);
                 if (row.plant_status) statuses.add(row.plant_status);
+                if (row.data_source) dataSources.add(row.data_source);
             }
             start += rows.length;
         } while (rows.length === RELATED_PAGE_SIZE);
@@ -195,6 +198,7 @@ router.get("/facets", async (req, res) => {
                     .map((id) => ({ id, name: names.get(id) || "Unknown staff member" }))
                     .sort((a, b) => a.name.localeCompare(b.name)),
                 plant_statuses: [...statuses].sort(),
+                data_sources: [...dataSources].sort(),
             },
         });
     } catch (error) {
@@ -212,6 +216,7 @@ router.get("/", async (req, res) => {
     const plantStatus = oneQueryValue(req.query, "plant_status");
     const conservationStatus = oneQueryValue(req.query, "conservation_status");
     const registeredBy = oneQueryValue(req.query, "registered_by");
+    const source = oneQueryValue(req.query, "source");
     if (search === null || search.length > 100 || hasUnsafeFilterCharacter(search)) {
         return res.status(400).json({ message: "Invalid search" });
     }
@@ -220,6 +225,9 @@ router.get("/", async (req, res) => {
     }
     if (registeredBy === null || (registeredBy && !UUID_PATTERN.test(registeredBy))) {
         return res.status(400).json({ message: "Invalid registered_by" });
+    }
+    if (source === null || (source && !["field", "inaturalist"].includes(source))) {
+        return res.status(400).json({ message: "Invalid source" });
     }
     if (plantStatus === null || plantStatus.length > 50 ||
         /[,]/.test(plantStatus) || hasUnsafeFilterCharacter(plantStatus)) {
@@ -259,10 +267,12 @@ router.get("/", async (req, res) => {
 
         let query = req.supabase
             .from("plants")
-            .select(PLANT_COLUMNS, { count: "exact" });
+            .select(PLANT_COLUMNS, { count: "exact" })
+            .is("deleted_at", null);
         if (eligibleSpeciesIds !== null) query = query.in("species_id", eligibleSpeciesIds);
         if (plantStatus) query = query.eq("plant_status", plantStatus);
         if (registeredBy) query = query.eq("registered_by", registeredBy);
+        if (source) query = query.eq("data_source", source);
         if (search) {
             const term = ilikeValue(search);
             const conditions = [
@@ -308,6 +318,9 @@ router.get("/", async (req, res) => {
                     species: speciesById.get(plant.species_id) || null,
                     location_description: plant.location_description || null,
                     plant_status: plant.plant_status || null,
+                    data_source: plant.data_source || "field",
+                    source_observer: plant.source_observer || null,
+                    source_licence: plant.source_licence || null,
                     registered_by: profileNames.get(plant.registered_by) || null,
                     last_observation_at: summary.last,
                     photo_thumbnail: primaryPhotoByPlant.get(plant.id) || null,
@@ -336,6 +349,7 @@ router.get("/:id", async (req, res) => {
             .from("plants")
             .select(PLANT_COLUMNS)
             .eq("id", id)
+            .is("deleted_at", null)
             .maybeSingle();
         if (plantError) throw plantError;
         if (!plant) return res.status(404).json({ message: "Plant not found" });
@@ -379,6 +393,9 @@ router.get("/:id", async (req, res) => {
                 species: speciesById.get(plant.species_id) || null,
                 location_description: plant.location_description || null,
                 plant_status: plant.plant_status || null,
+                data_source: plant.data_source || "field",
+                source_observer: plant.source_observer || null,
+                source_licence: plant.source_licence || null,
                 registered_by: profileNames.get(plant.registered_by) || null,
                 registered_at: plant.registered_at || null,
                 last_observation_at: summary.last,

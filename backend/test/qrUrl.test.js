@@ -110,6 +110,33 @@ test('visitor page renders only allowed fields and escapes stored content', asyn
   assert.match(response.headers.get('content-security-policy'), /default-src 'none'/);
 });
 
+test('iNaturalist source is escaped plain text on the visitor page and exposed by the QR API', async t => {
+  const row = {
+    scientific_name: 'Shorea albida',
+    data_source: 'inaturalist',
+    source_observer: '<Observer>',
+    source_licence: 'CC-BY-NC',
+    source_url: 'https://www.inaturalist.org/observations/123',
+  };
+  const client = { rpc: async () => ({ data: [row], error: null }) };
+  const router = createPublicPlantsRouter({ client });
+  router.get('/api/public/plants/by-qr', createPublicQrHandler(client));
+  const url = await start(t, router);
+
+  const page = await fetch(url + '/p/' + TAG);
+  const html = await page.text();
+  assert.equal(page.status, 200);
+  assert.match(html, /Source: iNaturalist observation by &lt;Observer&gt; \(CC-BY-NC\)/);
+  assert.doesNotMatch(html, /<a\b|source_url|inaturalist\.org/);
+
+  const api = await fetch(url + '/api/public/plants/by-qr?code=' + TAG);
+  const body = await api.json();
+  assert.equal(body.data.data_source, 'inaturalist');
+  assert.equal(body.data.source_observer, '<Observer>');
+  assert.equal(body.data.source_licence, 'CC-BY-NC');
+  assert.equal(body.data.source_url, undefined);
+});
+
 test('invalid visitor tags never query the database', async t => {
   const calls = []; const url = await start(t, publicRouter({ data: [], error: null }, calls));
   assert.equal((await fetch(url + '/p/invalid')).status, 400);

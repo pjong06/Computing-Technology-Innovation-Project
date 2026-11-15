@@ -167,6 +167,9 @@ export type PublicTagLookupResult =
       habitat: string | null;
       conservationStatus: string | null;
       culturalSignificance: string | null;
+      dataSource: 'field' | 'inaturalist';
+      sourceObserver: string | null;
+      sourceLicence: string | null;
     }
   | { status: 'pending'; tagCode: string; message: string }
   | { status: 'not-found'; tagCode: string }
@@ -183,6 +186,9 @@ interface PublicPlantResponse {
     habitat: string | null;
     conservation_status: string | null;
     cultural_significance: string | null;
+    data_source: 'field' | 'inaturalist';
+    source_observer: string | null;
+    source_licence: string | null;
   };
 }
 
@@ -204,6 +210,9 @@ export async function lookupPublicTag(rawTag: string): Promise<PublicTagLookupRe
       habitat: response.data?.habitat || null,
       conservationStatus: response.data?.conservation_status || null,
       culturalSignificance: response.data?.cultural_significance || null,
+      dataSource: response.data?.data_source === 'inaturalist' ? 'inaturalist' : 'field',
+      sourceObserver: response.data?.source_observer || null,
+      sourceLicence: response.data?.source_licence || null,
     };
   } catch (error) {
     if (error instanceof ApiError) {
