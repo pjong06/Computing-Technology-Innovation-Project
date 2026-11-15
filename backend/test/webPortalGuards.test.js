@@ -309,3 +309,18 @@ test('every element reports.js reads exists in reports.html, and the table has a
   // A missing table shows a message instead of throwing.
   assert.match(script, /if \(parts === null\) \{\s*document\.getElementById\('report-note'\)\.textContent = REPORT_TABLE_MISSING;/);
 });
+
+
+test('distribution map loads sensor stations with a separate marker layer', () => {
+  const mapCode = fs.readFileSync(
+    path.join(__dirname, '../../frontend/js/map.js'),
+    'utf8'
+  );
+
+  assert.match(mapCode, /api\('\/officer\/map\/stations'\)/);
+  assert.match(mapCode, /function drawSensorMarkers\(\)/);
+  assert.match(mapCode, /sensorMarkerLayer = L\.layerGroup\(\)\.addTo\(map\)/);
+  assert.match(mapCode, /loadSensorStations\(\)\.catch/);
+  assert.match(mapCode, /escapePopupText\(station\.station_code\)/);
+  assert.match(mapCode, /escapePopupText\(station\.location_note/);
+});
