@@ -47,7 +47,8 @@ interface TagLookupResponse {
 
 // Looks a tag up on the phone first (works without signal), then on the server.
 export async function lookupTag(rawTag: string): Promise<TagLookupResult> {
-  const tagCode = rawTag.trim().toUpperCase();
+  const tagCode = parseTagCode(rawTag) ??
+    rawTag.trim().toUpperCase();
 
   const record = useRecordStore.getState().findByTag(tagCode);
   if (record) return { status: 'on-phone', tagCode, record };
@@ -158,20 +159,20 @@ export function describeTagLookup(result: Exclude<TagLookupResult, { status: 'on
 // Public lookup returns plant details only after approval.
 export type PublicTagLookupResult =
   | {
-      status: 'found';
-      tagCode: string;
-      scientificName: string | null;
-      commonName: string | null;
-      localName: string | null;
-      // Public plant facts for the visitor plant page. Location is never used there.
-      description: string | null;
-      habitat: string | null;
-      conservationStatus: string | null;
-      culturalSignificance: string | null;
-      dataSource: 'field' | 'inaturalist';
-      sourceObserver: string | null;
-      sourceLicence: string | null;
-    }
+    status: 'found';
+    tagCode: string;
+    scientificName: string | null;
+    commonName: string | null;
+    localName: string | null;
+    // Public plant facts for the visitor plant page. Location is never used there.
+    description: string | null;
+    habitat: string | null;
+    conservationStatus: string | null;
+    culturalSignificance: string | null;
+    dataSource: 'field' | 'inaturalist';
+    sourceObserver: string | null;
+    sourceLicence: string | null;
+  }
   | { status: 'pending'; tagCode: string; message: string }
   | { status: 'not-found'; tagCode: string }
   | { status: 'offline'; tagCode: string }
