@@ -1,5 +1,8 @@
 const { randomUUID } = require('node:crypto');
-const { evaluateThreats } = require('./threatDetectionService');
+const {
+  evaluateThreats,
+  evaluateDatabaseRules,
+} = require('./threatDetectionService');
 
 const AlertStatus = Object.freeze({
   ACTIVE: 'active',
@@ -10,8 +13,16 @@ const alerts = [];
 const activeAlertsByKey = new Map();
 const MAX_ALERT_HISTORY = 500;
 
-function activeAlertKey(stationId, threatType) {
-  return `${stationId}:${threatType}`;
+function activeAlertKey(stationId, evaluation) {
+  if (evaluation.type.startsWith('database_rule:')) {
+    return `${stationId}:${evaluation.type}`;
+  }
+
+  if (evaluation.rule_key) {
+    return `${stationId}:rule:${evaluation.rule_key}`;
+  }
+
+  return `${stationId}:${evaluation.type}`;
 }
 
 function readingTime(reading, fallback = new Date()) {
@@ -41,6 +52,7 @@ function createAlert(reading, evaluation, detectedAt) {
   const alert = {
     id: randomUUID(),
     station_id: reading.station_id,
+    rule_key: evaluation.rule_key ?? null,
     type: evaluation.type,
     severity: evaluation.severity,
     status: AlertStatus.ACTIVE,
@@ -56,12 +68,13 @@ function createAlert(reading, evaluation, detectedAt) {
   };
 
   alerts.push(alert);
-  activeAlertsByKey.set(activeAlertKey(alert.station_id, alert.type), alert);
+  activeAlertsByKey.set(activeAlertKey(reading.station_id, evaluation), alert);
   trimResolvedHistory();
   return alert;
 }
 
 function updateAlert(alert, reading, evaluation, detectedAt) {
+  alert.rule_key = evaluation.rule_key ?? null;
   alert.severity = evaluation.severity;
   alert.sensor = evaluation.sensor;
   alert.value = evaluation.value;
@@ -73,11 +86,11 @@ function updateAlert(alert, reading, evaluation, detectedAt) {
   return alert;
 }
 
-function resolveAlert(alert, reading, resolvedAt) {
+function resolveAlert(alert, reading, evaluation, resolvedAt) {
   alert.status = AlertStatus.RESOLVED;
   alert.reading_sequence = reading.sequence;
   alert.resolved_at = resolvedAt;
-  activeAlertsByKey.delete(activeAlertKey(alert.station_id, alert.type));
+  activeAlertsByKey.delete(activeAlertKey(reading.station_id, evaluation));
   return alert;
 }
 
@@ -87,13 +100,15 @@ function processTelemetryForAlerts(reading, options = {}) {
   }
 
   const processedAt = readingTime(reading, options.processedAt);
-  const evaluations = evaluateThreats(reading, options.thresholds);
+const evaluations = options.databaseRules !== undefined
+  ? evaluateDatabaseRules(reading, options.databaseRules)
+  : evaluateThreats(reading, options.thresholds);
   const changes = { created: [], updated: [], resolved: [] };
 
   for (const evaluation of evaluations) {
     if (!evaluation.evaluated) continue;
 
-    const key = activeAlertKey(reading.station_id, evaluation.type);
+    const key = activeAlertKey(reading.station_id, evaluation);
     const existing = activeAlertsByKey.get(key);
 
     if (evaluation.triggered) {
@@ -104,7 +119,31 @@ function processTelemetryForAlerts(reading, options = {}) {
       const target = existing ? changes.updated : changes.created;
       target.push(snapshot(changedAlert));
     } else if (existing) {
-      changes.resolved.push(snapshot(resolveAlert(existing, reading, processedAt)));
+      changes.resolved.push(snapshot(resolveAlert(existing, reading, evaluation, processedAt))
+);
+    }
+  }
+
+  // Resolve alerts whose database rules are no longer enabled or present.
+  if (options.databaseRules !== undefined) {
+    const currentRuleKeys = new Set(
+      evaluations.map((evaluation) => String(evaluation.rule_key))
+    );
+
+    for (const [key, alert] of activeAlertsByKey.entries()) {
+      if (
+        alert.station_id !== reading.station_id ||
+        alert.rule_key == null ||
+        currentRuleKeys.has(String(alert.rule_key))
+      ) {
+        continue;
+      }
+
+      alert.status = AlertStatus.RESOLVED;
+      alert.reading_sequence = reading.sequence;
+      alert.resolved_at = processedAt;
+      activeAlertsByKey.delete(key);
+      changes.resolved.push(snapshot(alert));
     }
   }
 

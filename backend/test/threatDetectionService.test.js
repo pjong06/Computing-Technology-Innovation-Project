@@ -192,3 +192,145 @@ test('invalid configured threshold is rejected', () => {
     /IOT_HEAVY_RAIN_PCT must be a number between 0 and 100/,
   );
 });
+
+test('database alert rules override prototype thresholds', () => {
+  const changes = processTelemetryForAlerts(
+    reading({
+      temperature_c: 36,
+      soil_moisture_pct: 50,
+      motion_detected: false,
+      distance_cm: 150,
+      rain_intensity_pct: 5,
+    }),
+    {
+      databaseRules: [
+        {
+          station_id: null,
+          rule_name: 'High temperature at 40 C',
+          metric: 'temperature_c',
+          comparison_operator: '>=',
+          threshold_value: 40,
+          severity: 'high',
+          is_enabled: true,
+        },
+      ],
+    },
+  );
+
+  assert.equal(changes.created.length, 0);
+  assert.deepEqual(getActiveAlerts(), []);
+});
+
+test('multiple database rules for the same sensor create separate alerts', () => {
+  const changes = processTelemetryForAlerts(
+    reading({ temperature_c: 42 }),
+    {
+      databaseRules: [
+        {
+          id: 'temperature-rule-35',
+          station_id: null,
+          rule_name: 'High temperature',
+          metric: 'temperature_c',
+          comparison_operator: '>=',
+          threshold_value: 35,
+          severity: 'high',
+          is_enabled: true,
+        },
+        {
+          id: 'temperature-rule-40',
+          station_id: null,
+          rule_name: 'Very high temperature',
+          metric: 'temperature_c',
+          comparison_operator: '>=',
+          threshold_value: 40,
+          severity: 'high',
+          is_enabled: true,
+        },
+      ],
+    },
+  );
+
+  assert.equal(changes.created.length, 2);
+  assert.equal(getActiveAlerts().length, 2);
+  assert.deepEqual(
+    new Set(changes.created.map((alert) => alert.message)),
+    new Set(['High temperature', 'Very high temperature']),
+  );
+});
+
+test('database rules resolve independently for the same sensor', () => {
+  const databaseRules = [
+    {
+      id: 'temperature-rule-35',
+      station_id: null,
+      rule_name: 'High temperature',
+      metric: 'temperature_c',
+      comparison_operator: '>=',
+      threshold_value: 35,
+      severity: 'high',
+      is_enabled: true,
+    },
+    {
+      id: 'temperature-rule-40',
+      station_id: null,
+      rule_name: 'Very high temperature',
+      metric: 'temperature_c',
+      comparison_operator: '>=',
+      threshold_value: 40,
+      severity: 'high',
+      is_enabled: true,
+    },
+  ];
+
+  const first = processTelemetryForAlerts(
+    reading({ temperature_c: 42 }),
+    { databaseRules },
+  );
+
+  assert.equal(first.created.length, 2);
+
+  const second = processTelemetryForAlerts(
+    reading({ temperature_c: 37, sequence: 2 }),
+    { databaseRules },
+  );
+
+  assert.equal(second.resolved.length, 1);
+  assert.equal(second.updated.length, 1);
+  assert.equal(getActiveAlerts().length, 1);
+  assert.equal(getActiveAlerts()[0].message, 'High temperature');
+});
+
+
+test('removing a database rule resolves its existing alert', () => {
+  const databaseRules = [
+    {
+      id: 'temperature-rule-35',
+      station_id: null,
+      rule_name: 'High temperature',
+      metric: 'temperature_c',
+      comparison_operator: '>=',
+      threshold_value: 35,
+      severity: 'high',
+      is_enabled: true,
+    },
+  ];
+
+  // First reading creates an active alert.
+  const first = processTelemetryForAlerts(
+    reading({ temperature_c: 42 }),
+    { databaseRules },
+  );
+
+  assert.equal(first.created.length, 1);
+  assert.equal(getActiveAlerts().length, 1);
+
+  // The rule is disabled and no longer returned by the database.
+  const second = processTelemetryForAlerts(
+    reading({ temperature_c: 42, sequence: 2 }),
+    { databaseRules: [] },
+  );
+
+  assert.equal(second.resolved.length, 1);
+  assert.equal(getActiveAlerts().length, 0);
+  assert.equal(second.resolved[0].rule_key, 'temperature-rule-35');
+});

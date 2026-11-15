@@ -64,13 +64,13 @@ function validateTelemetry(payload) {
   return reading;
 }
 
-function ingestTelemetry(payload, receivedAt = new Date()) {
+function ingestTelemetry(payload, receivedAt = new Date(), alertOptions = {}) {
   const reading = {
     ...validateTelemetry(payload),
     received_at: receivedAt.toISOString(),
   };
 
-processTelemetryForAlerts(reading);
+processTelemetryForAlerts(reading, alertOptions);
 
 latestByStation.set(reading.station_id, reading);
 recentReadings.push(reading);
