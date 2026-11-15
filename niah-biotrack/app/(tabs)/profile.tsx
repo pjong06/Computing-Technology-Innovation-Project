@@ -975,6 +975,34 @@ export default function ProfileScreen() {
           </View>
         )}
 
+        {/* Account Security - Signed-in accounts only */}
+
+        {!isGuest && (
+          <TouchableOpacity
+            style={styles.actionRowCard}
+            activeOpacity={0.8}
+            onPress={() => router.push('/change-password' as never)}
+          >
+            <View style={styles.actionRowLeft}>
+              <View style={styles.actionIconBox}>
+                <Ionicons
+                  name="key-outline"
+                  size={18}
+                  color="#213B2A"
+                />
+              </View>
+              <Text style={styles.actionRowTitle}>
+                Change password
+              </Text>
+            </View>
+            <Ionicons
+              name="chevron-forward"
+              size={18}
+              color="#76877B"
+            />
+          </TouchableOpacity>
+        )}
+
         {/* Actions */}
 
         {isGuest && (
@@ -1328,6 +1356,39 @@ const styles =
       color: '#8A998E',
       textAlign: 'center',
       marginTop: 8,
+    },
+
+    actionRowCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: '#FFFFFF',
+      borderRadius: 18,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      borderWidth: 1,
+      borderColor: '#E6ECE8',
+    },
+
+    actionRowLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+
+    actionIconBox: {
+      width: 34,
+      height: 34,
+      borderRadius: 10,
+      backgroundColor: '#EDF3EE',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+
+    actionRowTitle: {
+      fontSize: 14.5,
+      fontWeight: '700',
+      color: '#213B2A',
     },
 
     signUpBtn: {
