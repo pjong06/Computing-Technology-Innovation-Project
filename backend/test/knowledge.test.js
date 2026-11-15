@@ -411,7 +411,7 @@ test('officer photo upload rejects files larger than 5 MiB', async t => {
 
   assert.equal(response.status, 413);
   assert.deepEqual(response.body, {
-    message: 'Could not receive photo',
+    message: 'The photo must be 5 MB or smaller.',
   });
   assert.equal(calls.length, 0);
 });
@@ -436,7 +436,7 @@ test('officer photo upload rejects multiple files', async t => {
 
   assert.equal(response.status, 400);
   assert.deepEqual(response.body, {
-    message: 'Could not receive photo',
+    message: 'Upload one photo using the photo field, without extra fields.',
   });
   assert.equal(calls.length, 0);
 });
@@ -536,10 +536,68 @@ test('officer photo upload rejects additional text fields', async t => {
 
   assert.equal(response.status, 400);
   assert.deepEqual(response.body, {
-    message: 'Could not receive photo',
+    message: 'Upload one photo using the photo field, without extra fields.',
   });
   assert.equal(calls.length, 0);
 });
+
+test('species photos reject unsupported MIME types before database or Storage access', async t => {
+  const { request, calls } = await setup(t);
+  for (const type of ['text/plain', 'image/svg+xml', 'image/gif', 'application/octet-stream']) {
+    const form = new FormData();
+    form.append('photo', new Blob(['not an allowed image'], { type }), 'photo.bin');
+    const response = await request(`/species/${ID}/photos`, 'POST', form);
+    assert.equal(response.status, 400);
+    assert.match(response.body.message, /JPEG, PNG or WebP/);
+  }
+  assert.equal(calls.length, 0);
+});
+
+test('species photos reject spoofed types, mismatched formats and corrupt WebP without uploading', async t => {
+  const sharp = require('sharp');
+  const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: '#228844' } }).png().toBuffer();
+  const { request, calls, database } = await setup(t, { data: { id: ID, verification_status: 'approved' }, error: null });
+  database.storage = { from() { assert.fail('Rejected photos must never access Storage'); } };
+  for (const [type, buffer] of [
+    ['image/jpeg', Buffer.from('not an image')],
+    ['image/png', Buffer.from('not an image')],
+    ['image/webp', Buffer.from('RIFF0000WEBPinvalid')],
+    ['image/jpeg', png],
+  ]) {
+    const form = new FormData();
+    form.append('photo', new Blob([buffer], { type }), 'photo.jpg');
+    const response = await request(`/species/${ID}/photos`, 'POST', form);
+    assert.equal(response.status, 400);
+    assert.match(response.body.message, /Invalid photo|content must match/);
+  }
+  assert.equal(calls.some(call => call[0] === 'insert'), false);
+});
+
+for (const format of ['png', 'webp']) {
+  test(`officer can upload a real ${format} photo and store processed JPEG`, async t => {
+    const sharp = require('sharp');
+    const { request, calls, database } = await setup(t, { data: { id: ID, verification_status: 'approved' }, error: null });
+    const uploads = [];
+    database.storage = { from(bucket) {
+      assert.equal(bucket, 'species-media');
+      return { async upload(filePath, buffer, options) {
+        uploads.push({ filePath, buffer, options });
+        return { error: null };
+      } };
+    } };
+    const buffer = await sharp({ create: { width: 20, height: 20, channels: 3, background: '#228844' } })
+      .toFormat(format).toBuffer();
+    const form = new FormData();
+    form.append('photo', new Blob([buffer], { type: `image/${format}` }), `plant.${format}`);
+    const response = await request(`/species/${ID}/photos`, 'POST', form);
+    assert.equal(response.status, 201);
+    assert.equal(uploads.length, 1);
+    assert.equal(uploads[0].options.contentType, 'image/jpeg');
+    assert.equal(uploads[0].options.upsert, false);
+    assert.equal((await sharp(uploads[0].buffer).metadata()).format, 'jpeg');
+    assert.ok(calls.some(call => call[0] === 'insert'));
+  });
+}
 
 // ---- Officer species list: every state, with family and photos ----
 

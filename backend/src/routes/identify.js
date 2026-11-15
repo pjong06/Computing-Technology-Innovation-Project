@@ -1,5 +1,6 @@
 const express = require('express');
 const multer = require('multer');
+const sharp = require('sharp');
 
 const {
   identifyPlant,
@@ -52,12 +53,13 @@ const upload = multer({
     const allowedTypes = [
       'image/jpeg',
       'image/png',
+      'image/webp',
     ];
 
     if (!allowedTypes.includes(file.mimetype)) {
       callback(
         new Error(
-          'Only JPG and PNG plant images are allowed.'
+          'Only JPEG, PNG and WebP plant images are allowed.'
         )
       );
 
@@ -94,6 +96,12 @@ function hasValidImageSignature(file) {
     );
   }
 
+  if (file.mimetype === 'image/webp') {
+    return bytes.length >= 12 &&
+      bytes.toString('ascii', 0, 4) === 'RIFF' &&
+      bytes.toString('ascii', 8, 12) === 'WEBP';
+  }
+
   return false;
 }
 
@@ -113,7 +121,7 @@ function uploadImage(req, res, next) {
         if (
           error.code === 'LIMIT_FILE_SIZE'
         ) {
-          res.status(400).json({
+          res.status(413).json({
             success: false,
             message:
               'The photo must be 10 MB or smaller.',
@@ -123,8 +131,8 @@ function uploadImage(req, res, next) {
         }
 
         if (
-          error.code ===
-          'LIMIT_UNEXPECTED_FILE'
+          error.code === 'LIMIT_UNEXPECTED_FILE' ||
+          error.code === 'LIMIT_FILE_COUNT'
         ) {
           res.status(400).json({
             success: false,
@@ -138,7 +146,7 @@ function uploadImage(req, res, next) {
         res.status(400).json({
           success: false,
           message:
-            'The photo could not be uploaded.',
+            'Upload one photo using the image field, without extra fields.',
         });
 
         return;
@@ -174,22 +182,37 @@ router.post(
       return res.status(400).json({
         success: false,
         message:
-          'The file must be a valid JPG or PNG image.',
+          'The file must be a valid JPEG, PNG or WebP image.',
       });
+    }
+
+    // The identification provider expects JPEG/PNG. Decode WebP with a pixel
+    // bound and send a fresh JPEG, rather than forwarding an unsupported format.
+    let image = req.file;
+    if (image.mimetype === 'image/webp') {
+      try {
+        const buffer = await sharp(image.buffer, { limitInputPixels: 25_000_000 })
+          .rotate()
+          .resize(2000, 2000, { fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 85 }).toBuffer();
+        image = { buffer, mimetype: 'image/jpeg', originalname: 'plant.jpg' };
+      } catch {
+        return res.status(400).json({ success: false, message: 'The file must be a valid WebP image (maximum 25 megapixels).' });
+      }
     }
 
     try {
       const defaultFilename =
-        req.file.mimetype === 'image/png'
+        image.mimetype === 'image/png'
           ? 'plant.png'
           : 'plant.jpg';
 
       const suggestions =
         await identifyPlant({
-          buffer: req.file.buffer,
-          mimetype: req.file.mimetype,
+          buffer: image.buffer,
+          mimetype: image.mimetype,
           filename:
-            req.file.originalname ||
+            image.originalname ||
             defaultFilename,
         });
 
