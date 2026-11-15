@@ -4,7 +4,9 @@ drawMenu('map.html');
 
 let map = null;
 let markerLayer = null;
+let sensorMarkerLayer = null;
 let plants = [];
+let sensorStations = [];
 
 // Creates the Leaflet map with its three map styles: satellite, street and topographic.
 function createMap() {
@@ -35,6 +37,7 @@ function createMap() {
   satellite.addTo(map);
   L.control.layers({ 'Satellite': satellite, 'Street': street, 'Topographic': topo }).addTo(map);
   markerLayer = L.layerGroup().addTo(map);
+sensorMarkerLayer = L.layerGroup().addTo(map);
 }
 
 function escapePopupText(value) {
@@ -65,6 +68,44 @@ function makePopup(plant) {
     '<div>Status: ' + escapePopupText(plant.status || 'Not recorded') + '</div>' +
     '<div>Landmark: ' + escapePopupText(plant.landmark || 'Not recorded') + '</div>' +
     '<div>Last visit: ' + escapePopupText(displayVisitDate(plant.last_visit)) + '</div>';
+}
+
+function drawSensorMarkers() {
+  if (!map || !sensorMarkerLayer) return;
+
+  sensorMarkerLayer.clearLayers();
+
+  sensorStations.forEach(station => {
+    const point = [station.latitude, station.longitude];
+
+    const popup =
+      '<strong>IoT Sensor Station</strong>' +
+      '<div>Station: ' + escapePopupText(station.station_code) + '</div>' +
+      '<div>Status: ' + escapePopupText(station.status || 'Unknown') + '</div>' +
+      '<div>Location: ' + escapePopupText(station.location_note || 'Not recorded') + '</div>';
+
+    L.circleMarker(point, {
+      radius: 9,
+      color: '#ffffff',
+      weight: 2,
+      fillColor: '#2389da',
+      fillOpacity: 0.95
+    })
+      .bindPopup(popup)
+      .addTo(sensorMarkerLayer);
+  });
+}
+
+async function loadSensorStations() {
+  const result = await api('/officer/map/stations');
+
+  if (!result || !Array.isArray(result.data)) {
+    throw new Error('The sensor station response was invalid.');
+  }
+
+sensorStations = result.data;
+drawSensorMarkers();
+drawMarkers(true);
 }
 
 function fillSpeciesFilter() {
@@ -122,9 +163,21 @@ function drawMarkers(zoomToFit) {
 
   document.getElementById('map-message').textContent =
     'Showing ' + points.length + ' plant' + (points.length === 1 ? '' : 's') + ' on the map.';
-  if (zoomToFit && points.length > 0) {
-    map.fitBounds(L.latLngBounds(points), { padding: [50, 50], maxZoom: 16 });
+if (zoomToFit) {
+  const sensorPoints = sensorStations.map(station => [
+    station.latitude,
+    station.longitude
+  ]);
+
+  const allPoints = [...points, ...sensorPoints];
+
+  if (allPoints.length > 0) {
+    map.fitBounds(L.latLngBounds(allPoints), {
+      padding: [50, 50],
+      maxZoom: 16
+    });
   }
+}
 }
 
 function resetMapFilters() {
@@ -151,9 +204,19 @@ if (pageAllowed === false) {
     'The map could not load. Check your internet connection and refresh the page.';
 } else {
   createMap();
-  document.getElementById('map-message').textContent = 'Loading plant locations...';
+
+  document.getElementById('map-message').textContent =
+    'Loading plant and sensor locations...';
+
   loadPlants().catch(error => {
-    document.getElementById('map-message').textContent = 'Plant locations could not be loaded.';
+    document.getElementById('map-message').textContent =
+      'Plant locations could not be loaded.';
     showUnexpectedError(error);
+  });
+
+  loadSensorStations().catch(error => {
+    console.error('Sensor station locations could not be loaded:', error);
+    document.getElementById('map-message').textContent +=
+      ' Sensor station locations could not be loaded.';
   });
 }

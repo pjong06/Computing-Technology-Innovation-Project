@@ -62,4 +62,42 @@ router.get("/plants", async (req, res) => {
     }
 });
 
+
+router.get("/stations", async (req, res) => {
+    try {
+        const { data, error } = await req.supabase
+            .from("sensor_stations")
+            .select("id, station_code, station_status, latitude, longitude, location_note")
+            .limit(1000);
+
+        if (error) throw error;
+
+        const stations = (data || [])
+            .filter(station =>
+                Number.isFinite(station.latitude) &&
+                Number.isFinite(station.longitude) &&
+                station.latitude >= -90 &&
+                station.latitude <= 90 &&
+                station.longitude >= -180 &&
+                station.longitude <= 180 &&
+                !(station.latitude === 0 && station.longitude === 0)
+            )
+            .map(station => ({
+                id: station.id,
+                station_code: station.station_code,
+                status: station.station_status,
+                latitude: station.latitude,
+                longitude: station.longitude,
+                location_note: station.location_note,
+            }));
+
+        return res.json({ data: stations });
+    } catch (error) {
+        console.error("Map stations error:", error);
+        return res.status(500).json({
+            message: "Could not load sensor station locations",
+        });
+    }
+});
+
 module.exports = router;
