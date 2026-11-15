@@ -1,4 +1,5 @@
 import { apiFetch, ApiError } from '../api/client';
+import { parseTagCode } from '../utils/tagCode';
 import {
   IdentificationStatus,
   RecordStatus,
@@ -193,7 +194,10 @@ interface PublicPlantResponse {
 }
 
 export async function lookupPublicTag(rawTag: string): Promise<PublicTagLookupResult> {
-  const tagCode = rawTag.trim();
+  const tagCode = parseTagCode(rawTag);
+  if (tagCode === null) {
+    return { status: 'not-found', tagCode: rawTag.trim() };
+  }
   try {
     // auth: false — visitors have no login; the route is public and rate-limited.
     const response = await apiFetch<PublicPlantResponse>(
