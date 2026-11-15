@@ -96,6 +96,18 @@ function initialPhotos(record: PlantRecord | undefined): ImagePicker.ImagePicker
   return [];
 }
 
+function formatRouteDistance(meters: number): string {
+  if (meters >= 1000) {
+    return `${(meters / 1000).toFixed(2)} km`;
+  }
+  return `${Math.round(meters)} m`;
+}
+
+function formatRouteDuration(seconds: number): string {
+  const mins = Math.max(1, Math.round(seconds / 60));
+  return `${mins} min`;
+}
+
 interface GpsFix {
   latitude: number;
   longitude: number;
@@ -109,10 +121,43 @@ export default function NewRecordScreen() {
   const router = useRouter();
   const blocked = useStaffOnly();
   const me = useProfileStore((state) => state.me);
-  const { editId, speciesId: preselectedSpeciesId } = useLocalSearchParams<{
+  const {
+    editId,
+    speciesId: preselectedSpeciesId,
+    latitude: paramLatitude,
+    longitude: paramLongitude,
+    accuracy: paramAccuracy,
+    routeId: paramRouteId,
+    distanceMeters: paramDistanceMeters,
+    durationSeconds: paramDurationSeconds,
+  } = useLocalSearchParams<{
     editId?: string;
     speciesId?: string;
+    latitude?: string;
+    longitude?: string;
+    accuracy?: string;
+    routeId?: string;
+    distanceMeters?: string;
+    durationSeconds?: string;
   }>();
+
+  const parsedLat = paramLatitude !== undefined ? Number(paramLatitude) : NaN;
+  const parsedLng = paramLongitude !== undefined ? Number(paramLongitude) : NaN;
+  const parsedAcc =
+    paramAccuracy !== undefined && paramAccuracy !== ''
+      ? Number(paramAccuracy)
+      : null;
+  const hasParamGps = Number.isFinite(parsedLat) && Number.isFinite(parsedLng);
+
+  const parsedDistanceM =
+    paramDistanceMeters !== undefined && paramDistanceMeters !== ''
+      ? Number(paramDistanceMeters)
+      : NaN;
+  const parsedDurationSec =
+    paramDurationSeconds !== undefined && paramDurationSeconds !== ''
+      ? Number(paramDurationSeconds)
+      : NaN;
+  const hasAttachedRoute = Boolean(paramRouteId) || Number.isFinite(parsedDistanceM);
 
   const existingRecord = useRecordStore((state) =>
     editId ? state.records.find((r) => r.id === editId) : undefined
@@ -120,6 +165,7 @@ export default function NewRecordScreen() {
   const addRecord = useRecordStore((state) => state.addRecord);
   const updateRecord = useRecordStore((state) => state.updateRecord);
   const syncRecord = useRecordStore((state) => state.syncRecord);
+  const linkRouteToPlant = useRecordStore((state) => state.linkRouteToPlant);
   const allSpecies = useSpeciesStore((state) => state.species);
 
   const isEditing = Boolean(existingRecord);
@@ -134,14 +180,23 @@ export default function NewRecordScreen() {
   const [morphology, setMorphology] = useState(existingRecord?.morphology ?? '');
   const [locationName, setLocationName] = useState(existingRecord?.locationName ?? '');
 
-  const [gpsFix, setGpsFix] = useState<GpsFix | null>(
+  const initialGpsFix: GpsFix | null =
     existingRecord?.latitude !== undefined && existingRecord?.longitude !== undefined
-      ? { latitude: existingRecord.latitude, longitude: existingRecord.longitude, accuracyM: existingRecord.gpsAccuracyM ?? null }
-      : null
-  );
-  const [gpsStatus, setGpsStatus] = useState<GpsStatus>(
-    existingRecord?.latitude !== undefined && existingRecord?.longitude !== undefined ? 'ready' : 'acquiring'
-  );
+      ? {
+          latitude: existingRecord.latitude,
+          longitude: existingRecord.longitude,
+          accuracyM: existingRecord.gpsAccuracyM ?? null,
+        }
+      : hasParamGps
+      ? {
+          latitude: parsedLat,
+          longitude: parsedLng,
+          accuracyM: parsedAcc !== null && Number.isFinite(parsedAcc) ? parsedAcc : null,
+        }
+      : null;
+
+  const [gpsFix, setGpsFix] = useState<GpsFix | null>(initialGpsFix);
+  const [gpsStatus, setGpsStatus] = useState<GpsStatus>(initialGpsFix ? 'ready' : 'acquiring');
   const [gpsError, setGpsError] = useState('');
   const [errors, setErrors] = useState<FieldErrors>({});
 
@@ -439,6 +494,13 @@ export default function NewRecordScreen() {
       submittedForReview: false,
     };
 
+    const routeLength = Number.isFinite(parsedDistanceM)
+      ? formatRouteDistance(parsedDistanceM)
+      : existingRecord?.routeLength;
+    const walkingTime = Number.isFinite(parsedDurationSec)
+      ? formatRouteDuration(parsedDurationSec)
+      : existingRecord?.walkingTime;
+
     const recordData = {
       scientificName: approvedSpecies?.scientific_name ?? '',
       speciesId: approvedSpecies?.id ?? null,
@@ -452,6 +514,8 @@ export default function NewRecordScreen() {
       longitude: gpsFix.longitude,
       gpsAccuracyM: gpsFix.accuracyM,
       gpsCoordination: formatCoordinates(gpsFix.latitude, gpsFix.longitude, gpsFix.accuracyM),
+      routeLength,
+      walkingTime,
       photoUris: photoList,
       photoMeta,
       photoEntries,
@@ -471,6 +535,10 @@ export default function NewRecordScreen() {
     if (!saved) {
       Toast.show({ type: 'error', text1: 'Record not updated', text2: 'Only local drafts can be edited.' });
       return;
+    }
+
+    if (paramRouteId) {
+      await linkRouteToPlant(paramRouteId, saved.id);
     }
 
     if (existingRecord) {
@@ -762,6 +830,21 @@ export default function NewRecordScreen() {
 
         <Text style={styles.fieldLabel}>GPS coordinates *</Text>
         <View style={[styles.gpsCard, (gpsStatus === 'timeout' || gpsStatus === 'unavailable') && styles.gpsCardError]}>
+          {hasAttachedRoute && (
+            <View style={styles.routeAttachedPill}>
+              <Ionicons name="navigate-outline" size={14} color="#2D6A4F" />
+              <Text style={styles.routeAttachedText}>
+                Transect attached
+                {Number.isFinite(parsedDistanceM)
+                  ? ` · ${formatRouteDistance(parsedDistanceM)}`
+                  : ''}
+                {Number.isFinite(parsedDurationSec)
+                  ? ` · ${formatRouteDuration(parsedDurationSec)}`
+                  : ''}
+              </Text>
+            </View>
+          )}
+
           {gpsStatus === 'acquiring' && (
             <>
               <View style={styles.loadingRow}>
@@ -992,6 +1075,22 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   gpsCardError: { borderColor: '#F0C2C2', backgroundColor: '#FFF8F8' },
+  routeAttachedPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    backgroundColor: '#E8F5E9',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    marginBottom: 10,
+  },
+  routeAttachedText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#2D6A4F',
+  },
   gpsHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
   gpsStatusBadge: { color: '#215A36', fontWeight: '700', fontSize: 12 },
   gpsStatusPending: { color: '#213B2A', fontWeight: '700', fontSize: 13 },
