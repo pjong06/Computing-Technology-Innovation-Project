@@ -205,8 +205,8 @@ const USERS_KEY = 'niah_users';
 const EDIT_KEY = 'niah_editing';
 const TOAST_KEY = 'niah_toast';
 const SESSION_KEY = 'niah_session';
-// Suspended botanists are told to contact the officer at this email.
-const OFFICER_CONTACT_EMAIL = 'georgetanyonghan@gmail.com';
+const SUSPENDED_ACCOUNT_MESSAGE =
+  'Your account is suspended. Contact your system administrator.';
 
 // Turns the text of an SVG drawing into an image address that an <img> tag can show.
 function svgPicture(svg) {
@@ -696,7 +696,7 @@ function findByScientificName(list, scientificName) {
   return null;
 }
 
-// Makes a username from the start of an email, like "georgetanyonghan@gmail.com" -> "george".
+// Makes a username from the part of an email before the @ sign.
 // A number is added if another user already has it.
 function makeUsernameFromEmail(email, list) {
   let base = email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '');
@@ -880,7 +880,7 @@ function tellIfSuspended() {
   }
   const user = findUserByEmail(session.email);
   if (user !== null && user.active === false) {
-    rememberToast('Your account is suspended. Contact the officer at ' + OFFICER_CONTACT_EMAIL);
+    rememberToast(SUSPENDED_ACCOUNT_MESSAGE);
   }
 }
 
@@ -1096,9 +1096,9 @@ function readGps(text) {
   if (parts.length !== 2) {
     return null;
   }
-  const lat = parseFloat(parts[0]);
-  const lng = parseFloat(parts[1]);
-  if (isNaN(lat) || isNaN(lng)) {
+  const lat = Number.parseFloat(parts[0]);
+  const lng = Number.parseFloat(parts[1]);
+  if (Number.isNaN(lat) || Number.isNaN(lng)) {
     return null;
   }
   return [lat, lng];

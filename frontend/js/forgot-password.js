@@ -1,4 +1,33 @@
 // Send 6 digit verification code
+function isValidResetEmail(email) {
+    const atIndex = email.indexOf('@');
+    if (
+        atIndex <= 0 ||
+        atIndex !== email.lastIndexOf('@') ||
+        atIndex >= email.length - 2
+    ) {
+        return false;
+    }
+
+    const dotIndex = email.indexOf('.', atIndex + 1);
+    if (dotIndex <= atIndex + 1 || dotIndex >= email.length - 1) {
+        return false;
+    }
+
+    for (let index = 0; index < email.length; index++) {
+        const character = email[index];
+        if (character === '@') {
+            if (index !== atIndex) {
+                return false;
+            }
+        } else if (character.trim() === '') {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 async function sendResetEmail() {
 
     const email = document.getElementById('reset-email').value.trim();
@@ -12,7 +41,7 @@ async function sendResetEmail() {
     }
 
     // Check email format
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (!isValidResetEmail(email)) {
         showMessage('Please enter a valid email address.', 'error');
         return;
     }

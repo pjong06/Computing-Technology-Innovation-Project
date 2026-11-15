@@ -103,7 +103,7 @@ function pdfColor(hex) {
   const parts = [];
   for (let i = 0; i < 3; i++) {
     const twoLetters = hex.slice(1 + i * 2, 3 + i * 2);
-    const number = parseInt(twoLetters, 16) / 255;
+    const number = Number.parseInt(twoLetters, 16) / 255;
     parts.push(number.toFixed(3));
   }
   return parts.join(' ');
