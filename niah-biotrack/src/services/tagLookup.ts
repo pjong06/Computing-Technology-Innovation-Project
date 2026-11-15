@@ -154,8 +154,7 @@ export function describeTagLookup(result: Exclude<TagLookupResult, { status: 'on
 
 // ---- Visitors (not signed in) ----
 
-// What a visitor's scan found. Uses the public route, which only returns approved
-// plants, so a plant that exists but isn't approved yet looks the same as "not found".
+// Public lookup returns plant details only after approval.
 export type PublicTagLookupResult =
   | {
       status: 'found';
@@ -169,6 +168,7 @@ export type PublicTagLookupResult =
       conservationStatus: string | null;
       culturalSignificance: string | null;
     }
+  | { status: 'pending'; tagCode: string; message: string }
   | { status: 'not-found'; tagCode: string }
   | { status: 'offline'; tagCode: string }
   | { status: 'error'; tagCode: string; message: string };
@@ -207,6 +207,9 @@ export async function lookupPublicTag(rawTag: string): Promise<PublicTagLookupRe
     };
   } catch (error) {
     if (error instanceof ApiError) {
+      if (error.status === 404 && error.code === 'plant_pending_verification') {
+        return { status: 'pending', tagCode, message: error.message };
+      }
       if (error.status === 404) return { status: 'not-found', tagCode };
       if (error.status === 0) return { status: 'offline', tagCode };
       return { status: 'error', tagCode, message: error.message };
@@ -221,6 +224,8 @@ export function describePublicTagLookup(result: Exclude<PublicTagLookupResult, {
   message: string;
 } {
   switch (result.status) {
+    case 'pending':
+      return { title: 'Being verified', message: result.message };
     case 'not-found':
       return {
         title: 'Tag not found',

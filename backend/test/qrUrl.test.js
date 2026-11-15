@@ -6,7 +6,7 @@ process.env.SUPABASE_URL = 'https://example.supabase.co';
 process.env.SUPABASE_PUBLISHABLE_KEY = 'test-key';
 const { buildPublicPlantUrl, generatePlantQR, QrConfigurationError } = require('../src/services/qrService');
 const { generateQRBatchPDF } = require('../src/services/qrPdfService');
-const { createPublicPlantsRouter } = require('../src/routes/publicPlants');
+const { createPublicPlantsRouter, createPublicQrHandler } = require('../src/routes/publicPlants');
 const { createQrBatchRouter } = require('../src/routes/qrBatch');
 const { requireRole } = require('../src/middleware/auth');
 const TAG = 'NIAH-PLT-00001';
@@ -144,7 +144,7 @@ test('visitor requests are rate limited', async t => {
   for (let i = 0; i < 60; i++) assert.equal((await fetch(url + '/p/' + TAG)).status, 404);
   const response = await fetch(url + '/p/' + TAG);
   assert.equal(response.status, 429); assert.ok(response.headers.get('retry-after'));
-  assert.equal(calls.length, 60);
+  assert.equal(calls.length, 120);
 });
 
 async function batchSetup(t, role, plants, generatePDF) {
@@ -199,4 +199,25 @@ test('DEMO records are explicitly distinguished from real research and officer r
   assert.equal(response.status, 200);
   assert.match(html, /Demonstration record/);
   assert.match(html, /does not represent officer review/);
+});
+
+test('pending tag discloses only verification status on web and API', async t => {
+  const client = { async rpc(fn) {
+    return { data: fn === 'public_plant_tag_is_pending' ? true : [], error: null };
+  } };
+  const router = createPublicPlantsRouter({ client });
+  router.get('/api/public/plants/by-qr', createPublicQrHandler(client));
+  const url = await start(t, router);
+  const response = await fetch(url + '/p/' + TAG);
+  assert.equal(response.status, 404);
+  const html = await response.text();
+  assert.match(html, /Being verified/);
+  assert.match(html, /This plant is being verified by Sarawak Forestry/);
+  assert.doesNotMatch(html, new RegExp(TAG));
+  const api = await fetch(url + '/api/public/plants/by-qr?code=' + TAG);
+  assert.equal(api.status, 404);
+  assert.deepEqual(await api.json(), {
+    code: 'plant_pending_verification',
+    message: 'This plant is being verified by Sarawak Forestry. Check back later.',
+  });
 });
