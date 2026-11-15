@@ -6,7 +6,7 @@ const path = require('node:path');
 
 const migrationPath = path.resolve(
   __dirname,
-  '../../supabase/migrations/20261115090000_unify_iot_alert_rules.sql',
+  '../../supabase/migrations/20261115090001_unify_iot_alert_rules.sql',
 );
 
 const sql = fs.readFileSync(migrationPath, 'utf8');
