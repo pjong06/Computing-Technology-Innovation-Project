@@ -1,12 +1,23 @@
 const express = require('express');
 const multer = require('multer');
+const { requireAuth, requireRole } = require('../middleware/auth');
+const { createIdentifyRateLimit } = require('../middleware/identifyRateLimit');
 
 const {
   identifyPlant,
   PlantAiError,
 } = require('../services/plantAiService');
 
+function createIdentifyRouter({
+  ipLimit = 20, userLimit = 10, windowMs = 60000, now = Date.now,
+} = {}) {
 const router = express.Router();
+const ipLimiter = createIdentifyRateLimit({
+  limit: ipLimit, windowMs, now, keyFor: req => req.ip || req.socket.remoteAddress,
+});
+const userLimiter = createIdentifyRateLimit({
+  limit: userLimit, windowMs, now, keyFor: req => req.user.id,
+});
 
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
 
@@ -157,6 +168,10 @@ function uploadImage(req, res, next) {
 
 router.post(
   '/',
+  ipLimiter,
+  requireAuth,
+  requireRole('botanist', 'officer'),
+  userLimiter,
   limitConcurrentIdentifications,
   uploadImage,
   async (req, res) => {
@@ -231,4 +246,8 @@ router.post(
   }
 );
 
-module.exports = router;
+return router;
+}
+
+module.exports = createIdentifyRouter();
+module.exports.createIdentifyRouter = createIdentifyRouter;

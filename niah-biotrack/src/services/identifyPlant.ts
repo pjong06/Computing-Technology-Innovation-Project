@@ -1,6 +1,7 @@
 import type * as ImagePicker from 'expo-image-picker';
 import { fetch } from 'expo/fetch';
 import { File } from 'expo-file-system';
+import { supabase } from '../lib/supabase';
 
 export interface SpeciesSuggestion {
   rank: number;
@@ -149,11 +150,18 @@ export async function identifyPlant(
 
   let response;
 
+  const { data, error } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (error || !token) {
+    throw new Error('Please sign in before identifying a plant.');
+  }
+
   try {
     response = await fetch(
       `${API_BASE_URL}/api/identify`,
       {
         method: 'POST',
+        headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
         body: formData,
         signal,
       }
