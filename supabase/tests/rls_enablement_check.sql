@@ -1,4 +1,4 @@
--- Owner-run, rollback-only check of this exact Task 6 migration body.
+-- Owner-run, rollback-only check of this equivalent Task 6 enablement commands.
 -- No real-account login or policy correctness acceptance is claimed.
 BEGIN;
 SET LOCAL lock_timeout = '3s';
@@ -10,6 +10,7 @@ DECLARE
     before_access text;
     after_access text;
     pass integer;
+    target_table text;
 BEGIN
     SELECT md5(coalesce(jsonb_agg(to_jsonb(p) ORDER BY tablename, policyname), '[]'::jsonb)::text)
     INTO before_policies FROM pg_policies p WHERE schemaname = 'public';
@@ -22,33 +23,35 @@ BEGIN
     WHERE n.nspname='public' AND c.relkind IN ('r','p');
 
     FOR pass IN 1..2 LOOP
-        EXECUTE $migration$
-ALTER TABLE public.alert_camera_evidence ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.alert_rules ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.alerts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.observation_media ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.observation_reviews ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.observations ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.park_visitors ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.plant_edit_requests ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.plant_media ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.plant_observation_history ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.plants ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.sensor_readings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.sensor_stations ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.species ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.species_media ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.species_reference_photos ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.sync_events ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.tag_reservation_batches ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.tag_reservations ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.taxonomy ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.website_plant_migration_map ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.website_species ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.website_users ENABLE ROW LEVEL SECURITY;
-$migration$;
+        FOREACH target_table IN ARRAY ARRAY[
+            'alert_camera_evidence',
+            'alert_rules',
+            'alerts',
+            'audit_logs',
+            'observation_media',
+            'observation_reviews',
+            'observations',
+            'park_visitors',
+            'plant_edit_requests',
+            'plant_media',
+            'plant_observation_history',
+            'plants',
+            'profiles',
+            'sensor_readings',
+            'sensor_stations',
+            'species',
+            'species_media',
+            'species_reference_photos',
+            'sync_events',
+            'tag_reservation_batches',
+            'tag_reservations',
+            'taxonomy',
+            'website_plant_migration_map',
+            'website_species',
+            'website_users'
+        ] LOOP
+            EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', target_table);
+        END LOOP;
     END LOOP;
     IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
         WHERE n.nspname='public' AND c.relkind IN ('r','p') AND NOT c.relrowsecurity) THEN
@@ -69,4 +72,4 @@ $migration$;
 END;
 $check$;
 ROLLBACK;
-SELECT 'PASS' AS result, 'Exact enablement body executed twice; policies, table/column grants, owners and FORCE RLS unchanged; all changes rolled back' AS scope;
+SELECT 'PASS' AS result, 'Equivalent enablement commands executed twice; policies, table/column grants, owners and FORCE RLS unchanged; all changes rolled back' AS scope;

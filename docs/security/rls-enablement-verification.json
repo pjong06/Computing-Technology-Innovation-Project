@@ -15,5 +15,10 @@
     "policies": 78,
     "migration_formally_applied": false
   },
+  "refactored_test": {
+    "result": "PASS",
+    "method": "Dynamic ALTER TABLE generation; local check confirmed all 25 names match the migration exactly and contain no duplicates",
+    "live_retest": "Executed equivalent commands twice; policy/table and column grant/owner/FORCE RLS summaries unchanged; rolled back"
+  },
   "scope": "Catalog and migration idempotence only; no real-user policy authorization acceptance; no permanent schema change or user data writes."
 }

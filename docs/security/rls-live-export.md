@@ -138,6 +138,7 @@ View 不适用表级 ENABLE RLS。public_species 仅投影 approved species，�
 | --- | --- |
 | 线上只读导出 | 完成；配置为查询时快照 |
 | 幂等预演 | PASS；同一 migration body 连续执行两次，policy／表与列 grants／owner／FORCE RLS 摘要不变；全部回滚 |
+| 去重复复测 | PASS；当前脚本动态生成命令，25 个表名与 migration 逐项一致；执行两次并回滚，权限摘要不变 |
 | 独立复查 | 仍为 25/25 RLS ON、78 policies；正式 migration 未应用 |
 | 正式应用 | 未执行；交团队 review |
 | 真实账号行为 | 不包含在本次配置导出中 |
