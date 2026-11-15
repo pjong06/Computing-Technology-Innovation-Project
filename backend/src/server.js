@@ -120,46 +120,13 @@ app.get('/api/health/supabase', async (_req, res) => {
 
 // PUBLIC PLANT QR CODE LOOKUP
 // Return approved public plant information for a QR code.
-const { createQrLimiter, publicQrData } = require('./middleware/publicQrProtection');
+const { createQrLimiter } = require('./middleware/publicQrProtection');
 const qrLimiter = createQrLimiter({
   limit: Number(process.env.QR_RATE_LIMIT || 60),
   windowMs: Number(process.env.QR_RATE_WINDOW_MS || 60000),
 });
 
-app.get('/api/public/plants/by-qr', qrLimiter, async (req, res) => {
-  const qrCode =
-    typeof req.query.code === 'string'
-      ? req.query.code.trim()
-      : '';
-
-  if (!qrCode || qrCode.length > 120) {
-    return res.status(400).json({
-      message: 'Valid QR code is required',
-    });
-  }
-
-  const { data, error } = await publicClient.rpc(
-    'public_plant_by_qr_v2',
-    { p_qr: qrCode }
-  );
-
-  if (error) {
-    console.error('Public QR lookup error:', error);
-
-    return res.status(500).json({
-      message: 'Could not load plant information',
-    });
-  }
-
-  if (!data || data.length === 0) {
-    return res.status(404).json({
-      message: 'Approved plant not found',
-    });
-  }
-
-  res.set('Cache-Control', 'no-store');
-  return res.json({ data: publicQrData(data[0]) });
-});
+app.get('/api/public/plants/by-qr', qrLimiter, publicPlantRoutes.createPublicQrHandler(publicClient));
 
 // CURRENT USER INFORMATION
 
