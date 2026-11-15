@@ -1,0 +1,89 @@
+{
+  "project_id": "yzhxjzbzslnveskkwvfy",
+  "scope": "Task 4 database trigger fix; live DDL authorized by user",
+  "migration": {
+    "version": "20261115171620",
+    "name": "suspend_profile_on_website_user_delete"
+  },
+  "before": {
+    "website_count": 14,
+    "profile_count": 28,
+    "auth_count": 28,
+    "delete_trigger_count": 2,
+    "auth_hard_delete": true
+  },
+  "dry_run": {
+    "result": "PASS",
+    "transaction": "rolled back",
+    "method": "migration plus rollback-only fixture SQL; assertions completed without exception"
+  },
+  "after_application_test": {
+    "result": "PASS",
+    "method": "same rollback-only fixture SQL with simulated authenticated Officer claims; not a real JWT session",
+    "assertions": [
+      "Officer can delete target website row",
+      "matching profile retained with suspended status",
+      "Auth user retained",
+      "unrelated profile remains active",
+      "Officer/self deletion denied",
+      "unmatched profile deletion rejected atomically"
+    ],
+    "returned_configuration": [
+      {
+        "tgname": "website_users_delete_login",
+        "tgenabled": "O",
+        "definition": "CREATE TRIGGER website_users_delete_login AFTER DELETE ON public.website_users FOR EACH ROW EXECUTE FUNCTION website_users_delete_login()"
+      }
+    ]
+  },
+  "verification": {
+    "counts": {
+      "auth": 28,
+      "website": 14,
+      "profiles": 28,
+      "fixture_auth": 0,
+      "fixture_website": 0,
+      "fixture_profiles": 0
+    },
+    "policy": [
+      {
+        "cmd": "ALL",
+        "qual": "(EXISTS ( SELECT 1\n   FROM profiles p\n  WHERE ((p.id = auth.uid()) AND (p.role = 'officer'::text) AND (p.account_status = 'active'::text))))",
+        "roles": [
+          "authenticated"
+        ],
+        "policyname": "only the officer can use website users",
+        "with_check": "(EXISTS ( SELECT 1\n   FROM profiles p\n  WHERE ((p.id = auth.uid()) AND (p.role = 'officer'::text) AND (p.account_status = 'active'::text))))"
+      }
+    ],
+    "migration": {
+      "name": "suspend_profile_on_website_user_delete",
+      "version": "20261115171620"
+    },
+    "update_sync": "CREATE TRIGGER website_users_update_profile AFTER UPDATE ON public.website_users FOR EACH ROW WHEN (((old.role IS DISTINCT FROM new.role) OR (old.active IS DISTINCT FROM new.active))) EXECUTE FUNCTION sync_website_user_to_profile()",
+    "direct_execute": {
+      "anon": false,
+      "authenticated": false
+    },
+    "delete_triggers": [
+      {
+        "name": "website_users_delete_login",
+        "enabled": "O",
+        "definition": "CREATE TRIGGER website_users_delete_login AFTER DELETE ON public.website_users FOR EACH ROW EXECUTE FUNCTION website_users_delete_login()"
+      }
+    ],
+    "suspension_function": "CREATE OR REPLACE FUNCTION public.website_users_delete_login()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO ''\nAS $function$\nDECLARE\n    target_role text;\nBEGIN\n    -- Use the immutable account ID, never an email supplied by the portal.\n    SELECT p.role INTO target_role\n    FROM public.profiles AS p\n    WHERE p.id = OLD.id\n    FOR UPDATE;\n\n    IF NOT FOUND THEN\n        RAISE EXCEPTION 'Cannot remove website user without a matching profile'\n            USING ERRCODE = '23503';\n    END IF;\n\n    -- Match the portal's Officer protection, using the authoritative profile role.\n    IF target_role = 'officer' OR OLD.id = auth.uid() THEN\n        RAISE EXCEPTION 'Officer and own accounts cannot be removed'\n            USING ERRCODE = '42501';\n    END IF;\n\n    UPDATE public.profiles\n    SET account_status = 'suspended', updated_at = now()\n    WHERE id = OLD.id;\n\n    -- No exception swallowing: if suspension fails, the DELETE also rolls back.\n    RETURN OLD;\nEND;\n$function$\n"
+  },
+  "cleanup": {
+    "website_count": 14,
+    "profile_count": 28,
+    "auth_count": 28,
+    "fixture_auth": 0,
+    "fixture_profiles": 0,
+    "fixture_website": 0
+  },
+  "remaining": [
+    "Real JWT old-session protected API 403 acceptance not run",
+    "Local migration and evidence not committed or pushed"
+  ]
+}
