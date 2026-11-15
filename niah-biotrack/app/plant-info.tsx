@@ -135,6 +135,11 @@ export default function PlantInfoScreen() {
             <Text style={[styles.badgeText, { color: statusColors.text }]}>{status.label}</Text>
           </View>
           <Text style={styles.body}>{status.meaning}</Text>
+          {scanned?.dataSource === 'inaturalist' ? (
+            <Text style={styles.body}>
+              Source: iNaturalist observation by {scanned.sourceObserver || 'Unknown'} ({scanned.sourceLicence || 'Unknown'})
+            </Text>
+          ) : null}
 
           {facts.description ? (
             <>

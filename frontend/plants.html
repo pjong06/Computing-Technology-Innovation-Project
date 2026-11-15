@@ -26,6 +26,7 @@ main.wide { max-width: 1500px; }
 .plant-title { margin: 0 0 4px; font-size: 17px; }
 .plant-sub, .plant-meta { color: var(--mute); font-size: 13px; overflow-wrap: anywhere; }
 .plant-meta { margin-top: 3px; }
+.source-badge { display: inline-block; margin-top: 6px; padding: 3px 7px; border-radius: 999px; background: var(--mint); color: var(--ink); font-size: 11px; font-weight: 700; }
 .plant-status { padding: 4px 10px; border-radius: 999px; background: var(--mint); color: var(--ink); font-size: 12px; font-weight: 700; white-space: nowrap; }
 .plant-status.approved { background: var(--ok); color: var(--okt); }
 .plant-status.pending { background: var(--wa); color: var(--wat); }
@@ -74,6 +75,11 @@ main.wide { max-width: 1500px; }
     </select>
     <select id="registered-by-filter" aria-label="Filter by registered by">
       <option value="">All registered by</option>
+    </select>
+    <select id="source-filter" aria-label="Filter by source">
+      <option value="">Source: All</option>
+      <option value="field">Field</option>
+      <option value="inaturalist">iNaturalist</option>
     </select>
     <button class="btn" type="submit">Search</button>
   </form>

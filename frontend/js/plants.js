@@ -59,6 +59,13 @@ function makePlantRow(plant) {
   speciesName.textContent = plant.species?.common_name || 'No common name recorded';
   info.appendChild(speciesName);
 
+  if (plant.data_source === 'inaturalist') {
+    const sourceBadge = document.createElement('span');
+    sourceBadge.className = 'source-badge';
+    sourceBadge.textContent = 'iNaturalist';
+    info.appendChild(sourceBadge);
+  }
+
   const meta = document.createElement('div');
   meta.className = 'plant-meta';
   meta.textContent = 'Tag: ' + (plant.tag_code || 'No tag') +
@@ -107,11 +114,13 @@ async function loadPlants() {
   const status = byId('plant-status-filter').value;
   const conservation = byId('conservation-filter').value;
   const registeredBy = byId('registered-by-filter').value;
+  const source = byId('source-filter').value;
   if (search) params.set('search', search);
   if (species) params.set('species_id', species);
   if (status) params.set('plant_status', status);
   if (conservation) params.set('conservation_status', conservation);
   if (registeredBy) params.set('registered_by', registeredBy);
+  if (source) params.set('source', source);
 
   try {
     const result = await api('/officer/plants?' + params.toString());
@@ -180,6 +189,14 @@ async function loadFilterOptions() {
       item => item.name,
       ''
     );
+    replaceOptions(
+      byId('source-filter'),
+      'Source: All',
+      facets.data.data_sources || [],
+      value => value,
+      value => value === 'inaturalist' ? 'iNaturalist' : 'Field',
+      ''
+    );
   } catch (error) {
     showToast('Some plant filters could not be loaded. ' + (error.message || 'Please refresh.'));
   }
@@ -193,7 +210,7 @@ if (pageAllowed === false) {
     currentPage = 1;
     void loadPlants();
   });
-  ['plant-species', 'plant-status-filter', 'conservation-filter', 'registered-by-filter']
+  ['plant-species', 'plant-status-filter', 'conservation-filter', 'registered-by-filter', 'source-filter']
     .forEach(id => byId(id).addEventListener('change', () => {
       currentPage = 1;
       void loadPlants();

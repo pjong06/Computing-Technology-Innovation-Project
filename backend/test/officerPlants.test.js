@@ -76,6 +76,9 @@ test('officer plant list applies filters, search, newest sorting and paging with
         species_id: SPECIES_ID,
         location_description: 'Near the trail',
         plant_status: 'approved',
+        data_source: 'inaturalist',
+        source_observer: 'Aina Rahman',
+        source_licence: 'CC-BY',
         registered_by: registeredById,
         registered_at: '2026-11-02T10:00:00Z',
       }],
@@ -111,6 +114,9 @@ test('officer plant list applies filters, search, newest sorting and paging with
   assert.equal(result.body.data[0].tag_code, 'NIAH-PLT-00001');
   assert.equal(result.body.data[0].species.scientific_name, 'Nepenthes ampullaria');
   assert.equal(result.body.data[0].registered_by, 'Field Officer');
+  assert.equal(result.body.data[0].data_source, 'inaturalist');
+  assert.equal(result.body.data[0].source_observer, 'Aina Rahman');
+  assert.equal(result.body.data[0].source_licence, 'CC-BY');
   assert.equal(result.body.data[0].last_observation_at, '2026-11-02T10:00:00Z');
   assert.equal(result.body.data[0].observation_count, 2);
   assert.match(result.body.data[0].photo_thumbnail.url, /^https:\/\/signed\.example\//);
@@ -122,6 +128,8 @@ test('officer plant list applies filters, search, newest sorting and paging with
     call[2] === 'plant_status' && call[3] === 'approved'));
   assert.ok(db.calls.some((call) => call[0] === 'plants' && call[1] === 'eq' &&
     call[2] === 'registered_by' && call[3] === registeredById));
+  assert.ok(db.calls.some((call) => call[0] === 'plants' && call[1] === 'is' &&
+    call[2] === 'deleted_at' && call[3] === null));
   assert.ok(db.calls.some((call) => call[0] === 'plants' && call[1] === 'or' &&
     call[2].includes('qr_code_value.ilike') && call[2].includes(`species_id.eq.${SPECIES_ID}`)));
   assert.ok(db.calls.filter((call) => call[1] === 'select').every((call) => !call[2].includes('*')));
@@ -139,6 +147,9 @@ test('officer plant detail includes signed photos and observation history withou
         species_id: SPECIES_ID,
         location_description: 'Near the trail',
         plant_status: 'approved',
+        data_source: 'inaturalist',
+        source_observer: 'Aina Rahman',
+        source_licence: 'CC-BY-NC',
         registered_by: OFFICER_ID,
         registered_at: '2026-10-01T08:00:00Z',
         latitude: 3.2,
@@ -211,6 +222,9 @@ test('officer plant detail includes signed photos and observation history withou
   assert.equal(result.status, 200);
   assert.equal(result.body.data.latitude, 3.2);
   assert.equal(result.body.data.registered_by, 'Registered By');
+  assert.equal(result.body.data.data_source, 'inaturalist');
+  assert.equal(result.body.data.source_observer, 'Aina Rahman');
+  assert.equal(result.body.data.source_licence, 'CC-BY-NC');
   assert.equal(result.body.data.photos.length, 1);
   assert.match(result.body.data.photos[0].url, /^https:\/\/signed\.example\//);
   assert.equal(result.body.data.observations[0].height_cm, 125);
@@ -223,6 +237,8 @@ test('officer plant detail includes signed photos and observation history withou
   assert.doesNotMatch(plantSelect[2], /\blatitude\b|\blongitude\b/);
   assert.ok(db.calls.some((call) => call[0] === 'plant_map_points' && call[1] === 'select' &&
     call[2] === 'id, latitude, longitude'));
+  assert.ok(db.calls.some((call) => call[0] === 'plants' && call[1] === 'is' &&
+    call[2] === 'deleted_at' && call[3] === null));
 });
 
 test('plant catalogue enforces officer access and validates paging before database access', async () => {
@@ -248,9 +264,9 @@ test('plant catalogue facets provide species counts and registered-by options', 
   db = fakeDb({
     plants: {
       data: [
-        { species_id: SPECIES_ID, registered_by: OFFICER_ID, plant_status: 'approved' },
-        { species_id: SPECIES_ID, registered_by: OFFICER_ID, plant_status: 'pending' },
-        { species_id: null, registered_by: OFFICER_ID, plant_status: 'pending' },
+        { species_id: SPECIES_ID, registered_by: OFFICER_ID, plant_status: 'approved', data_source: 'field' },
+        { species_id: SPECIES_ID, registered_by: OFFICER_ID, plant_status: 'pending', data_source: 'inaturalist' },
+        { species_id: null, registered_by: OFFICER_ID, plant_status: 'pending', data_source: 'field' },
       ],
       error: null,
     },
@@ -262,5 +278,37 @@ test('plant catalogue facets provide species counts and registered-by options', 
   assert.deepEqual(result.body.data.species_counts, [{ species_id: SPECIES_ID, count: 2 }]);
   assert.deepEqual(result.body.data.registered_by, [{ id: OFFICER_ID, name: 'Field Officer' }]);
   assert.deepEqual(result.body.data.plant_statuses, ['approved', 'pending']);
+  assert.deepEqual(result.body.data.data_sources, ['field', 'inaturalist']);
+  assert.ok(db.calls.some((call) => call[0] === 'plants' && call[1] === 'is' &&
+    call[2] === 'deleted_at' && call[3] === null));
   assert.ok(db.calls.filter((call) => call[1] === 'select').every((call) => !call[2].includes('*')));
+});
+
+test('source filter only accepts known values and filters the active catalogue', async () => {
+  role = 'officer';
+  db = fakeDb({ plants: { data: [], count: 0, error: null } });
+
+  const result = await callRoute('/api/officer/plants', router, {
+    path: '/?source=inaturalist',
+  });
+  assert.equal(result.status, 200);
+  assert.ok(db.calls.some(call => call[0] === 'plants' && call[1] === 'eq' &&
+    call[2] === 'data_source' && call[3] === 'inaturalist'));
+  assert.ok(db.calls.some(call => call[0] === 'plants' && call[1] === 'is' &&
+    call[2] === 'deleted_at' && call[3] === null));
+
+  db = fakeDb();
+  assert.equal((await callRoute('/api/officer/plants', router, {
+    path: '/?source=other',
+  })).status, 400);
+  assert.equal(db.calls.length, 0);
+});
+
+test('deleted plant details are not returned', async () => {
+  role = 'officer';
+  db = fakeDb({ plants: { single: null, data: [], error: null } });
+  const result = await callRoute('/api/officer/plants', router, { path: `/${PLANT_ID}` });
+  assert.equal(result.status, 404);
+  assert.ok(db.calls.some(call => call[0] === 'plants' && call[1] === 'is' &&
+    call[2] === 'deleted_at' && call[3] === null));
 });
