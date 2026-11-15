@@ -79,6 +79,7 @@ const sampleData = {
   ]
 };
 
+let historyQueryCalls = [];
 function fakeSupabase(errorTable = null) {
   return {
     from(table) {
@@ -94,16 +95,37 @@ function fakeSupabase(errorTable = null) {
           : null
       });
 
-      const query = {
-        order() {
-          return this;
-        },
-        limit: async () => result(),
-        then(resolve, reject) {
-          return Promise.resolve(result()).then(resolve, reject);
-        }
-      };
+if (table === 'sensor_readings') {
+  historyQueryCalls = [];
+}
 
+const query = {
+  order(...args) {
+    this.calls.push(['order', ...args]);
+    return this;
+  },
+  gte(...args) {
+    this.calls.push(['gte', ...args]);
+    return this;
+  },
+  lte(...args) {
+    this.calls.push(['lte', ...args]);
+    return this;
+  },
+  eq(...args) {
+    this.calls.push(['eq', ...args]);
+    return this;
+  },
+  range(...args) {
+    this.calls.push(['range', ...args]);
+    return Promise.resolve(result());
+  },
+  limit: async () => result(),
+  calls: historyQueryCalls,
+  then(resolve, reject) {
+    return Promise.resolve(result()).then(resolve, reject);
+  }
+};
       return {
         select() {
           return query;
@@ -268,4 +290,66 @@ test('readings and alerts reject anonymous, visitor, legacy Admin and inactive p
       }
     }, null, profile);
   }
+});
+
+
+test('IoT history rejects invalid date, station and pagination filters', async () => {
+  const invalidQueries = [
+    '?from=invalid-date',
+    '?from=2026-02-30',
+    '?to=invalid-date',
+    '?from=2026-11-15&to=2026-11-01',
+    '?station_id=invalid',
+    '?page=0',
+    '?page=-1',
+    '?page=abc',
+    '?page=1.5',
+    '?page_size=0',
+    '?page_size=101',
+    '?page_size=abc',
+    '?page=999999999999999999999',
+  ];
+
+  await withApp(async base => {
+    for (const query of invalidQueries) {
+      const result = await get(base, `/readings/history${query}`);
+
+      assert.equal(
+        result.status,
+        400,
+        `Expected HTTP 400 for ${query}`
+      );
+    }
+  });
+});
+
+
+test('IoT history sends date, station and pagination filters to Supabase', async () => {
+  const stationId = '11111111-1111-4111-8111-111111111111';
+
+  await withApp(async base => {
+    const result = await get(
+      base,
+      `/readings/history?from=2026-11-01&to=2026-11-15&station_id=${stationId}&page=2&page_size=20`
+    );
+
+    assert.equal(result.status, 200);
+
+    assert.deepEqual(
+      historyQueryCalls,
+      [
+        ['order', 'recorded_at', { ascending: false }],
+        ['order', 'id', { ascending: false }],
+        ['gte', 'recorded_at', '2026-11-01T00:00:00.000Z'],
+        ['lte', 'recorded_at', '2026-11-15T23:59:59.999Z'],
+        ['eq', 'station_id', stationId],
+        ['range', 20, 39],
+      ]
+    );
+
+    assert.deepEqual(result.body.pagination, {
+      page: 2,
+      page_size: 20,
+    });
+  });
 });
