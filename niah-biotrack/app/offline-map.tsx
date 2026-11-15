@@ -115,7 +115,7 @@ export default function OfflineMapScreen() {
           >
             <Ionicons name="chevron-back-outline" size={28} color="#213B2A" />
           </TouchableOpacity>
-          <Text style={styles.headerTag}>Navigate · GPS only</Text>
+          <Text style={styles.headerTag}>Find plant</Text>
         </View>
 
         <View style={styles.compassCard}>

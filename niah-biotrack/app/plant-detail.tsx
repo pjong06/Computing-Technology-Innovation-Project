@@ -661,7 +661,7 @@ export default function PlantDetailScreen() {
                 } as any)
               }
             >
-              <Text style={styles.actionBtnText}>🧭 Navigate</Text>
+              <Text style={styles.actionBtnText}>🧭 Find plant</Text>
             </TouchableOpacity>
 
             {matched.tagCode ? (

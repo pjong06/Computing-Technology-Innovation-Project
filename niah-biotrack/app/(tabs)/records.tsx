@@ -1,81 +1,283 @@
-import React, { useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
-  View,
+  ActivityIndicator,
+  FlatList,
+  Platform,
+  SafeAreaView,
+  StatusBar,
+  StyleSheet,
   Text,
   TextInput,
-  FlatList,
   TouchableOpacity,
-  StyleSheet,
-  SafeAreaView,
-  Platform,
-  StatusBar,
+  View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
+import Toast from 'react-native-toast-message';
 import { useStaffOnly } from '../../src/context/AuthRoleContext';
 import {
-  IdentificationStatus,
   ReviewStatus,
   SyncStatus,
   useRecordStore,
+  type ObservationVisit,
+  type PlantRecord,
 } from '../../src/store/useRecordStore';
+import { useProposalStore, type SpeciesProposal } from '../../src/store/useProposalStore';
+import { buildSyncSummary } from '../../src/services/syncSummary';
 import { REVIEW_BADGE } from '../../src/utils/reviewStatus';
 
-type RecordFilter = 'All' | 'Needs identification' | SyncStatus;
+type SubmissionType = 'All' | 'Plants' | 'Observations' | 'Species';
+
+type SubmissionItem =
+  | { key: string; type: 'plant'; timestamp: number; record: PlantRecord }
+  | { key: string; type: 'visit'; timestamp: number; record: PlantRecord; visit: ObservationVisit }
+  | { key: string; type: 'species'; timestamp: number; proposal: SpeciesProposal };
+
+function timestampFor(value?: string): number {
+  if (!value) return 0;
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function formatDate(value?: string): string {
+  if (!value) return 'Date unavailable';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+}
+
+function submissionBadge(
+  syncStatus: SyncStatus,
+  reviewStatus?: string
+): { label: string; bg: string; text: string } {
+  if (syncStatus !== SyncStatus.UPLOADED) {
+    return { label: 'Not synced', bg: '#FDF4D8', text: '#8C5E03' };
+  }
+  const review = String(reviewStatus ?? '');
+  if (review === 'rejected') {
+    return { ...REVIEW_BADGE[ReviewStatus.REJECTED], label: 'Needs changes' };
+  }
+  if (review === 'approved' || review === 'archived') {
+    return REVIEW_BADGE[ReviewStatus.APPROVED];
+  }
+  return { ...REVIEW_BADGE[ReviewStatus.PENDING], label: 'Pending' };
+}
+
+function submissionName(item: SubmissionItem): string {
+  if (item.type === 'species') return item.proposal.scientificName;
+  return item.record.scientificName || 'Identification pending';
+}
+
+function searchableValues(item: SubmissionItem): (string | undefined)[] {
+  if (item.type === 'species') {
+    return [
+      item.proposal.scientificName,
+      item.proposal.commonName,
+      item.proposal.localName,
+      item.proposal.family,
+      item.proposal.description,
+      item.proposal.habitat,
+    ];
+  }
+  return [
+    item.record.scientificName,
+    item.record.commonName,
+    item.record.family,
+    item.record.locationName,
+    item.record.tagCode ?? undefined,
+    item.type === 'visit' ? item.visit.notes : undefined,
+  ];
+}
+
+function rejectionReason(item: SubmissionItem): string | null {
+  const review = item.type === 'species'
+    ? item.proposal.review
+    : item.type === 'visit'
+      ? item.visit.reviewStatus
+      : item.record.reviewStatus;
+  if (String(review) !== 'rejected') return null;
+
+  const reason = item.type === 'species'
+    ? item.proposal.reviewComment
+    : item.type === 'visit'
+      ? item.visit.reviewComment
+      : item.record.reviewComment;
+  return reason?.trim() || 'No reason was given.';
+}
 
 export default function RecordsScreen() {
   const router = useRouter();
-  // Botanist-only screen: guests and visitors are sent back to Home.
   const blocked = useStaffOnly();
   const records = useRecordStore((state) => state.records);
-  const [selectedTab, setSelectedTab] = useState<RecordFilter>('All');
-  const [searchQuery, setSearchQuery] = useState('');
+  const syncAll = useRecordStore((state) => state.syncAll);
+  const refreshReviewStatuses = useRecordStore((state) => state.refreshReviewStatuses);
+  const proposals = useProposalStore((state) => state.proposals);
+  const syncAllProposals = useProposalStore((state) => state.syncAllProposals);
+  const refreshProposalStatuses = useProposalStore((state) => state.refreshProposalStatuses);
 
-  const countAll = records.length;
-  const countSynced = records.filter((r) => r.syncStatus === SyncStatus.UPLOADED).length;
-  const countPending = records.filter((r) => r.syncStatus === SyncStatus.NOT_UPLOADED).length;
-  const countFailed = records.filter((r) => r.syncStatus === SyncStatus.FAILED).length;
-  const countNeedsIdentification = records.filter(
-    (record) => record.identificationStatus === IdentificationStatus.PENDING
+  const [selectedType, setSelectedType] = useState<SubmissionType>('All');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [expandedProposalId, setExpandedProposalId] = useState<string | null>(null);
+  const [syncingAll, setSyncingAll] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!blocked) {
+        void refreshReviewStatuses();
+        void refreshProposalStatuses();
+      }
+    }, [blocked, refreshReviewStatuses, refreshProposalStatuses])
+  );
+
+  const submissions = useMemo(() => {
+    const items: SubmissionItem[] = records.flatMap((record) => [
+      {
+        key: `plant:${record.id}`,
+        type: 'plant' as const,
+        timestamp: timestampFor(record.createdAtIso || record.createdAt),
+        record,
+      },
+      ...record.observations.map((visit) => ({
+        key: `visit:${record.id}:${visit.id}`,
+        type: 'visit' as const,
+        timestamp: timestampFor(visit.observedAt || visit.date),
+        record,
+        visit,
+      })),
+    ]);
+
+    items.push(
+      ...proposals.map((proposal) => ({
+        key: `species:${proposal.id}`,
+        type: 'species' as const,
+        timestamp: timestampFor(proposal.createdAt),
+        proposal,
+      }))
+    );
+
+    return items.sort((a, b) => b.timestamp - a.timestamp);
+  }, [records, proposals]);
+
+  const filtered = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return submissions.filter((item) => {
+      const matchesType =
+        selectedType === 'All' ||
+        (selectedType === 'Plants' && item.type === 'plant') ||
+        (selectedType === 'Observations' && item.type === 'visit') ||
+        (selectedType === 'Species' && item.type === 'species');
+      const matchesQuery =
+        query === '' ||
+        searchableValues(item).some((value) => value?.toLowerCase().includes(query));
+      return matchesType && matchesQuery;
+    });
+  }, [searchQuery, selectedType, submissions]);
+
+  const summary = buildSyncSummary(records, syncingAll);
+  const pendingCount = summary.pendingItemCount;
+  const failedCount = summary.failedItemCount;
+  const recordsToSync = pendingCount + failedCount;
+  const unsentProposalCount = proposals.filter(
+    (proposal) => proposal.syncStatus !== SyncStatus.UPLOADED
   ).length;
 
-  const filtered = records.filter((r) => {
-    const matchesTab =
-      selectedTab === 'All'
-        ? true
-        : selectedTab === 'Needs identification'
-          ? r.identificationStatus === IdentificationStatus.PENDING
-          : r.syncStatus === selectedTab;
-    const normalizedQuery = searchQuery.trim().toLowerCase();
-    const matchesQuery = [r.scientificName, r.commonName, r.family, r.locationName]
-      .some((value) => value?.toLowerCase().includes(normalizedQuery));
-    return matchesTab && matchesQuery;
-  });
+  const handleSyncNow = async () => {
+    setSyncingAll(true);
+    try {
+      const {
+        uploaded,
+        failed: recordsFailed,
+        skipped,
+        photosUploaded,
+        photoProblems,
+      } = await syncAll();
+      const proposalsResult = await syncAllProposals();
+      await refreshProposalStatuses();
 
-  const getStatusBadge = (status: SyncStatus) => {
-    switch (status) {
-      case SyncStatus.UPLOADED:
-        return { bg: '#E4F2E7', text: '#215A36' };
-      case SyncStatus.NOT_UPLOADED:
-        return { bg: '#FDF4D8', text: '#8C5E03' };
-      case SyncStatus.FAILED:
-        return { bg: '#FDE2E2', text: '#9B1C1C' };
-      case SyncStatus.LOCAL_ONLY:
-        return { bg: '#E8ECE9', text: '#526158' };
+      const failed = recordsFailed + proposalsResult.failed;
+      const parts = [`${uploaded} uploaded`];
+      if (failed > 0) parts.push(`${failed} failed`);
+      if (skipped > 0) parts.push(`${skipped} already uploading`);
+      if (photosUploaded > 0) {
+        parts.push(`${photosUploaded} ${photosUploaded === 1 ? 'photo' : 'photos'} uploaded`);
+      }
+      if (photoProblems > 0) {
+        parts.push(
+          `${photoProblems} ${photoProblems === 1 ? 'photo' : 'photos'} over 5 MB (see the plant page)`
+        );
+      }
+      if (proposalsResult.uploaded > 0) {
+        parts.push(
+          `${proposalsResult.uploaded} species ${
+            proposalsResult.uploaded === 1 ? 'proposal' : 'proposals'
+          } sent`
+        );
+      }
+
+      Toast.show({
+        type: failed > 0 ? 'error' : 'success',
+        text1: failed > 0 ? 'Some records did not upload' : 'Sync complete',
+        text2: failed > 0 ? `${parts.join(' · ')}. Tap Retry to try again.` : parts.join(' · '),
+        position: 'bottom',
+      });
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Sync could not finish',
+        text2: error instanceof Error ? error.message : 'Please try again.',
+        position: 'bottom',
+      });
+    } finally {
+      setSyncingAll(false);
     }
   };
 
   if (blocked) return null;
 
+  const filters: SubmissionType[] = ['All', 'Plants', 'Observations', 'Species'];
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
-        {/* Title updated to 'My plants' */}
-        <Text style={styles.headerTitle}>My plants</Text>
+        <Text style={styles.headerTitle}>My submissions</Text>
 
-        {/* Placeholder updated to 'Search my plants' */}
+        {(recordsToSync > 0 || unsentProposalCount > 0) && (
+          <View style={styles.syncCard}>
+            <Text style={styles.syncTitle}>
+              {[
+                recordsToSync > 0
+                  ? `${recordsToSync} ${
+                      recordsToSync === 1 ? 'submission' : 'submissions'
+                    }`
+                  : null,
+                unsentProposalCount > 0
+                  ? `${unsentProposalCount} species ${
+                      unsentProposalCount === 1 ? 'proposal' : 'proposals'
+                    }`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(' and ')}{' '}
+              pending sync
+            </Text>
+            <Text style={styles.syncSub}>
+              {pendingCount} queued{failedCount > 0 ? ` · ${failedCount} failed` : ''} · local storage safe
+            </Text>
+            <TouchableOpacity
+              style={[styles.syncBtn, syncingAll && styles.syncBtnDisabled]}
+              onPress={() => void handleSyncNow()}
+              disabled={syncingAll}
+            >
+              {syncingAll ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.syncBtnText}>Sync now</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+
         <TextInput
           style={styles.searchBar}
-          placeholder="Search my plants"
+          placeholder="Search my submissions"
           placeholderTextColor="#8C9A91"
           value={searchQuery}
           onChangeText={setSearchQuery}
@@ -84,117 +286,135 @@ export default function RecordsScreen() {
           clearButtonMode="while-editing"
         />
 
-        {/* Record workflow and upload-state filters */}
-        <View style={styles.tabBar}>
-          {([
-            { label: 'All', value: 'All', count: countAll },
-            { label: 'Identify', value: 'Needs identification', count: countNeedsIdentification },
-            { label: 'Synced', value: SyncStatus.UPLOADED, count: countSynced },
-            { label: 'Pending', value: SyncStatus.NOT_UPLOADED, count: countPending },
-            { label: 'Failed', value: SyncStatus.FAILED, count: countFailed },
-          ] as { label: string; value: RecordFilter; count: number }[]).map((tab) => {
-            const isActive = selectedTab === tab.value;
+        <View style={styles.filterRow}>
+          {filters.map((filter) => {
+            const isActive = selectedType === filter;
             return (
               <TouchableOpacity
-                key={tab.label}
-                onPress={() => setSelectedTab(tab.value)}
-                style={[styles.tabItem, isActive && styles.activeTabBorder]}
+                key={filter}
+                onPress={() => setSelectedType(filter)}
+                style={[styles.filterChip, isActive && styles.activeFilterChip]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: isActive }}
               >
-                <Text style={[styles.tabLabel, isActive && styles.activeTabLabel]}>
-                  {tab.label} {tab.count}
+                <Text style={[styles.filterLabel, isActive && styles.activeFilterLabel]}>
+                  {filter}
                 </Text>
               </TouchableOpacity>
             );
           })}
         </View>
 
-        {filtered.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyTitle}>No records yet</Text>
-            <Text style={styles.emptySub}>
-              Plants you record in the field will appear here even before they sync.
-            </Text>
-            {/* Button text updated to '+ Register your first plant' */}
-            <TouchableOpacity
-              style={styles.primaryPillBtn}
-              onPress={() => router.push('/new-record' as any)}
-            >
-              <Text style={styles.primaryPillText}>+ Register your first plant</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.secondaryPillBtn}
-              onPress={() => router.push('/(tabs)/scan' as any)}
-            >
-              <Text style={styles.secondaryPillText}>Scan an existing tag</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <FlatList
-            data={filtered}
-            keyExtractor={(item) => item.id}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
-            automaticallyAdjustKeyboardInsets
-            renderItem={({ item }) => {
-              const badge = getStatusBadge(item.syncStatus);
-              return (
-                <TouchableOpacity
-                  style={styles.recordCard}
-                  activeOpacity={0.7}
-                  onPress={() =>
-                    router.push({ pathname: '/plant-detail', params: { id: item.id } } as any)
+        <FlatList
+          data={filtered}
+          keyExtractor={(item) => item.key}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          automaticallyAdjustKeyboardInsets
+          contentContainerStyle={filtered.length === 0 ? styles.emptyList : styles.listContent}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyTitle}>
+                {submissions.length === 0 ? 'No submissions yet' : 'No submissions match'}
+              </Text>
+              <Text style={styles.emptySub}>
+                {submissions.length === 0
+                  ? 'Plants, observations and species proposals saved on this phone will appear here.'
+                  : 'Try a different filter or search term.'}
+              </Text>
+              {submissions.length === 0 ? (
+                <>
+                  <TouchableOpacity
+                    style={styles.primaryPillBtn}
+                    onPress={() => router.push('/new-record' as any)}
+                  >
+                    <Text style={styles.primaryPillText}>+ Register a plant</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.secondaryPillBtn}
+                    onPress={() => router.push('/(tabs)/scan' as any)}
+                  >
+                    <Text style={styles.secondaryPillText}>Scan an existing tag</Text>
+                  </TouchableOpacity>
+                </>
+              ) : null}
+            </View>
+          }
+          renderItem={({ item }) => {
+            const badge = item.type === 'species'
+              ? submissionBadge(item.proposal.syncStatus, item.proposal.review)
+              : item.type === 'visit'
+                ? submissionBadge(item.visit.syncStatus, item.visit.reviewStatus)
+                : submissionBadge(item.record.syncStatus, item.record.reviewStatus);
+            const reason = rejectionReason(item);
+            const tagCode = item.type === 'species' ? null : item.record.tagCode;
+            const date = item.type === 'plant'
+              ? formatDate(item.record.createdAtIso || item.record.createdAt)
+              : item.type === 'visit'
+                ? formatDate(item.visit.observedAt || item.visit.date)
+                : formatDate(item.proposal.createdAt);
+            const metadata = [
+              tagCode ? `Tag ${tagCode}` : null,
+              item.type !== 'species' ? item.record.locationName : null,
+              date,
+            ]
+              .filter(Boolean)
+              .join(' · ');
+            const isProposalExpanded =
+              item.type === 'species' && expandedProposalId === item.proposal.id;
+
+            return (
+              <TouchableOpacity
+                style={styles.recordCard}
+                activeOpacity={0.75}
+                onPress={() => {
+                  if (item.type === 'species') {
+                    setExpandedProposalId(isProposalExpanded ? null : item.proposal.id);
+                    return;
                   }
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.recordSpecies}>
-                      {item.scientificName || 'Identification pending'}
+                  router.push({ pathname: '/plant-detail', params: { id: item.record.id } } as any);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`${item.type} submission: ${submissionName(item)}`}
+              >
+                <View style={styles.rowTop}>
+                  <View style={styles.typeBadge}>
+                    <Text style={styles.typeBadgeText}>
+                      {item.type === 'plant' ? 'PLANT' : item.type === 'visit' ? 'VISIT' : 'SPECIES'}
                     </Text>
-                    <Text style={styles.recordMeta}>
-                      {item.locationName} · {item.createdAt}
-                    </Text>
-                    {item.reviewStatus && item.reviewStatus !== ReviewStatus.DRAFT ? (
-                      <Text
-                        style={[styles.reviewLine, { color: REVIEW_BADGE[item.reviewStatus].text }]}
-                        numberOfLines={2}
-                      >
-                        {REVIEW_BADGE[item.reviewStatus].label}
-                        {item.reviewStatus === ReviewStatus.REJECTED
-                          ? `: ${item.reviewComment?.trim() || 'No reason was given.'}`
-                          : ''}
-                      </Text>
+                  </View>
+                  <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
+                    <Text style={[styles.statusBadgeText, { color: badge.text }]}>{badge.label}</Text>
+                  </View>
+                </View>
+                <Text style={styles.recordSpecies}>{submissionName(item)}</Text>
+                <Text style={styles.recordMeta}>{metadata}</Text>
+                {reason ? <Text style={styles.reasonText}>Officer's reason: {reason}</Text> : null}
+
+                {isProposalExpanded && item.type === 'species' ? (
+                  <View style={styles.proposalDetails}>
+                    {item.proposal.commonName ? (
+                      <Text style={styles.detailText}>Common name: {item.proposal.commonName}</Text>
+                    ) : null}
+                    {item.proposal.localName ? (
+                      <Text style={styles.detailText}>Local name: {item.proposal.localName}</Text>
+                    ) : null}
+                    {item.proposal.family ? (
+                      <Text style={styles.detailText}>Family: {item.proposal.family}</Text>
+                    ) : null}
+                    {item.proposal.description ? (
+                      <Text style={styles.detailText}>Description: {item.proposal.description}</Text>
+                    ) : null}
+                    {item.proposal.habitat ? (
+                      <Text style={styles.detailText}>Habitat: {item.proposal.habitat}</Text>
                     ) : null}
                   </View>
-                  <View
-                    style={[
-                      styles.statusBadge,
-                      {
-                        backgroundColor:
-                          item.identificationStatus === IdentificationStatus.PENDING
-                            ? '#FDF4D8'
-                            : badge.bg,
-                      },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.statusBadgeText,
-                        {
-                          color:
-                            item.identificationStatus === IdentificationStatus.PENDING
-                              ? '#8C5E03'
-                              : badge.text,
-                        },
-                      ]}
-                    >
-                      • {item.identificationStatus === IdentificationStatus.PENDING ? 'Identify later' : item.syncStatus}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              );
-            }}
-          />
-        )}
+                ) : null}
+              </TouchableOpacity>
+            );
+          }}
+        />
       </View>
     </SafeAreaView>
   );
@@ -208,6 +428,28 @@ const styles = StyleSheet.create({
   },
   container: { flex: 1, paddingHorizontal: 20, paddingTop: 16 },
   headerTitle: { fontSize: 24, fontWeight: '800', color: '#1E2B22', marginBottom: 14 },
+  syncCard: {
+    backgroundColor: '#E6EFE9',
+    borderRadius: 18,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 14,
+  },
+  syncTitle: { fontSize: 13.5, fontWeight: '700', color: '#213B2A' },
+  syncSub: { fontSize: 11.5, color: '#5C7163', marginTop: 2 },
+  syncBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#213B2A',
+    minWidth: 104,
+    height: 36,
+    borderRadius: 18,
+    paddingHorizontal: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  syncBtnDisabled: { opacity: 0.6 },
+  syncBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
   searchBar: {
     backgroundColor: '#FFFFFF',
     height: 48,
@@ -217,36 +459,67 @@ const styles = StyleSheet.create({
     color: '#1E2B22',
     borderWidth: 1.2,
     borderColor: '#E6ECE8',
+    marginBottom: 12,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 6,
     marginBottom: 14,
   },
-  tabBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    borderBottomWidth: 1,
-    borderBottomColor: '#DEE4DF',
-    marginBottom: 16,
-  },
-  tabItem: { paddingBottom: 10, paddingHorizontal: 6 },
-  activeTabBorder: { borderBottomWidth: 2.5, borderBottomColor: '#213B2A' },
-  tabLabel: { fontSize: 13, color: '#68776D', fontWeight: '500' },
-  activeTabLabel: { color: '#213B2A', fontWeight: '700' },
-  recordCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  filterChip: {
+    flex: 1,
     alignItems: 'center',
+    paddingVertical: 9,
+    borderRadius: 18,
+    backgroundColor: '#E9EEEA',
+  },
+  activeFilterChip: { backgroundColor: '#213B2A' },
+  filterLabel: { fontSize: 12.5, color: '#68776D', fontWeight: '600' },
+  activeFilterLabel: { color: '#FFFFFF', fontWeight: '700' },
+  listContent: { paddingBottom: 12 },
+  emptyList: { flexGrow: 1 },
+  recordCard: {
     backgroundColor: '#FFFFFF',
-    padding: 18,
-    borderRadius: 24,
+    padding: 16,
+    borderRadius: 20,
     marginBottom: 10,
     borderWidth: 1.2,
     borderColor: '#E6ECE8',
   },
+  rowTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  typeBadge: {
+    backgroundColor: '#E9EEEA',
+    paddingVertical: 4,
+    paddingHorizontal: 9,
+    borderRadius: 10,
+  },
+  typeBadgeText: { fontSize: 9.5, letterSpacing: 0.5, fontWeight: '800', color: '#526158' },
+  statusBadge: { paddingVertical: 5, paddingHorizontal: 10, borderRadius: 16 },
+  statusBadgeText: { fontSize: 11, fontWeight: '700' },
   recordSpecies: { fontSize: 15, fontWeight: '700', color: '#1E2B22' },
   recordMeta: { fontSize: 12.5, color: '#68776D', marginTop: 4 },
-  reviewLine: { fontSize: 12, fontWeight: '600', marginTop: 4 },
-  statusBadge: { paddingVertical: 5, paddingHorizontal: 12, borderRadius: 16 },
-  statusBadgeText: { fontSize: 11.5, fontWeight: '700' },
-  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 20 },
+  reasonText: { fontSize: 12, fontWeight: '600', color: '#9B1C1C', marginTop: 6 },
+  proposalDetails: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#E6ECE8',
+    gap: 4,
+  },
+  detailText: { fontSize: 12.5, color: '#526158', lineHeight: 18 },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 30,
+  },
   emptyTitle: { fontSize: 18, fontWeight: '700', color: '#1E2B22', marginBottom: 6 },
   emptySub: {
     fontSize: 13,
