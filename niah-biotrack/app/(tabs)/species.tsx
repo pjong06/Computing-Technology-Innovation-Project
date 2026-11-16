@@ -267,25 +267,6 @@ export default function SpeciesScreen() {
           Plants
         </Text>
 
-        <View style={styles.actionRow}>
-          <TouchableOpacity
-            style={styles.actionButton}
-            activeOpacity={0.85}
-            onPress={() => router.push('/new-record' as any)}
-          >
-            <Text style={styles.actionButtonText}>+ Register plant</Text>
-          </TouchableOpacity>
-          {canPropose && (
-            <TouchableOpacity
-              style={styles.actionButton}
-              activeOpacity={0.85}
-              onPress={() => router.push('/propose-species' as any)}
-            >
-              <Text style={styles.actionButtonText}>+ Propose species</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
         <TextInput
           style={styles.searchBar}
           placeholder="Search name or plant tag"
@@ -599,17 +580,6 @@ const styles = StyleSheet.create({
   speciesSub: { fontSize: 12.5, color: '#5B6B60', marginTop: 4 },
   plantCount: { fontSize: 12, color: '#68776D', marginTop: 6, fontWeight: '600' },
   chevron: { fontSize: 22, color: '#88988D', marginLeft: 8 },
-  actionRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
-  actionButton: {
-    flex: 1,
-    borderWidth: 1.2,
-    borderColor: '#213B2A',
-    borderRadius: 22,
-    paddingVertical: 10,
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-  },
-  actionButtonText: { color: '#213B2A', fontWeight: '700', fontSize: 13 },
   proposalSection: { marginBottom: 14 },
   proposalToggle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10 },
   proposalHeading: { fontSize: 13, fontWeight: '800', color: '#4E6254' },
