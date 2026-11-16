@@ -49,10 +49,13 @@ function formatDiameter(diameterCm) {
     : `${Math.round(Number(diameterCm) * 100) / 100} cm`;
 }
 
-function renderPhotos(photos) {
+function renderPhotos(photos, speciesPhoto) {
   const grid = byId('plant-photos');
   grid.replaceChildren();
-  byId('plant-no-photos').hidden = photos.length > 0;
+  const speciesFallback = photos.length === 0 && speciesPhoto?.url ? speciesPhoto : null;
+  byId('plant-no-photos').hidden = photos.length > 0 || Boolean(speciesFallback);
+  byId('plant-photo-heading').textContent =
+    speciesFallback ? 'Species reference photo' : 'Plant photos';
   photos.forEach(photo => {
     const image = document.createElement('img');
     image.src = photo.url || PICTURE_BLANK;
@@ -64,6 +67,28 @@ function renderPhotos(photos) {
     };
     grid.appendChild(image);
   });
+
+  if (speciesFallback) {
+    const figure = document.createElement('figure');
+    figure.className = 'species-photo-fallback';
+    const image = document.createElement('img');
+    image.src = speciesFallback.url;
+    image.alt = 'Species reference photo';
+    image.loading = 'lazy';
+    const caption = document.createElement('figcaption');
+    caption.textContent = 'Species photo';
+    const credit = makeSpeciesPhotoCredit(speciesFallback, false);
+    image.onerror = function () {
+      image.onerror = null;
+      image.src = PICTURE_BLANK;
+      figure.hidden = true;
+      byId('plant-no-photos').hidden = false;
+    };
+    figure.appendChild(image);
+    figure.appendChild(caption);
+    if (credit) figure.appendChild(credit);
+    grid.appendChild(figure);
+  }
 }
 
 function renderObservations(observations) {
@@ -123,7 +148,11 @@ function renderPlant(plant) {
   const statusElement = byId('plant-status');
   statusElement.textContent = status.label;
   statusElement.className = 'detail-value plant-status ' + status.css;
-  byId('plant-registered-by').textContent = plant.registered_by || 'Unknown';
+  const imported = plant.data_source === 'inaturalist';
+  byId('plant-registered-label').textContent = imported ? 'Imported source' : 'Registered by';
+  byId('plant-registered-by').textContent = imported
+    ? `Imported from iNaturalist · Observer: ${plant.source_observer || 'Unknown'}`
+    : plant.registered_by || 'Unknown';
   byId('plant-registered-at').textContent = displayDate(plant.registered_at);
   byId('plant-last-observation').textContent = displayDate(plant.last_observation_at);
   byId('plant-location').textContent = plant.location_description || 'Not recorded';
@@ -132,7 +161,7 @@ function renderPlant(plant) {
     ? 'Not recorded'
     : `${plant.latitude}, ${plant.longitude}`;
   byId('plant-observation-count').textContent = String(plant.observation_count);
-  renderPhotos(plant.photos || []);
+  renderPhotos(plant.photos || [], plant.species_photo);
   renderObservations(plant.observations || []);
   renderMap(plant);
 }

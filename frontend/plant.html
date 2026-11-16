@@ -24,6 +24,8 @@
 .plant-status.rejected { background: var(--er); color: var(--ert); }
 .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin-top: 14px; }
 .photo-grid img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 10px; background: var(--mint); }
+.species-photo-fallback { max-width: 360px; margin: 0; }
+.species-photo-fallback figcaption { margin-top: 4px; color: var(--mute); font-size: 12px; }
 #plant-map { height: 260px; margin-top: 12px; border-radius: 10px; background: var(--mint); }
 .history-card { margin-top: 18px; overflow: hidden; }
 .table-wrap { overflow-x: auto; }
@@ -61,7 +63,7 @@
         <p class="plant-source" id="plant-source"></p>
         <div class="detail-facts">
           <div class="detail-fact"><div class="detail-label">Plant status</div><div class="detail-value" id="plant-status"></div></div>
-          <div class="detail-fact"><div class="detail-label">Registered by</div><div class="detail-value" id="plant-registered-by"></div></div>
+          <div class="detail-fact"><div class="detail-label" id="plant-registered-label">Registered by</div><div class="detail-value" id="plant-registered-by"></div></div>
           <div class="detail-fact"><div class="detail-label">Registered</div><div class="detail-value" id="plant-registered-at"></div></div>
           <div class="detail-fact"><div class="detail-label">Last observation</div><div class="detail-value" id="plant-last-observation"></div></div>
           <div class="detail-fact"><div class="detail-label">Location note</div><div class="detail-value" id="plant-location"></div></div>
@@ -69,7 +71,7 @@
           <div class="detail-fact"><div class="detail-label">Coordinates</div><div class="detail-value" id="plant-coordinates"></div></div>
           <div class="detail-fact"><div class="detail-label">Observations</div><div class="detail-value" id="plant-observation-count"></div></div>
         </div>
-        <h2>Plant photos</h2>
+        <h2 id="plant-photo-heading">Plant photos</h2>
         <div class="photo-grid" id="plant-photos"></div>
         <p class="muted" id="plant-no-photos" hidden>No photos have been added to this plant.</p>
       </article>

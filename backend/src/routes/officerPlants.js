@@ -19,6 +19,8 @@ const PLANT_COLUMNS =
     "id, qr_code_value, species_id, location_description, plant_status, " +
     "registered_by, registered_at, data_source, source_observer, source_licence";
 const SPECIES_COLUMNS = "id, scientific_name, common_name, conservation_status";
+const SPECIES_PHOTO_COLUMNS =
+    "id, species_id, file_path, is_primary, source, licence_code, attribution, photographer";
 const OBSERVATION_COLUMNS =
     "id, plant_id, observer_id, observed_at, height_cm, diameter_cm, " +
     "health_status, life_stage, review_status";
@@ -70,6 +72,31 @@ async function loadSpeciesById(supabase, speciesIds) {
         .select(SPECIES_COLUMNS)
         .in("id", speciesIds));
     return new Map(rows.map((row) => [row.id, row]));
+}
+
+async function loadSpeciesPhotos(supabase, speciesIds) {
+    if (speciesIds.length === 0) return [];
+    return throwOnError(await supabase
+        .from("species_media")
+        .select(SPECIES_PHOTO_COLUMNS)
+        .in("species_id", speciesIds));
+}
+
+function preferredSpeciesPhotosById(photos) {
+    const grouped = new Map();
+    for (const photo of photos) {
+        const group = grouped.get(photo.species_id) || [];
+        group.push(photo);
+        grouped.set(photo.species_id, group);
+    }
+
+    return new Map([...grouped].map(([speciesId, speciesPhotos]) => {
+        const preferred = speciesPhotos.find(photo => photo.source === "sfc" && photo.is_primary) ||
+            speciesPhotos.find(photo => photo.source === "sfc") ||
+            speciesPhotos.find(photo => photo.is_primary) ||
+            speciesPhotos[0];
+        return [speciesId, preferred];
+    }));
 }
 
 async function loadProfileNames(supabase, profileIds) {
@@ -127,11 +154,11 @@ async function loadPlantPhotos(supabase, plantIds, primaryOnly) {
     return throwOnError(await query);
 }
 
-async function signPhotos(supabase, photos) {
+async function signPhotos(supabase, photos, bucket = "plant-media") {
     if (photos.length === 0) return new Map();
     const paths = photos.map((photo) => photo.file_path);
     const { data, error } = await supabase.storage
-        .from("plant-media")
+        .from(bucket)
         .createSignedUrls(paths, PHOTO_URL_TTL_SECONDS);
     if (error) throw error;
 
@@ -149,6 +176,17 @@ function publicPhoto(photo, urls) {
         is_primary: photo.is_primary,
         url: urls.get(photo.file_path),
         expires_in: PHOTO_URL_TTL_SECONDS,
+    };
+}
+
+function publicSpeciesPhoto(photo, urls) {
+    if (!photo) return null;
+    return {
+        url: urls.get(photo.file_path),
+        source: photo.source || null,
+        licence_code: photo.licence_code || null,
+        attribution: photo.attribution || null,
+        photographer: photo.photographer || null,
     };
 }
 
@@ -297,12 +335,24 @@ router.get("/", async (req, res) => {
             loadSpeciesById(req.supabase, speciesIds),
             loadProfileNames(req.supabase, profileIds),
             loadObservations(req.supabase, plantIds),
-            loadPlantPhotos(req.supabase, plantIds, true),
+            loadPlantPhotos(req.supabase, plantIds, false),
         ]);
-        const photoUrls = await signPhotos(req.supabase, photos);
+        const plantsWithPhotos = new Set(photos.map(photo => photo.plant_id));
+        const primaryPhotos = photos.filter(photo => photo.is_primary);
+        const fallbackSpeciesIds = uniqueIds(
+            plants.filter(plant => !plantsWithPhotos.has(plant.id)),
+            "species_id"
+        );
+        const speciesPhotos = await loadSpeciesPhotos(req.supabase, fallbackSpeciesIds);
+        const preferredSpeciesPhotos = preferredSpeciesPhotosById(speciesPhotos);
+        const selectedSpeciesPhotos = [...preferredSpeciesPhotos.values()];
+        const [photoUrls, speciesPhotoUrls] = await Promise.all([
+            signPhotos(req.supabase, primaryPhotos),
+            signPhotos(req.supabase, selectedSpeciesPhotos, "species-media"),
+        ]);
         const summaries = observationSummaryByPlant(observations);
         const primaryPhotoByPlant = new Map();
-        for (const photo of photos) {
+        for (const photo of primaryPhotos) {
             if (!primaryPhotoByPlant.has(photo.plant_id)) {
                 primaryPhotoByPlant.set(photo.plant_id, publicPhoto(photo, photoUrls));
             }
@@ -324,6 +374,12 @@ router.get("/", async (req, res) => {
                     registered_by: profileNames.get(plant.registered_by) || null,
                     last_observation_at: summary.last,
                     photo_thumbnail: primaryPhotoByPlant.get(plant.id) || null,
+                    species_photo: plantsWithPhotos.has(plant.id)
+                        ? null
+                        : publicSpeciesPhoto(
+                            preferredSpeciesPhotos.get(plant.species_id),
+                            speciesPhotoUrls
+                        ),
                     observation_count: summary.count,
                 };
             }),
@@ -380,7 +436,18 @@ router.get("/:id", async (req, res) => {
                 latestCommentByObservation.set(review.observation_id, review.comments);
             }
         }
-        const photoUrls = await signPhotos(req.supabase, photos);
+        const [photoUrls, speciesPhotos] = await Promise.all([
+            signPhotos(req.supabase, photos),
+            photos.length === 0 && plant.species_id
+                ? loadSpeciesPhotos(req.supabase, [plant.species_id])
+                : Promise.resolve([]),
+        ]);
+        const preferredSpeciesPhoto = preferredSpeciesPhotosById(speciesPhotos).get(plant.species_id);
+        const speciesPhotoUrls = await signPhotos(
+            req.supabase,
+            preferredSpeciesPhoto ? [preferredSpeciesPhoto] : [],
+            "species-media"
+        );
         const summaries = observationSummaryByPlant(observations);
         const summary = summaries.get(plant.id) || { count: 0, last: null };
         const primaryPhoto = photos.find((photo) => photo.is_primary);
@@ -403,6 +470,9 @@ router.get("/:id", async (req, res) => {
                 latitude: coordinates.latitude,
                 longitude: coordinates.longitude,
                 photo_thumbnail: primaryPhoto ? publicPhoto(primaryPhoto, photoUrls) : null,
+                species_photo: photos.length === 0
+                    ? publicSpeciesPhoto(preferredSpeciesPhoto, speciesPhotoUrls)
+                    : null,
                 photos: photos.map((photo) => publicPhoto(photo, photoUrls)),
                 observations: observations.map((observation) => ({
                     id: observation.id,
