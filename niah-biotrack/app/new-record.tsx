@@ -141,8 +141,8 @@ export default function NewRecordScreen() {
     durationSeconds?: string;
   }>();
 
-  const parsedLat = paramLatitude !== undefined ? Number(paramLatitude) : NaN;
-  const parsedLng = paramLongitude !== undefined ? Number(paramLongitude) : NaN;
+  const parsedLat = paramLatitude !== undefined ? Number(paramLatitude) : Number.NaN;
+  const parsedLng = paramLongitude !== undefined ? Number(paramLongitude) : Number.NaN;
   const parsedAcc =
     paramAccuracy !== undefined && paramAccuracy !== ''
       ? Number(paramAccuracy)
@@ -152,11 +152,11 @@ export default function NewRecordScreen() {
   const parsedDistanceM =
     paramDistanceMeters !== undefined && paramDistanceMeters !== ''
       ? Number(paramDistanceMeters)
-      : NaN;
+      : Number.NaN;
   const parsedDurationSec =
     paramDurationSeconds !== undefined && paramDurationSeconds !== ''
       ? Number(paramDurationSeconds)
-      : NaN;
+      : Number.NaN;
   const hasAttachedRoute = Boolean(paramRouteId) || Number.isFinite(parsedDistanceM);
 
   const existingRecord = useRecordStore((state) =>

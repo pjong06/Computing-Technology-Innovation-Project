@@ -228,32 +228,62 @@ export default function HomeScreen() {
               </TouchableOpacity>
             ) : null}
 
-            <View style={styles.actionGrid}>
-              <TouchableOpacity
-                style={styles.actionCard}
-                activeOpacity={0.85}
-                onPress={() => router.push('/(tabs)/scan')}
-                accessibilityRole="button"
-                accessibilityLabel="Scan QR code"
-              >
-                <View style={styles.actionIconWrap}>
-                  <Ionicons name="qr-code-outline" size={32} color="#284632" />
-                </View>
-                <Text style={styles.actionCardLabel}>Scan QR code</Text>
-              </TouchableOpacity>
+            <View style={styles.actionSection}>
+              <View style={styles.actionRow}>
+                <TouchableOpacity
+                  style={styles.actionCard}
+                  activeOpacity={0.85}
+                  onPress={() => router.push('/(tabs)/scan')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Scan QR code"
+                >
+                  <View style={styles.actionIconWrap}>
+                    <Ionicons name="qr-code-outline" size={28} color="#284632" />
+                  </View>
+                  <Text style={styles.actionCardLabel}>Scan QR code</Text>
+                </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.actionCard}
-                activeOpacity={0.85}
-                onPress={() => router.push('/new-record')}
-                accessibilityRole="button"
-                accessibilityLabel="Record observation"
-              >
-                <View style={styles.actionIconWrap}>
-                  <Ionicons name="add-circle-outline" size={32} color="#284632" />
-                </View>
-                <Text style={styles.actionCardLabel}>Record observation</Text>
-              </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.actionCard}
+                  activeOpacity={0.85}
+                  onPress={() => router.push('/add-observation')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Record observation"
+                >
+                  <View style={styles.actionIconWrap}>
+                    <Ionicons name="add-circle-outline" size={28} color="#284632" />
+                  </View>
+                  <Text style={styles.actionCardLabel}>Record observation</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.actionRow}>
+                <TouchableOpacity
+                  style={styles.actionCard}
+                  activeOpacity={0.85}
+                  onPress={() => router.push('/new-record')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Register plant"
+                >
+                  <View style={styles.actionIconWrap}>
+                    <Ionicons name="leaf-outline" size={28} color="#284632" />
+                  </View>
+                  <Text style={styles.actionCardLabel}>Register plant</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.actionCard}
+                  activeOpacity={0.85}
+                  onPress={() => router.push('/propose-species')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Propose species"
+                >
+                  <View style={styles.actionIconWrap}>
+                    <Ionicons name="create-outline" size={28} color="#284632" />
+                  </View>
+                  <Text style={styles.actionCardLabel}>Propose species</Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
             <TouchableOpacity
@@ -458,24 +488,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginBottom: 14,
   },
-  actionGrid: {
+  actionSection: {
+    gap: 10,
+    marginBottom: 12,
+  },
+  actionRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 12,
-    marginBottom: 12,
   },
   actionCard: {
     flex: 1,
-    height: 120,
+    height: 98,
     backgroundColor: '#DDEAE1',
-    borderRadius: 22,
+    borderRadius: 20,
     paddingHorizontal: 10,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  actionIconWrap: { marginBottom: 6 },
+  actionIconWrap: { marginBottom: 5 },
   actionCardLabel: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '700',
     color: '#284632',
     textAlign: 'center',
