@@ -1,5 +1,13 @@
 import { apiFetch, ApiError } from '../api/client';
-import { useRecordStore, type PlantRecord } from '../store/useRecordStore';
+import { parseTagCode } from '../utils/tagCode';
+import {
+  IdentificationStatus,
+  RecordStatus,
+  ReviewStatus,
+  SyncStatus,
+  useRecordStore,
+  type PlantRecord,
+} from '../store/useRecordStore';
 
 // What a tag lookup found. Every case is real: nothing is filled in when the tag
 // can't be matched, so the screen can say exactly what happened.
@@ -13,13 +21,34 @@ export type TagLookupResult =
 // GET /api/plants/tag/:tagCode answers { data: { ...plant, species: {...} } }.
 interface TagLookupResponse {
   data: {
-    species?: { scientific_name?: string | null; common_name?: string | null } | null;
+    id?: string;
+    plant_id?: string;
+    client_record_id?: string | null;
+    species_id?: string | null;
+    qr_code_value?: string | null;
+    tag_code?: string | null;
+    location_description?: string | null;
+    location_name?: string | null;
+    morphology?: string | null;
+    description?: string | null;
+    plant_status?: string | null;
+    registered_at?: string | null;
+    row_version?: number | null;
+    gps_accuracy_m?: number | null;
+    scientific_name?: string | null;
+    common_name?: string | null;
+    species?: {
+      id?: string | null;
+      scientific_name?: string | null;
+      common_name?: string | null;
+    } | null;
   };
 }
 
 // Looks a tag up on the phone first (works without signal), then on the server.
 export async function lookupTag(rawTag: string): Promise<TagLookupResult> {
-  const tagCode = rawTag.trim().toUpperCase();
+  const tagCode = parseTagCode(rawTag) ??
+    rawTag.trim().toUpperCase();
 
   const record = useRecordStore.getState().findByTag(tagCode);
   if (record) return { status: 'on-phone', tagCode, record };
@@ -27,13 +56,70 @@ export async function lookupTag(rawTag: string): Promise<TagLookupResult> {
   try {
     // apiFetch attaches the login token; the route rejects requests without one.
     const response = await apiFetch<TagLookupResponse>(`/api/plants/tag/${encodeURIComponent(tagCode)}`);
-    // Read the species itself, not the route's "Unknown species" placeholder.
-    const species = response.data?.species;
+    const data = response.data;
+    const serverId = data?.plant_id || data?.id;
+    if (!serverId) {
+      return {
+        status: 'error',
+        tagCode,
+        message: 'The server returned a plant without an ID. Please try again.',
+      };
+    }
+
+    const species = data.species;
+    const speciesId = data.species_id || species?.id || null;
+    const registeredAt =
+      data.registered_at && Number.isFinite(Date.parse(data.registered_at))
+        ? new Date(data.registered_at)
+        : new Date();
+    const plantStatus = data.plant_status?.toLowerCase();
+    const cachedRecord: PlantRecord = {
+      id: data.client_record_id || serverId,
+      serverId,
+      rowVersion: data.row_version ?? undefined,
+      tagCode: data.tag_code || data.qr_code_value || tagCode,
+      scientificName:
+        species?.scientific_name ||
+        data.scientific_name ||
+        'Species not recorded',
+      speciesId,
+      commonName: species?.common_name || data.common_name || '',
+      family: '',
+      morphology: data.morphology || '',
+      description: data.description || '',
+      locationName:
+        data.location_name ||
+        data.location_description ||
+        'Location not recorded',
+      gpsAccuracyM: data.gps_accuracy_m ?? null,
+      gpsCoordination: '',
+      photoUris: [],
+      photoEntries: [],
+      recordStatus: RecordStatus.COMPLETE,
+      identificationStatus: speciesId
+        ? IdentificationStatus.IDENTIFIED
+        : IdentificationStatus.PENDING,
+      syncStatus: SyncStatus.UPLOADED,
+      reviewStatus:
+        plantStatus === 'approved'
+          ? ReviewStatus.APPROVED
+          : plantStatus === 'rejected'
+            ? ReviewStatus.REJECTED
+            : ReviewStatus.PENDING,
+      createdAt: registeredAt.toLocaleDateString('en-GB', {
+        day: 'numeric',
+        month: 'short',
+      }),
+      createdAtIso: registeredAt.toISOString(),
+      observations: [],
+    };
+    const record = await useRecordStore
+      .getState()
+      .cacheServerRecord(cachedRecord);
     return {
-      status: 'server-only',
+      status: 'on-phone',
       tagCode,
-      scientificName: species?.scientific_name || null,
-      commonName: species?.common_name || null,
+      record,
     };
   } catch (error) {
     if (error instanceof ApiError) {
@@ -57,7 +143,7 @@ export function describeTagLookup(result: Exclude<TagLookupResult, { status: 'on
       return {
         title: result.scientificName ?? 'Species not recorded',
         message:
-          'This plant is registered on the server but not on this phone. Visits can only be added to plants saved on this phone.',
+          'This plant is registered on the server but could not be added to this phone.',
       };
     case 'not-found':
       return { title: 'Tag not found', message: 'No plant has this tag, on this phone or on the server.' };
@@ -70,21 +156,24 @@ export function describeTagLookup(result: Exclude<TagLookupResult, { status: 'on
 
 // ---- Visitors (not signed in) ----
 
-// What a visitor's scan found. Uses the public route, which only returns approved
-// plants, so a plant that exists but isn't approved yet looks the same as "not found".
+// Public lookup returns plant details only after approval.
 export type PublicTagLookupResult =
   | {
-      status: 'found';
-      tagCode: string;
-      scientificName: string | null;
-      commonName: string | null;
-      localName: string | null;
-      // Public plant facts for the visitor plant page. Location is never used there.
-      description: string | null;
-      habitat: string | null;
-      conservationStatus: string | null;
-      culturalSignificance: string | null;
-    }
+    status: 'found';
+    tagCode: string;
+    scientificName: string | null;
+    commonName: string | null;
+    localName: string | null;
+    // Public plant facts for the visitor plant page. Location is never used there.
+    description: string | null;
+    habitat: string | null;
+    conservationStatus: string | null;
+    culturalSignificance: string | null;
+    dataSource: 'field' | 'inaturalist';
+    sourceObserver: string | null;
+    sourceLicence: string | null;
+  }
+  | { status: 'pending'; tagCode: string; message: string }
   | { status: 'not-found'; tagCode: string }
   | { status: 'offline'; tagCode: string }
   | { status: 'error'; tagCode: string; message: string };
@@ -99,11 +188,17 @@ interface PublicPlantResponse {
     habitat: string | null;
     conservation_status: string | null;
     cultural_significance: string | null;
+    data_source: 'field' | 'inaturalist';
+    source_observer: string | null;
+    source_licence: string | null;
   };
 }
 
 export async function lookupPublicTag(rawTag: string): Promise<PublicTagLookupResult> {
-  const tagCode = rawTag.trim();
+  const tagCode = parseTagCode(rawTag);
+  if (tagCode === null) {
+    return { status: 'not-found', tagCode: rawTag.trim() };
+  }
   try {
     // auth: false — visitors have no login; the route is public and rate-limited.
     const response = await apiFetch<PublicPlantResponse>(
@@ -120,9 +215,15 @@ export async function lookupPublicTag(rawTag: string): Promise<PublicTagLookupRe
       habitat: response.data?.habitat || null,
       conservationStatus: response.data?.conservation_status || null,
       culturalSignificance: response.data?.cultural_significance || null,
+      dataSource: response.data?.data_source === 'inaturalist' ? 'inaturalist' : 'field',
+      sourceObserver: response.data?.source_observer || null,
+      sourceLicence: response.data?.source_licence || null,
     };
   } catch (error) {
     if (error instanceof ApiError) {
+      if (error.status === 404 && error.code === 'plant_pending_verification') {
+        return { status: 'pending', tagCode, message: error.message };
+      }
       if (error.status === 404) return { status: 'not-found', tagCode };
       if (error.status === 0) return { status: 'offline', tagCode };
       return { status: 'error', tagCode, message: error.message };
@@ -137,6 +238,8 @@ export function describePublicTagLookup(result: Exclude<PublicTagLookupResult, {
   message: string;
 } {
   switch (result.status) {
+    case 'pending':
+      return { title: 'Being verified', message: result.message };
     case 'not-found':
       return {
         title: 'Tag not found',

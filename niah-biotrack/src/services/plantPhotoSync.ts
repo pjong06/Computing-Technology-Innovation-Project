@@ -153,6 +153,7 @@ export async function syncPlantPhotos(
 ): Promise<{
   record: PlantRecord;
   error?: string;
+  retryable?: boolean;
 }> {
   const photos = record.photoEntries ?? [];
 
@@ -171,6 +172,7 @@ export async function syncPlantPhotos(
   const nextPhotos = [...photos];
 
   let firstError: string | undefined;
+  let needsRetry = false;
 
   for (let index = 0; index < nextPhotos.length; index += 1) {
     const photo = nextPhotos[index];
@@ -199,7 +201,8 @@ export async function syncPlantPhotos(
 
       const retryable =
         error instanceof ApiError &&
-        (error.status === 0 || error.status >= 500);
+        (error.status === 0 || error.status === 408 || error.status === 429 || error.status >= 500);
+      needsRetry ||= retryable;
 
       nextPhotos[index] = {
         ...photo,
@@ -230,5 +233,6 @@ export async function syncPlantPhotos(
       ),
     },
     error: firstError,
+    retryable: needsRetry,
   };
 }

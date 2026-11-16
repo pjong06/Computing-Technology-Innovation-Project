@@ -71,10 +71,12 @@ async function rowsByIds(client, table, fields, ids) {
     const uniqueIds = [...new Set(ids.filter(Boolean))];
     const rows = [];
     for (let index = 0; index < uniqueIds.length; index += 100) {
-        const { data, error } = await client
+        let query = client
             .from(table)
             .select(fields)
             .in("id", uniqueIds.slice(index, index + 100));
+        if (table === "plants") query = query.is("deleted_at", null);
+        const { data, error } = await query;
         if (error) {
             console.error(`${table} report lookup error:`, error);
             throw new ReportError("Could not load related report data");
@@ -153,9 +155,11 @@ async function botanistReport(client, from, to) {
     const observations = await readReportRows(query, "observation");
 
     const [plants, profiles] = await Promise.all([
-        rowsByIds(client, "plants", "id, species_id, qr_code_value", observations.map(item => item.plant_id)),
+        rowsByIds(client, "plants", "id, species_id, qr_code_value, data_source, source_observer", observations.map(item => item.plant_id)),
         rowsByIds(client, "profiles", "id, full_name", observations.map(item => item.observer_id)),
     ]);
+    const activePlantIds = new Set(plants.map(plant => plant.id));
+    const activeObservations = observations.filter(item => activePlantIds.has(item.plant_id));
     const species = await rowsByIds(client, "species", "id, scientific_name", plants.map(item => item.species_id));
     const plantById = new Map(plants.map(item => [item.id, item]));
     const profileById = new Map(profiles.map(item => [item.id, item]));
@@ -168,24 +172,29 @@ async function botanistReport(client, from, to) {
             { key: "observed_at", label: "Date" },
             { key: "scientific_name", label: "Species" },
             { key: "plant_tag", label: "Plant tag" },
+            { key: "source", label: "Source" },
             { key: "botanist", label: "Botanist" },
             { key: "health_status", label: "Health" },
             { key: "life_stage", label: "Stage" },
-            { key: "height_cm", label: "Height (cm)" },
+            { key: "height_m", label: "Height (m)" },
             { key: "diameter_cm", label: "Diameter (cm)" },
             { key: "review_status", label: "Review status" },
         ],
-        rows: observations.map(item => {
+        rows: activeObservations.map(item => {
             const plant = plantById.get(item.plant_id);
             return {
                 observed_at: dateOnly(item.observed_at),
                 scientific_name: speciesById.get(plant?.species_id)?.scientific_name || "Unknown",
                 plant_tag: plant?.qr_code_value || "No tag",
+                source: plant?.data_source === "inaturalist"
+                    ? `Imported from iNaturalist · Observer: ${plant.source_observer || "Unknown"}`
+                    : "Field",
                 botanist: profileById.get(item.observer_id)?.full_name || "Unknown",
                 health_status: item.health_status || "",
                 life_stage: item.life_stage || "",
-                height_cm: item.height_cm ?? "",
-                diameter_cm: item.diameter_cm ?? "",
+                // Stored in cm; reported in metres (2 decimals). Diameter stays in cm.
+                height_m: item.height_cm == null ? "" : Math.round(Number(item.height_cm)) / 100,
+                diameter_cm: item.diameter_cm == null ? "" : Math.round(Number(item.diameter_cm) * 100) / 100,
                 review_status: item.review_status || "",
             };
         }),
@@ -204,7 +213,7 @@ async function locationsReport(client, from, to) {
     const points = plantIds.length
         ? await readReportRows(
             client.from("plant_map_points")
-                .select("id, species_id, qr_code_value, plant_status, location_description, latitude, longitude")
+                .select("id, species_id, qr_code_value, plant_status, location_description, latitude, longitude, data_source, source_observer")
                 .in("id", plantIds),
             "plant location"
         )
@@ -218,6 +227,7 @@ async function locationsReport(client, from, to) {
         columns: [
             { key: "scientific_name", label: "Species" },
             { key: "plant_tag", label: "Plant tag" },
+            { key: "source", label: "Source" },
             { key: "landmark", label: "Landmark" },
             { key: "latitude", label: "Latitude" },
             { key: "longitude", label: "Longitude" },
@@ -226,6 +236,9 @@ async function locationsReport(client, from, to) {
         rows: points.map(point => ({
             scientific_name: speciesById.get(point.species_id)?.scientific_name || "Unknown",
             plant_tag: point.qr_code_value || "No tag",
+            source: point.data_source === "inaturalist"
+                ? `Imported from iNaturalist · Observer: ${point.source_observer || "Unknown"}`
+                : "Field",
             landmark: point.location_description || "Not recorded",
             latitude: point.latitude,
             longitude: point.longitude,

@@ -10,6 +10,7 @@ import type {
 import {
   getLocalEntities,
   getPlantTagRefusals,
+  getRecordSyncErrors,
   saveEntityAndQueue,
   type LocalSyncStatus,
   type SyncOperationType,
@@ -195,7 +196,9 @@ function observationPayload(
   observation: ObservationVisit
 ): Record<string, unknown> {
   return {
-    plant_client_record_id: record.id,
+    ...(record.serverId
+      ? { plant_id: record.serverId }
+      : { plant_client_record_id: record.id }),
     observed_at:
       observation.observedAt ??
       new Date().toISOString(),
@@ -480,6 +483,7 @@ export async function loadOrMigrateRecords(
   // Tags the server refused for each plant (tag in use / plant locked).
   const tagRefusals =
     await getPlantTagRefusals();
+  const syncErrors = await getRecordSyncErrors();
 
   const observationById = new Map(
     storedObservations.map((entity) => [
@@ -576,6 +580,9 @@ export async function loadOrMigrateRecords(
 
       return {
         ...snapshot,
+        syncError: syncErrors.get(`plant:${entity.clientRecordId}`) ??
+          observations.map((visit) => syncErrors.get(`observation:${visit.id}`)).find(Boolean) ??
+          photoEntries.find((photo) => photo.lastError)?.lastError,
         tagProblem:
           tagRefusal === 'tag_in_use'
             ? 'in_use'

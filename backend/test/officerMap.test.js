@@ -51,6 +51,9 @@ test('officer gets plants combined with species and their latest visit', async (
         plant_status: 'healthy',
         location_description: 'Near the trail',
         species_id: SPECIES_ID,
+        data_source: 'inaturalist',
+        source_observer: 'Aina Rahman',
+        source_licence: 'CC-BY',
       }],
       error: null,
     },
@@ -81,6 +84,9 @@ test('officer gets plants combined with species and their latest visit', async (
     tag: 'NIAH-PLT-1',
     status: 'healthy',
     landmark: 'Near the trail',
+    data_source: 'inaturalist',
+    source_observer: 'Aina Rahman',
+    source_licence: 'CC-BY',
     species: {
       id: SPECIES_ID,
       scientific_name: 'Nepenthes ampullaria',
@@ -90,7 +96,7 @@ test('officer gets plants combined with species and their latest visit', async (
     last_visit: '2026-11-02T10:00:00Z',
   }]);
   assert.ok(db.calls.some(call => call[0] === 'plant_map_points' && call[1] === 'select' &&
-    call[2] === 'id, latitude, longitude, qr_code_value, plant_status, location_description, species_id'));
+    call[2] === 'id, latitude, longitude, qr_code_value, plant_status, location_description, species_id, data_source, source_observer, source_licence'));
   assert.ok(db.calls.some(call => call[0] === 'observations' && call[1] === 'is' &&
     call[2] === 'deleted_at' && call[3] === null));
 });
@@ -168,4 +174,104 @@ test('database errors return a generic message and are logged', async () => {
   assert.equal(logged.length, 3);
   assert.ok(logged.every(args => args[0] === 'Map plants error:' &&
     args[1].message === 'SECRET_DATABASE_DETAILS'));
+});
+
+
+test('officer can retrieve sensor station locations', async () => {
+  role = 'officer';
+
+  db = fakeDb({
+    sensor_stations: {
+      data: [
+        {
+          id: 'station-1',
+          station_code: 'NIAH-01',
+          station_status: 'active',
+          latitude: 3.2,
+          longitude: 113.7,
+          location_note: 'Near the main trail',
+        },
+        {
+          id: 'station-2',
+          station_code: 'NIAH-02',
+          station_status: 'active',
+          latitude: null,
+          longitude: null,
+          location_note: null,
+        },
+      ],
+      error: null,
+    },
+  });
+
+  const result = await callRoute('/api/officer/map', router, {
+    path: '/stations',
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.body.data.length, 1);
+  assert.equal(result.body.data[0].station_code, 'NIAH-01');
+  assert.equal(result.body.data[0].location_note, 'Near the main trail');
+});
+
+
+test('only officers can view sensor station locations', async () => {
+  db = fakeDb({
+    sensor_stations: {
+      data: [{
+        id: 'station-1',
+        station_code: 'NIAH-01',
+        station_status: 'active',
+        latitude: 3.2,
+        longitude: 113.7,
+        location_note: 'Test location',
+      }],
+      error: null,
+    },
+  });
+
+  for (const deniedRole of ['botanist', 'researcher', 'visitor']) {
+    role = deniedRole;
+
+    const result = await callRoute('/api/officer/map', router, {
+      path: '/stations',
+    });
+
+    assert.equal(result.status, 403);
+  }
+
+  role = 'officer';
+});
+
+
+test('sensor station database errors return a safe message', async () => {
+  role = 'officer';
+
+  db = fakeDb({
+    sensor_stations: {
+      data: null,
+      error: { message: 'SECRET_DATABASE_DETAILS' },
+    },
+  });
+
+  const originalError = console.error;
+  console.error = () => {};
+
+  try {
+    const result = await callRoute('/api/officer/map', router, {
+      path: '/stations',
+    });
+
+    assert.equal(result.status, 500);
+    assert.equal(
+      result.body.message,
+      'Could not load sensor station locations'
+    );
+    assert.doesNotMatch(
+      JSON.stringify(result.body),
+      /SECRET_DATABASE_DETAILS/
+    );
+  } finally {
+    console.error = originalError;
+  }
 });

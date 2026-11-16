@@ -32,7 +32,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="species"
         options={{
-          title: 'Species',
+          title: 'Plants',
           href: isVisitor ? null : undefined,
           tabBarIcon: ({ color }) => (
             <Ionicons name="leaf-outline" size={22} color={color as string} />
@@ -61,10 +61,10 @@ export default function TabLayout() {
       <Tabs.Screen
         name="records"
         options={{
-          title: 'My plants',
+          title: 'My submissions',
           href: isVisitor ? null : undefined,
           tabBarIcon: ({ color }) => (
-            <Ionicons name="list-outline" size={22} color={color as string} />
+            <Ionicons name="document-text-outline" size={22} color={color as string} />
           ),
         }}
       />

@@ -1,3 +1,5 @@
+import { orderSpeciesMedia } from '../utils/speciesPhoto';
+
 export interface SpeciesTaxonomySummary {
   family: string | null;
 }
@@ -13,9 +15,14 @@ export interface SpeciesTaxonomy {
 
 export interface SpeciesMedia {
   id: string;
-  file_path: string;
-  media_type: string;
+  file_path?: string;
+  media_type?: string;
   is_primary: boolean;
+  source?: 'sfc' | 'inaturalist' | null;
+  licence_code?: 'cc0' | 'cc-by' | 'cc-by-sa' | null;
+  attribution?: string | null;
+  photographer?: string | null;
+  source_url?: string | null;
 }
 
 // Optional until the Knowledge API/database adds real attribution fields.
@@ -36,6 +43,7 @@ export interface Species {
   conservation_status: string | null;
   description: string | null;
   taxonomy: SpeciesTaxonomySummary | null;
+  species_media: SpeciesMedia[];
 }
 
 export interface SpeciesDetail extends Species {
@@ -57,14 +65,21 @@ interface SpeciesPage {
   };
 }
 
-const BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL?.trim().replace(/\/+$/, '');
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '/') end -= 1;
+  return value.slice(0, end);
+}
+
+const BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
+const NORMALIZED_BASE_URL = BASE_URL === undefined ? undefined : trimTrailingSlashes(BASE_URL);
 const REQUEST_TIMEOUT_MS = 15_000;
 
 function requireBaseUrl(): string {
-  if (!BASE_URL) {
+  if (!NORMALIZED_BASE_URL) {
     throw new Error('EXPO_PUBLIC_API_BASE_URL is not set');
   }
-  return BASE_URL;
+  return NORMALIZED_BASE_URL;
 }
 
 async function fetchJson<T>(path: string): Promise<T> {
@@ -107,7 +122,10 @@ export async function fetchSpecies(): Promise<Species[]> {
       throw new Error('Unexpected species response from server');
     }
 
-    allSpecies.push(...body.data);
+    allSpecies.push(...body.data.map((item) => ({
+      ...item,
+      species_media: orderSpeciesMedia(item.species_media),
+    })));
     totalPages = Math.max(1, body.pagination.total_pages);
     page += 1;
   } while (page <= totalPages);
@@ -131,9 +149,7 @@ export async function fetchSpeciesDetail(id: string): Promise<SpeciesDetail> {
 
   return {
     ...body.data,
-    species_media: Array.isArray(body.data.species_media)
-      ? body.data.species_media
-      : [],
+    species_media: orderSpeciesMedia(body.data.species_media),
   };
 }
 

@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as Location from 'expo-location';
 import Toast from 'react-native-toast-message';
 
 import {
@@ -21,14 +22,20 @@ import {
   type LifeStage,
 } from '../src/store/useRecordStore';
 import { useProfileStore } from '../src/store/useProfileStore';
-import { takePhotoWithCamera } from '../src/utils/imagePicker';
+import {
+  pickImageFromLibrary,
+  takePhotoWithCamera,
+} from '../src/utils/imagePicker';
 import { savePhotoPermanently } from '../src/utils/photoStorage';
 import { useAuthRole } from '../src/context/AuthRoleContext';
+import { describeTagLookup, lookupTag } from '../src/services/tagLookup';
 
 import FormScrollView from '../src/components/FormScrollView';
 import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
+import { checkDiameterCm, checkHeightMetres, metresToCm, parseMeasurement } from '../src/utils/units';
 
 const DONE_BAR_ID = 'add-observation-done';
+const GPS_TIMEOUT_MS = 20_000;
 
 const LIFE_STAGES: LifeStage[] = [
   'Seedling',
@@ -94,7 +101,8 @@ export default function AddObservationScreen() {
   const [plantTag, setPlantTag] = useState<string>(params.tagCode || '');
 
   // ── PART 1 & 2: SPLIT MEASUREMENT STATES ─────────────────────
-  const [heightCm, setHeightCm] = useState<string>('');
+  // Typed: height in metres, diameter in cm. Height is converted to cm when saved.
+  const [heightM, setHeightM] = useState<string>('');
   const [diameterCm, setDiameterCm] = useState<string>('');
 
   const [lifeStage, setLifeStage] = useState<LifeStage>('Mature');
@@ -113,6 +121,80 @@ export default function AddObservationScreen() {
   // ── UNIFIED PHOTO EVIDENCE (MIN 1, MAX 4) ────────────────────
   const [photos, setPhotos] = useState<string[]>([]);
   const [notes, setNotes] = useState<string>('');
+  const [visitLocation, setVisitLocation] = useState<{
+    latitude: number;
+    longitude: number;
+    accuracyM: number | null;
+  } | null>(null);
+  const [locationStatus, setLocationStatus] = useState<
+    'not-requested' | 'capturing' | 'ready' | 'unavailable'
+  >('not-requested');
+  const [locationMessage, setLocationMessage] = useState('');
+
+  const captureVisitLocation = async () => {
+    setLocationStatus('capturing');
+    setLocationMessage('');
+
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      const { status } =
+        await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setLocationMessage(
+          'Location permission is off. Please enable location permissions to save observations.'
+        );
+        setLocationStatus('unavailable');
+        return null;
+      }
+
+      if (!(await Location.hasServicesEnabledAsync())) {
+        setLocationMessage(
+          'Location services are off. Please enable location services to save observations.'
+        );
+        setLocationStatus('unavailable');
+        return null;
+      }
+
+      const locationPromise = Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error('GPS_TIMEOUT')),
+          GPS_TIMEOUT_MS
+        );
+      });
+      const fix = await Promise.race([locationPromise, timeoutPromise]);
+      const captured = {
+        latitude: fix.coords.latitude,
+        longitude: fix.coords.longitude,
+        accuracyM: fix.coords.accuracy,
+      };
+
+      setVisitLocation(captured);
+      setLocationStatus('ready');
+      return captured;
+    } catch (error) {
+      console.warn('Could not capture observation location:', error);
+      setLocationMessage(
+        error instanceof Error && error.message === 'GPS_TIMEOUT'
+          ? 'GPS took too long to respond. Tap Retry to acquire a GPS fix.'
+          : 'Could not get a GPS fix. Tap Retry to acquire a GPS fix.'
+      );
+      setLocationStatus('unavailable');
+      return null;
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  };
+
+  // Automatically capture location on mount
+  useEffect(() => {
+    if (!isVisitor) {
+      void captureVisitLocation();
+    }
+  }, [isVisitor]);
 
   const adjustValue = (
     setter: React.Dispatch<React.SetStateAction<string>>,
@@ -120,13 +202,13 @@ export default function AddObservationScreen() {
     isFloat = false
   ) => {
     setter((previous) => {
-      const current = parseFloat(previous) || 0;
+      const current = parseMeasurement(previous) ?? 0;
       const updated = Math.max(0, current + delta);
       return isFloat ? updated.toFixed(1) : Math.round(updated).toString();
     });
   };
 
-  const handlePickPhoto = async () => {
+  const handlePickPhoto = async (source: 'camera' | 'gallery') => {
     if (photos.length >= 4) {
       Toast.show({
         type: 'info',
@@ -136,7 +218,10 @@ export default function AddObservationScreen() {
       return;
     }
 
-    const result = await takePhotoWithCamera();
+    const result =
+      source === 'camera'
+        ? await takePhotoWithCamera()
+        : await pickImageFromLibrary();
 
     if (result.status === 'permission-denied') {
       Alert.alert(
@@ -148,8 +233,10 @@ export default function AddObservationScreen() {
 
     if (result.status === 'error') {
       Alert.alert(
-        'Camera unavailable',
-        'The camera could not be opened. Please try again.'
+        source === 'camera' ? 'Camera unavailable' : 'Gallery unavailable',
+        source === 'camera'
+          ? 'The camera could not be opened. Please try again.'
+          : 'The photo library could not be opened. Please try again.'
       );
       return;
     }
@@ -166,7 +253,7 @@ export default function AddObservationScreen() {
   };
 
   // ── STEP VALIDATION ──────────────────────────────────────────
-  const handleNextStep = () => {
+  const handleNextStep = async () => {
     if (currentStep === 1) {
       if (!plantTag.trim() && !params.plantId) {
         Toast.show({
@@ -178,12 +265,15 @@ export default function AddObservationScreen() {
       }
 
       if (!plant) {
-        Toast.show({
-          type: 'error',
-          text1: 'Plant not on this phone',
-          text2: 'Register this plant with New Record before adding a visit.',
-        });
-        return;
+        const result = await lookupTag(cleanTag);
+        if (result.status !== 'on-phone') {
+          Toast.show({
+            type: 'error',
+            text1: describeTagLookup(result).title,
+            text2: describeTagLookup(result).message,
+          });
+          return;
+        }
       }
 
       setCurrentStep(2);
@@ -191,11 +281,14 @@ export default function AddObservationScreen() {
     }
 
     if (currentStep === 2) {
-      if (!heightCm.trim() || !diameterCm.trim()) {
+      const heightCheck = checkHeightMetres(heightM);
+      const diameterCheck = checkDiameterCm(diameterCm);
+      const problem = heightCheck.ok ? diameterCheck : heightCheck;
+      if (!problem.ok) {
         Toast.show({
           type: 'error',
-          text1: 'Measurements Required',
-          text2: 'Both Height and Diameter values must be recorded.',
+          text1: 'Check the measurements',
+          text2: problem.message,
         });
         return;
       }
@@ -204,13 +297,23 @@ export default function AddObservationScreen() {
     }
   };
 
-  // ── SAVE & VALIDATE MINIMUM 1 PHOTO ──────────────────────────
+  // ── SAVE & VALIDATE GPS & PHOTOS ─────────────────────────────
   const handleSaveObservation = async () => {
     if (!plant) {
       Toast.show({
         type: 'error',
         text1: 'Plant not found',
         text2: 'Open this plant from My Records and try again.',
+      });
+      return;
+    }
+
+    // Require GPS fix before saving
+    if (!visitLocation) {
+      Toast.show({
+        type: 'error',
+        text1: 'GPS Location Required',
+        text2: 'Please acquire a GPS fix before saving this observation.',
       });
       return;
     }
@@ -237,6 +340,7 @@ export default function AddObservationScreen() {
     setIsSubmitting(true);
 
     try {
+      const capturedLocation = visitLocation;
       const storedPhotoUris = await Promise.all(
         photos.map((uri) => savePhotoPermanently(uri))
       );
@@ -253,8 +357,10 @@ export default function AddObservationScreen() {
         hour12: true,
       });
 
-      const height = parseFloat(heightCm);
-      const diameter = parseFloat(diameterCm);
+      const heightCheck = checkHeightMetres(heightM);
+      const diameterCheck = checkDiameterCm(diameterCm);
+      const heightMetres = heightCheck.ok ? heightCheck.value : undefined;
+      const diameter = diameterCheck.ok ? diameterCheck.value : undefined;
 
       await addObservation(plant.id, {
         date: `${formattedDate} · ${formattedTime}`,
@@ -262,19 +368,40 @@ export default function AddObservationScreen() {
         recordedBy: me?.full_name || me?.email || 'Field Staff',
         health: healthStatus,
         stage: lifeStage,
-        measurement: `Height ${heightCm} cm · Diameter ${diameterCm} cm`,
-        heightCm: Number.isFinite(height) ? height : undefined,
-        diameterCm: Number.isFinite(diameter) ? diameter : undefined,
+        measurement: `Height ${heightMetres ?? '-'} m · Diameter ${diameter ?? '-'} cm`,
+        heightCm: heightMetres === undefined ? undefined : metresToCm(heightMetres),
+        diameterCm: diameter,
         notes: notes.trim() || 'Observation logged in field.',
         photoUris: storedPhotoUris,
+        latitude: capturedLocation?.latitude,
+        longitude: capturedLocation?.longitude,
+        gpsAccuracyM: capturedLocation?.accuracyM,
+        submissionRequested: true,
       });
 
-      void syncRecord(plant.id);
+      syncRecord(plant.id)
+        .then((result) => {
+          if (!result.ok) {
+            Toast.show({
+              type: 'info',
+              text1: 'Saved; submission is pending',
+              text2: result.reason,
+            });
+          }
+        })
+        .catch((error: unknown) => {
+          console.error('Observation sync failed:', error);
+          Toast.show({
+            type: 'error',
+            text1: 'Saved; sync could not start',
+            text2: 'The observation is stored on this device and will retry.',
+          });
+        });
 
       Toast.show({
         type: 'success',
         text1: 'Observation saved',
-        text2: 'Saved safely on this device. Syncing with backend.',
+        text2: 'Saved on this device and queued for officer review.',
       });
 
       router.back();
@@ -395,69 +522,69 @@ export default function AddObservationScreen() {
           </View>
         )}
 
-        {/* STEP 2: Metrics (Split Height & Diameter) */}
+        {/* STEP 2: Metrics */}
         {currentStep === 2 && (
           <View style={styles.stepContent}>
-            {/* PART 1: TREE HEIGHT */}
+            {/* HEIGHT */}
             <View style={styles.card}>
               <View style={styles.cardHeaderBetween}>
                 <View style={styles.metricTitleGroup}>
                   <Text style={styles.metricPartPill}>PART 1</Text>
-                  <Text style={styles.cardTitle}>Tree Height (cm)</Text>
+                  <Text style={styles.cardTitle}>Height (m)</Text>
                 </View>
-                <Text style={styles.unitBadge}>Centimeters</Text>
+                <Text style={styles.unitBadge}>Metres</Text>
               </View>
 
               <View style={styles.stepperRow}>
                 <TouchableOpacity
                   style={styles.stepperActionBtn}
-                  onPress={() => adjustValue(setHeightCm, -10)}
-                >
-                  <Text style={styles.stepperActionText}>-10</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.stepperActionBtn}
-                  onPress={() => adjustValue(setHeightCm, -1)}
+                  onPress={() => adjustValue(setHeightM, -1, true)}
                 >
                   <Text style={styles.stepperActionText}>-1</Text>
                 </TouchableOpacity>
 
+                <TouchableOpacity
+                  style={styles.stepperActionBtn}
+                  onPress={() => adjustValue(setHeightM, -0.1, true)}
+                >
+                  <Text style={styles.stepperActionText}>-0.1</Text>
+                </TouchableOpacity>
+
                 <TextInput
                   style={styles.stepperInput}
-                  value={heightCm}
-                  onChangeText={setHeightCm}
-                  placeholder="0"
+                  value={heightM}
+                  onChangeText={setHeightM}
+                  placeholder="0.0"
                   placeholderTextColor="#A1B0A6"
-                  keyboardType="numeric"
+                  keyboardType="decimal-pad"
                   textAlign="center"
                   inputAccessoryViewID={DONE_BAR_ID}
                 />
 
                 <TouchableOpacity
                   style={styles.stepperActionBtn}
-                  onPress={() => adjustValue(setHeightCm, 1)}
+                  onPress={() => adjustValue(setHeightM, 0.1, true)}
                 >
-                  <Text style={styles.stepperActionText}>+1</Text>
+                  <Text style={styles.stepperActionText}>+0.1</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={styles.stepperActionBtn}
-                  onPress={() => adjustValue(setHeightCm, 10)}
+                  onPress={() => adjustValue(setHeightM, 1, true)}
                 >
-                  <Text style={styles.stepperActionText}>+10</Text>
+                  <Text style={styles.stepperActionText}>+1</Text>
                 </TouchableOpacity>
               </View>
             </View>
 
-            {/* PART 2: DIAMETER AT BREAST HEIGHT */}
+            {/* DIAMETER */}
             <View style={styles.card}>
               <View style={styles.cardHeaderBetween}>
                 <View style={styles.metricTitleGroup}>
                   <Text style={styles.metricPartPill}>PART 2</Text>
-                  <Text style={styles.cardTitle}>Diameter at Breast Height (cm)</Text>
+                  <Text style={styles.cardTitle}>Diameter (cm)</Text>
                 </View>
-                <Text style={styles.unitBadge}>DBH</Text>
+                <Text style={styles.unitBadge}>Centimetres</Text>
               </View>
 
               <View style={styles.stepperRow}>
@@ -561,9 +688,46 @@ export default function AddObservationScreen() {
           </View>
         )}
 
-        {/* STEP 3: Evidence (1 Button, 1-4 Photos) */}
+        {/* STEP 3: Evidence & GPS */}
         {currentStep === 3 && (
           <View style={styles.stepContent}>
+            <View style={styles.card}>
+              <View style={styles.cardHeader}>
+                <Text style={styles.cardIcon}>📍</Text>
+                <Text style={styles.cardTitle}>Visit GPS Location *</Text>
+              </View>
+              {locationStatus === 'capturing' ? (
+                <View style={styles.locationLoadingRow}>
+                  <ActivityIndicator size="small" color="#2D6A4F" />
+                  <Text style={styles.locationInfo}> Acquiring GPS fix…</Text>
+                </View>
+              ) : visitLocation ? (
+                <>
+                  <Text style={styles.locationInfo}>
+                    Coordinates: {visitLocation.latitude.toFixed(6)}, {visitLocation.longitude.toFixed(6)}
+                  </Text>
+                  <Text style={styles.locationInfo}>
+                    Accuracy:{' '}
+                    {visitLocation.accuracyM === null
+                      ? 'unavailable'
+                      : `about ${Math.round(visitLocation.accuracyM)} m`}
+                  </Text>
+                </>
+              ) : (
+                <Text style={styles.locationErrorText}>
+                  {locationMessage || 'GPS fix required to save observation.'}
+                </Text>
+              )}
+              {locationStatus !== 'capturing' && !visitLocation ? (
+                <TouchableOpacity
+                  style={styles.locationRetryBtn}
+                  onPress={() => void captureVisitLocation()}
+                >
+                  <Text style={styles.locationRetryText}>Retry GPS</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
             <View style={styles.card}>
               <View style={styles.cardHeaderBetween}>
                 <View style={styles.cardHeader}>
@@ -580,7 +744,6 @@ export default function AddObservationScreen() {
               </Text>
 
               <View style={styles.photoGrid}>
-                {/* Thumbnails */}
                 {photos.map((uri, index) => (
                   <View key={`${uri}-${index}`} style={styles.photoTile}>
                     <Image source={{ uri }} style={styles.photoThumb} />
@@ -597,19 +760,31 @@ export default function AddObservationScreen() {
                   </View>
                 ))}
 
-                {/* Single Add Photo Button */}
                 {photos.length < 4 && (
-                  <TouchableOpacity
-                    style={styles.addPhotoCard}
-                    onPress={handlePickPhoto}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.cameraIcon}>📸</Text>
-                    <Text style={styles.addPhotoText}>Add Photo</Text>
-                    <Text style={styles.addPhotoSlotHint}>
-                      {4 - photos.length} slot(s) left
-                    </Text>
-                  </TouchableOpacity>
+                  <>
+                    <TouchableOpacity
+                      style={styles.addPhotoCard}
+                      onPress={() => handlePickPhoto('camera')}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.cameraIcon}>📸</Text>
+                      <Text style={styles.addPhotoText}>Take Photo</Text>
+                      <Text style={styles.addPhotoSlotHint}>
+                        {4 - photos.length} slot(s) left
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.addPhotoCard}
+                      onPress={() => handlePickPhoto('gallery')}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.cameraIcon}>🖼️</Text>
+                      <Text style={styles.addPhotoText}>Choose from Gallery</Text>
+                      <Text style={styles.addPhotoSlotHint}>
+                        {4 - photos.length} slot(s) left
+                      </Text>
+                    </TouchableOpacity>
+                  </>
                 )}
               </View>
             </View>
@@ -661,14 +836,18 @@ export default function AddObservationScreen() {
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
-            style={[styles.saveBtn, { flex: 1, marginLeft: 12 }]}
+            style={[
+              styles.saveBtn,
+              { flex: 1, marginLeft: 12 },
+              (!visitLocation || locationStatus === 'capturing') && styles.saveBtnDisabled,
+            ]}
             onPress={handleSaveObservation}
-            disabled={isSubmitting}
+            disabled={isSubmitting || !visitLocation || locationStatus === 'capturing'}
           >
             {isSubmitting ? (
               <ActivityIndicator color="#FFFFFF" size="small" />
             ) : (
-              <Text style={styles.primaryBtnText}>☁️ Save Observation</Text>
+              <Text style={styles.primaryBtnText}>☁️ Save and submit</Text>
             )}
           </TouchableOpacity>
         )}
@@ -944,6 +1123,35 @@ const styles = StyleSheet.create({
     color: '#68776D',
     marginBottom: 10,
   },
+  locationLoadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  locationInfo: {
+    fontSize: 13,
+    color: '#526A5A',
+    marginBottom: 4,
+  },
+  locationErrorText: {
+    fontSize: 13,
+    color: '#DC2626',
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  locationRetryBtn: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 16,
+    backgroundColor: '#E8F5E9',
+  },
+  locationRetryText: {
+    color: '#2D6A4F',
+    fontSize: 12,
+    fontWeight: '700',
+  },
   photoGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1066,6 +1274,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#2D6A4F',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  saveBtnDisabled: {
+    opacity: 0.5,
   },
   primaryBtnText: {
     color: '#FFFFFF',

@@ -9,7 +9,7 @@ router.get("/plants", async (req, res) => {
     try {
         const { data: plantRows, error: plantsError } = await req.supabase
             .from("plant_map_points")
-            .select("id, latitude, longitude, qr_code_value, plant_status, location_description, species_id")
+            .select("id, latitude, longitude, qr_code_value, plant_status, location_description, species_id, data_source, source_observer, source_licence")
             .limit(2000);
         if (plantsError) throw plantsError;
 
@@ -52,6 +52,9 @@ router.get("/plants", async (req, res) => {
                 tag: plant.qr_code_value,
                 status: plant.plant_status,
                 landmark: plant.location_description,
+                data_source: plant.data_source || "field",
+                source_observer: plant.source_observer,
+                source_licence: plant.source_licence,
                 species: speciesById.get(plant.species_id) || null,
                 last_visit: lastVisitByPlantId.get(plant.id) || null,
             })),
@@ -59,6 +62,44 @@ router.get("/plants", async (req, res) => {
     } catch (error) {
         console.error("Map plants error:", error);
         return res.status(500).json({ message: "Could not load plant locations" });
+    }
+});
+
+
+router.get("/stations", async (req, res) => {
+    try {
+        const { data, error } = await req.supabase
+            .from("sensor_stations")
+            .select("id, station_code, station_status, latitude, longitude, location_note")
+            .limit(1000);
+
+        if (error) throw error;
+
+        const stations = (data || [])
+            .filter(station =>
+                Number.isFinite(station.latitude) &&
+                Number.isFinite(station.longitude) &&
+                station.latitude >= -90 &&
+                station.latitude <= 90 &&
+                station.longitude >= -180 &&
+                station.longitude <= 180 &&
+                !(station.latitude === 0 && station.longitude === 0)
+            )
+            .map(station => ({
+                id: station.id,
+                station_code: station.station_code,
+                status: station.station_status,
+                latitude: station.latitude,
+                longitude: station.longitude,
+                location_note: station.location_note,
+            }));
+
+        return res.json({ data: stations });
+    } catch (error) {
+        console.error("Map stations error:", error);
+        return res.status(500).json({
+            message: "Could not load sensor station locations",
+        });
     }
 });
 

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Plant catalogue - Niah Biotrack</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="images/logo.png">
+<link rel="stylesheet" href="css/style.css">
+<style>
+main.wide { max-width: 1500px; }
+.plant-filters { align-items: center; }
+.plant-filters select { min-width: 150px; }
+.plant-list { display: grid; gap: 12px; }
+.plant-row {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 14px;
+  color: var(--ink);
+  text-decoration: none;
+}
+.plant-row:hover { border-color: var(--sage); }
+.plant-photo-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; }
+.plant-thumb { width: 112px; height: 82px; object-fit: cover; border-radius: 10px; background: var(--mint); }
+.species-photo-label { color: var(--mute); font-size: 10px; line-height: 1.2; }
+.plant-title { margin: 0 0 4px; font-size: 17px; }
+.plant-sub, .plant-meta { color: var(--mute); font-size: 13px; overflow-wrap: anywhere; }
+.plant-meta { margin-top: 3px; }
+.source-badge { display: inline-block; margin-top: 6px; padding: 3px 7px; border-radius: 999px; background: var(--mint); color: var(--ink); font-size: 11px; font-weight: 700; }
+.plant-status { padding: 4px 10px; border-radius: 999px; background: var(--mint); color: var(--ink); font-size: 12px; font-weight: 700; white-space: nowrap; }
+.plant-status.approved { background: var(--ok); color: var(--okt); }
+.plant-status.pending { background: var(--wa); color: var(--wat); }
+.plant-status.rejected { background: var(--er); color: var(--ert); }
+.pager { display: flex; justify-content: space-between; align-items: center; margin-top: 18px; }
+.pager-label { color: var(--mute); font-size: 13px; }
+.plant-state { padding: 18px; }
+.plant-state[hidden] { display: none; }
+@media (max-width: 760px) {
+  .plant-filters { align-items: stretch; }
+  .plant-filters select { flex: 1 1 40%; }
+}
+@media (max-width: 520px) {
+  main.wide { padding: 20px 16px; }
+  .plant-row { grid-template-columns: 76px minmax(0, 1fr); gap: 10px; }
+  .plant-thumb { width: 76px; height: 72px; }
+  .plant-status { grid-column: 2; justify-self: start; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+<nav id="menu"></nav>
+<main class="wide">
+<section class="page on">
+  <h1>Plant <span>catalogue</span></h1>
+  <p class="lead">Search and review registered plants, field locations and observation history.</p>
+  <form class="bar plant-filters" id="plant-filters">
+    <input id="plant-search" class="grow" type="search" placeholder="Search tag, species or location"
+      aria-label="Search by tag code, species name or location">
+    <select id="plant-species" aria-label="Filter by species">
+      <option value="">All species</option>
+    </select>
+    <select id="plant-status-filter" aria-label="Filter by plant status">
+      <option value="">All plant statuses</option>
+    </select>
+    <select id="conservation-filter" aria-label="Filter by conservation status">
+      <option value="">All conservation statuses</option>
+      <option value="CR">Critically Endangered</option>
+      <option value="EN">Endangered</option>
+      <option value="VU">Vulnerable</option>
+      <option value="NT">Near Threatened</option>
+      <option value="LC">Least Concern</option>
+      <option value="DD">Data Deficient</option>
+      <option value="NA">Not assessed</option>
+    </select>
+    <select id="registered-by-filter" aria-label="Filter by registered by">
+      <option value="">All registered by</option>
+    </select>
+    <select id="source-filter" aria-label="Filter by source">
+      <option value="">Source: All</option>
+      <option value="field">Field</option>
+      <option value="inaturalist">iNaturalist</option>
+    </select>
+    <button class="btn" type="submit">Search</button>
+  </form>
+
+  <p class="muted" id="plants-count">Loading plants...</p>
+  <div class="card plant-state" id="plants-loading" role="status">Loading plants...</div>
+  <div class="card plant-state" id="plants-error" role="alert" hidden></div>
+  <div class="card plant-state" id="plants-empty" hidden>No plants match these filters. Try changing your search or filters.</div>
+  <div class="plant-list" id="plants-list"></div>
+  <div class="pager" id="plants-pager" hidden>
+    <button class="btn ghost" id="plants-previous" type="button">Previous</button>
+    <span class="pager-label" id="plants-page"></span>
+    <button class="btn ghost" id="plants-next" type="button">Next</button>
+  </div>
+</section>
+</main>
+</div>
+<div id="toast" role="status"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R" crossorigin="anonymous"></script>
+<script src="js/shared.js"></script>
+<script src="js/plants.js"></script>
+</body>
+</html>

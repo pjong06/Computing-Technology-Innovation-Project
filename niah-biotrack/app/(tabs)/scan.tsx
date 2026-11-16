@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -9,9 +9,11 @@ import {
   Platform,
   StatusBar,
 } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraView, scanFromURLAsync, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
+import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import Toast from 'react-native-toast-message';
 import { useAuthRole } from '../../src/context/AuthRoleContext';
 import {
   lookupTag,
@@ -36,8 +38,108 @@ export default function ScanScreen() {
   const [torchEnabled, setTorchEnabled] = useState(false);
   const [scanned, setScanned] = useState(false);
   const [isLookingUp, setIsLookingUp] = useState(false);
+  const [isReadingImage, setIsReadingImage] = useState(false);
   const [scan, setScan] = useState<ScanResult | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
+  const scanningRef = useRef(false);
+
+  const handleTagScanned = async (data: string) => {
+    if (scanningRef.current) return;
+    scanningRef.current = true;
+    setScanned(true);
+    setIsLookingUp(true);
+
+    try {
+      // Real results only: never filled in with made-up plant details.
+      const next: ScanResult = canEdit
+        ? { kind: 'staff', result: await lookupTag(data) }
+        : { kind: 'visitor', result: await lookupPublicTag(data) };
+      setScan(next);
+      setModalVisible(true);
+    } catch (error) {
+      scanningRef.current = false;
+      setScanned(false);
+      Toast.show({
+        type: 'error',
+        text1: 'Could not look up this tag',
+        text2: error instanceof Error ? error.message : 'Please try scanning it again.',
+        position: 'bottom',
+      });
+    } finally {
+      setIsLookingUp(false);
+    }
+  };
+
+  const handleBarcodeScanned = ({ data }: BarcodeScanningResult) => {
+    void handleTagScanned(data);
+  };
+
+  const handleUploadQr = async () => {
+    if (isReadingImage || scanningRef.current) return;
+    setIsReadingImage(true);
+    try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permissionResult.granted) {
+        Toast.show({
+          type: 'error',
+          text1: 'Permission denied',
+          text2: 'Allow access to your photos to upload a QR image.',
+          position: 'bottom',
+        });
+        return;
+      }
+
+      const pickerResult = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+      });
+      if (pickerResult.canceled) return;
+
+      const imageUri = pickerResult.assets[0]?.uri;
+      if (!imageUri) {
+        Toast.show({
+          type: 'error',
+          text1: "This image couldn't be read",
+          text2: 'Choose another image and try again.',
+          position: 'bottom',
+        });
+        return;
+      }
+
+      let barcodes: BarcodeScanningResult[];
+      try {
+        barcodes = await scanFromURLAsync(imageUri, ['qr']);
+      } catch {
+        Toast.show({
+          type: 'error',
+          text1: "This image couldn't be read",
+          text2: 'Choose another image and try again.',
+          position: 'bottom',
+        });
+        return;
+      }
+
+      if (barcodes.length === 0) {
+        Toast.show({
+          type: 'error',
+          text1: 'No QR code found',
+          text2: 'Choose a clear image of a plant QR tag.',
+          position: 'bottom',
+        });
+        return;
+      }
+
+      await handleTagScanned(barcodes[0].data);
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: "This image couldn't be read",
+        text2: error instanceof Error ? error.message : 'Choose another image and try again.',
+        position: 'bottom',
+      });
+    } finally {
+      setIsReadingImage(false);
+    }
+  };
 
   if (!permission) {
     return <View style={styles.blackBg} />;
@@ -54,24 +156,20 @@ export default function ScanScreen() {
         <TouchableOpacity style={styles.permissionBtn} onPress={requestPermission}>
           <Text style={styles.permissionBtnText}>Enable Camera</Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.galleryPermissionBtn}
+          onPress={() => void handleUploadQr()}
+          disabled={isReadingImage}
+        >
+          {isReadingImage ? (
+            <ActivityIndicator size="small" color="#213B2A" />
+          ) : (
+            <Text style={styles.galleryPermissionBtnText}>Upload QR from gallery</Text>
+          )}
+        </TouchableOpacity>
       </View>
     );
   }
-
-  const handleBarcodeScanned = async ({ data }: { data: string }) => {
-    if (scanned || isLookingUp) return;
-
-    setScanned(true);
-    setIsLookingUp(true);
-
-    // Real results only: never filled in with made-up plant details.
-    const next: ScanResult = canEdit
-      ? { kind: 'staff', result: await lookupTag(data) }
-      : { kind: 'visitor', result: await lookupPublicTag(data) };
-    setScan(next);
-    setModalVisible(true);
-    setIsLookingUp(false);
-  };
 
   // The current result, split by who scanned, so each branch below is typed exactly.
   const staffResult = scan?.kind === 'staff' ? scan.result : null;
@@ -93,6 +191,7 @@ export default function ScanScreen() {
     });
 
     setTimeout(() => {
+      scanningRef.current = false;
       setScanned(false);
       setScan(null);
     }, 800);
@@ -102,6 +201,7 @@ export default function ScanScreen() {
     setModalVisible(false);
     setScan(null);
     setTimeout(() => {
+      scanningRef.current = false;
       setScanned(false);
     }, 400);
   };
@@ -116,7 +216,7 @@ export default function ScanScreen() {
         barcodeScannerSettings={{
           barcodeTypes: ['qr', 'code128', 'code39'],
         }}
-        onBarcodeScanned={scanned ? undefined : handleBarcodeScanned}
+        onBarcodeScanned={scanned || isReadingImage ? undefined : handleBarcodeScanned}
       />
 
       <View style={styles.overlay}>
@@ -160,6 +260,20 @@ export default function ScanScreen() {
         </View>
 
         <View style={styles.bottomBar}>
+          <TouchableOpacity
+            style={styles.galleryUploadBtn}
+            onPress={() => void handleUploadQr()}
+            disabled={isReadingImage || isLookingUp}
+          >
+            {isReadingImage ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Ionicons name="image-outline" size={18} color="#FFFFFF" />
+            )}
+            <Text style={styles.manualEntryText}>
+              {isReadingImage ? 'Reading image...' : 'Upload QR from gallery'}
+            </Text>
+          </TouchableOpacity>
           <TouchableOpacity
             style={styles.manualEntryBtn}
             onPress={() => router.push('/manual-qr')}
@@ -382,6 +496,18 @@ const styles = StyleSheet.create({
   },
   bottomBar: {
     alignItems: 'center',
+    gap: 10,
+  },
+  galleryUploadBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 22,
+    borderRadius: 24,
+    backgroundColor: 'rgba(45, 106, 79, 0.85)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.45)',
   },
   manualEntryBtn: {
     flexDirection: 'row',
@@ -429,6 +555,18 @@ const styles = StyleSheet.create({
   permissionBtnText: {
     color: '#FFFFFF',
     fontSize: 15,
+    fontWeight: '700',
+  },
+  galleryPermissionBtn: {
+    marginTop: 14,
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  galleryPermissionBtnText: {
+    color: '#213B2A',
+    fontSize: 14,
     fontWeight: '700',
   },
   modalBackdrop: {

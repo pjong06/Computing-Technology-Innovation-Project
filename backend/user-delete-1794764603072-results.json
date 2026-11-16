@@ -1,0 +1,60 @@
+{
+  "run": "f1420c96-2a95-4395-9117-bd195fba39d5",
+  "mode": "acceptance",
+  "status": "COMPLETE",
+  "api": "https://niah-backend.onrender.com",
+  "started_at": "2026-11-15T17:43:23.072Z",
+  "rows": [
+    {
+      "test": "Officer is verified active by deployed API",
+      "result": "PASS"
+    },
+    {
+      "test": "Fresh fixture identity differs from Officer",
+      "result": "PASS"
+    },
+    {
+      "test": "Fixture has a real unexpired session",
+      "result": "PASS"
+    },
+    {
+      "test": "Same JWT before removal: HTTP 200 Botanist",
+      "result": "PASS",
+      "http": 200
+    },
+    {
+      "test": "Officer removal API accepted",
+      "result": "PASS",
+      "http": 200
+    },
+    {
+      "test": "Same unexpired JWT after removal: profile denial HTTP 403",
+      "result": "PASS",
+      "http": 403,
+      "same_jwt": true,
+      "jwt_unexpired": true
+    },
+    {
+      "test": "Original JWT still verified by Auth",
+      "result": "PASS"
+    },
+    {
+      "test": "Profile retained and suspended",
+      "result": "PASS"
+    },
+    {
+      "test": "Auth account retained with fixture marker",
+      "result": "PASS"
+    },
+    {
+      "test": "Website row removed",
+      "result": "PASS"
+    },
+    {
+      "test": "Fixture cleanup independently verified",
+      "result": "PASS"
+    }
+  ],
+  "scope": "Deployed API, real Officer and disposable Botanist sessions. Only disposable fixture records changed. Tokens, passwords and account IDs excluded.",
+  "finished_at": "2026-11-15T17:44:27.598Z"
+}

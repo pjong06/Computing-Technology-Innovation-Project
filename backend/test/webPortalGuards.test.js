@@ -60,7 +60,8 @@ test('user changes are saved to website_users, which the database copies to prof
   const shared = read('frontend/js/shared.js');
   const users = read('frontend/js/users.js');
   // USERS_KEY is saved through /api/web-data/users (website_users), not only in the browser.
-  assert.match(shared, /key: USERS_KEY, path: '\/users'/);
+  assert.match(shared, /key: USERS_KEY/);
+  assert.match(shared, /request\.open\(method, '\/api\/web-data\/users'/);
   assert.match(read('backend/src/routes/webData.js'), /website_users/);
   // The page shows the real account status and can activate pending accounts.
   assert.match(users, /from\('profiles'\)\.select\('id, account_status'\)/);
@@ -76,7 +77,30 @@ test('user changes are saved to website_users, which the database copies to prof
 test('only the officer can change website data on the server', () => {
   const webData = read('backend/src/routes/webData.js');
   assert.match(webData, /function isOfficer\(req\)/);
-  assert.match(webData, /router\.put\("\/:key", async \(req, res\) => \{\s*if \(!isOfficer\(req\)\)/);
+  assert.match(webData, /router\.get\("\/users", async \(req, res\) => \{/);
+  assert.match(webData, /router\.put\("\/users", async \(req, res\) => \{\s*if \(!isOfficer\(req\)\)/);
+  assert.doesNotMatch(webData, /website_species|website_observations|web_data|\/species|\/observations/);
+});
+
+test('frontend no longer references the removed portal-copy data', () => {
+  const frontendRoot = path.join(repoRoot, 'frontend');
+  const files = [];
+  function collectFiles(directory) {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        collectFiles(file);
+      } else if (/\.(?:html|js|css)$/.test(entry.name)) {
+        files.push(file);
+      }
+    }
+  }
+  collectFiles(frontendRoot);
+
+  const legacyData = /\/(?:api\/)?web-data\/(?:species|observations)\b|website_(?:species|observations)/i;
+  for (const file of files) {
+    assert.doesNotMatch(fs.readFileSync(file, 'utf8'), legacyData, path.relative(repoRoot, file));
+  }
 });
 
 // ---- No public sign-up, staff-only portal ----
@@ -110,11 +134,204 @@ test('species.js and editor.js use /api/knowledge, not the old website copy', ()
     assert.match(source, /\/knowledge\/species/, file);
     assert.doesNotMatch(source, /web-data|getSpecies\(|SPECIES_KEY|getObservations\(|OBSERVATIONS_KEY/, file);
   }
-  // Officers review botanists' proposals on the catalogue page; a rejection needs a reason.
+  // Proposal reviews live on their own officer page; botanists only submit proposals.
   const species = read('frontend/js/species.js');
-  assert.match(species, /'\/knowledge\/species\/proposals\/pending'/);
-  assert.match(species, /'\/knowledge\/species\/proposals\/' \+ proposal\.id \+ '\/review'/);
-  assert.match(species, /Please type a reason/);
+  assert.doesNotMatch(species, /species\/proposals\/pending|reviewProposal/);
+  assert.doesNotMatch(read('frontend/species.html'), /proposals-section|proposals-list/);
+  const proposals = read('frontend/js/proposals.js');
+  assert.match(proposals, /'\/knowledge\/species\/proposals\/pending'/);
+  assert.doesNotMatch(species, /\/knowledge\/species\/proposals\/|review_comment/);
+  assert.match(proposals, /'\/knowledge\/species\/proposals\/' \+ proposal\.id \+ '\/review'/);
+  assert.match(proposals, /proposal\.created_at/);
+  assert.match(proposals, /proposal\.habitat/);
+  assert.match(read('frontend/proposals.html'), /id="reject-reason"/);
+  assert.doesNotMatch(proposals, /prompt\(/);
+  assert.match(proposals, /Proposed habitat \/ location note/);
+  assert.match(proposals, /No reference photo provided/);
   // Botanists only propose.
   assert.match(read('frontend/js/editor.js'), /'\/knowledge\/species\/proposals'/);
+});
+
+test('species proposals page is officer-only, guarded, and its controls match the page', () => {
+  const shared = read('frontend/js/shared.js');
+  const botanistPages = shared.slice(
+    shared.indexOf('const BOTANIST_PAGES'),
+    shared.indexOf('];', shared.indexOf('const BOTANIST_PAGES'))
+  );
+  assert.doesNotMatch(botanistPages, /proposals\.html/);
+  assert.match(shared, /file: 'proposals\.html', label: 'Species proposals'/);
+  assert.match(shared, /badge\.id = 'species-proposals-count'/);
+  assert.match(shared, /refreshSpeciesProposalMenuCount\(\)/);
+  assert.match(shared, /api\('\/knowledge\/species\/proposals\/pending\?page=1&page_size=1'\)/);
+
+  const html = read('frontend/proposals.html');
+  const script = read('frontend/js/proposals.js');
+  assert.match(script, /if \(pageAllowed === false\)/);
+  assert.match(script, /loadProposals\(\)\.catch/);
+  assert.match(html, /<dialog[^>]+id="reject-dialog"/);
+  assert.match(html, /<textarea[^>]+id="reject-reason" required/);
+
+  const htmlIds = new Set(Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]));
+  const scriptIds = Array.from(script.matchAll(/byId\(['"]([^'"]+)['"]\)/g), match => match[1]);
+  assert.ok(scriptIds.length > 0);
+  for (const id of scriptIds) {
+    assert.ok(htmlIds.has(id), `proposals.js reads #${id}, which is missing from proposals.html`);
+  }
+  assert.match(html, /<script src="js\/proposals\.js"><\/script>/);
+});
+
+test('approval queue labels pending first plant records and revisits', () => {
+  const queue = read('frontend/js/queue.js');
+  assert.match(queue, /observation\.plant\?\.plant_status === 'pending' \? 'New plant' : 'Revisit'/);
+  assert.match(queue, /visitKindBadge\(observation\)/);
+  const reviews = read('backend/src/routes/officerReviews.js');
+  assert.match(reviews, /species_id, plant_status/);
+  assert.match(reviews, /plant_status: plant\.plant_status/);
+});
+
+test('the species catalogue and editor render iNaturalist photo credits', () => {
+  const shared = read('frontend/js/shared.js');
+  assert.match(shared, /function makeSpeciesPhotoCredit\(photo, compact\)/);
+  assert.match(shared, /photo\.source !== 'inaturalist'/);
+  assert.match(read('frontend/js/species.js'), /makeSpeciesPhotoCredit\(photo, true\)/);
+  assert.match(read('frontend/js/editor.js'), /makeSpeciesPhotoCredit\(photo, false\)/);
+
+  const creditStart = shared.indexOf('function makeSpeciesPhotoCredit(');
+  const creditEnd = shared.indexOf('\n}', creditStart);
+  const creditRenderer = shared.slice(creditStart, creditEnd);
+  assert.match(creditRenderer, /credit\.textContent = fullCredit/);
+  assert.match(shared, /'cc-by': 'CC BY'/);
+  assert.match(shared, /'cc-by-sa': 'CC BY-SA'/);
+  assert.match(shared, /cc0: 'CC0'/);
+  assert.doesNotMatch(creditRenderer, /createElement\(['"]a['"]\)|\.href\s*=|source_url/);
+
+  const mobileCredit = read('niah-biotrack/src/components/SpeciesPhotoCredit.tsx');
+  assert.match(mobileCredit, /Photo: \$\{name\}, \$\{licence \?\? 'Unknown licence'\} via iNaturalist/);
+  assert.doesNotMatch(mobileCredit, /Linking|onPress|accessibilityRole|source_url|creativecommons\.org/);
+});
+
+test('web and mobile species screens do not use legacy reference-photo fields', () => {
+  const legacyFields = /reference_(?:image_url|observation_url|image_credit|image_license)/;
+  for (const file of [
+    'frontend/js/species.js',
+    'frontend/js/editor.js',
+    'frontend/js/shared.js',
+    'niah-biotrack/app/plant-info.tsx',
+    'niah-biotrack/app/species-reference/[id].tsx',
+  ]) {
+    assert.doesNotMatch(read(file), legacyFields, file);
+  }
+});
+
+test('species catalogue controls match the JavaScript selectors and redraw on changes', () => {
+  const html = read('frontend/species.html');
+  const script = read('frontend/js/species.js');
+  const htmlIds = new Set(Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]));
+  const scriptIds = Array.from(script.matchAll(/getElementById\(['"]([^'"]+)['"]\)/g), match => match[1]);
+  for (const id of scriptIds) {
+    assert.ok(htmlIds.has(id), `species.js reads #${id}, which is missing from species.html`);
+  }
+  assert.match(html, /id="search-box"[^>]*aria-label="Search species by name"[^>]*oninput="drawSpeciesTable\(\)"/);
+  assert.match(html, /id="status-filter"[^>]*aria-label="Filter by conservation status"[^>]*onchange="drawSpeciesTable\(\)"/);
+  assert.match(script, /const searchInput = document\.getElementById\('search-box'\)/);
+});
+
+test('the distribution map is officer-only in the menu, the page list and on the page itself', () => {
+  const shared = read('frontend/js/shared.js');
+  const map = read('frontend/js/map.js');
+  // Non-officers (botanists, and researchers, who sign in as Botanist on the web) may open
+  // only BOTANIST_PAGES, and the menu hides every page canOpen() refuses.
+  const botanistPages = shared.slice(shared.indexOf('const BOTANIST_PAGES'), shared.indexOf('];', shared.indexOf('const BOTANIST_PAGES')));
+  assert.doesNotMatch(botanistPages, /map\.html/);
+  assert.match(shared, /if \(user !== null && canOpen\(user, MENU\[i\]\.file\) === false\) \{\s*continue;/);
+  // Opening map.html directly sends a non-officer away with a message.
+  assert.match(shared, /if \(canOpen\(user, file\) === false\) \{\s*rememberToast\(OFFICER_ONLY_PAGE_MESSAGE\);\s*location\.replace\('species\.html'\);\s*return false;/);
+  assert.match(shared, /const pageAllowed = guardPages\(\);/);
+  // map.js asks for plant locations only when the page guard let this person stay.
+  const guard = map.indexOf('if (pageAllowed === false)');
+  assert.ok(guard !== -1, 'map.js must check pageAllowed');
+  assert.ok(guard < map.indexOf('loadPlants().catch'), 'map.js must check pageAllowed before loading plants');
+  assert.match(map, /Imported from iNaturalist · Observer:/);
+  assert.match(read('frontend/map.html'), /<script src="js\/shared\.js"><\/script>\s*<script src="js\/map\.js"><\/script>/);
+});
+
+test('the plant catalogue is officer-only, linked from the menu and its page controls exist', () => {
+  const shared = read('frontend/js/shared.js');
+  const botanistPages = shared.slice(
+    shared.indexOf('const BOTANIST_PAGES'),
+    shared.indexOf('];', shared.indexOf('const BOTANIST_PAGES'))
+  );
+  assert.doesNotMatch(botanistPages, /plants\.html|plant\.html/);
+
+  const menu = shared.slice(shared.indexOf('const MENU'), shared.indexOf('];', shared.indexOf('const MENU')));
+  const speciesPosition = menu.indexOf("file: 'species.html'");
+  const plantsPosition = menu.indexOf("file: 'plants.html'");
+  const editorPosition = menu.indexOf("file: 'editor.html'");
+  assert.ok(speciesPosition < plantsPosition && plantsPosition < editorPosition);
+  assert.match(menu, /file: 'plants\.html', label: 'Plant catalogue'/);
+
+  const catalogue = read('frontend/js/plants.js');
+  const detail = read('frontend/js/plant.js');
+  assert.match(catalogue, /if \(pageAllowed === false\)/);
+  assert.match(detail, /if \(pageAllowed === false\)/);
+  assert.ok(catalogue.indexOf('if (pageAllowed === false)') < catalogue.indexOf('loadFilterOptions().then'));
+  assert.ok(detail.indexOf('if (pageAllowed === false)') < detail.indexOf('loadPlant().catch'));
+  assert.match(catalogue, /api\('\/officer\/plants\?/);
+  assert.match(detail, /api\('\/officer\/plants\//);
+  assert.match(catalogue, /Imported from iNaturalist · Observer:/);
+  assert.match(catalogue, /plant\.species_photo/);
+  assert.match(catalogue, /makeSpeciesPhotoCredit/);
+  assert.match(catalogue, /speciesPhotoLabel\.textContent = 'Species photo'/);
+  assert.match(detail, /Imported from iNaturalist · Observer:/);
+  assert.match(detail, /plant\.species_photo/);
+  assert.match(detail, /makeSpeciesPhotoCredit/);
+  assert.match(detail, /Species reference photo/);
+
+  for (const [htmlPath, scriptPath] of [
+    ['frontend/plants.html', 'frontend/js/plants.js'],
+    ['frontend/plant.html', 'frontend/js/plant.js'],
+  ]) {
+    const html = read(htmlPath);
+    const script = read(scriptPath);
+    const htmlIds = new Set(Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]));
+    const scriptIds = Array.from(script.matchAll(/byId\(['"]([^'"]+)['"]\)/g), match => match[1]);
+    assert.ok(scriptIds.length > 0);
+    for (const id of scriptIds) {
+      assert.ok(htmlIds.has(id), `${scriptPath} reads #${id}, which is missing from ${htmlPath}`);
+    }
+    assert.match(html, new RegExp(`<script src="js/${scriptPath.split('/').pop()}"></script>`));
+  }
+
+  assert.match(read('frontend/js/species.js'), /plants\.html\?species=/);
+  assert.match(read('frontend/js/species.js'), /View plants \(/);
+});
+
+test('every element reports.js reads exists in reports.html, and the table has a head and body', () => {
+  const html = read('frontend/reports.html');
+  const script = read('frontend/js/reports.js');
+  const htmlIds = new Set(Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]));
+  const scriptIds = Array.from(script.matchAll(/getElementById\(['"]([^'"]+)['"]\)/g), match => match[1]);
+  assert.ok(scriptIds.length > 0);
+  for (const id of scriptIds) {
+    assert.ok(htmlIds.has(id), `reports.js reads #${id}, which is missing from reports.html`);
+  }
+  // reports.js fills the table's <thead> and first <tbody>, so both must be inside #report-table.
+  assert.match(html, /<table id="report-table">\s*<thead>[\s\S]*<\/thead>\s*<tbody>[\s\S]*<\/tbody>\s*<\/table>/);
+  // A missing table shows a message instead of throwing.
+  assert.match(script, /if \(parts === null\) \{\s*document\.getElementById\('report-note'\)\.textContent = REPORT_TABLE_MISSING;/);
+});
+
+
+test('distribution map loads sensor stations with a separate marker layer', () => {
+  const mapCode = fs.readFileSync(
+    path.join(__dirname, '../../frontend/js/map.js'),
+    'utf8'
+  );
+
+  assert.match(mapCode, /api\('\/officer\/map\/stations'\)/);
+  assert.match(mapCode, /function drawSensorMarkers\(\)/);
+  assert.match(mapCode, /sensorMarkerLayer = L\.layerGroup\(\)\.addTo\(map\)/);
+  assert.match(mapCode, /loadSensorStations\(\)\.catch/);
+  assert.match(mapCode, /escapePopupText\(station\.station_code\)/);
+  assert.match(mapCode, /escapePopupText\(station\.location_note/);
 });

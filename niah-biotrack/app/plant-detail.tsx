@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -35,6 +35,10 @@ import { resolveStoredPhotoUri } from '../src/utils/photoStorage';
 import { formatCoordinates } from '../src/utils/formatCoordinates';
 import { fetchPlantQr, saveQrImage, type PlantQr } from '../src/api/plantQr';
 import { ApiError } from '../src/api/client';
+import { formatDiameterCm, formatHeightFromCm, parseMeasurement } from '../src/utils/units';
+import { useSpeciesStore } from '../src/store/useSpeciesStore';
+import SpeciesPhotoCredit from '../src/components/SpeciesPhotoCredit';
+import { preferredSpeciesPhoto } from '../src/utils/speciesPhoto';
 
 const TAG_PROBLEM_TEXT: Record<'in_use' | 'locked', string> = {
   in_use:
@@ -48,12 +52,22 @@ const TAG_NOT_ON_SERVER_TEXT =
 
 const NOT_RECORDED = 'Not recorded';
 
-function formatDimension(dimension?: string) {
-  const value = dimension?.trim();
-  if (!value) {
-    return NOT_RECORDED;
-  }
-  return /^\d+(\.\d+)?$/.test(value) ? `${value} m` : value;
+// The plant's latest measured height and diameter: from the newest visit that has one
+// (stored in cm), otherwise from what was typed when the plant was registered
+// (height in m, diameter in cm). Height is shown in metres, diameter in centimetres.
+function latestHeight(record: { height?: string; observations: ObservationVisit[] }): string {
+  const visit = record.observations.find((observation) => observation.heightCm !== undefined);
+  const fromVisit = formatHeightFromCm(visit?.heightCm);
+  if (fromVisit) return fromVisit;
+  const typed = parseMeasurement(record.height);
+  return typed === null ? NOT_RECORDED : `${typed} m`;
+}
+
+function latestDiameter(record: { diameter?: string; observations: ObservationVisit[] }): string {
+  const visit = record.observations.find((observation) => observation.diameterCm !== undefined);
+  const fromVisit = formatDiameterCm(visit?.diameterCm);
+  if (fromVisit) return fromVisit;
+  return formatDiameterCm(parseMeasurement(record.diameter)) ?? NOT_RECORDED;
 }
 
 function visitChips(observation: ObservationVisit): string[] {
@@ -71,14 +85,14 @@ function visitChips(observation: ObservationVisit): string[] {
     observation.heightCm !== undefined ||
     observation.diameterCm !== undefined
   ) {
-    if (observation.heightCm !== undefined) {
-      chips.push(
-        `Height ${Number((observation.heightCm / 100).toFixed(2))} m`
-      );
+    const height = formatHeightFromCm(observation.heightCm);
+    if (height) {
+      chips.push(`Height ${height}`);
     }
 
-    if (observation.diameterCm !== undefined) {
-      chips.push(`Diameter ${observation.diameterCm} cm`);
+    const diameter = formatDiameterCm(observation.diameterCm);
+    if (diameter) {
+      chips.push(`Diameter ${diameter}`);
     }
   } else {
     const measurement = observation.measurement?.trim();
@@ -130,12 +144,32 @@ export default function PlantDetailScreen() {
   const [qrError, setQrError] = useState('');
 
   const matched = records.find((record) => record.id === id);
+  const speciesId = matched?.speciesId ?? null;
+  const speciesImageUri = useSpeciesStore((state) =>
+    speciesId ? state.imageUrisBySpeciesId[speciesId] : undefined
+  );
+  const speciesMedia = useSpeciesStore((state) =>
+    speciesId ? state.detailsById[speciesId]?.species_media : undefined
+  );
+  const loadSpeciesDetail = useSpeciesStore((state) => state.loadSpeciesDetail);
+
+  useEffect(() => {
+    if (speciesId && !matched?.photoUris?.length) {
+      void loadSpeciesDetail(speciesId);
+    }
+  }, [loadSpeciesDetail, matched?.photoUris?.length, speciesId]);
 
   if (!matched) {
     return <PlantNotFound code={id} />;
   }
 
   const photos = (matched.photoUris ?? []).map(resolveStoredPhotoUri);
+  const speciesFallbackKey = `species:${speciesId || ''}`;
+  const speciesFallbackUri =
+    photos.length === 0 && speciesImageUri && !brokenPhotos[speciesFallbackKey]
+      ? speciesImageUri
+      : null;
+  const speciesPhotoCredit = preferredSpeciesPhoto(speciesMedia);
 
   const PHOTO_LABELS: Record<string, string> = {
     whole_plant: 'Whole plant',
@@ -409,6 +443,18 @@ export default function PlantDetailScreen() {
                 )
               }
             />
+          ) : speciesFallbackUri ? (
+            <Image
+              source={{ uri: speciesFallbackUri }}
+              style={[styles.heroPhoto, { width }]}
+              resizeMode="cover"
+              onError={() =>
+                setBrokenPhotos((previous) => ({
+                  ...previous,
+                  [speciesFallbackKey]: true,
+                }))
+              }
+            />
           ) : (
             <View
               style={[
@@ -420,6 +466,12 @@ export default function PlantDetailScreen() {
               <Text style={styles.heroEmptyText}>No photos recorded</Text>
             </View>
           )}
+
+          {speciesFallbackUri ? (
+            <View style={styles.speciesPhotoBadge}>
+              <Text style={styles.speciesPhotoBadgeText}>Species photo</Text>
+            </View>
+          ) : null}
 
           <TouchableOpacity
             onPress={() => router.back()}
@@ -436,6 +488,12 @@ export default function PlantDetailScreen() {
             </View>
           )}
         </View>
+
+        {speciesFallbackUri && speciesPhotoCredit?.source === 'inaturalist' ? (
+          <View style={styles.speciesPhotoCredit}>
+            <SpeciesPhotoCredit photo={speciesPhotoCredit} />
+          </View>
+        ) : null}
 
         <View style={styles.sheet}>
           <Text style={styles.title}>
@@ -524,12 +582,12 @@ export default function PlantDetailScreen() {
             <DetailRow label="Common name" value={matched.commonName} />
             <DetailRow label="Family" value={matched.family} />
             <DetailRow
-              label="Height"
-              value={formatDimension(matched.height)}
+              label="Height (m)"
+              value={latestHeight(matched)}
             />
             <DetailRow
-              label="Diameter"
-              value={formatDimension((matched as any).diameter)}
+              label="Diameter (cm)"
+              value={latestDiameter(matched)}
             />
             <DetailRow
               label="Plant tag"
@@ -650,7 +708,7 @@ export default function PlantDetailScreen() {
                 } as any)
               }
             >
-              <Text style={styles.actionBtnText}>🧭 Navigate</Text>
+              <Text style={styles.actionBtnText}>🧭 Find plant</Text>
             </TouchableOpacity>
 
             {matched.tagCode ? (
@@ -898,6 +956,25 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 11,
     fontWeight: '700',
+  },
+  speciesPhotoBadge: {
+    position: 'absolute',
+    bottom: 16,
+    left: 16,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+  },
+  speciesPhotoBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  speciesPhotoCredit: {
+    paddingHorizontal: 22,
+    paddingTop: 4,
+    backgroundColor: '#F6F8F6',
   },
   sheet: {
     padding: 22,

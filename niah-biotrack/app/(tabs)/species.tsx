@@ -15,7 +15,12 @@ import { useRouter } from 'expo-router';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import type { Species } from '../../src/api/species';
 import { useProposalStore, type SpeciesProposal } from '../../src/store/useProposalStore';
-import { SyncStatus } from '../../src/store/useRecordStore';
+import {
+  ReviewStatus,
+  SyncStatus,
+  useRecordStore,
+  type PlantRecord,
+} from '../../src/store/useRecordStore';
 import Toast from 'react-native-toast-message';
 import { useAuthRole } from '../../src/context/AuthRoleContext';
 
@@ -59,6 +64,22 @@ const getStatusColor = (code: string) => {
   }
 };
 
+function plantReviewBadge(record: PlantRecord): { label: string; bg: string; text: string } {
+  if (record.syncStatus !== SyncStatus.UPLOADED) {
+    return { label: 'Not synced', bg: '#FDF4D8', text: '#8C5E03' };
+  }
+  if (record.reviewStatus === ReviewStatus.APPROVED) {
+    return { label: 'Approved', bg: '#E4F2E7', text: '#215A36' };
+  }
+  if (record.reviewStatus === ReviewStatus.REJECTED) {
+    return { label: 'Needs changes', bg: '#FDE2E2', text: '#9B1C1C' };
+  }
+  if (record.reviewStatus === ReviewStatus.PENDING) {
+    return { label: 'Pending', bg: '#E3ECF8', text: '#1F4E8C' };
+  }
+  return { label: 'Not synced', bg: '#FDF4D8', text: '#8C5E03' };
+}
+
 export default function SpeciesScreen() {
   const router = useRouter();
   // Proposing is botanist-only (POST /species/proposals refuses other roles).
@@ -69,10 +90,13 @@ export default function SpeciesScreen() {
   const error = useSpeciesStore((state) => state.error);
   const lastUpdated = useSpeciesStore((state) => state.lastUpdated);
   const loadSpecies = useSpeciesStore((state) => state.loadSpecies);
+  const records = useRecordStore((state) => state.records);
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [expandedSpeciesIds, setExpandedSpeciesIds] = useState<Set<string>>(() => new Set());
+  const [proposalsExpanded, setProposalsExpanded] = useState(false);
 
   const proposals = useProposalStore((state) => state.proposals);
   const syncProposal = useProposalStore((state) => state.syncProposal);
@@ -100,10 +124,19 @@ export default function SpeciesScreen() {
   // My proposals, shown above the approved list. They are never part of the approved
   // list itself (or the New Record picker) until an officer approves them.
   const renderProposals = () =>
-    proposals.length === 0 ? null : (
+    canPropose ? (
       <View style={styles.proposalSection}>
-        <Text style={styles.proposalHeading}>My proposals</Text>
-        {proposals.map((p) => {
+        <TouchableOpacity
+          style={styles.proposalToggle}
+          activeOpacity={0.75}
+          onPress={() => setProposalsExpanded((expanded) => !expanded)}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: proposalsExpanded }}
+        >
+          <Text style={styles.proposalHeading}>My species proposals ({proposals.length})</Text>
+          <Text style={styles.proposalChevron}>{proposalsExpanded ? '⌃' : '⌄'}</Text>
+        </TouchableOpacity>
+        {proposalsExpanded && proposals.map((p) => {
           const badge = proposalBadge(p);
           const notSent = p.syncStatus !== SyncStatus.UPLOADED;
           return (
@@ -130,7 +163,11 @@ export default function SpeciesScreen() {
                     </TouchableOpacity>
                   )}
                   {p.syncStatus === SyncStatus.FAILED && retryingId !== p.id && (
-                    <TouchableOpacity onPress={() => removeProposal(p.id)} hitSlop={8}>
+                    <TouchableOpacity onPress={() => {
+                      void removeProposal(p.id).catch(() => {
+                        Toast.show({ type: 'error', text1: 'Could not remove the proposal.' });
+                      });
+                    }} hitSlop={8}>
                       <Text style={[styles.proposalAction, styles.proposalRemove]}>Remove</Text>
                     </TouchableOpacity>
                   )}
@@ -140,7 +177,7 @@ export default function SpeciesScreen() {
           );
         })}
       </View>
-    );
+    ) : null;
 
   const statusOptions = useMemo(() => {
     const codes = new Set(species.map(statusCode));
@@ -149,21 +186,34 @@ export default function SpeciesScreen() {
     return [...known, ...other];
   }, [species]);
 
-  const filtered = useMemo(() => {
+  const groupedSpecies = useMemo(() => {
     const query = search.trim().toLowerCase();
 
-    return species.filter((item) => {
-      const matchesSearch =
+    return species.flatMap((item) => {
+      if (statusFilter !== null && statusCode(item) !== statusFilter) return [];
+
+      const localPlants = records.filter((record) =>
+        record.speciesId === item.id ||
+        (!!record.scientificName &&
+          record.scientificName.trim().toLowerCase() === item.scientific_name.trim().toLowerCase())
+      );
+      const matchesName =
         query === '' ||
         [item.scientific_name, item.common_name, item.local_name].some((name) =>
           name?.toLowerCase().includes(query)
         );
-      const matchesStatus =
-        statusFilter === null || statusCode(item) === statusFilter;
+      const matchingTagPlants = query
+        ? localPlants.filter((record) => record.tagCode?.toLowerCase().includes(query))
+        : localPlants;
 
-      return matchesSearch && matchesStatus;
+      if (!matchesName && matchingTagPlants.length === 0) return [];
+      return [{
+        species: item,
+        plants: localPlants,
+        visiblePlants: matchesName ? localPlants : matchingTagPlants,
+      }];
     });
-  }, [search, species, statusFilter]);
+  }, [records, search, species, statusFilter]);
 
   const updatedText = lastUpdated
     ? new Date(lastUpdated).toLocaleString('en-GB', {
@@ -214,22 +264,31 @@ export default function SpeciesScreen() {
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
         <Text style={styles.title}>
-          Species <Text style={styles.titleAccent}>Reference</Text>
+          Plants
         </Text>
 
-        {canPropose && (
+        <View style={styles.actionRow}>
           <TouchableOpacity
-            style={styles.proposeBtn}
+            style={styles.actionButton}
             activeOpacity={0.85}
-            onPress={() => router.push('/propose-species' as any)}
+            onPress={() => router.push('/new-record' as any)}
           >
-            <Text style={styles.proposeBtnText}>+ Propose new species</Text>
+            <Text style={styles.actionButtonText}>+ Register plant</Text>
           </TouchableOpacity>
-        )}
+          {canPropose && (
+            <TouchableOpacity
+              style={styles.actionButton}
+              activeOpacity={0.85}
+              onPress={() => router.push('/propose-species' as any)}
+            >
+              <Text style={styles.actionButtonText}>+ Propose species</Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
         <TextInput
           style={styles.searchBar}
-          placeholder="Search scientific, common or local name"
+          placeholder="Search name or plant tag"
           placeholderTextColor="#8C9A91"
           value={search}
           onChangeText={setSearch}
@@ -311,9 +370,9 @@ export default function SpeciesScreen() {
         {species.length > 0 && (
           <View style={styles.countRow}>
             <Text style={styles.countBanner}>
-              {filtered.length === species.length
+              {groupedSpecies.length === species.length
                 ? `${species.length} species · automatically synced`
-                : `Showing ${filtered.length} of ${species.length} species`}
+                : `Showing ${groupedSpecies.length} of ${species.length} species`}
             </Text>
             {statusFilter !== null && (
               <TouchableOpacity onPress={() => chooseStatus(null)} hitSlop={8}>
@@ -324,8 +383,8 @@ export default function SpeciesScreen() {
         )}
 
         <FlatList
-          data={filtered}
-          keyExtractor={(item) => item.id}
+          data={groupedSpecies}
+          keyExtractor={(item) => item.species.id}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
@@ -338,44 +397,85 @@ export default function SpeciesScreen() {
           ListHeaderComponent={canPropose ? renderProposals : undefined}
           ListEmptyComponent={renderEmpty}
           renderItem={({ item }) => {
-            const code = statusCode(item);
+            const speciesItem = item.species;
+            const code = statusCode(speciesItem);
             const badge = getStatusColor(code);
             const subtitle =
-              item.common_name || item.local_name || 'No common name recorded';
+              speciesItem.common_name || 'No common name recorded';
+            const expanded = expandedSpeciesIds.has(speciesItem.id);
 
             return (
-              <TouchableOpacity
-                style={styles.speciesCard}
-                activeOpacity={0.7}
-                onPress={() =>
-                  router.push({
-                    pathname: '/species-reference/[id]',
-                    params: { id: item.id },
-                  } as any)
-                }
-              >
-                <View style={{ flex: 1 }}>
-                  <View style={styles.nameRow}>
-                    <Text style={styles.speciesName}>{item.scientific_name}</Text>
-                    <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
-                      <Text style={[styles.statusText, { color: badge.text }]}>
-                        {code === 'NA' ? 'Not assessed' : code}
-                      </Text>
+              <View style={styles.speciesCard}>
+                <TouchableOpacity
+                  style={styles.speciesHeader}
+                  activeOpacity={0.7}
+                  onPress={() => setExpandedSpeciesIds((current) => {
+                    const next = new Set(current);
+                    if (next.has(speciesItem.id)) next.delete(speciesItem.id);
+                    else next.add(speciesItem.id);
+                    return next;
+                  })}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded }}
+                >
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.nameRow}>
+                      <Text style={styles.speciesName}>{speciesItem.scientific_name}</Text>
+                      <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
+                        <Text style={[styles.statusText, { color: badge.text }]}>
+                          {code === 'NA' ? 'Not assessed' : code}
+                        </Text>
+                      </View>
                     </View>
+                    <Text style={styles.speciesSub}>{subtitle}</Text>
+                    <Text style={styles.plantCount}>
+                      {item.plants.length} {item.plants.length === 1 ? 'plant' : 'plants'}
+                    </Text>
                   </View>
-                  <Text
-                    style={[
-                      styles.speciesSub,
-                      !item.common_name &&
-                        !item.local_name &&
-                        styles.speciesSubEmpty,
-                    ]}
-                  >
-                    {subtitle}
-                  </Text>
-                </View>
-                <Text style={styles.chevron}>›</Text>
-              </TouchableOpacity>
+                  <Text style={styles.chevron}>{expanded ? '⌃' : '›'}</Text>
+                </TouchableOpacity>
+
+                {expanded && (
+                  <View style={styles.expandedContent}>
+                    {item.visiblePlants.map((plant) => {
+                      const plantBadge = plantReviewBadge(plant);
+                      return (
+                        <TouchableOpacity
+                          key={plant.id}
+                          style={styles.plantRow}
+                          activeOpacity={0.75}
+                          onPress={() => router.push({ pathname: '/plant-detail', params: { id: plant.id } } as any)}
+                        >
+                          <View style={styles.plantInfo}>
+                            <Text style={styles.plantTag}>{plant.tagCode || 'No tag code'}</Text>
+                            <Text style={styles.plantMeta} numberOfLines={1}>
+                              Location: {plant.locationName || 'Not recorded'}
+                            </Text>
+                            <Text style={styles.plantMeta}>
+                              Life stage: {plant.observations[0]?.stage || 'Not recorded'}
+                            </Text>
+                          </View>
+                          <View style={[styles.plantStatusBadge, { backgroundColor: plantBadge.bg }]}>
+                            <Text style={[styles.plantStatusText, { color: plantBadge.text }]}>
+                              {plantBadge.label}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                    <TouchableOpacity
+                      style={styles.addPlantButton}
+                      activeOpacity={0.75}
+                      onPress={() => router.push({
+                        pathname: '/new-record',
+                        params: { speciesId: speciesItem.id },
+                      } as any)}
+                    >
+                      <Text style={styles.addPlantText}>+ Add plant of this species</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
             );
           }}
         />
@@ -392,7 +492,6 @@ const styles = StyleSheet.create({
   },
   container: { flex: 1, paddingHorizontal: 20, paddingTop: 16 },
   title: { fontSize: 24, fontWeight: '800', color: '#1E2B22', marginBottom: 14 },
-  titleAccent: { color: '#6B8F72' },
   searchBar: {
     backgroundColor: '#FFFFFF',
     height: 50,
@@ -475,15 +574,14 @@ const styles = StyleSheet.create({
   },
   retryText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
   speciesCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    padding: 18,
+    padding: 14,
     borderRadius: 24,
     marginBottom: 10,
     borderWidth: 1.2,
     borderColor: '#E6ECE8',
   },
+  speciesHeader: { flexDirection: 'row', alignItems: 'center', padding: 4 },
   nameRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
   speciesName: {
     fontSize: 15,
@@ -499,20 +597,23 @@ const styles = StyleSheet.create({
   },
   statusText: { fontSize: 10.5, fontWeight: '800' },
   speciesSub: { fontSize: 12.5, color: '#5B6B60', marginTop: 4 },
-  speciesSubEmpty: { fontStyle: 'italic', color: '#8C9A91' },
+  plantCount: { fontSize: 12, color: '#68776D', marginTop: 6, fontWeight: '600' },
   chevron: { fontSize: 22, color: '#88988D', marginLeft: 8 },
-  proposeBtn: {
+  actionRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
+  actionButton: {
+    flex: 1,
     borderWidth: 1.2,
     borderColor: '#213B2A',
     borderRadius: 22,
     paddingVertical: 10,
     alignItems: 'center',
-    marginBottom: 12,
     backgroundColor: '#FFFFFF',
   },
-  proposeBtnText: { color: '#213B2A', fontWeight: '700', fontSize: 13.5 },
+  actionButtonText: { color: '#213B2A', fontWeight: '700', fontSize: 13 },
   proposalSection: { marginBottom: 14 },
-  proposalHeading: { fontSize: 13, fontWeight: '800', color: '#4E6254', marginBottom: 8 },
+  proposalToggle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10 },
+  proposalHeading: { fontSize: 13, fontWeight: '800', color: '#4E6254' },
+  proposalChevron: { fontSize: 18, color: '#68776D', paddingHorizontal: 8 },
   proposalCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
@@ -526,4 +627,13 @@ const styles = StyleSheet.create({
   proposalActions: { flexDirection: 'row', gap: 18, marginTop: 8, alignItems: 'center' },
   proposalAction: { fontSize: 12.5, fontWeight: '700', color: '#213B2A', textDecorationLine: 'underline' },
   proposalRemove: { color: '#9B1C1C' },
+  expandedContent: { borderTopWidth: 1, borderTopColor: '#E6ECE8', marginTop: 10, paddingTop: 4 },
+  plantRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#EEF1EF' },
+  plantInfo: { flex: 1, paddingRight: 8 },
+  plantTag: { fontSize: 13, color: '#1E2B22', fontWeight: '700' },
+  plantMeta: { fontSize: 11.5, color: '#68776D', marginTop: 3 },
+  plantStatusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+  plantStatusText: { fontSize: 10.5, fontWeight: '700' },
+  addPlantButton: { alignSelf: 'flex-start', paddingVertical: 10, paddingHorizontal: 4, marginTop: 4 },
+  addPlantText: { color: '#213B2A', fontSize: 12.5, fontWeight: '700' },
 });

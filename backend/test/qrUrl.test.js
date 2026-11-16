@@ -6,7 +6,7 @@ process.env.SUPABASE_URL = 'https://example.supabase.co';
 process.env.SUPABASE_PUBLISHABLE_KEY = 'test-key';
 const { buildPublicPlantUrl, generatePlantQR, QrConfigurationError } = require('../src/services/qrService');
 const { generateQRBatchPDF } = require('../src/services/qrPdfService');
-const { createPublicPlantsRouter } = require('../src/routes/publicPlants');
+const { createPublicPlantsRouter, createPublicQrHandler } = require('../src/routes/publicPlants');
 const { createQrBatchRouter } = require('../src/routes/qrBatch');
 const { requireRole } = require('../src/middleware/auth');
 const TAG = 'NIAH-PLT-00001';
@@ -91,7 +91,11 @@ function publicRouter(result, calls) {
 test('visitor page renders only allowed fields and escapes stored content', async t => {
   const calls = [];
   const row = { scientific_name: 'Shorea albida', common_name: '<script>alert(1)</script>',
-    description: 'Approved description', conservation_status: 'EN', habitat: 'Peat forest',
+    description: 'Approved description\nSource: iNaturalist observation https://www.inaturalist.org/observations/123',
+    reference_image_url: 'https://example.test/legacy.jpg',
+    reference_observation_url: 'https://example.test/observation',
+    reference_image_credit: 'Legacy photographer', reference_image_license: 'CC-BY-NC',
+    conservation_status: 'EN', habitat: 'Peat forest',
     latitude: 99.123456, longitude: 88.654321, location_description: 'SECRET_LOCATION',
     registered_by: 'SECRET_STAFF', access_token: 'SECRET_TOKEN' };
   const url = await start(t, publicRouter({ data: [row], error: null }, calls));
@@ -99,11 +103,38 @@ test('visitor page renders only allowed fields and escapes stored content', asyn
   assert.equal(response.status, 200);
   assert.match(html, /Shorea albida/); assert.match(html, /Endangered/);
   assert.match(html, /&lt;script&gt;/); assert.doesNotMatch(html, /<script>/);
-  assert.doesNotMatch(html, /99.123456|88.654321|SECRET_LOCATION|SECRET_STAFF|SECRET_TOKEN/);
+  assert.doesNotMatch(html, /99.123456|88.654321|SECRET_LOCATION|SECRET_STAFF|SECRET_TOKEN|legacy\.jpg|Legacy photographer|CC-BY-NC|iNaturalist observation/);
   assert.deepEqual(calls, [['public_plant_by_qr_v2', { p_qr: TAG }]]);
   assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.equal(response.headers.get('x-powered-by'), null);
   assert.match(response.headers.get('content-security-policy'), /default-src 'none'/);
+});
+
+test('iNaturalist source is escaped plain text on the visitor page and exposed by the QR API', async t => {
+  const row = {
+    scientific_name: 'Shorea albida',
+    data_source: 'inaturalist',
+    source_observer: '<Observer>',
+    source_licence: 'CC-BY-NC',
+    source_url: 'https://www.inaturalist.org/observations/123',
+  };
+  const client = { rpc: async () => ({ data: [row], error: null }) };
+  const router = createPublicPlantsRouter({ client });
+  router.get('/api/public/plants/by-qr', createPublicQrHandler(client));
+  const url = await start(t, router);
+
+  const page = await fetch(url + '/p/' + TAG);
+  const html = await page.text();
+  assert.equal(page.status, 200);
+  assert.match(html, /Source: iNaturalist observation by &lt;Observer&gt; \(CC-BY-NC\)/);
+  assert.doesNotMatch(html, /<a\b|source_url|inaturalist\.org/);
+
+  const api = await fetch(url + '/api/public/plants/by-qr?code=' + TAG);
+  const body = await api.json();
+  assert.equal(body.data.data_source, 'inaturalist');
+  assert.equal(body.data.source_observer, '<Observer>');
+  assert.equal(body.data.source_licence, 'CC-BY-NC');
+  assert.equal(body.data.source_url, undefined);
 });
 
 test('invalid visitor tags never query the database', async t => {
@@ -140,7 +171,7 @@ test('visitor requests are rate limited', async t => {
   for (let i = 0; i < 60; i++) assert.equal((await fetch(url + '/p/' + TAG)).status, 404);
   const response = await fetch(url + '/p/' + TAG);
   assert.equal(response.status, 429); assert.ok(response.headers.get('retry-after'));
-  assert.equal(calls.length, 60);
+  assert.equal(calls.length, 120);
 });
 
 async function batchSetup(t, role, plants, generatePDF) {
@@ -195,4 +226,25 @@ test('DEMO records are explicitly distinguished from real research and officer r
   assert.equal(response.status, 200);
   assert.match(html, /Demonstration record/);
   assert.match(html, /does not represent officer review/);
+});
+
+test('pending tag discloses only verification status on web and API', async t => {
+  const client = { async rpc(fn) {
+    return { data: fn === 'public_plant_tag_is_pending' ? true : [], error: null };
+  } };
+  const router = createPublicPlantsRouter({ client });
+  router.get('/api/public/plants/by-qr', createPublicQrHandler(client));
+  const url = await start(t, router);
+  const response = await fetch(url + '/p/' + TAG);
+  assert.equal(response.status, 404);
+  const html = await response.text();
+  assert.match(html, /Being verified/);
+  assert.match(html, /This plant is being verified by Sarawak Forestry/);
+  assert.doesNotMatch(html, new RegExp(TAG));
+  const api = await fetch(url + '/api/public/plants/by-qr?code=' + TAG);
+  assert.equal(api.status, 404);
+  assert.deepEqual(await api.json(), {
+    code: 'plant_pending_verification',
+    message: 'This plant is being verified by Sarawak Forestry. Check back later.',
+  });
 });

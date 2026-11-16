@@ -16,6 +16,8 @@ import {
 import { useRouter } from 'expo-router';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
+import SpeciesPhotoCredit from '../../src/components/SpeciesPhotoCredit';
+import { preferredSpeciesPhoto } from '../../src/utils/speciesPhoto';
 
 // The visitor and guest "Plant guide": the approved species list (public data, cached on
 // the phone), in plain language. Botanists use the Species tab instead.
@@ -126,19 +128,23 @@ export default function PlantGuideScreen() {
             const status = plainConservationStatus(item.conservation_status);
             const colors = conservationStatusColors(status.code);
             const photo = imageUrisBySpeciesId[item.id];
+            const photoCredit = preferredSpeciesPhoto(item.species_media);
             return (
               <TouchableOpacity
                 style={styles.row}
                 activeOpacity={0.7}
                 onPress={() => router.push({ pathname: '/plant-info', params: { speciesId: item.id } } as any)}
               >
-                {photo ? (
-                  <Image source={{ uri: photo }} style={styles.thumb} />
-                ) : (
-                  <View style={[styles.thumb, styles.thumbPlaceholder]}>
-                    <Text style={{ fontSize: 22 }}>🌿</Text>
-                  </View>
-                )}
+                <View style={styles.photoColumn}>
+                  {photo ? (
+                    <Image source={{ uri: photo }} style={styles.thumb} />
+                  ) : (
+                    <View style={[styles.thumb, styles.thumbPlaceholder]}>
+                      <Text style={{ fontSize: 22 }}>🌿</Text>
+                    </View>
+                  )}
+                  <SpeciesPhotoCredit photo={photoCredit} compact />
+                </View>
                 <View style={{ flex: 1, marginLeft: 12 }}>
                   <Text style={styles.commonName}>{item.common_name || item.scientific_name}</Text>
                   {item.common_name ? <Text style={styles.scientific}>{item.scientific_name}</Text> : null}
@@ -158,6 +164,7 @@ export default function PlantGuideScreen() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F6F8F6', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
+  photoColumn: { width: 110 },
   container: { flex: 1, paddingHorizontal: 20, paddingTop: 12 },
   title: { fontSize: 24, fontWeight: '800', color: '#1E2B22', marginBottom: 12 },
   search: { backgroundColor: '#FFFFFF', height: 46, borderRadius: 23, paddingHorizontal: 18, fontSize: 14, color: '#1E2B22', borderWidth: 1.2, borderColor: '#E6ECE8', marginBottom: 10 },

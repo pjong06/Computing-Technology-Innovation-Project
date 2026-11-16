@@ -7,7 +7,9 @@ require('dotenv').config({
 
 const express = require('express');
 const app = express();
-app.set('trust proxy', 1);
+// Render's observed route: client -> Cloudflare -> forwarding proxies -> app.
+// Revalidate this hop count if the ingress path changes; never expose a shorter path.
+app.set('trust proxy', 3);
 const PORT = process.env.PORT || 3000;
 
 // IMPORT ROUTES AND SERVICES
@@ -29,6 +31,7 @@ const { publicClient } = require('./config/supabase');
 const { requireAuth, requireRole } = require('./middleware/auth');
 const { startMqttIngestion } = require('./services/mqttIngestionService');
 const officerMapRoutes = require('./routes/officerMap');
+const officerPlantsRoutes = require('./routes/officerPlants');
 
 // MIDDLEWARE
 
@@ -68,6 +71,7 @@ app.use('/api/web-data', webDataRoutes);
 app.use('/api/sync', requireAuth, requireRole('botanist'), syncRoutes);
 
 app.use('/api/officer/map', officerMapRoutes);
+app.use('/api/officer/plants', officerPlantsRoutes);
 
 // Public plant routes
 app.use(publicPlantRoutes);
@@ -116,46 +120,13 @@ app.get('/api/health/supabase', async (_req, res) => {
 
 // PUBLIC PLANT QR CODE LOOKUP
 // Return approved public plant information for a QR code.
-const { createQrLimiter, publicQrData } = require('./middleware/publicQrProtection');
+const { createQrLimiter } = require('./middleware/publicQrProtection');
 const qrLimiter = createQrLimiter({
   limit: Number(process.env.QR_RATE_LIMIT || 60),
   windowMs: Number(process.env.QR_RATE_WINDOW_MS || 60000),
 });
 
-app.get('/api/public/plants/by-qr', qrLimiter, async (req, res) => {
-  const qrCode =
-    typeof req.query.code === 'string'
-      ? req.query.code.trim()
-      : '';
-
-  if (!qrCode || qrCode.length > 120) {
-    return res.status(400).json({
-      message: 'Valid QR code is required',
-    });
-  }
-
-  const { data, error } = await publicClient.rpc(
-    'public_plant_by_qr_v2',
-    { p_qr: qrCode }
-  );
-
-  if (error) {
-    console.error('Public QR lookup error:', error);
-
-    return res.status(500).json({
-      message: 'Could not load plant information',
-    });
-  }
-
-  if (!data || data.length === 0) {
-    return res.status(404).json({
-      message: 'Approved plant not found',
-    });
-  }
-
-  res.set('Cache-Control', 'no-store');
-  return res.json({ data: publicQrData(data[0]) });
-});
+app.get('/api/public/plants/by-qr', qrLimiter, publicPlantRoutes.createPublicQrHandler(publicClient));
 
 // CURRENT USER INFORMATION
 

@@ -1462,6 +1462,111 @@ function getAlertIcon(group) {
 }
 
 
+function stripTrailingMetricSuffix(message) {
+  const trimmedMessage =
+    message.trimEnd();
+
+  if (
+    trimmedMessage.endsWith(')') === false
+  ) {
+    return message;
+  }
+
+  const openingIndex =
+    trimmedMessage.lastIndexOf('(');
+  const metric =
+    trimmedMessage.slice(
+      openingIndex + 1,
+      -1
+    );
+
+  if (
+    openingIndex === -1 ||
+    metric.length === 0 ||
+    metric.includes(')')
+  ) {
+    return message;
+  }
+
+  return trimmedMessage
+    .slice(
+      0,
+      openingIndex
+    )
+    .trimEnd();
+}
+
+
+function isAlertWordCharacter(character) {
+  if (character === '') {
+    return false;
+  }
+
+  const code =
+    character.charCodeAt(0);
+
+  return (
+    (code >= 48 && code <= 57) ||
+    (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122) ||
+    code === 95
+  );
+}
+
+
+function findAlertSourceKeyword(message, keyword) {
+  for (
+    let keywordIndex = 0;
+    keywordIndex <= message.length - keyword.length;
+    keywordIndex++
+  ) {
+    let matchesKeyword = true;
+    for (
+      let offset = 0;
+      offset < keyword.length;
+      offset++
+    ) {
+      if (
+        message[keywordIndex + offset].toLowerCase() !==
+        keyword[offset]
+      ) {
+        matchesKeyword = false;
+        break;
+      }
+    }
+
+    if (matchesKeyword === false) {
+      continue;
+    }
+
+    const previousCharacter =
+      message[keywordIndex - 1];
+    const nextCharacter =
+      message[keywordIndex + keyword.length] || '';
+
+    if (
+      previousCharacter !== undefined &&
+      previousCharacter.trim() === '' &&
+      isAlertWordCharacter(nextCharacter) === false
+    ) {
+      let matchIndex =
+        keywordIndex - 1;
+
+      while (
+        matchIndex > 0 &&
+        message[matchIndex - 1].trim() === ''
+      ) {
+        matchIndex--;
+      }
+
+      return matchIndex;
+    }
+  }
+
+  return -1;
+}
+
+
 function getAlertDisplayTitle(
   alert
 ) {
@@ -1533,10 +1638,7 @@ function getAlertDisplayTitle(
   }
 
   return (
-    message.replace(
-      /\s*\([^()]+\)\s*$/,
-      ''
-    ) ||
+    stripTrailingMetricSuffix(message) ||
     'IoT threat alert'
   );
 }
@@ -1550,30 +1652,30 @@ function getAlertSourceName(
       alert.alert_message || ''
     );
 
-  const patterns = [
-    /\s+temperature\b/i,
-    /\s+humidity\b/i,
-    /\s+soil\b/i,
-    /\s+rain\b/i,
+  const keywords = [
+    'temperature',
+    'humidity',
+    'soil',
+    'rain',
   ];
 
   for (
-    const pattern of
-    patterns
+    const keyword of
+    keywords
   ) {
-    const match =
-      message.match(
-        pattern
+    const matchIndex =
+      findAlertSourceKeyword(
+        message,
+        keyword
       );
 
     if (
-      match &&
-      match.index > 0
+      matchIndex > 0
     ) {
       return message
         .slice(
           0,
-          match.index
+          matchIndex
         )
         .trim();
     }

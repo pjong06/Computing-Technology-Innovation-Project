@@ -1,14 +1,53 @@
 const express = require('express');
 const multer = require('multer');
+const sharp = require('sharp');
+const { requireAuth, requireRole } = require('../middleware/auth');
+const { createIdentifyRateLimit } = require('../middleware/identifyRateLimit');
 
 const {
   identifyPlant,
   PlantAiError,
 } = require('../services/plantAiService');
 
+function createIdentifyRouter({
+  ipLimit = 20, userLimit = 10, windowMs = 60000, now = Date.now,
+} = {}) {
 const router = express.Router();
+const ipLimiter = createIdentifyRateLimit({
+  limit: ipLimit, windowMs, now, keyFor: req => req.ip || req.socket.remoteAddress,
+});
+const userLimiter = createIdentifyRateLimit({
+  limit: userLimit, windowMs, now, keyFor: req => req.user.id,
+});
 
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
+
+const MAX_CONCURRENT_IDENTIFICATIONS = 2;
+let activeIdentifications = 0;
+
+function limitConcurrentIdentifications(req, res, next) {
+  if (activeIdentifications >= MAX_CONCURRENT_IDENTIFICATIONS) {
+    return res.status(503).json({
+      success: false,
+      message: 'Plant identification is busy. Please try again later.',
+    });
+  }
+
+  activeIdentifications++;
+
+  let released = false;
+
+  function releaseSlot() {
+    if (released) return;
+    released = true;
+    activeIdentifications--;
+  }
+
+  res.once('finish', releaseSlot);
+  res.once('close', releaseSlot);
+
+  next();
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -25,12 +64,13 @@ const upload = multer({
     const allowedTypes = [
       'image/jpeg',
       'image/png',
+      'image/webp',
     ];
 
     if (!allowedTypes.includes(file.mimetype)) {
       callback(
         new Error(
-          'Only JPG and PNG plant images are allowed.'
+          'Only JPEG, PNG and WebP plant images are allowed.'
         )
       );
 
@@ -67,6 +107,12 @@ function hasValidImageSignature(file) {
     );
   }
 
+  if (file.mimetype === 'image/webp') {
+    return bytes.length >= 12 &&
+      bytes.toString('ascii', 0, 4) === 'RIFF' &&
+      bytes.toString('ascii', 8, 12) === 'WEBP';
+  }
+
   return false;
 }
 
@@ -86,7 +132,7 @@ function uploadImage(req, res, next) {
         if (
           error.code === 'LIMIT_FILE_SIZE'
         ) {
-          res.status(400).json({
+          res.status(413).json({
             success: false,
             message:
               'The photo must be 10 MB or smaller.',
@@ -96,8 +142,8 @@ function uploadImage(req, res, next) {
         }
 
         if (
-          error.code ===
-          'LIMIT_UNEXPECTED_FILE'
+          error.code === 'LIMIT_UNEXPECTED_FILE' ||
+          error.code === 'LIMIT_FILE_COUNT'
         ) {
           res.status(400).json({
             success: false,
@@ -111,7 +157,7 @@ function uploadImage(req, res, next) {
         res.status(400).json({
           success: false,
           message:
-            'The photo could not be uploaded.',
+            'Upload one photo using the image field, without extra fields.',
         });
 
         return;
@@ -130,6 +176,11 @@ function uploadImage(req, res, next) {
 
 router.post(
   '/',
+  ipLimiter,
+  requireAuth,
+  requireRole('botanist', 'officer'),
+  userLimiter,
+  limitConcurrentIdentifications,
   uploadImage,
   async (req, res) => {
     if (!req.file) {
@@ -146,22 +197,37 @@ router.post(
       return res.status(400).json({
         success: false,
         message:
-          'The file must be a valid JPG or PNG image.',
+          'The file must be a valid JPEG, PNG or WebP image.',
       });
+    }
+
+    // The identification provider expects JPEG/PNG. Decode WebP with a pixel
+    // bound and send a fresh JPEG, rather than forwarding an unsupported format.
+    let image = req.file;
+    if (image.mimetype === 'image/webp') {
+      try {
+        const buffer = await sharp(image.buffer, { limitInputPixels: 25_000_000 })
+          .rotate()
+          .resize(2000, 2000, { fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 85 }).toBuffer();
+        image = { buffer, mimetype: 'image/jpeg', originalname: 'plant.jpg' };
+      } catch {
+        return res.status(400).json({ success: false, message: 'The file must be a valid WebP image (maximum 25 megapixels).' });
+      }
     }
 
     try {
       const defaultFilename =
-        req.file.mimetype === 'image/png'
+        image.mimetype === 'image/png'
           ? 'plant.png'
           : 'plant.jpg';
 
       const suggestions =
         await identifyPlant({
-          buffer: req.file.buffer,
-          mimetype: req.file.mimetype,
+          buffer: image.buffer,
+          mimetype: image.mimetype,
           filename:
-            req.file.originalname ||
+            image.originalname ||
             defaultFilename,
         });
 
@@ -203,4 +269,8 @@ router.post(
   }
 );
 
-module.exports = router;
+return router;
+}
+
+module.exports = createIdentifyRouter();
+module.exports.createIdentifyRouter = createIdentifyRouter;

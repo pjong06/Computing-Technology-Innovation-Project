@@ -18,9 +18,12 @@ import Toast from 'react-native-toast-message';
 import { useAuthRole } from '../../src/context/AuthRoleContext';
 import { useRecordStore, SyncStatus, IdentificationStatus } from '../../src/store/useRecordStore';
 import { buildSyncSummary } from '../../src/services/syncSummary';
+import { resumePausedRecordRetries } from '../../src/services/offlineDatabase';
 import { useProposalStore } from '../../src/store/useProposalStore';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
+import SpeciesPhotoCredit from '../../src/components/SpeciesPhotoCredit';
+import { preferredSpeciesPhoto } from '../../src/utils/speciesPhoto';
 
 const FEATURED_COUNT = 4;
 
@@ -102,14 +105,20 @@ export default function HomeScreen() {
 
   const handleRetry = async (id: string) => {
     setRetryingIds((ids) => [...ids, id]);
-    const result = await syncRecord(id);
-    setRetryingIds((ids) => ids.filter((x) => x !== id));
-
-    Toast.show(
-      result.ok
-        ? { type: 'success', text1: 'Record uploaded', position: 'bottom' }
-        : { type: 'error', text1: 'Upload failed', text2: result.reason, position: 'bottom' }
-    );
+    try {
+      const record = useRecordStore.getState().records.find((item) => item.id === id);
+      await resumePausedRecordRetries(id, record?.observations.map((visit) => visit.id) ?? []);
+      const result = await syncRecord(id);
+      Toast.show(
+        result.ok
+          ? { type: 'success', text1: 'Record uploaded', position: 'bottom' }
+          : { type: 'error', text1: 'Upload failed', text2: result.reason, position: 'bottom' }
+      );
+    } catch {
+      Toast.show({ type: 'error', text1: 'Could not retry this record. Please try again.' });
+    } finally {
+      setRetryingIds((ids) => ids.filter((x) => x !== id));
+    }
   };
 
   const getStatusBadge = (status: SyncStatus) => {
@@ -225,23 +234,12 @@ export default function HomeScreen() {
                 activeOpacity={0.85}
                 onPress={() => router.push('/(tabs)/scan')}
                 accessibilityRole="button"
-                accessibilityLabel="Scan plant tag"
+                accessibilityLabel="Record observation"
               >
                 <View style={styles.scanIconWrap}>
                   <Ionicons name="scan-outline" size={32} color="#284632" />
                 </View>
-                <Text style={styles.scanCardLabel}>Scan Tag</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.newRecordCard}
-                activeOpacity={0.85}
-                onPress={() => router.push('/new-record' as any)}
-                accessibilityRole="button"
-                accessibilityLabel="Register a new plant"
-              >
-                <Ionicons name="add-circle-outline" size={32} color="#FFFFFF" />
-                <Text style={styles.newRecordLabel}>Register plant</Text>
+                <Text style={styles.scanCardLabel}>Record observation</Text>
               </TouchableOpacity>
             </View>
 
@@ -314,7 +312,7 @@ export default function HomeScreen() {
 
                       {item.syncStatus === SyncStatus.FAILED && (
                         <View style={styles.errorSubRow}>
-                          <Text style={styles.errorSubText}>Upload failed</Text>
+                          <Text style={styles.errorSubText}>{item.syncError || 'Upload failed'}</Text>
                           {retryingIds.includes(item.id) ? (
                             <ActivityIndicator size="small" color="#9B1C1C" />
                           ) : (
@@ -361,6 +359,7 @@ export default function HomeScreen() {
                     const status = plainConservationStatus(item.conservation_status);
                     const colors = conservationStatusColors(status.code);
                     const photo = imageUrisBySpeciesId[item.id];
+                    const photoCredit = preferredSpeciesPhoto(item.species_media);
                     return (
                       <TouchableOpacity
                         key={item.id}
@@ -375,6 +374,7 @@ export default function HomeScreen() {
                             <Ionicons name="leaf-outline" size={26} color="#46654F" />
                           </View>
                         )}
+                        <SpeciesPhotoCredit photo={photoCredit} compact />
                         <Text style={styles.featuredName} numberOfLines={1}>
                           {item.common_name || item.scientific_name}
                         </Text>
@@ -461,16 +461,6 @@ const styles = StyleSheet.create({
   },
   scanIconWrap: { marginBottom: 6 },
   scanCardLabel: { fontSize: 14.5, fontWeight: '700', color: '#284632' },
-  newRecordCard: {
-    flex: 1,
-    height: 120,
-    backgroundColor: '#284632',
-    borderRadius: 22,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 6,
-  },
-  newRecordLabel: { fontSize: 14, fontWeight: '700', color: '#FFFFFF', textAlign: 'center' },
   routePill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -526,7 +516,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginTop: 4,
   },
-  errorSubText: { fontSize: 11, color: '#9B1C1C' },
+  errorSubText: { flex: 1, fontSize: 11, color: '#9B1C1C' },
   retryBtn: { fontSize: 11, fontWeight: '700', color: '#9B1C1C', textDecorationLine: 'underline' },
   emptyContainer: { alignItems: 'center', paddingVertical: 30 },
   emptyTitle: { fontSize: 15, fontWeight: '700', color: '#1E2B22', marginBottom: 4 },

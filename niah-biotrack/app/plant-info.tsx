@@ -15,6 +15,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
 import { lookupPublicTag, describePublicTagLookup, type PublicTagLookupResult } from '../src/services/tagLookup';
 import { conservationStatusColors, plainConservationStatus } from '../src/utils/conservationStatus';
+import SpeciesPhotoCredit from '../src/components/SpeciesPhotoCredit';
+import { preferredSpeciesPhoto } from '../src/utils/speciesPhoto';
 
 // What the page shows, from either source. Never any location or coordinates.
 interface PlantFacts {
@@ -74,6 +76,7 @@ export default function PlantInfoScreen() {
   const detail = speciesId ? detailsById[speciesId] : undefined;
   const listItem = speciesId ? species.find((s) => s.id === speciesId) : undefined;
   const photo = speciesId ? imageUrisBySpeciesId[speciesId] : undefined;
+  const photoCredit = preferredSpeciesPhoto(detail?.species_media ?? listItem?.species_media);
 
   // The scanned plant's own public facts come first; the species fills any gaps.
   const facts: PlantFacts = {
@@ -112,7 +115,11 @@ export default function PlantInfoScreen() {
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
           {photo ? (
-            <Image source={{ uri: photo }} style={styles.photo} resizeMode="cover" accessibilityIgnoresInvertColors />
+            <>
+              <Image source={{ uri: photo }} style={styles.photo} resizeMode="cover" accessibilityIgnoresInvertColors />
+              <Text style={styles.speciesPhotoLabel}>Species photo</Text>
+              <SpeciesPhotoCredit photo={photoCredit} />
+            </>
           ) : (
             <View style={[styles.photo, styles.photoPlaceholder]}>
               <Text style={styles.placeholderIcon}>🌿</Text>
@@ -129,6 +136,11 @@ export default function PlantInfoScreen() {
             <Text style={[styles.badgeText, { color: statusColors.text }]}>{status.label}</Text>
           </View>
           <Text style={styles.body}>{status.meaning}</Text>
+          {scanned?.dataSource === 'inaturalist' ? (
+            <Text style={styles.body}>
+              Source: iNaturalist observation by {scanned.sourceObserver || 'Unknown'} ({scanned.sourceLicence || 'Unknown'})
+            </Text>
+          ) : null}
 
           {facts.description ? (
             <>
@@ -165,6 +177,7 @@ const styles = StyleSheet.create({
   centerBox: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 28 },
   content: { paddingHorizontal: 20, paddingBottom: 40 },
   photo: { width: '100%', aspectRatio: 4 / 3, borderRadius: 20, marginBottom: 16, backgroundColor: '#E7EFEA' },
+  speciesPhotoLabel: { fontSize: 11, color: '#68776D', marginTop: -10, marginBottom: 2 },
   photoPlaceholder: { justifyContent: 'center', alignItems: 'center' },
   placeholderIcon: { fontSize: 48 },
   title: { fontSize: 24, fontWeight: '800', color: '#1E2B22', textAlign: 'left' },

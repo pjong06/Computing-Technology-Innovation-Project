@@ -1,5 +1,6 @@
 const express = require('express');
 const { TAG_PATTERN } = require('../services/qrService');
+const { removeLegacyObservationSource } = require('../utils/speciesDescription');
 
 const STYLES = `
 :root{color-scheme:light;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#20392d;background:#f3f4ec}
@@ -35,21 +36,70 @@ function documentHtml(title, content) {
 function publicPlantHtml(tag, row) {
     // Explicit allowlist: never serialize the RPC result, staff identity or coordinates into HTML.
     const plant = Object.fromEntries(PUBLIC_FIELDS.map(key => [key,
-        typeof row[key] === 'string' ? row[key].slice(0, 10000) : '']));
+        typeof row[key] === 'string'
+            ? (key === 'description' ? removeLegacyObservationSource(row[key]) : row[key]).slice(0, 10000)
+            : '']));
     const isDemo = Object.values(plant).some(value => /\bDEMO\b/i.test(value));
     const status = plant.conservation_status || 'Unknown';
     const sections = [['About this species', plant.description], ['Appearance', plant.morphology],
         ['Habitat', plant.habitat], ['Cultural significance', plant.cultural_significance]];
+    const sourceLine = row.data_source === 'inaturalist'
+        ? `<p class="notice">Source: iNaturalist observation by ${escapeHtml(
+            typeof row.source_observer === 'string' ? row.source_observer.slice(0, 200) : 'Unknown'
+        )} (${escapeHtml(
+            typeof row.source_licence === 'string' ? row.source_licence.slice(0, 100) : 'Unknown'
+        )})</p>`
+        : '';
     return documentHtml(plant.scientific_name || 'Plant information',
         `<div class="tag">${escapeHtml(tag)}</div>` +
         (isDemo ? '<aside class="demo"><strong>Demonstration record</strong><br>Not real research data. Approved status is for demonstration only and does not represent officer review.</aside>' : '') +
         `<h1>${escapeHtml(plant.scientific_name || 'Plant information')}</h1>` +
         (plant.common_name ? `<p class="common">${escapeHtml(plant.common_name)}</p>` : '') +
         (plant.local_name ? `<p class="local">Local name: ${escapeHtml(plant.local_name)}</p>` : '') +
+        sourceLine +
         `<div class="status">Conservation status: ${escapeHtml(STATUS_NAMES[status] || status)}</div>` +
         sections.filter(([, value]) => value.trim()).map(([label, value]) =>
             `<section><h2>${label}</h2><p>${escapeHtml(value)}</p></section>`).join('') +
         (!plant.description.trim() ? '<p class="notice">A species description has not yet been provided.</p>' : ''));
+}
+
+const { publicQrData } = require('../middleware/publicQrProtection');
+
+const PENDING_MESSAGE = 'This plant is being verified by Sarawak Forestry. Check back later.';
+
+async function lookupPublicPlant(database, tag) {
+    const { data, error } = await database.rpc('public_plant_by_qr_v2', { p_qr: tag });
+    if (error) throw error;
+    if (Array.isArray(data) && data.length) return { status: 'found', plant: data[0] };
+    if (!TAG_PATTERN.test(tag)) return { status: 'not-found' };
+
+    const result = await database.rpc('public_plant_tag_is_pending', { p_qr: tag });
+    // The previous response remains available while the migration awaits rollout.
+    if (result.error && result.error.code !== 'PGRST202') throw result.error;
+    return { status: result.data === true && !result.error ? 'pending' : 'not-found' };
+}
+
+function createPublicQrHandler(database) {
+    return async (req, res) => {
+        const tag = typeof req.query.code === 'string' ? req.query.code.trim() : '';
+        if (!tag || tag.length > 120) {
+            return res.status(400).json({ message: 'Valid QR code is required' });
+        }
+
+        try {
+            const result = await lookupPublicPlant(database, tag);
+            if (result.status === 'pending') {
+                return res.status(404).json({ code: 'plant_pending_verification', message: PENDING_MESSAGE });
+            }
+            if (result.status === 'not-found') {
+                return res.status(404).json({ message: 'Approved plant not found' });
+            }
+            return res.json({ data: publicQrData(result.plant) });
+        } catch (error) {
+            console.error('Public QR lookup error:', error);
+            return res.status(500).json({ message: 'Could not load plant information' });
+        }
+    };
 }
 
 function createPublicPlantsRouter({ client } = {}) {
@@ -82,13 +132,12 @@ function createPublicPlantsRouter({ client } = {}) {
         }
         try {
             const database = client || require('../config/supabase').publicClient;
-            // This existing RPC filters approved plants/species and approved observations.
-            const { data, error } = await database.rpc('public_plant_by_qr_v2', { p_qr: tag });
-            if (error) return errorPage(503, 'Temporarily unavailable', 'Plant information could not be loaded. Please try again later.');
-            if (!Array.isArray(data) || data.length === 0) {
+            const result = await lookupPublicPlant(database, tag);
+            if (result.status === 'pending') return errorPage(404, 'Being verified', PENDING_MESSAGE);
+            if (result.status === 'not-found') {
                 return errorPage(404, 'Plant information unavailable', 'This tag has no approved public record yet.');
             }
-            return res.type('html').send(publicPlantHtml(tag, data[0]));
+            return res.type('html').send(publicPlantHtml(tag, result.plant));
         } catch {
             return errorPage(503, 'Temporarily unavailable', 'Plant information could not be loaded. Please try again later.');
         }
@@ -98,3 +147,4 @@ function createPublicPlantsRouter({ client } = {}) {
 
 module.exports = createPublicPlantsRouter();
 module.exports.createPublicPlantsRouter = createPublicPlantsRouter;
+module.exports.createPublicQrHandler = createPublicQrHandler;

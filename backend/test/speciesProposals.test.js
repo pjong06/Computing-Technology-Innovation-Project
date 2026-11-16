@@ -230,14 +230,22 @@ test('database failures return a generic message', async t => {
 
 test('officer lists pending proposals with the proposing botanist name', async t => {
   const { request, queries } = await setup(t, [
-    { data: [{ id: SPECIES, scientific_name: 'Nepenthes example', proposed_by: USER, verification_status: 'pending' }], error: null, count: 1 },
+    {
+      data: [{
+        id: SPECIES, scientific_name: 'Nepenthes example', proposed_by: USER,
+        verification_status: 'pending', created_at: '2026-11-14T09:00:00Z',
+      }],
+      error: null, count: 1,
+    },
     { data: [{ id: USER, full_name: 'Aina Rahman' }], error: null },
   ], 'officer');
   const response = await request('/species/proposals/pending');
   assert.equal(response.status, 200);
   assert.equal(response.body.data[0].proposer_name, 'Aina Rahman');
+  assert.equal(response.body.data[0].created_at, '2026-11-14T09:00:00Z');
   assert.deepEqual(response.body.pagination, { page: 1, page_size: 100, total: 1, total_pages: 1 });
   assert.ok(queries[0].some(c => c[0] === 'eq' && c[1] === 'verification_status' && c[2] === 'pending'));
+  assert.ok(queries[0].some(c => c[0] === 'select' && /proposed_by, created_at/.test(c[1])));
   assert.deepEqual(queries[1].find(c => c[0] === 'in'), ['in', 'id', [USER]]);
 });
 

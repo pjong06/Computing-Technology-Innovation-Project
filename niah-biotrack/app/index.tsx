@@ -217,7 +217,7 @@ export default function LoginScreen() {
 
         <View style={styles.footer}>
           <Text style={styles.helpText}>
-            Accounts are created by Sarawak Forestry Corporation.
+            Staff accounts are created by SFC officers. Visitors can sign up.
           </Text>
         </View>
       </FormScrollView>

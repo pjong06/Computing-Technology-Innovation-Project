@@ -1,6 +1,7 @@
 import type * as ImagePicker from 'expo-image-picker';
 import { fetch } from 'expo/fetch';
 import { File } from 'expo-file-system';
+import { supabase } from '../lib/supabase';
 
 export interface SpeciesSuggestion {
   rank: number;
@@ -32,11 +33,19 @@ export class IdentifyNetworkError extends Error {
 const MAX_IMAGE_SIZE =
   10 * 1024 * 1024;
 
-const API_BASE_URL =
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '/') end -= 1;
+  return value.slice(0, end);
+}
+
+const configuredApiBaseUrl =
   process.env
     .EXPO_PUBLIC_API_BASE_URL
-    ?.trim()
-    .replace(/\/+$/, '');
+    ?.trim();
+
+const API_BASE_URL =
+  configuredApiBaseUrl === undefined ? undefined : trimTrailingSlashes(configuredApiBaseUrl);
 
 function getUploadName(
   photo: ImagePicker.ImagePickerAsset
@@ -141,11 +150,18 @@ export async function identifyPlant(
 
   let response;
 
+  const { data, error } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (error || !token) {
+    throw new Error('Please sign in before identifying a plant.');
+  }
+
   try {
     response = await fetch(
       `${API_BASE_URL}/api/identify`,
       {
         method: 'POST',
+        headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
         body: formData,
         signal,
       }

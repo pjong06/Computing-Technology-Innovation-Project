@@ -1,2 +1,7 @@
 .temp/
 .branches/
+# Species photo licence check: working files (exports, review sheet, API cache)
+scripts/species-photos/*.csv
+scripts/species-photos/.cache/
+# The review page's download (it lands in Downloads, but may be copied here)
+species-photo-review-by-species-REVIEWED.csv

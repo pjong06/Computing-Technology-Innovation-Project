@@ -148,6 +148,19 @@ nav a.on {
   color: #fff;
 }
 
+.menu-count {
+  float: right;
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--er);
+  color: var(--ert);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) nav a.on {
     color: #10170f;
@@ -396,8 +409,8 @@ tr.row:hover td {
 }
 
 .pv {
-  width: 96px;
-  height: 96px;
+  width: min(100%, 360px);
+  height: auto;
 }
 
 .pv .thumb {
@@ -406,6 +419,7 @@ tr.row:hover td {
 }
 
 .pv .thumbbox {
+  display: block;
   width: 96px;
   height: 96px;
 }
@@ -418,6 +432,13 @@ tr.row:hover td {
   border-radius: 12px;
 
   object-fit: cover;
+}
+
+.species-photo-credit {
+  margin: 4px 0;
+  color: var(--mute);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 /* Flex / Spacing */
@@ -726,6 +747,25 @@ table.big .pill {
   font-size: 14px;
 }
 
+.review-kind {
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.review-kind.new-plant {
+  background: var(--wa);
+  color: var(--wat);
+}
+
+.review-kind.revisit {
+  background: var(--mint);
+  color: var(--ink);
+}
+
 .detail {
   padding: 22px;
 }
@@ -885,6 +925,12 @@ table.big .btn {
 }
 
 /* IoT alert panel */
+
+.iot-main {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
 .alert-list {
   display: grid;
   gap: 12px;

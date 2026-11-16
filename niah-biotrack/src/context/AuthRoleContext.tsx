@@ -95,7 +95,11 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    checkUserRole();
+    checkUserRole().catch((error: unknown) => {
+      console.error('Unable to check user role', error);
+      setRole('visitor');
+      setUserName('Park Visitor');
+    });
   }, []);
 
   // "Explore without an account". Any saved login is removed first, so a guest never
@@ -113,10 +117,14 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
   // see the previous user's records and photos (and could upload them as their own).
   // Screens must warn about unsynced data BEFORE calling this; it deletes it.
   const logout = async () => {
-    useRecordStore.getState().clearAllData(); // records, routes, draft route
-    useProposalStore.getState().clearProposals(); // species proposals
-    deleteAllStoredPhotos();
-    await AsyncStorage.removeItem('niah_is_guest_visitor');
+    try {
+      await useProposalStore.getState().clearProposals();
+      await useRecordStore.getState().clearAllData(); // records, routes, draft route
+      await deleteAllStoredPhotos();
+      await AsyncStorage.removeItem('niah_is_guest_visitor');
+    } catch {
+      console.error('Unable to clear local data while signing out.');
+    }
     // Works offline too, and forgets the cached account details.
     await signOutOnThisPhone();
     setRole('visitor');

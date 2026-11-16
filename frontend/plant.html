@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Plant details - Niah Biotrack</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous">
+<link rel="icon" href="images/logo.png">
+<link rel="stylesheet" href="css/style.css">
+<style>
+.detail-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr); gap: 18px; }
+.detail-card { min-width: 0; padding: 20px; }
+.back-link { display: inline-block; margin-bottom: 14px; color: var(--pri); font-weight: 600; text-decoration: none; }
+.tag-line { color: var(--mute); font-size: 14px; }
+.detail-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 18px; }
+.detail-fact { min-width: 0; }
+.detail-label { color: var(--mute); font-size: 12px; }
+.detail-value { margin-top: 2px; overflow-wrap: anywhere; font-weight: 600; }
+.plant-source { margin: 8px 0 0; color: var(--mute); font-size: 13px; overflow-wrap: anywhere; }
+.plant-status { display: inline-block; padding: 4px 10px; border-radius: 999px; background: var(--mint); }
+.plant-status.approved { background: var(--ok); color: var(--okt); }
+.plant-status.pending { background: var(--wa); color: var(--wat); }
+.plant-status.rejected { background: var(--er); color: var(--ert); }
+.photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin-top: 14px; }
+.photo-grid img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 10px; background: var(--mint); }
+.species-photo-fallback { max-width: 360px; margin: 0; }
+.species-photo-fallback figcaption { margin-top: 4px; color: var(--mute); font-size: 12px; }
+#plant-map { height: 260px; margin-top: 12px; border-radius: 10px; background: var(--mint); }
+.history-card { margin-top: 18px; overflow: hidden; }
+.table-wrap { overflow-x: auto; }
+.history-table { width: 100%; border-collapse: collapse; min-width: 760px; }
+.history-table th, .history-table td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.history-table th { color: var(--mute); font-size: 12px; font-weight: 700; }
+.history-table td { font-size: 13px; }
+.review-rejected { color: var(--ert); }
+.plant-state { padding: 18px; }
+.plant-state[hidden] { display: none; }
+@media (max-width: 760px) {
+  .detail-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 520px) {
+  main { padding: 20px 16px; }
+  .detail-card { padding: 15px; }
+  .detail-facts { gap: 10px; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+<nav id="menu"></nav>
+<main>
+<section class="page on">
+  <a class="back-link" href="plants.html">‹ Plant catalogue</a>
+  <div class="card plant-state" id="plant-loading" role="status">Loading plant details...</div>
+  <div class="card plant-state" id="plant-error" role="alert" hidden></div>
+  <div id="plant-detail" hidden>
+    <div class="detail-grid">
+      <article class="card detail-card">
+        <p class="tag-line" id="plant-tag"></p>
+        <h1 id="plant-title">Plant</h1>
+        <p class="lead" id="plant-species"></p>
+        <p class="plant-source" id="plant-source"></p>
+        <div class="detail-facts">
+          <div class="detail-fact"><div class="detail-label">Plant status</div><div class="detail-value" id="plant-status"></div></div>
+          <div class="detail-fact"><div class="detail-label" id="plant-registered-label">Registered by</div><div class="detail-value" id="plant-registered-by"></div></div>
+          <div class="detail-fact"><div class="detail-label">Registered</div><div class="detail-value" id="plant-registered-at"></div></div>
+          <div class="detail-fact"><div class="detail-label">Last observation</div><div class="detail-value" id="plant-last-observation"></div></div>
+          <div class="detail-fact"><div class="detail-label">Location note</div><div class="detail-value" id="plant-location"></div></div>
+          <div class="detail-fact"><div class="detail-label">Conservation status</div><div class="detail-value" id="plant-conservation"></div></div>
+          <div class="detail-fact"><div class="detail-label">Coordinates</div><div class="detail-value" id="plant-coordinates"></div></div>
+          <div class="detail-fact"><div class="detail-label">Observations</div><div class="detail-value" id="plant-observation-count"></div></div>
+        </div>
+        <h2 id="plant-photo-heading">Plant photos</h2>
+        <div class="photo-grid" id="plant-photos"></div>
+        <p class="muted" id="plant-no-photos" hidden>No photos have been added to this plant.</p>
+      </article>
+      <article class="card detail-card">
+        <h2>Plant location</h2>
+        <div id="plant-map"></div>
+        <p class="muted" id="plant-map-message"></p>
+      </article>
+    </div>
+    <article class="card history-card">
+      <div class="detail-card">
+        <h2>Observation history</h2>
+        <p class="muted" id="observations-count"></p>
+      </div>
+      <div class="table-wrap">
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>Date</th><th>Observer</th><th>Health</th><th>Life stage</th>
+              <th>Height (m)</th><th>Diameter (cm)</th><th>Review status</th><th>Latest reviewer comment</th>
+            </tr>
+          </thead>
+          <tbody id="observations-body"></tbody>
+        </table>
+      </div>
+      <p class="muted detail-card" id="observations-empty" hidden>No observations are recorded for this plant.</p>
+    </article>
+  </div>
+</section>
+</main>
+</div>
+<div id="toast" role="status"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R" crossorigin="anonymous"></script>
+<script src="js/shared.js"></script>
+<script src="js/plant.js"></script>
+</body>
+</html>

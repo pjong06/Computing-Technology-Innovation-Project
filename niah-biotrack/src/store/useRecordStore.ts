@@ -40,7 +40,16 @@ import {
 
 import {
   runOutboxSync,
+  isRetryableStatus,
+  type SyncRunResult,
 } from '../services/syncEngine';
+import { requestSyncRetry } from '../services/syncRetry';
+
+import {
+  checkDiameterCm,
+  checkHeightMetres,
+  metresToCm,
+} from '../utils/units';
 
 /* =========================================================
  * ENUMS
@@ -191,6 +200,8 @@ export interface ObservationVisit {
     | number
     | null;
 
+  submissionRequested?: boolean;
+
   submittedForReview?:
     boolean;
 
@@ -220,6 +231,7 @@ export type TagProblem =
   | 'locked';
 
 export interface PlantRecord {
+  syncError?: string;
   /*
    * Stable local UUID.
    */
@@ -351,6 +363,7 @@ export type SyncResult =
         reason: string;
       }
   ) & {
+    retryable?: boolean;
     photosUploaded?:
       number;
 
@@ -359,6 +372,7 @@ export type SyncResult =
   };
 
 export interface SyncAllResult {
+  retryable: boolean;
   uploaded: number;
 
   failed: number;
@@ -393,6 +407,11 @@ const uploadsInProgress =
 function isUploadable(
   record: PlantRecord
 ): boolean {
+  if (record.serverId) {
+    return record.recordStatus ===
+      RecordStatus.COMPLETE;
+  }
+
   return (
     record.syncStatus !==
       SyncStatus.LOCAL_ONLY &&
@@ -411,15 +430,16 @@ function isFullySubmitted(
     | PlantRecord
     | undefined
 ): boolean {
-  return (
-    record?.reviewStatus ===
-      ReviewStatus.PENDING &&
-    record.observations.length >
-      0 &&
+  return Boolean(
+    record &&
+    record.observations.length > 0 &&
     record.observations.every(
       (observation) =>
-        observation
-          .submittedForReview
+        observation.submittedForReview ||
+        observation.reviewStatus ===
+          ReviewStatus.PENDING ||
+        observation.reviewStatus ===
+          ReviewStatus.APPROVED
     )
   );
 }
@@ -664,6 +684,20 @@ function buildRegistrationVisit(
         ? `${record.height} m`
         : 'Not recorded',
 
+    /*
+     * The plant's typed height (m) and diameter (cm),
+     * stored in cm like every other visit.
+     */
+    heightCm: (() => {
+      const height = checkHeightMetres(record.height);
+      return height.ok ? metresToCm(height.value) : undefined;
+    })(),
+
+    diameterCm: (() => {
+      const diameter = checkDiameterCm(record.diameter);
+      return diameter.ok ? diameter.value : undefined;
+    })(),
+
     notes:
       record.description?.trim() ||
       'Registration visit (added on submit).',
@@ -695,8 +729,6 @@ interface RecordState {
       | 'tagCode'
       | 'createdAt'
       | 'createdAtIso'
-      | 'observations'
-      | 'reviewStatus'
       | 'reviewComment'
     >
   ) => Promise<PlantRecord>;
@@ -711,6 +743,7 @@ interface RecordState {
       | 'commonName'
       | 'family'
       | 'height'
+      | 'diameter'
       | 'morphology'
       | 'description'
       | 'locationName'
@@ -724,12 +757,18 @@ interface RecordState {
       | 'recordStatus'
       | 'identificationStatus'
       | 'syncStatus'
+      | 'reviewStatus'
+      | 'observations'
     >
   ) =>
     Promise<
       | PlantRecord
       | null
     >;
+
+  cacheServerRecord: (
+    record: PlantRecord
+  ) => Promise<PlantRecord>;
 
   addObservation: (
     plantRecordId:
@@ -752,7 +791,8 @@ interface RecordState {
     >;
 
   syncRecord: (
-    id: string
+    id: string,
+    outboxRun?: SyncRunResult
   ) =>
     Promise<SyncResult>;
 
@@ -894,9 +934,6 @@ export const useRecordStore =
               tagCode:
                 null,
 
-              reviewStatus:
-                ReviewStatus.DRAFT,
-
               reviewComment:
                 null,
 
@@ -915,8 +952,6 @@ export const useRecordStore =
               createdAtIso:
                 now.toISOString(),
 
-              observations:
-                [],
             };
 
             /*
@@ -930,6 +965,15 @@ export const useRecordStore =
               {
                 queuePlant:
                   true,
+
+                queueObservationIds:
+                  newRecord.observations
+                    .filter(
+                      (observation) =>
+                        newRecord.syncStatus !== SyncStatus.LOCAL_ONLY &&
+                        observation.syncStatus !== SyncStatus.UPLOADED
+                    )
+                    .map((observation) => observation.id),
               }
             );
 
@@ -1021,6 +1065,43 @@ export const useRecordStore =
             );
 
             return updated;
+          },
+
+        cacheServerRecord:
+          async (record) => {
+            const existing =
+              get().records.find(
+                (item) =>
+                  item.serverId === record.serverId ||
+                  (record.tagCode !== null &&
+                    item.tagCode === record.tagCode)
+              );
+
+            if (existing) {
+              return existing;
+            }
+
+            await persistRecordSnapshot(record);
+
+            set((state) => ({
+              records: state.records.some(
+                (item) =>
+                  item.serverId === record.serverId ||
+                  (record.tagCode !== null &&
+                    item.tagCode === record.tagCode)
+              )
+                ? state.records
+                : [record, ...state.records],
+            }));
+
+            return (
+              get().records.find(
+                (item) =>
+                  item.serverId === record.serverId ||
+                  (record.tagCode !== null &&
+                    item.tagCode === record.tagCode)
+              ) ?? record
+            );
           },
 
         /* -------------------------------------------------
@@ -1151,7 +1232,8 @@ export const useRecordStore =
 
         syncRecord:
           async (
-            id
+            id,
+            outboxRun
           ) => {
             const original =
               get().records.find(
@@ -1257,7 +1339,10 @@ export const useRecordStore =
                * ======================================= */
 
               const run =
-                await runOutboxSync();
+                outboxRun && plantMetadataStatus !== null &&
+                  plantMetadataStatus !== 'local_only' && queueObservationIds.length === 0
+                  ? outboxRun
+                  : await runOutboxSync();
 
               let refreshedRecords =
                 await loadOrMigrateRecords(
@@ -1284,19 +1369,6 @@ export const useRecordStore =
 
                   reason:
                     'Record not found after synchronization',
-                };
-              }
-
-              if (run.error) {
-                return {
-                  ok: false,
-
-                  reason:
-                    run.error,
-
-                  photosUploaded,
-
-                  photoProblems,
                 };
               }
 
@@ -1363,7 +1435,7 @@ export const useRecordStore =
                         ? "This plant can't be changed after submission, so the tag was not saved on the server"
                         : hasConflict
                       ? 'A newer server version exists. This record needs conflict review.'
-                      : 'The server rejected part of this record. Review it and try again.',
+                      : refreshed.syncError ?? 'The server rejected part of this record. Review it and try again.',
 
                   photosUploaded,
 
@@ -1389,7 +1461,8 @@ export const useRecordStore =
                   ok: false,
 
                   reason:
-                    'Some metadata operations are still waiting to upload.',
+                    refreshed.syncError ?? run.error ?? 'Some metadata operations are still waiting to upload.',
+                  retryable: run.remaining,
 
                   photosUploaded,
 
@@ -1485,11 +1558,13 @@ export const useRecordStore =
               if (
                 photoRun.error
               ) {
+                if (photoRun.retryable) requestSyncRetry();
                 return {
                   ok: false,
 
                   reason:
                     photoRun.error,
+                  retryable: photoRun.retryable,
 
                   photosUploaded,
 
@@ -1789,8 +1864,11 @@ export const useRecordStore =
                * ======================================= */
 
               if (
-                refreshed.reviewStatus ===
-                ReviewStatus.PENDING
+                refreshed.reviewStatus === ReviewStatus.PENDING ||
+                refreshed.observations.some(
+                  (observation) =>
+                    observation.submissionRequested
+                )
               ) {
                 const submittedIds =
                   new Set<string>();
@@ -1801,10 +1879,24 @@ export const useRecordStore =
                   ].reverse()
                 ) {
                   if (
-                    !observation.serverId ||
-                    observation
-                      .submittedForReview
+                    !observation.serverId
                   ) {
+                    continue;
+                  }
+
+                  if (
+                    observation.submittedForReview
+                  ) {
+                    continue;
+                  }
+
+                  if (
+                    observation.reviewStatus === ReviewStatus.PENDING ||
+                    observation.reviewStatus === ReviewStatus.APPROVED
+                  ) {
+                    if (observation.submissionRequested) {
+                      submittedIds.add(observation.id);
+                    }
                     continue;
                   }
 
@@ -1842,6 +1934,9 @@ export const useRecordStore =
 
                                   submittedForReview:
                                     true,
+
+                                  submissionRequested:
+                                    false,
                                 }
                               : observation
                         ),
@@ -1995,6 +2090,8 @@ export const useRecordStore =
                 photoProblems,
               };
             } catch (error) {
+              const retryable = error instanceof ApiError && isRetryableStatus(error.status);
+              if (retryable) requestSyncRetry();
               const reason =
                 error instanceof
                   ApiError
@@ -2008,6 +2105,7 @@ export const useRecordStore =
                 ok: false,
 
                 reason,
+                retryable,
 
                 photosUploaded,
 
@@ -2241,7 +2339,8 @@ export const useRecordStore =
              * records[], but their delete operation
              * still exists in the outbox.
              */
-            await runOutboxSync();
+            const outboxRun = await runOutboxSync();
+            let retryable = outboxRun.remaining;
 
             const refreshedRecords =
               await loadOrMigrateRecords(
@@ -2274,6 +2373,13 @@ export const useRecordStore =
                         !isFullySubmitted(
                           record
                         )
+                      ) ||
+                      record.observations.some(
+                        (observation) =>
+                          observation.submissionRequested &&
+                          !observation.submittedForReview &&
+                          observation.reviewStatus !== ReviewStatus.PENDING &&
+                          observation.reviewStatus !== ReviewStatus.APPROVED
                       )
                     )
                 )
@@ -2316,8 +2422,10 @@ export const useRecordStore =
 
               const result =
                 await get().syncRecord(
-                  id
+                  id,
+                  outboxRun
                 );
+              retryable ||= result.retryable === true;
 
               if (
                 result.ok
@@ -2345,6 +2453,7 @@ export const useRecordStore =
             await get().refreshReviewStatuses();
 
             return {
+              retryable,
               uploaded,
 
               failed,

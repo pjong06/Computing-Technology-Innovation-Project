@@ -1,0 +1,1245 @@
+{
+  "project_id": "yzhxjzbzslnveskkwvfy",
+  "views": [
+    {
+      "name": "plant_map_points",
+      "owner": "postgres",
+      "options": [
+        "security_invoker=true"
+      ],
+      "anon_select": false,
+      "authenticated_select": true,
+      "definition": " SELECT id,\n    species_id,\n    qr_code_value,\n    plant_status,\n    location_description,\n    st_y(location::geometry) AS latitude,\n    st_x(location::geometry) AS longitude,\n    data_source,\n    source_observer,\n    source_licence\n   FROM plants p\n  WHERE location IS NOT NULL AND deleted_at IS NULL;"
+    },
+    {
+      "name": "public_species",
+      "owner": "postgres",
+      "options": null,
+      "anon_select": false,
+      "authenticated_select": false,
+      "definition": " SELECT id,\n    scientific_name,\n    common_name,\n    local_name,\n    conservation_status,\n    description,\n    morphology,\n    habitat,\n    cultural_significance\n   FROM species\n  WHERE verification_status = 'approved'::text;"
+    }
+  ],
+  "tables": [
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "alert_camera_evidence",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 2,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "alert_rules",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 1,
+      "authenticated_select": false
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "alerts",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 5,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "audit_logs",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 2,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "observation_media",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 6,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "observation_reviews",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 4,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "observations",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 9,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "park_visitors",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 5,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "plant_edit_requests",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 0,
+      "authenticated_select": false
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "plant_media",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 3,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "plant_observation_history",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 2,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "plants",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 8,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "profiles",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 4,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "sensor_readings",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 2,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "sensor_stations",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 2,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "species",
+      "anon_select": true,
+      "rls_enabled": true,
+      "policy_count": 5,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "species_media",
+      "anon_select": true,
+      "rls_enabled": true,
+      "policy_count": 6,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "species_reference_photos",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 1,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "sync_events",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 4,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "tag_reservation_batches",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 0,
+      "authenticated_select": false
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "tag_reservations",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 1,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "taxonomy",
+      "anon_select": true,
+      "rls_enabled": true,
+      "policy_count": 3,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "website_plant_migration_map",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 0,
+      "authenticated_select": false
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "website_species",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 2,
+      "authenticated_select": true
+    },
+    {
+      "kind": "r",
+      "owner": "postgres",
+      "extension": null,
+      "force_rls": false,
+      "table_name": "website_users",
+      "anon_select": false,
+      "rls_enabled": true,
+      "policy_count": 1,
+      "authenticated_select": true
+    }
+  ],
+  "policies": [
+    {
+      "cmd": "SELECT",
+      "qual": "(( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['botanist'::text, 'researcher'::text]))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "alert_camera_evidence",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists_researchers_read_camera_evidence",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(( SELECT current_app_role() AS current_app_role) = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "alert_camera_evidence",
+      "permissive": "PERMISSIVE",
+      "policyname": "camera_evidence_officer_read",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "(current_app_role() = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "alert_rules",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers manage alert rules",
+      "schemaname": "public",
+      "with_check": "(current_app_role() = 'officer'::text)"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['botanist'::text, 'researcher'::text]))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "alerts",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists and researchers read alerts",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "DELETE",
+      "qual": "(( SELECT current_app_role() AS current_app_role) = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "alerts",
+      "permissive": "PERMISSIVE",
+      "policyname": "officer_delete_iot_alerts",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(current_app_role() = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "alerts",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers read alerts",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "(current_app_role() = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "alerts",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers update alerts",
+      "schemaname": "public",
+      "with_check": "(current_app_role() = 'officer'::text)"
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "(( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['botanist'::text, 'researcher'::text]))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "alerts",
+      "permissive": "PERMISSIVE",
+      "policyname": "staff_handle_alerts",
+      "schemaname": "public",
+      "with_check": "(( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['botanist'::text, 'researcher'::text]))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((owner_id = auth.uid()) AND (current_app_role() = 'botanist'::text))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "audit_logs",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists read own audit logs",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(current_app_role() = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "audit_logs",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers read audit logs",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((current_app_role() = 'botanist'::text) AND (EXISTS ( SELECT 1\n   FROM observations o\n  WHERE ((o.id = observation_media.observation_id) AND (o.review_status = 'approved'::text) AND (o.deleted_at IS NULL)))))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "observation_media",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists read approved observation photos",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((( SELECT current_app_role() AS current_app_role) = 'botanist'::text) AND (EXISTS ( SELECT 1\n   FROM observations o\n  WHERE ((o.id = observation_media.observation_id) AND (o.observer_id = ( SELECT auth.uid() AS uid)) AND (o.deleted_at IS NULL)))))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "observation_media",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists read photos of own observations",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "observation_media",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists upload photos to editable observations",
+      "schemaname": "public",
+      "with_check": "((( SELECT current_app_role() AS current_app_role) = 'botanist'::text) AND (uploaded_by = ( SELECT auth.uid() AS uid)) AND (EXISTS ( SELECT 1\n   FROM observations o\n  WHERE ((o.id = observation_media.observation_id) AND (o.observer_id = ( SELECT auth.uid() AS uid)) AND (o.review_status = ANY (ARRAY['draft'::text, 'rejected'::text])) AND (o.deleted_at IS NULL)))) AND security_private.can_link_observation_object(file_path))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(( SELECT current_app_role() AS current_app_role) = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "observation_media",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers read observation photos",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "observation_media",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers upload own observation media",
+      "schemaname": "public",
+      "with_check": "((( SELECT current_app_role() AS current_app_role) = 'officer'::text) AND (uploaded_by = ( SELECT auth.uid() AS uid)) AND (EXISTS ( SELECT 1\n   FROM observations o\n  WHERE ((o.id = observation_media.observation_id) AND (o.observer_id = ( SELECT auth.uid() AS uid)) AND (o.review_status = ANY (ARRAY['draft'::text, 'rejected'::text])) AND (o.deleted_at IS NULL)))))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((( SELECT current_app_role() AS current_app_role) = 'researcher'::text) AND (EXISTS ( SELECT 1\n   FROM observations o\n  WHERE ((o.id = observation_media.observation_id) AND (o.review_status = 'approved'::text) AND (o.deleted_at IS NULL)))))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "observation_media",
+      "permissive": "PERMISSIVE",
+      "policyname": "researchers read approved observation photos",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((( SELECT current_app_role() AS current_app_role) = 'botanist'::text) AND (EXISTS ( SELECT 1\n   FROM observations o\n  WHERE ((o.id = observation_reviews.observation_id) AND (o.observer_id = ( SELECT auth.uid() AS uid)) AND (o.deleted_at IS NULL)))))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "observation_reviews",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists read reviews of own observations",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "observation_reviews",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers create pending observation reviews",
+      "schemaname": "public",
+      "with_check": "((( SELECT current_app_role() AS current_app_role) = 'officer'::text) AND (reviewer_id = ( SELECT auth.uid() AS uid)) AND (EXISTS ( SELECT 1\n   FROM observations o\n  WHERE ((o.id = observation_reviews.observation_id) AND (o.review_status = 'pending'::text) AND (o.deleted_at IS NULL)))))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(( SELECT current_app_role() AS current_app_role) = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "observation_reviews",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers read observation reviews",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((( SELECT current_app_role() AS current_app_role) = 'researcher'::text) AND (EXISTS ( SELECT 1\n   FROM observations o\n  WHERE ((o.id = observation_reviews.observation_id) AND (o.review_status = 'approved'::text) AND (o.deleted_at IS NULL)))))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "observation_reviews",
+      "permissive": "PERMISSIVE",
+      "policyname": "researchers read approved observation reviews",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "observations",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists create draft observations",
+      "schemaname": "public",
+      "with_check": "((( SELECT current_app_role() AS current_app_role) = 'botanist'::text) AND (observer_id = ( SELECT auth.uid() AS uid)) AND (review_status = 'draft'::text) AND (deleted_at IS NULL) AND (deleted_by IS NULL) AND (EXISTS ( SELECT 1\n   FROM plants p\n  WHERE ((p.id = observations.plant_id) AND (p.registered_by = ( SELECT auth.uid() AS uid))))))"
+    },
+    {
+      "cmd": "DELETE",
+      "qual": "((( SELECT current_app_role() AS current_app_role) = 'botanist'::text) AND (observer_id = ( SELECT auth.uid() AS uid)) AND (review_status = 'draft'::text) AND (deleted_at IS NULL))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "observations",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists delete own draft observations",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "((( SELECT current_app_role() AS current_app_role) = 'botanist'::text) AND (observer_id = ( SELECT auth.uid() AS uid)) AND (review_status = ANY (ARRAY['draft'::text, 'rejected'::text])) AND (deleted_at IS NULL))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "observations",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists edit own draft or rejected observations",
+      "schemaname": "public",
+      "with_check": "((( SELECT current_app_role() AS current_app_role) = 'botanist'::text) AND (observer_id = ( SELECT auth.uid() AS uid)) AND (review_status = ANY (ARRAY['draft'::text, 'rejected'::text, 'pending'::text])) AND (deleted_at IS NULL) AND (deleted_by IS NULL) AND (EXISTS ( SELECT 1\n   FROM plants p\n  WHERE ((p.id = observations.plant_id) AND (p.registered_by = ( SELECT auth.uid() AS uid))))))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((( SELECT current_app_role() AS current_app_role) = 'botanist'::text) AND (observer_id = ( SELECT auth.uid() AS uid)) AND (deleted_at IS NULL))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "observations",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists read own active observations",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "observations",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers create own observations",
+      "schemaname": "public",
+      "with_check": "((current_app_role() = 'officer'::text) AND (observer_id = ( SELECT auth.uid() AS uid)) AND (EXISTS ( SELECT 1\n   FROM plants p\n  WHERE ((p.id = observations.plant_id) AND (p.deleted_at IS NULL)))))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(( SELECT current_app_role() AS current_app_role) = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "observations",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers read all observations",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "((current_app_role() = 'officer'::text) AND (review_status = 'rejected'::text) AND (deleted_at IS NULL))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "observations",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers reopen rejected observations",
+      "schemaname": "public",
+      "with_check": "((current_app_role() = 'officer'::text) AND (review_status = 'pending'::text) AND (deleted_at IS NULL))"
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "((current_app_role() = 'officer'::text) AND (review_status = 'approved'::text))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "observations",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers soft-delete or restore approved observations",
+      "schemaname": "public",
+      "with_check": "((current_app_role() = 'officer'::text) AND (review_status = 'approved'::text))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['botanist'::text, 'researcher'::text])) AND (review_status = 'approved'::text) AND (deleted_at IS NULL))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "observations",
+      "permissive": "PERMISSIVE",
+      "policyname": "staff read approved active observations",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "park_visitors",
+      "permissive": "PERMISSIVE",
+      "policyname": "staff create park visits",
+      "schemaname": "public",
+      "with_check": "(( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['officer'::text, 'admin'::text]))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['officer'::text, 'admin'::text]))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "park_visitors",
+      "permissive": "PERMISSIVE",
+      "policyname": "staff read park visits",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "(( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['officer'::text, 'admin'::text]))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "park_visitors",
+      "permissive": "PERMISSIVE",
+      "policyname": "staff update park visits",
+      "schemaname": "public",
+      "with_check": "(( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['officer'::text, 'admin'::text]))"
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "park_visitors",
+      "permissive": "PERMISSIVE",
+      "policyname": "visitors create own park visits",
+      "schemaname": "public",
+      "with_check": "(user_id = ( SELECT auth.uid() AS uid))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(user_id = ( SELECT auth.uid() AS uid))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "park_visitors",
+      "permissive": "PERMISSIVE",
+      "policyname": "visitors read own park visits",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "plant_media",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists upload own editable plant photos",
+      "schemaname": "public",
+      "with_check": "((( SELECT current_app_role() AS current_app_role) = 'botanist'::text) AND (uploaded_by = ( SELECT auth.uid() AS uid)) AND (EXISTS ( SELECT 1\n   FROM plants p\n  WHERE ((p.id = plant_media.plant_id) AND (p.registered_by = ( SELECT auth.uid() AS uid)) AND (p.plant_status = 'pending'::text) AND (NOT plant_has_submitted_observation(p.id))))))"
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "plant_media",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers upload plant photos",
+      "schemaname": "public",
+      "with_check": "((current_app_role() = 'officer'::text) AND (uploaded_by = ( SELECT auth.uid() AS uid)) AND (EXISTS ( SELECT 1\n   FROM plants p\n  WHERE ((p.id = plant_media.plant_id) AND (p.plant_status = 'approved'::text)))))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['botanist'::text, 'officer'::text, 'researcher'::text])) AND (EXISTS ( SELECT 1\n   FROM plants p\n  WHERE (p.id = plant_media.plant_id))))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "plant_media",
+      "permissive": "PERMISSIVE",
+      "policyname": "staff read visible plant photos",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "plant_observation_history",
+      "permissive": "PERMISSIVE",
+      "policyname": "Officers add plant observations",
+      "schemaname": "public",
+      "with_check": "((staff_id = ( SELECT auth.uid() AS uid)) AND (EXISTS ( SELECT 1\n   FROM profiles\n  WHERE ((profiles.id = ( SELECT auth.uid() AS uid)) AND (profiles.role = 'officer'::text) AND (profiles.account_status = 'active'::text)))))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "plant_observation_history",
+      "permissive": "PERMISSIVE",
+      "policyname": "Read plant observation history",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "plants",
+      "permissive": "PERMISSIVE",
+      "policyname": "Officers can register plants",
+      "schemaname": "public",
+      "with_check": "((registered_by = ( SELECT auth.uid() AS uid)) AND (EXISTS ( SELECT 1\n   FROM profiles\n  WHERE ((profiles.id = ( SELECT auth.uid() AS uid)) AND (profiles.role = 'officer'::text)))))"
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "plants",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists create plants",
+      "schemaname": "public",
+      "with_check": "((registered_by = ( SELECT auth.uid() AS uid)) AND (plant_status = 'pending'::text) AND (current_app_role() = 'botanist'::text))"
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "((registered_by = ( SELECT auth.uid() AS uid)) AND (plant_status = 'pending'::text) AND (current_app_role() = 'botanist'::text) AND (NOT plant_has_submitted_observation(id)))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "plants",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists edit own pending plants",
+      "schemaname": "public",
+      "with_check": "((registered_by = ( SELECT auth.uid() AS uid)) AND (plant_status = 'pending'::text) AND (current_app_role() = 'botanist'::text) AND (NOT plant_has_submitted_observation(id)))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((registered_by = ( SELECT auth.uid() AS uid)) AND (current_app_role() = 'botanist'::text))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "plants",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists read own plants",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "DELETE",
+      "qual": "(current_app_role() = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "plants",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers delete plants",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(current_app_role() = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "plants",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers read plants",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "(current_app_role() = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "plants",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers update plants",
+      "schemaname": "public",
+      "with_check": "(current_app_role() = 'officer'::text)"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((plant_status = 'approved'::text) AND (current_app_role() = ANY (ARRAY['botanist'::text, 'officer'::text, 'researcher'::text])))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "plants",
+      "permissive": "PERMISSIVE",
+      "policyname": "read approved plants",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(auth.uid() = id)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "profiles",
+      "permissive": "PERMISSIVE",
+      "policyname": "Allow authenticated users to read own profile",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(( SELECT auth.uid() AS uid) = id)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "profiles",
+      "permissive": "PERMISSIVE",
+      "policyname": "Users can read their own profile",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "(( SELECT auth.uid() AS uid) = id)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "profiles",
+      "permissive": "PERMISSIVE",
+      "policyname": "Users can update their own profile",
+      "schemaname": "public",
+      "with_check": "(( SELECT auth.uid() AS uid) = id)"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(current_app_role() = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "profiles",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers read profiles",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['botanist'::text, 'researcher'::text]))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "sensor_readings",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists and researchers read sensor readings",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(current_app_role() = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "sensor_readings",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers read sensor readings",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(current_app_role() = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "sensor_stations",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers read stations",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['botanist'::text, 'researcher'::text]))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "sensor_stations",
+      "permissive": "PERMISSIVE",
+      "policyname": "staff_read_sensor_stations",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "species",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists propose species",
+      "schemaname": "public",
+      "with_check": "((current_app_role() = 'botanist'::text) AND (verification_status = 'pending'::text) AND (proposed_by = auth.uid()) AND (taxonomy_id IS NULL) AND (review_comment IS NULL))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((current_app_role() = 'botanist'::text) AND (proposed_by = auth.uid()))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "species",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists read own proposals",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "DELETE",
+      "qual": "(EXISTS ( SELECT 1\n   FROM profiles\n  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'officer'::text) AND (profiles.account_status = 'active'::text))))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "species",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers can permanently delete species",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "(current_app_role() = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "species",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers manage species",
+      "schemaname": "public",
+      "with_check": "(current_app_role() = 'officer'::text)"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(verification_status = 'approved'::text)",
+      "roles": [
+        "anon",
+        "authenticated"
+      ],
+      "tablename": "species",
+      "permissive": "PERMISSIVE",
+      "policyname": "read approved species",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((current_app_role() = ANY (ARRAY['botanist'::text, 'admin'::text])) AND (EXISTS ( SELECT 1\n   FROM species s\n  WHERE ((s.id = species_media.species_id) AND (s.verification_status = 'approved'::text)))))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "species_media",
+      "permissive": "PERMISSIVE",
+      "policyname": "approved species media for staff",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "species_media",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists add own pending species media",
+      "schemaname": "public",
+      "with_check": "((uploaded_by = ( SELECT auth.uid() AS uid)) AND (is_primary = false) AND (current_app_role() = 'botanist'::text) AND (EXISTS ( SELECT 1\n   FROM species s\n  WHERE ((s.id = species_media.species_id) AND (s.proposed_by = ( SELECT auth.uid() AS uid)) AND (s.verification_status = 'pending'::text)))))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((current_app_role() = 'botanist'::text) AND (EXISTS ( SELECT 1\n   FROM species s\n  WHERE ((s.id = species_media.species_id) AND (s.proposed_by = ( SELECT auth.uid() AS uid)) AND (s.verification_status = 'pending'::text)))))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "species_media",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists read own pending species media",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "(current_app_role() = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "species_media",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers manage species photos",
+      "schemaname": "public",
+      "with_check": "(current_app_role() = 'officer'::text)"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM species s\n  WHERE ((s.id = species_media.species_id) AND (s.verification_status = 'approved'::text))))",
+      "roles": [
+        "anon"
+      ],
+      "tablename": "species_media",
+      "permissive": "PERMISSIVE",
+      "policyname": "public read approved species photos",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((current_app_role() = 'researcher'::text) AND (EXISTS ( SELECT 1\n   FROM species s\n  WHERE ((s.id = species_media.species_id) AND (s.verification_status = 'approved'::text)))))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "species_media",
+      "permissive": "PERMISSIVE",
+      "policyname": "researchers read approved species media",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "species_reference_photos",
+      "permissive": "PERMISSIVE",
+      "policyname": "Authenticated users can view reference photos",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "sync_events",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists insert own sync events",
+      "schemaname": "public",
+      "with_check": "((user_id = auth.uid()) AND (current_app_role() = 'botanist'::text))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((user_id = auth.uid()) AND (current_app_role() = 'botanist'::text))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "sync_events",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists read own sync events",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "sync_events",
+      "permissive": "PERMISSIVE",
+      "policyname": "users log own sync events",
+      "schemaname": "public",
+      "with_check": "((user_id = ( SELECT auth.uid() AS uid)) AND (current_app_role() = 'botanist'::text))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((user_id = ( SELECT auth.uid() AS uid)) OR (current_app_role() = 'officer'::text))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "sync_events",
+      "permissive": "PERMISSIVE",
+      "policyname": "users read own sync events",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((reserved_by = auth.uid()) AND (current_app_role() = 'botanist'::text))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "tag_reservations",
+      "permissive": "PERMISSIVE",
+      "policyname": "tag_reservations_read_own",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "anon",
+        "authenticated",
+        "service_role"
+      ],
+      "tablename": "taxonomy",
+      "permissive": "PERMISSIVE",
+      "policyname": "Allow public read access to taxonomy",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "(current_app_role() = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "taxonomy",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers manage taxonomy",
+      "schemaname": "public",
+      "with_check": "(current_app_role() = 'officer'::text)"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "true",
+      "roles": [
+        "anon",
+        "authenticated"
+      ],
+      "tablename": "taxonomy",
+      "permissive": "PERMISSIVE",
+      "policyname": "public read taxonomy",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "(EXISTS ( SELECT 1\n   FROM profiles\n  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'officer'::text) AND (profiles.account_status = 'active'::text))))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "website_species",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers manage plants",
+      "schemaname": "public",
+      "with_check": "(EXISTS ( SELECT 1\n   FROM profiles\n  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'officer'::text) AND (profiles.account_status = 'active'::text))))"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM profiles\n  WHERE ((profiles.id = auth.uid()) AND (profiles.account_status = 'active'::text))))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "website_species",
+      "permissive": "PERMISSIVE",
+      "policyname": "staff view plants",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "qual": "(EXISTS ( SELECT 1\n   FROM profiles p\n  WHERE ((p.id = auth.uid()) AND (p.role = 'officer'::text) AND (p.account_status = 'active'::text))))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "website_users",
+      "permissive": "PERMISSIVE",
+      "policyname": "only the officer can use website users",
+      "schemaname": "public",
+      "with_check": "(EXISTS ( SELECT 1\n   FROM profiles p\n  WHERE ((p.id = auth.uid()) AND (p.role = 'officer'::text) AND (p.account_status = 'active'::text))))"
+    }
+  ],
+  "partitions": null,
+  "captured_at": "2026-11-15T18:00:31.847698+00:00",
+  "scope": "Read-only catalog export, no user/business rows. Snapshot, not full schema reconstruction or real-account policy acceptance."
+}

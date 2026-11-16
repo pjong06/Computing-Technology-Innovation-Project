@@ -90,8 +90,87 @@ function evaluateThreats(reading, thresholds = getThreatThresholds()) {
   ];
 }
 
+
+function evaluateDatabaseRules(reading, rules) {
+  if (!reading || typeof reading !== 'object' || Array.isArray(reading)) {
+    throw new Error('A validated telemetry reading is required');
+  }
+
+  if (!Array.isArray(rules)) {
+    throw new Error('Database alert rules must be an array');
+  }
+
+  const measurements = {
+    temperature_c: reading.dht_valid === true
+      ? reading.temperature_c
+      : null,
+    humidity_percent: reading.dht_valid === true
+      ? reading.humidity_pct
+      : null,
+    soil_moisture_pct: reading.soil_moisture_pct,
+    rain_intensity_pct: reading.rain_intensity_pct,
+    movement_nearby_cm: reading.distance_valid === true
+      ? reading.distance_cm
+      : null,
+    movement_detected: typeof reading.motion_detected === 'boolean'
+      ? Number(reading.motion_detected)
+      : null,
+  };
+
+  const compare = {
+    '>': (value, threshold) => value > threshold,
+    '>=': (value, threshold) => value >= threshold,
+    '<': (value, threshold) => value < threshold,
+    '<=': (value, threshold) => value <= threshold,
+    '=': (value, threshold) => value === threshold,
+  };
+
+  return rules
+    .filter((rule) => rule.is_enabled === true)
+    .map((rule) => {
+      if (!Object.hasOwn(measurements, rule.metric)) {
+        throw new Error(`Unsupported database alert metric: ${rule.metric}`);
+      }
+
+      const comparison = compare[rule.comparison_operator];
+      const threshold = Number(rule.threshold_value);
+
+      if (!comparison || !Number.isFinite(threshold)) {
+        throw new Error('Invalid database alert rule configuration');
+      }
+
+      const value = measurements[rule.metric];
+      const evaluated = typeof value === 'number' && Number.isFinite(value);
+
+      return {
+        rule_key: rule.id || `${rule.metric}:${rule.rule_name}`,
+        type: rule.metric === 'movement_detected'
+  ? ThreatType.MOTION_DETECTED
+  : rule.metric === 'movement_nearby_cm'
+    ? ThreatType.PROXIMITY_BREACH
+    : rule.metric === 'temperature_c'
+      ? ThreatType.HIGH_TEMPERATURE
+      : rule.metric === 'soil_moisture_pct'
+        ? ThreatType.LOW_SOIL_MOISTURE
+        : rule.metric === 'rain_intensity_pct'
+          ? ThreatType.HEAVY_RAIN
+          : `database_rule:${rule.metric}:${rule.rule_name}`,
+        severity: rule.severity === 'high'
+          ? ThreatSeverity.CRITICAL
+          : ThreatSeverity.WARNING,
+        sensor: rule.metric,
+        value,
+        threshold,
+        message: rule.rule_name,
+        evaluated,
+        triggered: evaluated && comparison(value, threshold),
+      };
+    });
+}
+
 module.exports = {
   ThreatType,
   ThreatSeverity,
   evaluateThreats,
+  evaluateDatabaseRules,
 };
