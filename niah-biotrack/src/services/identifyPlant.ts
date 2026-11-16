@@ -1,10 +1,12 @@
 import type * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
+import { supabase } from '../lib/supabase';
 
 export interface SpeciesSuggestion {
   rank: number;
   scientificName: string;
   commonName: string | null;
+  family: string | null;
   confidence: number;
   confidenceLevel: 'High' | 'Moderate' | 'Low';
 }
@@ -13,6 +15,13 @@ interface IdentificationResponse {
   success: boolean;
   message: string;
   suggestions?: SpeciesSuggestion[];
+}
+
+export class IdentifyNetworkError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'IdentifyNetworkError';
+  }
 }
 
 const API_BASE_URL =
@@ -122,6 +131,12 @@ export async function identifyPlant(
 
   let response: Response;
 
+  const { data, error } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (error || !token) {
+    throw new Error('Please sign in before identifying a plant.');
+  }
+
   try {
     /*
      * Let React Native automatically create the
@@ -133,6 +148,10 @@ export async function identifyPlant(
       `${API_BASE_URL}/api/identify`,
       {
         method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body,
         signal,
       },
@@ -142,7 +161,7 @@ export async function identifyPlant(
       throw error;
     }
 
-    throw new Error(
+    throw new IdentifyNetworkError(
       'Cannot reach the backend. Check your internet connection and backend availability.',
     );
   }
