@@ -47,7 +47,6 @@ import {
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
 import {
   identifyPlant,
-  IdentifyNetworkError,
   type SpeciesSuggestion,
 } from '../src/services/identifyPlant';
 import {
@@ -375,7 +374,7 @@ export default function NewRecordScreen() {
     } catch (err) {
       if (req.signal.aborted) return;
       setIdentifyMessage(
-        err instanceof IdentifyNetworkError
+        err instanceof Error && err.name === 'IdentifyNetworkError'
           ? "Can't reach the AI server. Search the offline catalogue or save the record for later."
           : 'Identification failed. Search the offline catalogue or save the record for later.'
       );

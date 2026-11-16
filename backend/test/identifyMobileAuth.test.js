@@ -15,6 +15,16 @@ function loadIdentify({ session = null, error = null } = {}) {
   const context = vm.createContext({
     process: { env: { EXPO_PUBLIC_API_BASE_URL: 'https://backend.example.test' } },
     supabase: { auth: { getSession: async () => ({ data: { session }, error }) } },
+    ImageManipulator: {
+      ImageManipulator: {
+        manipulate: () => ({
+          renderAsync: async () => ({
+            saveAsync: async () => ({ uri: 'file:///prepared-plant.jpg' }),
+          }),
+        }),
+      },
+      SaveFormat: { JPEG: 'jpeg' },
+    },
     File: class { constructor() { this.exists = true; this.size = 4; } },
     FormData: class { fields = []; append(...args) { this.fields.push(args); } },
     fetch: async (...args) => {
@@ -45,5 +55,7 @@ test('Mobile identify: current session token accompanies multipart upload and ab
   assert.equal(options.headers.Authorization, 'Bearer local-test-placeholder');
   assert.equal(options.headers['Content-Type'], undefined);
   assert.equal(options.body.fields[0][0], 'image');
+  assert.equal(options.body.fields[0][1].uri, 'file:///prepared-plant.jpg');
+  assert.equal(options.body.fields[0][1].type, 'image/jpeg');
   assert.equal(options.signal, signal);
 });
