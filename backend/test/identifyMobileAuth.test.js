@@ -25,7 +25,14 @@ function loadIdentify({ session = null, error = null } = {}) {
       },
       SaveFormat: { JPEG: 'jpeg' },
     },
-    File: class { constructor() { this.exists = true; this.size = 4; } },
+    File: class {
+      constructor(uri) {
+        this.uri = uri;
+        this.exists = true;
+        this.size = 4;
+        this.type = 'image/jpeg';
+      }
+    },
     FormData: class { fields = []; append(...args) { this.fields.push(args); } },
     fetch: async (...args) => {
       requests.push(args);

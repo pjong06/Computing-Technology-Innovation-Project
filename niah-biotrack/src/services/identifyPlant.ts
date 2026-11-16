@@ -1,5 +1,7 @@
 import type * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
+import { fetch } from 'expo/fetch';
+import { File } from 'expo-file-system';
 import { supabase } from '../lib/supabase';
 
 export interface SpeciesSuggestion {
@@ -124,15 +126,17 @@ export async function identifyPlant(
   const preparedPhoto =
     await prepareImageForIdentification(photo);
 
+  const preparedFile = new File(preparedPhoto.uri);
+  if (!preparedFile.exists) {
+    throw new Error('The prepared image is no longer available.');
+  }
+
   const body = new FormData();
 
   body.append(
     'image',
-    {
-      uri: preparedPhoto.uri,
-      name: preparedPhoto.name,
-      type: preparedPhoto.type,
-    } as unknown as Blob,
+    preparedFile,
+    preparedPhoto.name,
   );
 
   let response: Response;
