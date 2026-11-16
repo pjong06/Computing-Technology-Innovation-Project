@@ -251,6 +251,7 @@ test('the distribution map is officer-only in the menu, the page list and on the
   const guard = map.indexOf('if (pageAllowed === false)');
   assert.ok(guard !== -1, 'map.js must check pageAllowed');
   assert.ok(guard < map.indexOf('loadPlants().catch'), 'map.js must check pageAllowed before loading plants');
+  assert.match(map, /Imported from iNaturalist · Observer:/);
   assert.match(read('frontend/map.html'), /<script src="js\/shared\.js"><\/script>\s*<script src="js\/map\.js"><\/script>/);
 });
 
@@ -273,8 +274,18 @@ test('the plant catalogue is officer-only, linked from the menu and its page con
   const detail = read('frontend/js/plant.js');
   assert.match(catalogue, /if \(pageAllowed === false\)/);
   assert.match(detail, /if \(pageAllowed === false\)/);
+  assert.ok(catalogue.indexOf('if (pageAllowed === false)') < catalogue.indexOf('loadFilterOptions().then'));
+  assert.ok(detail.indexOf('if (pageAllowed === false)') < detail.indexOf('loadPlant().catch'));
   assert.match(catalogue, /api\('\/officer\/plants\?/);
   assert.match(detail, /api\('\/officer\/plants\//);
+  assert.match(catalogue, /Imported from iNaturalist · Observer:/);
+  assert.match(catalogue, /plant\.species_photo/);
+  assert.match(catalogue, /makeSpeciesPhotoCredit/);
+  assert.match(catalogue, /speciesPhotoLabel\.textContent = 'Species photo'/);
+  assert.match(detail, /Imported from iNaturalist · Observer:/);
+  assert.match(detail, /plant\.species_photo/);
+  assert.match(detail, /makeSpeciesPhotoCredit/);
+  assert.match(detail, /Species reference photo/);
 
   for (const [htmlPath, scriptPath] of [
     ['frontend/plants.html', 'frontend/js/plants.js'],

@@ -37,16 +37,28 @@ function makePlantRow(plant) {
   link.href = 'plant.html?id=' + encodeURIComponent(plant.id);
   link.setAttribute('aria-label', 'View plant ' + (plant.tag_code || 'without a tag code'));
 
+  const speciesPhoto = plant.photo_thumbnail?.url ? null : plant.species_photo;
+  const photoWrapper = document.createElement('div');
+  photoWrapper.className = 'plant-photo-wrap';
   const image = document.createElement('img');
   image.className = 'plant-thumb';
-  image.alt = '';
+  image.alt = speciesPhoto?.url ? 'Species reference photo' : '';
   image.loading = 'lazy';
-  image.src = plant.photo_thumbnail?.url || PICTURE_BLANK;
+  image.src = plant.photo_thumbnail?.url || speciesPhoto?.url || PICTURE_BLANK;
+  const speciesPhotoLabel = document.createElement('span');
+  speciesPhotoLabel.className = 'species-photo-label';
+  speciesPhotoLabel.textContent = 'Species photo';
+  speciesPhotoLabel.hidden = !speciesPhoto?.url;
+  photoWrapper.appendChild(image);
+  if (speciesPhoto?.url) photoWrapper.appendChild(speciesPhotoLabel);
+  let speciesPhotoCredit = null;
   image.onerror = function () {
     image.onerror = null;
     image.src = PICTURE_BLANK;
+    speciesPhotoLabel.hidden = true;
+    speciesPhotoCredit?.remove();
   };
-  link.appendChild(image);
+  link.appendChild(photoWrapper);
 
   const info = document.createElement('div');
   const heading = document.createElement('h2');
@@ -74,9 +86,13 @@ function makePlantRow(plant) {
 
   const registered = document.createElement('div');
   registered.className = 'plant-meta';
-  registered.textContent = 'Registered by: ' + (plant.registered_by || 'Unknown') +
+  registered.textContent = (plant.data_source === 'inaturalist'
+    ? 'Imported from iNaturalist · Observer: ' + (plant.source_observer || 'Unknown')
+    : 'Registered by: ' + (plant.registered_by || 'Unknown')) +
     ' · Last visit: ' + displayDate(plant.last_observation_at);
   info.appendChild(registered);
+  speciesPhotoCredit = makeSpeciesPhotoCredit(speciesPhoto, true);
+  if (speciesPhotoCredit) info.appendChild(speciesPhotoCredit);
   link.appendChild(info);
 
   const status = formattedStatus(plant.plant_status);
