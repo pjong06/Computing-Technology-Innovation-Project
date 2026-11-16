@@ -4,6 +4,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
+const { mockAuth } = require('./helpers/routeTestKit');
+mockAuth(() => ({ userId: 'upload-test-user', role: 'botanist' }));
 
 // Mock PlantNet so tests never call the real AI service.
 const servicePath = require.resolve('../src/services/plantAiService');
@@ -25,7 +27,7 @@ require.cache[servicePath] = {
   },
 };
 
-const identifyRouter = require('../src/routes/identify');
+const { createIdentifyRouter } = require('../src/routes/identify');
 
 // Restore the original module cache so other tests are unaffected.
 if (originalService) {
@@ -36,7 +38,8 @@ if (originalService) {
 
 async function withApp(run) {
   const app = express();
-  app.use('/api/identify', identifyRouter);
+  app.disable('x-powered-by');
+  app.use('/api/identify', createIdentifyRouter());
 
   const server = await new Promise(resolve => {
     const instance = app.listen(0, '127.0.0.1', () => {

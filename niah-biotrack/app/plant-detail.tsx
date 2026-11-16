@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -36,6 +36,9 @@ import { formatCoordinates } from '../src/utils/formatCoordinates';
 import { fetchPlantQr, saveQrImage, type PlantQr } from '../src/api/plantQr';
 import { ApiError } from '../src/api/client';
 import { formatDiameterCm, formatHeightFromCm, parseMeasurement } from '../src/utils/units';
+import { useSpeciesStore } from '../src/store/useSpeciesStore';
+import SpeciesPhotoCredit from '../src/components/SpeciesPhotoCredit';
+import { preferredSpeciesPhoto } from '../src/utils/speciesPhoto';
 
 const TAG_PROBLEM_TEXT: Record<'in_use' | 'locked', string> = {
   in_use:
@@ -141,12 +144,32 @@ export default function PlantDetailScreen() {
   const [qrError, setQrError] = useState('');
 
   const matched = records.find((record) => record.id === id);
+  const speciesId = matched?.speciesId ?? null;
+  const speciesImageUri = useSpeciesStore((state) =>
+    speciesId ? state.imageUrisBySpeciesId[speciesId] : undefined
+  );
+  const speciesMedia = useSpeciesStore((state) =>
+    speciesId ? state.detailsById[speciesId]?.species_media : undefined
+  );
+  const loadSpeciesDetail = useSpeciesStore((state) => state.loadSpeciesDetail);
+
+  useEffect(() => {
+    if (speciesId && !matched?.photoUris?.length) {
+      void loadSpeciesDetail(speciesId);
+    }
+  }, [loadSpeciesDetail, matched?.photoUris?.length, speciesId]);
 
   if (!matched) {
     return <PlantNotFound code={id} />;
   }
 
   const photos = (matched.photoUris ?? []).map(resolveStoredPhotoUri);
+  const speciesFallbackKey = `species:${speciesId || ''}`;
+  const speciesFallbackUri =
+    photos.length === 0 && speciesImageUri && !brokenPhotos[speciesFallbackKey]
+      ? speciesImageUri
+      : null;
+  const speciesPhotoCredit = preferredSpeciesPhoto(speciesMedia);
 
   const PHOTO_LABELS: Record<string, string> = {
     whole_plant: 'Whole plant',
@@ -420,6 +443,18 @@ export default function PlantDetailScreen() {
                 )
               }
             />
+          ) : speciesFallbackUri ? (
+            <Image
+              source={{ uri: speciesFallbackUri }}
+              style={[styles.heroPhoto, { width }]}
+              resizeMode="cover"
+              onError={() =>
+                setBrokenPhotos((previous) => ({
+                  ...previous,
+                  [speciesFallbackKey]: true,
+                }))
+              }
+            />
           ) : (
             <View
               style={[
@@ -431,6 +466,12 @@ export default function PlantDetailScreen() {
               <Text style={styles.heroEmptyText}>No photos recorded</Text>
             </View>
           )}
+
+          {speciesFallbackUri ? (
+            <View style={styles.speciesPhotoBadge}>
+              <Text style={styles.speciesPhotoBadgeText}>Species photo</Text>
+            </View>
+          ) : null}
 
           <TouchableOpacity
             onPress={() => router.back()}
@@ -447,6 +488,12 @@ export default function PlantDetailScreen() {
             </View>
           )}
         </View>
+
+        {speciesFallbackUri && speciesPhotoCredit?.source === 'inaturalist' ? (
+          <View style={styles.speciesPhotoCredit}>
+            <SpeciesPhotoCredit photo={speciesPhotoCredit} />
+          </View>
+        ) : null}
 
         <View style={styles.sheet}>
           <Text style={styles.title}>
@@ -909,6 +956,25 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 11,
     fontWeight: '700',
+  },
+  speciesPhotoBadge: {
+    position: 'absolute',
+    bottom: 16,
+    left: 16,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+  },
+  speciesPhotoBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  speciesPhotoCredit: {
+    paddingHorizontal: 22,
+    paddingTop: 4,
+    backgroundColor: '#F6F8F6',
   },
   sheet: {
     padding: 22,

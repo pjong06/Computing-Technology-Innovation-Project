@@ -117,6 +117,7 @@ export default function PlantInfoScreen() {
           {photo ? (
             <>
               <Image source={{ uri: photo }} style={styles.photo} resizeMode="cover" accessibilityIgnoresInvertColors />
+              <Text style={styles.speciesPhotoLabel}>Species photo</Text>
               <SpeciesPhotoCredit photo={photoCredit} />
             </>
           ) : (
@@ -176,6 +177,7 @@ const styles = StyleSheet.create({
   centerBox: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 28 },
   content: { paddingHorizontal: 20, paddingBottom: 40 },
   photo: { width: '100%', aspectRatio: 4 / 3, borderRadius: 20, marginBottom: 16, backgroundColor: '#E7EFEA' },
+  speciesPhotoLabel: { fontSize: 11, color: '#68776D', marginTop: -10, marginBottom: 2 },
   photoPlaceholder: { justifyContent: 'center', alignItems: 'center' },
   placeholderIcon: { fontSize: 48 },
   title: { fontSize: 24, fontWeight: '800', color: '#1E2B22', textAlign: 'left' },
