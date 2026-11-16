@@ -61,13 +61,26 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             fields: 0,
             parts: 1,
         },
+        fileFilter(_req, file, callback) {
+            if (!["image/jpeg", "image/png", "image/webp"].includes(file.mimetype)) {
+                const error = new Error("Use a JPEG, PNG or WebP photo");
+                error.code = "INVALID_IMAGE_TYPE";
+                return callback(error);
+            }
+            callback(null, true);
+        },
     });
 
     function receivePhoto(req, res, next) {
         photoUpload.single("photo")(req, res, (error) => {
             if (error) {
                 const status = error.code === "LIMIT_FILE_SIZE" ? 413 : 400;
-                return res.status(status).json({ message: "Could not receive photo" });
+                const message = error.code === "LIMIT_FILE_SIZE"
+                    ? "The photo must be 5 MB or smaller."
+                    : error.code === "INVALID_IMAGE_TYPE"
+                        ? "Use a JPEG, PNG or WebP photo"
+                        : "Upload one photo using the photo field, without extra fields.";
+                return res.status(status).json({ message });
             }
             next();
         });
@@ -823,8 +836,9 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
                     limitInputPixels: 25_000_000,
                 }).metadata();
 
-                if (!["jpeg", "png"].includes(metadata.format)) {
-                    return res.status(400).json({ message: "Use a JPEG or PNG photo" });
+                const expectedFormat = { "image/jpeg": "jpeg", "image/png": "png", "image/webp": "webp" }[req.file.mimetype];
+                if (metadata.format !== expectedFormat) {
+                    return res.status(400).json({ message: "The photo content must match its JPEG, PNG or WebP type" });
                 }
 
                 // Resize the image and save a fresh JPEG without its original metadata.
