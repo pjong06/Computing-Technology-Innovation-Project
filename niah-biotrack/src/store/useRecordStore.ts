@@ -335,6 +335,32 @@ export interface PlantRecord {
     ObservationVisit[];
 }
 
+export interface RoutePoint {
+  latitude: number;
+
+  longitude: number;
+
+  timestamp: number;
+
+  accuracy:
+    | number
+    | null;
+}
+
+export interface RouteWaypoint {
+  id: string;
+
+  number: number;
+
+  label: string;
+
+  latitude: number;
+
+  longitude: number;
+
+  timeString: string;
+}
+
 export interface RecordedRoute {
   id: string;
 
@@ -343,6 +369,20 @@ export interface RecordedRoute {
   durationSeconds: number;
 
   endGps: string;
+
+  endLatitude?: number;
+
+  endLongitude?: number;
+
+  endAccuracyM?:
+    | number
+    | null;
+
+  breadcrumbs?:
+    RoutePoint[];
+
+  waypoints?:
+    RouteWaypoint[];
 
   linkedPlantId?: string;
 
@@ -403,6 +443,27 @@ export type SubmitResult =
 
 const uploadsInProgress =
   new Set<string>();
+
+function formatRouteLength(
+  meters: number
+): string {
+  if (meters >= 1000) {
+    return `${(meters / 1000).toFixed(2)} km`;
+  }
+
+  return `${Math.round(meters)} m`;
+}
+
+function formatWalkingTime(
+  seconds: number
+): string {
+  const mins = Math.max(
+    1,
+    Math.round(seconds / 60)
+  );
+
+  return `${mins} min`;
+}
 
 function isUploadable(
   record: PlantRecord
@@ -887,6 +948,14 @@ interface RecordState {
       | 'createdAt'
     >
   ) => RecordedRoute;
+
+  linkRouteToPlant: (
+    routeId: string,
+    plantId: string
+  ) => Promise<void>;
+
+  discardDraftRoute:
+    () => void;
 
   clearActiveDraftRoute:
     () => void;
@@ -3222,6 +3291,128 @@ export const useRecordStore =
             );
 
             return route;
+          },
+
+        linkRouteToPlant:
+          async (
+            routeId,
+            plantId
+          ) => {
+            const targetRoute =
+              get().routes.find(
+                (route) =>
+                  route.id ===
+                  routeId
+              );
+
+            if (!targetRoute) {
+              return;
+            }
+
+            const updatedRoutes =
+              get().routes.map(
+                (route) =>
+                  route.id ===
+                  routeId
+                    ? {
+                        ...route,
+                        linkedPlantId:
+                          plantId,
+                      }
+                    : route
+              );
+
+            const targetPlant =
+              get().records.find(
+                (item) =>
+                  item.id ===
+                    plantId ||
+                  item.serverId ===
+                    plantId
+              );
+
+            if (targetPlant) {
+              const updatedPlant:
+                PlantRecord = {
+                ...targetPlant,
+
+                routeLength:
+                  formatRouteLength(
+                    targetRoute.distanceMeters
+                  ),
+
+                walkingTime:
+                  formatWalkingTime(
+                    targetRoute.durationSeconds
+                  ),
+              };
+
+              await persistRecordSnapshot(
+                updatedPlant
+              );
+
+              set(
+                (state) => ({
+                  routes:
+                    updatedRoutes,
+
+                  activeDraftRoute:
+                    state.activeDraftRoute
+                      ?.id ===
+                    routeId
+                      ? null
+                      : state.activeDraftRoute,
+
+                  records:
+                    state.records.map(
+                      (item) =>
+                        item.id ===
+                        targetPlant.id
+                          ? updatedPlant
+                          : item
+                    ),
+                })
+              );
+
+              return;
+            }
+
+            set(
+              (state) => ({
+                routes:
+                  updatedRoutes,
+
+                activeDraftRoute:
+                  state.activeDraftRoute
+                    ?.id ===
+                  routeId
+                    ? null
+                    : state.activeDraftRoute,
+              })
+            );
+          },
+
+        discardDraftRoute:
+          () => {
+            const draftId =
+              get().activeDraftRoute
+                ?.id;
+
+            set(
+              (state) => ({
+                routes:
+                  draftId
+                    ? state.routes.filter(
+                        (route) =>
+                          route.id !==
+                          draftId
+                      )
+                    : state.routes,
+
+                activeDraftRoute:
+                  null,
+              })
+            );
           },
 
         /* -------------------------------------------------

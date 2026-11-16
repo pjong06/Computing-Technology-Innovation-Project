@@ -230,16 +230,29 @@ export default function HomeScreen() {
 
             <View style={styles.actionGrid}>
               <TouchableOpacity
-                style={styles.scanCard}
+                style={styles.actionCard}
                 activeOpacity={0.85}
                 onPress={() => router.push('/(tabs)/scan')}
                 accessibilityRole="button"
+                accessibilityLabel="Scan QR code"
+              >
+                <View style={styles.actionIconWrap}>
+                  <Ionicons name="qr-code-outline" size={32} color="#284632" />
+                </View>
+                <Text style={styles.actionCardLabel}>Scan QR code</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.actionCard}
+                activeOpacity={0.85}
+                onPress={() => router.push('/new-record')}
+                accessibilityRole="button"
                 accessibilityLabel="Record observation"
               >
-                <View style={styles.scanIconWrap}>
-                  <Ionicons name="scan-outline" size={32} color="#284632" />
+                <View style={styles.actionIconWrap}>
+                  <Ionicons name="add-circle-outline" size={32} color="#284632" />
                 </View>
-                <Text style={styles.scanCardLabel}>Record observation</Text>
+                <Text style={styles.actionCardLabel}>Record observation</Text>
               </TouchableOpacity>
             </View>
 
@@ -451,16 +464,22 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 12,
   },
-  scanCard: {
+  actionCard: {
     flex: 1,
     height: 120,
     backgroundColor: '#DDEAE1',
     borderRadius: 22,
+    paddingHorizontal: 10,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  scanIconWrap: { marginBottom: 6 },
-  scanCardLabel: { fontSize: 14.5, fontWeight: '700', color: '#284632' },
+  actionIconWrap: { marginBottom: 6 },
+  actionCardLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#284632',
+    textAlign: 'center',
+  },
   routePill: {
     flexDirection: 'row',
     alignItems: 'center',
