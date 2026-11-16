@@ -131,6 +131,71 @@ export default function AddObservationScreen() {
   >('not-requested');
   const [locationMessage, setLocationMessage] = useState('');
 
+  const captureVisitLocation = async () => {
+    setLocationStatus('capturing');
+    setLocationMessage('');
+
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      const { status } =
+        await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setLocationMessage(
+          'Location permission is off. Please enable location permissions to save observations.'
+        );
+        setLocationStatus('unavailable');
+        return null;
+      }
+
+      if (!(await Location.hasServicesEnabledAsync())) {
+        setLocationMessage(
+          'Location services are off. Please enable location services to save observations.'
+        );
+        setLocationStatus('unavailable');
+        return null;
+      }
+
+      const locationPromise = Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error('GPS_TIMEOUT')),
+          GPS_TIMEOUT_MS
+        );
+      });
+      const fix = await Promise.race([locationPromise, timeoutPromise]);
+      const captured = {
+        latitude: fix.coords.latitude,
+        longitude: fix.coords.longitude,
+        accuracyM: fix.coords.accuracy,
+      };
+
+      setVisitLocation(captured);
+      setLocationStatus('ready');
+      return captured;
+    } catch (error) {
+      console.warn('Could not capture observation location:', error);
+      setLocationMessage(
+        error instanceof Error && error.message === 'GPS_TIMEOUT'
+          ? 'GPS took too long to respond. Tap Retry to acquire a GPS fix.'
+          : 'Could not get a GPS fix. Tap Retry to acquire a GPS fix.'
+      );
+      setLocationStatus('unavailable');
+      return null;
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  };
+
+  // Automatically capture location on mount
+  useEffect(() => {
+    if (!isVisitor) {
+      void captureVisitLocation();
+    }
+  }, [isVisitor]);
+
   const adjustValue = (
     setter: React.Dispatch<React.SetStateAction<string>>,
     delta: number,
@@ -181,64 +246,6 @@ export default function AddObservationScreen() {
     }
   };
 
-  const captureVisitLocation = async () => {
-    setLocationStatus('capturing');
-    setLocationMessage('');
-
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-
-    try {
-      const { status } =
-        await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        setLocationMessage(
-          'Location permission is off. You can still save without GPS.'
-        );
-        setLocationStatus('unavailable');
-        return null;
-      }
-
-      if (!(await Location.hasServicesEnabledAsync())) {
-        setLocationMessage(
-          'Location services are off. You can still save without GPS.'
-        );
-        setLocationStatus('unavailable');
-        return null;
-      }
-
-      const locationPromise = Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeout = setTimeout(
-          () => reject(new Error('GPS_TIMEOUT')),
-          GPS_TIMEOUT_MS
-        );
-      });
-      const fix = await Promise.race([locationPromise, timeoutPromise]);
-      const captured = {
-        latitude: fix.coords.latitude,
-        longitude: fix.coords.longitude,
-        accuracyM: fix.coords.accuracy,
-      };
-
-      setVisitLocation(captured);
-      setLocationStatus('ready');
-      return captured;
-    } catch (error) {
-      console.warn('Could not capture observation location:', error);
-      setLocationMessage(
-        error instanceof Error && error.message === 'GPS_TIMEOUT'
-          ? 'GPS took too long to respond. You can still save without GPS.'
-          : 'Could not get a GPS fix. You can still save without GPS.'
-      );
-      setLocationStatus('unavailable');
-      return null;
-    } finally {
-      if (timeout) clearTimeout(timeout);
-    }
-  };
-
   const handleRemovePhoto = (index: number) => {
     setPhotos((previous) =>
       previous.filter((_, photoIndex) => photoIndex !== index)
@@ -274,7 +281,6 @@ export default function AddObservationScreen() {
     }
 
     if (currentStep === 2) {
-      // Same checks as Register plant: height 0.01-100 m, diameter 0.1-500 cm.
       const heightCheck = checkHeightMetres(heightM);
       const diameterCheck = checkDiameterCm(diameterCm);
       const problem = heightCheck.ok ? diameterCheck : heightCheck;
@@ -291,13 +297,23 @@ export default function AddObservationScreen() {
     }
   };
 
-  // ── SAVE & VALIDATE MINIMUM 1 PHOTO ──────────────────────────
+  // ── SAVE & VALIDATE GPS & PHOTOS ─────────────────────────────
   const handleSaveObservation = async () => {
     if (!plant) {
       Toast.show({
         type: 'error',
         text1: 'Plant not found',
         text2: 'Open this plant from My Records and try again.',
+      });
+      return;
+    }
+
+    // Require GPS fix before saving
+    if (!visitLocation) {
+      Toast.show({
+        type: 'error',
+        text1: 'GPS Location Required',
+        text2: 'Please acquire a GPS fix before saving this observation.',
       });
       return;
     }
@@ -324,11 +340,7 @@ export default function AddObservationScreen() {
     setIsSubmitting(true);
 
     try {
-      const capturedLocation =
-        visitLocation ??
-        (locationStatus !== 'unavailable'
-          ? await captureVisitLocation()
-          : null);
+      const capturedLocation = visitLocation;
       const storedPhotoUris = await Promise.all(
         photos.map((uri) => savePhotoPermanently(uri))
       );
@@ -510,10 +522,10 @@ export default function AddObservationScreen() {
           </View>
         )}
 
-        {/* STEP 2: Metrics (Split Height & Diameter) */}
+        {/* STEP 2: Metrics */}
         {currentStep === 2 && (
           <View style={styles.stepContent}>
-            {/* PART 1: TREE HEIGHT */}
+            {/* HEIGHT */}
             <View style={styles.card}>
               <View style={styles.cardHeaderBetween}>
                 <View style={styles.metricTitleGroup}>
@@ -565,7 +577,7 @@ export default function AddObservationScreen() {
               </View>
             </View>
 
-            {/* PART 2: DIAMETER (measured at breast height) */}
+            {/* DIAMETER */}
             <View style={styles.card}>
               <View style={styles.cardHeaderBetween}>
                 <View style={styles.metricTitleGroup}>
@@ -676,20 +688,23 @@ export default function AddObservationScreen() {
           </View>
         )}
 
-        {/* STEP 3: Evidence (1-4 Photos) */}
+        {/* STEP 3: Evidence & GPS */}
         {currentStep === 3 && (
           <View style={styles.stepContent}>
             <View style={styles.card}>
               <View style={styles.cardHeader}>
                 <Text style={styles.cardIcon}>📍</Text>
-                <Text style={styles.cardTitle}>Visit GPS Location</Text>
+                <Text style={styles.cardTitle}>Visit GPS Location *</Text>
               </View>
               {locationStatus === 'capturing' ? (
-                <Text style={styles.locationInfo}>Capturing phone location…</Text>
+                <View style={styles.locationLoadingRow}>
+                  <ActivityIndicator size="small" color="#2D6A4F" />
+                  <Text style={styles.locationInfo}> Acquiring GPS fix…</Text>
+                </View>
               ) : visitLocation ? (
                 <>
                   <Text style={styles.locationInfo}>
-                    {visitLocation.latitude.toFixed(6)}, {visitLocation.longitude.toFixed(6)}
+                    Coordinates: {visitLocation.latitude.toFixed(6)}, {visitLocation.longitude.toFixed(6)}
                   </Text>
                   <Text style={styles.locationInfo}>
                     Accuracy:{' '}
@@ -699,8 +714,8 @@ export default function AddObservationScreen() {
                   </Text>
                 </>
               ) : (
-                <Text style={styles.locationInfo}>
-                  {locationMessage || 'GPS will be captured for this visit when available.'}
+                <Text style={styles.locationErrorText}>
+                  {locationMessage || 'GPS fix required to save observation.'}
                 </Text>
               )}
               {locationStatus !== 'capturing' && !visitLocation ? (
@@ -708,9 +723,7 @@ export default function AddObservationScreen() {
                   style={styles.locationRetryBtn}
                   onPress={() => void captureVisitLocation()}
                 >
-                  <Text style={styles.locationRetryText}>
-                    {locationStatus === 'unavailable' ? 'Retry GPS' : 'Capture GPS'}
-                  </Text>
+                  <Text style={styles.locationRetryText}>Retry GPS</Text>
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -731,7 +744,6 @@ export default function AddObservationScreen() {
               </Text>
 
               <View style={styles.photoGrid}>
-                {/* Thumbnails */}
                 {photos.map((uri, index) => (
                   <View key={`${uri}-${index}`} style={styles.photoTile}>
                     <Image source={{ uri }} style={styles.photoThumb} />
@@ -748,7 +760,6 @@ export default function AddObservationScreen() {
                   </View>
                 ))}
 
-                {/* Camera and gallery options */}
                 {photos.length < 4 && (
                   <>
                     <TouchableOpacity
@@ -825,9 +836,13 @@ export default function AddObservationScreen() {
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
-            style={[styles.saveBtn, { flex: 1, marginLeft: 12 }]}
+            style={[
+              styles.saveBtn,
+              { flex: 1, marginLeft: 12 },
+              (!visitLocation || locationStatus === 'capturing') && styles.saveBtnDisabled,
+            ]}
             onPress={handleSaveObservation}
-            disabled={isSubmitting || locationStatus === 'capturing'}
+            disabled={isSubmitting || !visitLocation || locationStatus === 'capturing'}
           >
             {isSubmitting ? (
               <ActivityIndicator color="#FFFFFF" size="small" />
@@ -1108,9 +1123,20 @@ const styles = StyleSheet.create({
     color: '#68776D',
     marginBottom: 10,
   },
+  locationLoadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
   locationInfo: {
     fontSize: 13,
     color: '#526A5A',
+    marginBottom: 4,
+  },
+  locationErrorText: {
+    fontSize: 13,
+    color: '#DC2626',
+    fontWeight: '600',
     marginBottom: 4,
   },
   locationRetryBtn: {
@@ -1248,6 +1274,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#2D6A4F',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  saveBtnDisabled: {
+    opacity: 0.5,
   },
   primaryBtnText: {
     color: '#FFFFFF',
