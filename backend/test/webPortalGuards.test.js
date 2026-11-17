@@ -74,6 +74,21 @@ test('user changes are saved to website_users, which the database copies to prof
   assert.match(migrations, /FUNCTION public\.sync_website_user_to_profile\(\)/);
 });
 
+test('every users.js DOM id exists in users.html', () => {
+  const html = read('frontend/users.html');
+  const users = read('frontend/js/users.js');
+  const htmlIds = new Set(Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]));
+  const scriptIds = Array.from(
+    users.matchAll(/getElementById\(['"]([^'"]+)['"]\)/g),
+    match => match[1]
+  );
+
+  assert.ok(scriptIds.length > 0);
+  for (const id of scriptIds) {
+    assert.ok(htmlIds.has(id), `users.js reads #${id}, which is missing from users.html`);
+  }
+});
+
 test('only the officer can change website data on the server', () => {
   const webData = read('backend/src/routes/webData.js');
   assert.match(webData, /function isOfficer\(req\)/);
