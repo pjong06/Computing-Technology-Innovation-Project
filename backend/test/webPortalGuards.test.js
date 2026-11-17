@@ -356,3 +356,88 @@ test('distribution map loads sensor stations with a separate marker layer', () =
   assert.match(mapCode, /escapePopupText\(station\.station_code\)/);
   assert.match(mapCode, /escapePopupText\(station\.location_note/);
 });
+
+// ---- Trace routes on the distribution map (docs/trace-route-plan.md, phase 3) ----
+
+test('the map loads routes only from the officer-only endpoint, after the page guard', () => {
+  const map = read('frontend/js/map.js');
+  assert.match(map, /api\('\/officer\/map\/routes'\)/);
+  // The endpoint is officer-only: officerMap.js puts requireRole("officer") before every route.
+  const officerMap = read('backend/src/routes/officerMap.js');
+  const guard = officerMap.indexOf('router.use(requireAuth, requireRole("officer"));');
+  assert.ok(guard !== -1, 'officerMap.js must be officer-only');
+  assert.ok(guard < officerMap.indexOf('router.get("/routes"'), 'the routes endpoint comes after the officer guard');
+  // Routes are requested only when the page guard let this person stay.
+  assert.ok(map.indexOf('if (pageAllowed === false)') < map.indexOf('loadRoutes().catch'));
+  // If routes fail, the plants still show and a short note says so.
+  assert.match(map, /loadRoutes\(\)\.catch\(error => \{[\s\S]*?'Routes could not be loaded\.'/);
+  assert.doesNotMatch(map, /loadRoutes\(\)\.catch\(error => \{[^}]*showUnexpectedError/);
+});
+
+test('route popups escape every value (botanist, plant tag, scientific name)', () => {
+  const vm = require('node:vm');
+  const map = read('frontend/js/map.js');
+  const piece = (start, end) => map.slice(map.indexOf(start), map.indexOf(end, map.indexOf(start)));
+  const code = [
+    piece('function escapePopupText(', 'function makePopup('),
+    piece('function displayRouteDistance(', '// [lat, lng, time, accuracy]'),
+    'this.makeRoutePopup = makeRoutePopup;',
+  ].join('\n');
+  const context = {};
+  vm.runInNewContext(code, context);
+
+  const evil = '<img src=x onerror=alert(1)>';
+  const html = context.makeRoutePopup({
+    recorded_by: evil,
+    ended_at: '2026-11-18T01:30:00Z',
+    distance_m: 1234.5,
+    duration_s: 4500,
+    plant: { tag: evil, scientific_name: '<script>x</script>' },
+  });
+  assert.doesNotMatch(html, /<img|<script/);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(html, /Distance: 1\.23 km/);
+  assert.match(html, /Walking time: 1 h 15 min/);
+
+  const unlinked = context.makeRoutePopup({ recorded_by: 'Aron', distance_m: 420, duration_s: 600, plant: null });
+  assert.match(unlinked, /Not linked to a plant/);
+  assert.match(unlinked, /Distance: 420 m/);
+
+  // Every value in the popup goes through escapePopupText.
+  const popupSource = piece('function makeRoutePopup(', '// [lat, lng, time, accuracy]');
+  assert.doesNotMatch(popupSource, /\+\s*(route|plant)\.[a-z_]+/);
+  assert.match(popupSource, /escapePopupText\(route\.recorded_by/);
+  assert.match(popupSource, /escapePopupText\(plant\.tag/);
+  assert.match(popupSource, /escapePopupText\(plant\.scientific_name\)/);
+  assert.match(popupSource, /escapePopupText\('Not linked to a plant'\)/);
+});
+
+test('the "Show routes" checkbox exists, is on by default and is remembered in this browser', () => {
+  const html = read('frontend/map.html');
+  const map = read('frontend/js/map.js');
+  assert.match(html, /<input type="checkbox" id="map-show-routes" checked onchange="toggleRoutes\(this\.checked\)">\s*Show routes/);
+  assert.match(html, /id="map-route-note">Routes from the last 90 days\.</);
+  assert.match(map, /function toggleRoutes\(show\)/);
+  assert.match(map, /const SHOW_ROUTES_KEY = 'niah_map_show_routes';/);
+  // Unknown or missing value: shown (on by default); storage errors never break the map.
+  assert.match(map, /return localStorage\.getItem\(SHOW_ROUTES_KEY\) !== 'false';/);
+  assert.match(map, /try \{\s*localStorage\.setItem\(SHOW_ROUTES_KEY/);
+  // Routes have their own layer, separate from plant and sensor markers.
+  assert.match(map, /routeLayer = L\.layerGroup\(\);/);
+  assert.match(map, /L\.polyline\(latLngs/);
+});
+
+test('the map page keeps its element ids, and map.js reads only ids that exist', () => {
+  const html = read('frontend/map.html');
+  const map = read('frontend/js/map.js');
+  const htmlIds = new Set(Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]));
+  for (const id of ['menu', 'map-species', 'map-status', 'map-box', 'map-message', 'toast', 'map-show-routes', 'map-route-note']) {
+    assert.ok(htmlIds.has(id), `map.html must keep #${id}`);
+  }
+  const readIds = Array.from(map.matchAll(/getElementById\('([^']+)'\)/g), match => match[1]);
+  assert.ok(readIds.length > 0);
+  for (const id of readIds) {
+    assert.ok(htmlIds.has(id), `map.js reads #${id}, which is missing from map.html`);
+  }
+  assert.match(map, /L\.map\('map-box'\)/);
+});
