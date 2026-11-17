@@ -12,6 +12,7 @@ import {
   firstVisitOf,
   newPlantReview,
   waitingVisitsText,
+  isPhotoLockFinal,
 } from './submissionState.ts';
 
 test('a visit uploaded but still draft on the server is not submitted', () => {
@@ -141,4 +142,33 @@ test('a new plant row uses its first visit status, plus revisits waiting once ap
   );
   assert.equal(waitingVisitsText(1), '1 visit waiting for review');
   assert.equal(waitingVisitsText(3), '3 visits waiting for review');
+});
+
+test("another botanist's plant scanned onto this phone has no first visit: own visits there are revisits", () => {
+  // cacheServerRecord: createdAtIso is the server's registration time; no visits come with it.
+  const scanned = {
+    createdAtIso: '2026-10-20T03:00:00.000Z',
+    reviewStatus: 'approved',
+    observations: [{ id: 'mine', serverId: 's1', observedAt: '2026-11-17T08:00:00.000Z', reviewStatus: 'draft' }],
+  };
+  assert.equal(firstVisitOf(scanned), null);
+  // The plant row then shows the plant's own status (approved), not the visit's.
+  const review = newPlantReview(scanned);
+  assert.equal(review.firstVisit, null);
+  assert.equal(review.outcome, 'approved');
+  // A plant registered on this phone still finds its registration visit.
+  const own = { createdAtIso: '2026-11-01T02:00:00.000Z', observations: [{ id: 'r', observedAt: '2026-11-01T02:00:00.000Z' }] };
+  assert.equal(firstVisitOf(own).id, 'r');
+});
+
+test('a "locked" photo is retried while its visit is still a draft or sent back', () => {
+  // Final: the visit is waiting for review or reviewed, so photos really can't be added.
+  assert.equal(isPhotoLockFinal('pending'), true);
+  assert.equal(isPhotoLockFinal('approved'), true);
+  assert.equal(isPhotoLockFinal('archived'), true);
+  // Not final: photos can still be added, so the app tries the photo again.
+  assert.equal(isPhotoLockFinal('draft'), false);
+  assert.equal(isPhotoLockFinal('rejected'), false);
+  assert.equal(isPhotoLockFinal(undefined), false);
+  assert.equal(isPhotoLockFinal(null), false);
 });

@@ -51,9 +51,11 @@ export interface DatedVisit extends VisitSubmissionFields {
   date?: string;
 }
 
-// The visit made when the plant was registered (its "first visit"). It has the plant's
-// creation time; otherwise it is the oldest visit (new visits are added to the front of
-// the list, so on a tie the last one is the oldest). null when there are no visits yet.
+// The visit made when the plant was registered on this phone (its "first visit"): the
+// visit with the plant's creation time. null when there is none (no visits yet, or a plant
+// registered elsewhere and scanned onto this phone). Only records without a creation time
+// fall back to the oldest visit (new visits are added to the front of the list, so on a
+// tie the last one is the oldest).
 export function firstVisitOf<T extends DatedVisit>(record: {
   createdAtIso?: string;
   observations: T[];
@@ -61,9 +63,12 @@ export function firstVisitOf<T extends DatedVisit>(record: {
   const visits = record.observations;
   if (visits.length === 0) return null;
   if (record.createdAtIso) {
-    const registration = visits.find((visit) => visit.observedAt === record.createdAtIso);
-    if (registration) return registration;
+    // The registration visit has the plant's creation time. A plant cached from the server
+    // (scanned; e.g. another botanist's approved plant) has its server registration time
+    // and no such visit: this botanist's visits there are revisits, not a "first visit".
+    return visits.find((visit) => visit.observedAt === record.createdAtIso) ?? null;
   }
+  // Older records without a creation time: the oldest visit.
   const time = (visit: T) => {
     const parsed = Date.parse(visit.observedAt || visit.date || '');
     return Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : parsed;
@@ -175,4 +180,13 @@ export function oversizedPhotoMessage(count: number): string {
   const photos = count === 1 ? 'A photo is' : `${count} photos are`;
   const them = count === 1 ? 'it' : 'them';
   return `${photos} over 5 MB, so this visit was not sent for review. Remove ${them} on the plant page, then sync again.`;
+}
+
+// A visit photo the server marked "locked" (photos_locked) stays skipped only once the
+// visit is waiting for review or approved. While the visit is still a draft or was sent
+// back, photos can be added, so the photo is tried again (an older app version marked any
+// refusal "locked" and gave up on it for good).
+export function isPhotoLockFinal(reviewStatus: string | null | undefined): boolean {
+  const status = String(reviewStatus ?? '');
+  return status === 'pending' || status === 'approved' || status === 'archived';
 }

@@ -21,6 +21,10 @@ const PICKER_OPTIONS: ImagePicker.ImagePickerOptions = {
   // 0.5 keeps most phone photos well under the backend's 5 MB limit per photo, without
   // an extra image-resizing package. Larger photos are caught before upload.
   quality: 0.5,
+  // iOS: hand over library photos as JPEG. The default keeps the original format, so an
+  // iPhone photo came back as .heic (quality was ignored) and the backend, which takes
+  // JPEG/PNG/WebP only, refused it. Older .heic files are converted before upload.
+  preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
   presentationStyle: ImagePicker.UIImagePickerPresentationStyle.FULL_SCREEN,
 };
 
