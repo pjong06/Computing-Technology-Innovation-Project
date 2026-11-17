@@ -16,7 +16,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import { useAuthRole } from '../../src/context/AuthRoleContext';
-import { useRecordStore, SyncStatus, IdentificationStatus } from '../../src/store/useRecordStore';
+import { useRecordStore, SyncStatus, IdentificationStatus, type PlantRecord } from '../../src/store/useRecordStore';
 import { buildSyncSummary } from '../../src/services/syncSummary';
 import { resumePausedRecordRetries } from '../../src/services/offlineDatabase';
 import { useProposalStore } from '../../src/store/useProposalStore';
@@ -24,8 +24,8 @@ import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
 import SpeciesPhotoCredit from '../../src/components/SpeciesPhotoCredit';
 import { preferredSpeciesPhoto } from '../../src/utils/speciesPhoto';
-import { reviewOutcomeBadge } from '../../src/utils/reviewStatus';
-import { isRecordSubmitted, recordSubmitProblem } from '../../src/utils/submissionState';
+import { plantReviewBadge } from '../../src/utils/reviewStatus';
+import { recordSubmitProblem } from '../../src/utils/submissionState';
 
 const FEATURED_COUNT = 4;
 
@@ -125,11 +125,12 @@ export default function HomeScreen() {
 
   // Before upload: the upload status. After upload: the officer's decision, with the same
   // logic as My submissions (so a record never shows "Uploaded" here and "Pending" there).
-  const getStatusBadge = (status: SyncStatus, reviewStatus?: string, submitted = true) => {
-    switch (status) {
+  // An approved plant with a newer visit waiting reads "Approved" plus a small waiting line.
+  const getStatusBadge = (record: PlantRecord): { bg: string; text: string; label: string; waitingNote?: string | null } => {
+    switch (record.syncStatus) {
       case SyncStatus.UPLOADED: {
-        const review = reviewOutcomeBadge(reviewStatus, 'Uploaded · Waiting for review', submitted);
-        return { ...review, label: `• ${review.label}` };
+        const { badge, waitingNote } = plantReviewBadge(record, 'Uploaded · Waiting for review');
+        return { ...badge, label: `• ${badge.label}`, waitingNote };
       }
       case SyncStatus.NOT_UPLOADED:
         return { bg: '#FDF4D8', text: '#8C5E03', label: '• Not uploaded' };
@@ -167,9 +168,11 @@ export default function HomeScreen() {
               style={styles.headerLogo}
               resizeMode="contain"
             />
-            <View>
-              <Text style={styles.headerTitle}>Niah BioTrack</Text>
-              <Text style={styles.headerSubtitle}>Hello, {userName}</Text>
+            <View style={styles.headerText}>
+              <Text style={styles.headerTitle} numberOfLines={1}>Niah BioTrack</Text>
+              <Text style={styles.headerSubtitle} numberOfLines={1} ellipsizeMode="tail">
+                Hello, {userName}
+              </Text>
             </View>
           </View>
           <TouchableOpacity
@@ -324,7 +327,7 @@ export default function HomeScreen() {
                 keyExtractor={(item) => item.id}
                 showsVerticalScrollIndicator={false}
                 renderItem={({ item }) => {
-                  const badge = getStatusBadge(item.syncStatus, item.reviewStatus, isRecordSubmitted(item));
+                  const badge = getStatusBadge(item);
                   const notSentReason =
                     item.syncStatus === SyncStatus.UPLOADED ? recordSubmitProblem(item) : null;
                   return (
@@ -342,23 +345,28 @@ export default function HomeScreen() {
                         <View style={styles.plantIconCircle}>
                           <Ionicons name="leaf-outline" size={20} color="#2D6A4F" />
                         </View>
-                        <View style={{ flex: 1, marginHorizontal: 12 }}>
-                          <Text style={styles.speciesText}>
+                        {/* The text takes the rest of the row and the status badge sits under the
+                            name, so a long badge never squeezes the name into broken words. */}
+                        <View style={styles.recordTextColumn}>
+                          <Text style={styles.speciesText} numberOfLines={2} ellipsizeMode="tail">
                             {item.scientificName || 'Identification pending'}
                           </Text>
-                          <Text style={styles.locationText}>
+                          <Text style={styles.locationText} numberOfLines={2} ellipsizeMode="tail">
                             {item.locationName} · {item.createdAt}
                           </Text>
+                          {item.identificationStatus === IdentificationStatus.PENDING ? (
+                            <View style={[styles.badgePill, { backgroundColor: '#FDF4D8' }]}>
+                              <Text style={[styles.badgeText, { color: '#8C5E03' }]}>• Identify later</Text>
+                            </View>
+                          ) : (
+                            <View style={[styles.badgePill, { backgroundColor: badge.bg }]}>
+                              <Text style={[styles.badgeText, { color: badge.text }]}>{badge.label}</Text>
+                            </View>
+                          )}
+                          {badge.waitingNote ? (
+                            <Text style={styles.waitingNote}>{badge.waitingNote}</Text>
+                          ) : null}
                         </View>
-                        {item.identificationStatus === IdentificationStatus.PENDING ? (
-                          <View style={[styles.badgePill, { backgroundColor: '#FDF4D8' }]}>
-                            <Text style={[styles.badgeText, { color: '#8C5E03' }]}>• Identify later</Text>
-                          </View>
-                        ) : (
-                          <View style={[styles.badgePill, { backgroundColor: badge.bg }]}>
-                            <Text style={[styles.badgeText, { color: badge.text }]}>{badge.label}</Text>
-                          </View>
-                        )}
                       </TouchableOpacity>
 
                       {notSentReason ? (
@@ -468,7 +476,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 16,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center' },
+  // A long name never pushes the profile button off-screen.
+  headerLeft: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', marginRight: 8 },
+  headerText: { flex: 1, minWidth: 0 },
   headerLogo: { width: 38, height: 38, marginRight: 10 },
   headerTitle: { fontSize: 20, fontWeight: '800', color: '#284632' },
   headerSubtitle: { fontSize: 12, color: '#68776D', fontWeight: '600' },
@@ -568,10 +578,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  recordTextColumn: { flex: 1, minWidth: 0, marginLeft: 12 },
   speciesText: { fontSize: 14, fontWeight: '700', color: '#1E2B22' },
   locationText: { fontSize: 12, color: '#68776D', marginTop: 2 },
-  badgePill: { paddingVertical: 4, paddingHorizontal: 10, borderRadius: 14 },
+  badgePill: {
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+    marginTop: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+  },
   badgeText: { fontSize: 11, fontWeight: '700' },
+  waitingNote: { fontSize: 11.5, fontWeight: '600', color: '#1F4E8C', marginTop: 4 },
   errorSubRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

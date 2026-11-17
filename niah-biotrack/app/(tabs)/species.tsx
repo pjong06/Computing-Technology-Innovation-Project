@@ -15,8 +15,8 @@ import { useRouter } from 'expo-router';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import type { Species } from '../../src/api/species';
 import { useProposalStore, type SpeciesProposal } from '../../src/store/useProposalStore';
+import { plantReviewBadge } from '../../src/utils/reviewStatus';
 import {
-  ReviewStatus,
   SyncStatus,
   useRecordStore,
   type PlantRecord,
@@ -64,20 +64,18 @@ const getStatusColor = (code: string) => {
   }
 };
 
-function plantReviewBadge(record: PlantRecord): { label: string; bg: string; text: string } {
+// Before upload: "Not synced". After upload: the shared plant status (its first visit's
+// review, so an approved plant with a newer visit waiting reads "Approved" plus a small
+// "1 visit waiting for review" line, not "Pending" for the whole plant).
+function plantRowBadge(record: PlantRecord): {
+  badge: { label: string; bg: string; text: string };
+  waitingNote: string | null;
+} {
   if (record.syncStatus !== SyncStatus.UPLOADED) {
-    return { label: 'Not synced', bg: '#FDF4D8', text: '#8C5E03' };
+    return { badge: { label: 'Not synced', bg: '#FDF4D8', text: '#8C5E03' }, waitingNote: null };
   }
-  if (record.reviewStatus === ReviewStatus.APPROVED) {
-    return { label: 'Approved', bg: '#E4F2E7', text: '#215A36' };
-  }
-  if (record.reviewStatus === ReviewStatus.REJECTED) {
-    return { label: 'Needs changes', bg: '#FDE2E2', text: '#9B1C1C' };
-  }
-  if (record.reviewStatus === ReviewStatus.PENDING) {
-    return { label: 'Pending', bg: '#E3ECF8', text: '#1F4E8C' };
-  }
-  return { label: 'Not synced', bg: '#FDF4D8', text: '#8C5E03' };
+  const { badge, waitingNote } = plantReviewBadge(record, 'Pending');
+  return { badge, waitingNote };
 }
 
 export default function SpeciesScreen() {
@@ -419,7 +417,7 @@ export default function SpeciesScreen() {
                 {expanded && (
                   <View style={styles.expandedContent}>
                     {item.visiblePlants.map((plant) => {
-                      const plantBadge = plantReviewBadge(plant);
+                      const { badge: plantBadge, waitingNote } = plantRowBadge(plant);
                       return (
                         <TouchableOpacity
                           key={plant.id}
@@ -435,6 +433,7 @@ export default function SpeciesScreen() {
                             <Text style={styles.plantMeta}>
                               Life stage: {plant.observations[0]?.stage || 'Not recorded'}
                             </Text>
+                            {waitingNote ? <Text style={styles.plantWaiting}>{waitingNote}</Text> : null}
                           </View>
                           <View style={[styles.plantStatusBadge, { backgroundColor: plantBadge.bg }]}>
                             <Text style={[styles.plantStatusText, { color: plantBadge.text }]}>
@@ -602,7 +601,8 @@ const styles = StyleSheet.create({
   plantInfo: { flex: 1, paddingRight: 8 },
   plantTag: { fontSize: 13, color: '#1E2B22', fontWeight: '700' },
   plantMeta: { fontSize: 11.5, color: '#68776D', marginTop: 3 },
-  plantStatusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+  plantWaiting: { fontSize: 11.5, fontWeight: '600', color: '#1F4E8C', marginTop: 3 },
+  plantStatusBadge: { flexShrink: 0, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
   plantStatusText: { fontSize: 10.5, fontWeight: '700' },
   addPlantButton: { alignSelf: 'flex-start', paddingVertical: 10, paddingHorizontal: 4, marginTop: 4 },
   addPlantText: { color: '#213B2A', fontSize: 12.5, fontWeight: '700' },

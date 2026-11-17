@@ -46,6 +46,70 @@ export function reviewOutcome(reviewStatus: string | null | undefined, submitted
   return submitted ? 'pending' : 'not_submitted';
 }
 
+export interface DatedVisit extends VisitSubmissionFields {
+  observedAt?: string;
+  date?: string;
+}
+
+// The visit made when the plant was registered (its "first visit"). It has the plant's
+// creation time; otherwise it is the oldest visit (new visits are added to the front of
+// the list, so on a tie the last one is the oldest). null when there are no visits yet.
+export function firstVisitOf<T extends DatedVisit>(record: {
+  createdAtIso?: string;
+  observations: T[];
+}): T | null {
+  const visits = record.observations;
+  if (visits.length === 0) return null;
+  if (record.createdAtIso) {
+    const registration = visits.find((visit) => visit.observedAt === record.createdAtIso);
+    if (registration) return registration;
+  }
+  const time = (visit: T) => {
+    const parsed = Date.parse(visit.observedAt || visit.date || '');
+    return Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : parsed;
+  };
+  let oldest = visits[visits.length - 1];
+  for (const visit of visits) {
+    if (time(visit) < time(oldest)) oldest = visit;
+  }
+  return oldest;
+}
+
+// The review state of a newly registered plant's single list row: the status of its first
+// visit (the plant and that visit are one submission). When the plant is approved and later
+// visits (revisits) are waiting, also says how many, e.g. "1 visit waiting for review".
+// With no visit yet (an unsubmitted draft) the plant record's own state is used.
+export function newPlantReview<T extends DatedVisit>(record: {
+  createdAtIso?: string;
+  reviewStatus?: string | null;
+  observations: T[];
+}): { firstVisit: T | null; outcome: ReviewOutcome; waitingRevisits: number } {
+  const firstVisit = firstVisitOf(record);
+  if (firstVisit === null) {
+    return {
+      firstVisit,
+      outcome: reviewOutcome(record.reviewStatus, isRecordSubmitted(record)),
+      waitingRevisits: 0,
+    };
+  }
+  const outcome = reviewOutcome(firstVisit.reviewStatus, isVisitSubmitted(firstVisit));
+  const waitingRevisits =
+    outcome === 'approved'
+      ? record.observations.filter(
+          (visit) =>
+            visit !== firstVisit &&
+            Boolean(visit.serverId) &&
+            reviewOutcome(visit.reviewStatus, isVisitSubmitted(visit)) === 'pending'
+        ).length
+      : 0;
+  return { firstVisit, outcome, waitingRevisits };
+}
+
+// "1 visit waiting for review" / "2 visits waiting for review".
+export function waitingVisitsText(count: number): string {
+  return `${count} visit${count === 1 ? '' : 's'} waiting for review`;
+}
+
 // The first problem stopping a visit of this record from being sent for review, if any.
 export function recordSubmitProblem(record: { observations: VisitSubmissionFields[] }): string | null {
   const visit = record.observations.find((item) => item.submitError && !isVisitSubmitted(item));
