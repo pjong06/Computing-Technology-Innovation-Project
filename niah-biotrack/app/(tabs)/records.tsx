@@ -15,7 +15,6 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import Toast from 'react-native-toast-message';
 import { useStaffOnly } from '../../src/context/AuthRoleContext';
 import {
-  ReviewStatus,
   SyncStatus,
   useRecordStore,
   type ObservationVisit,
@@ -23,7 +22,7 @@ import {
 } from '../../src/store/useRecordStore';
 import { useProposalStore, type SpeciesProposal } from '../../src/store/useProposalStore';
 import { buildSyncSummary } from '../../src/services/syncSummary';
-import { REVIEW_BADGE } from '../../src/utils/reviewStatus';
+import { reviewOutcomeBadge } from '../../src/utils/reviewStatus';
 
 type SubmissionType = 'All' | 'Plants' | 'Observations' | 'Species';
 
@@ -51,14 +50,7 @@ function submissionBadge(
   if (syncStatus !== SyncStatus.UPLOADED) {
     return { label: 'Not synced', bg: '#FDF4D8', text: '#8C5E03' };
   }
-  const review = String(reviewStatus ?? '');
-  if (review === 'rejected') {
-    return { ...REVIEW_BADGE[ReviewStatus.REJECTED], label: 'Needs changes' };
-  }
-  if (review === 'approved' || review === 'archived') {
-    return REVIEW_BADGE[ReviewStatus.APPROVED];
-  }
-  return { ...REVIEW_BADGE[ReviewStatus.PENDING], label: 'Pending' };
+  return reviewOutcomeBadge(reviewStatus, 'Pending');
 }
 
 function submissionName(item: SubmissionItem): string {

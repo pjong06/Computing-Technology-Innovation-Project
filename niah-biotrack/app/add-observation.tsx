@@ -32,6 +32,7 @@ import { describeTagLookup, lookupTag } from '../src/services/tagLookup';
 
 import FormScrollView from '../src/components/FormScrollView';
 import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
+import TagScannerModal from '../src/components/TagScannerModal';
 import { checkDiameterCm, checkHeightMetres, metresToCm, parseMeasurement } from '../src/utils/units';
 
 const DONE_BAR_ID = 'add-observation-done';
@@ -99,6 +100,8 @@ export default function AddObservationScreen() {
   const [currentStep, setCurrentStep] = useState<number>(firstStep);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [plantTag, setPlantTag] = useState<string>(params.tagCode || '');
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [isLookingUpTag, setIsLookingUpTag] = useState(false);
 
   // ── PART 1 & 2: SPLIT MEASUREMENT STATES ─────────────────────
   // Typed: height in metres, diameter in cm. Height is converted to cm when saved.
@@ -250,6 +253,28 @@ export default function AddObservationScreen() {
     setPhotos((previous) =>
       previous.filter((_, photoIndex) => photoIndex !== index)
     );
+  };
+
+  // "Scan tag": the scanned tag goes straight into this form (no plant sheet first).
+  // Same lookup as typing the tag and pressing Next: phone first, then the server.
+  const handleTagScanned = async (data: string) => {
+    setScannerOpen(false);
+    setIsLookingUpTag(true);
+    try {
+      const result = await lookupTag(data);
+      if (result.status !== 'on-phone') {
+        Toast.show({
+          type: 'error',
+          text1: describeTagLookup(result).title,
+          text2: describeTagLookup(result).message,
+        });
+        return;
+      }
+      setPlantTag(result.tagCode);
+      setCurrentStep(2);
+    } finally {
+      setIsLookingUpTag(false);
+    }
   };
 
   // ── STEP VALIDATION ──────────────────────────────────────────
@@ -511,6 +536,20 @@ export default function AddObservationScreen() {
                 onChangeText={setPlantTag}
                 autoCapitalize="characters"
               />
+
+              <TouchableOpacity
+                style={styles.scanTagBtn}
+                onPress={() => setScannerOpen(true)}
+                disabled={isLookingUpTag}
+                accessibilityRole="button"
+                accessibilityLabel="Scan tag"
+              >
+                {isLookingUpTag ? (
+                  <ActivityIndicator size="small" color="#2F6B3A" />
+                ) : (
+                  <Text style={styles.scanTagBtnText}>📷  Scan tag</Text>
+                )}
+              </TouchableOpacity>
 
               {scientificName ? (
                 <View style={styles.speciesBadge}>
@@ -854,6 +893,14 @@ export default function AddObservationScreen() {
       </View>
 
       <KeyboardDoneBar nativeID={DONE_BAR_ID} />
+
+      <TagScannerModal
+        visible={scannerOpen}
+        onClose={() => setScannerOpen(false)}
+        onScanned={(data) => {
+          void handleTagScanned(data);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -995,6 +1042,17 @@ const styles = StyleSheet.create({
     color: '#415447',
     marginBottom: 6,
   },
+  scanTagBtn: {
+    marginTop: 12,
+    height: 46,
+    borderRadius: 12,
+    borderWidth: 1.4,
+    borderColor: '#2F6B3A',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  scanTagBtnText: { color: '#2F6B3A', fontSize: 15, fontWeight: '700' },
   textInput: {
     backgroundColor: '#F9FAF9',
     height: 48,

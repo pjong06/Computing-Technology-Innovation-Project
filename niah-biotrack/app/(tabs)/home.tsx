@@ -24,6 +24,7 @@ import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
 import SpeciesPhotoCredit from '../../src/components/SpeciesPhotoCredit';
 import { preferredSpeciesPhoto } from '../../src/utils/speciesPhoto';
+import { reviewOutcomeBadge } from '../../src/utils/reviewStatus';
 
 const FEATURED_COUNT = 4;
 
@@ -121,10 +122,14 @@ export default function HomeScreen() {
     }
   };
 
-  const getStatusBadge = (status: SyncStatus) => {
+  // Before upload: the upload status. After upload: the officer's decision, with the same
+  // logic as My submissions (so a record never shows "Uploaded" here and "Pending" there).
+  const getStatusBadge = (status: SyncStatus, reviewStatus?: string) => {
     switch (status) {
-      case SyncStatus.UPLOADED:
-        return { bg: '#E4F2E7', text: '#215A36', label: '• Uploaded' };
+      case SyncStatus.UPLOADED: {
+        const review = reviewOutcomeBadge(reviewStatus, 'Uploaded · Waiting for review');
+        return { ...review, label: `• ${review.label}` };
+      }
       case SyncStatus.NOT_UPLOADED:
         return { bg: '#FDF4D8', text: '#8C5E03', label: '• Not uploaded' };
       case SyncStatus.FAILED:
@@ -318,7 +323,7 @@ export default function HomeScreen() {
                 keyExtractor={(item) => item.id}
                 showsVerticalScrollIndicator={false}
                 renderItem={({ item }) => {
-                  const badge = getStatusBadge(item.syncStatus);
+                  const badge = getStatusBadge(item.syncStatus, item.reviewStatus);
                   return (
                     <View style={styles.recordItem}>
                       <TouchableOpacity

@@ -52,7 +52,7 @@ export default function LoginScreen() {
 
     const cleanId = identifier.trim();
     if (!cleanId || !password) {
-      setErrorMessage('Enter your email or ID and your password.');
+      setErrorMessage('Enter your email and your password.');
       return;
     }
 
@@ -85,7 +85,7 @@ export default function LoginScreen() {
         if (error.name === 'AuthRetryableFetchError' || error.status === 0) {
           setErrorMessage("Cannot reach server. Check connection.");
         } else if (error.code === 'invalid_credentials' || error.status === 400) {
-          setErrorMessage('Incorrect email, ID or password.');
+          setErrorMessage('Incorrect email or password.');
         } else {
           setErrorMessage(error.message || 'Sign-in failed.');
         }
@@ -130,13 +130,15 @@ export default function LoginScreen() {
         <Text style={styles.brandSubtitle}>Biodiversity documentation system</Text>
 
         <View style={styles.form}>
-          <Text style={styles.inputLabel}>Email or ID</Text>
+          <Text style={styles.inputLabel}>Email</Text>
           <TextInput
             style={styles.input}
-            placeholder="Your email or ID"
+            placeholder="Your email"
             placeholderTextColor="#8C9A91"
             value={identifier}
             onChangeText={setIdentifier}
+            keyboardType="email-address"
+            autoComplete="email"
             autoCapitalize="none"
             autoCorrect={false}
             returnKeyType="next"
@@ -209,7 +211,7 @@ export default function LoginScreen() {
           activeOpacity={0.85}
           onPress={handleEnterAsVisitor}
         >
-          <Text style={styles.visitorBtnText}>Explore without an account</Text>
+          <Text style={styles.visitorBtnText}>Continue as guest</Text>
         </TouchableOpacity>
         <Text style={styles.visitorSubtext}>
           Browse species and scan plant tags. Nothing is saved to an account.
