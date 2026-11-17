@@ -20,6 +20,10 @@ function makeListCard(observation) {
 // Makes the big card on the right with the details and the reason.
 function makeDetailCard(observation) {
   const card = makeObservationDetailCard(observation);
+  const photoSection = document.createElement('div');
+  photoSection.textContent = 'Loading photos...';
+  card.appendChild(photoSection);
+  void loadRejectedPhotos(observation.id, photoSection);
 
   addInfo(card, 'Reason for rejection', observation.rejection_comment || 'No reason recorded');
   if (observation.rejected_at) {
@@ -30,6 +34,29 @@ function makeDetailCard(observation) {
   addInfo(card, 'What happens next', 'The botanist needs to fix the observation and submit it again. It then comes back to the Observation approval queue.');
 
   return card;
+}
+
+async function loadRejectedPhotos(observationId, container) {
+  try {
+    const result = await api(`/officer/reviews/${observationId}/photos`);
+    const photos = (result.data || []).filter(photo => photo.url);
+
+    if (photos.length === 0) {
+      container.textContent = 'No photos with this observation.';
+      return;
+    }
+
+    container.textContent = '';
+    for (const photo of photos) {
+      const image = document.createElement('img');
+      image.className = 'obs-photo';
+      image.src = photo.url;
+      image.alt = photo.caption || 'Observation photo';
+      container.appendChild(image);
+    }
+  } catch {
+    container.textContent = 'The photos could not be loaded.';
+  }
 }
 
 // Draws the whole page: the count, the list on the left and the details on the right.

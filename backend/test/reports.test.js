@@ -25,6 +25,7 @@ function fakeDb(tables = {}, counts = {}) {
         query[method] = (...args) => {
           calls.push([table, method, ...args]);
           if (method === 'limit') query.limitValue = args[0];
+          if (table === 'plant_map_points' && method === 'in' && args[0] === 'id') query.ids = args[1];
           return query;
         };
       }
@@ -36,7 +37,7 @@ function fakeDb(tables = {}, counts = {}) {
       };
       query.then = (resolve, reject) => {
         const answer = tables[table] || { data: [], error: null };
-        const rows = answer.data || [];
+        const rows = query.ids ? (answer.data || []).filter(row => query.ids.includes(row.id)) : answer.data || [];
         const data = rows.slice(query.start, query.end + 1);
         const result = {
           data,
@@ -240,6 +241,25 @@ test('plant locations use the map view and are officer-only', async () => {
   assert.equal((await get('/locations')).status, 403);
   assert.equal(db.calls.length, 0);
   role = 'officer';
+});
+
+test('plant locations fetch and combine batches of at most 100 IDs', async () => {
+  const plants = Array.from({ length: 205 }, (_, index) => ({ id: String(index) }));
+  db = fakeDb({
+    plants: { data: plants },
+    plant_map_points: {
+      data: plants.map(plant => ({ ...plant, qr_code_value: plant.id })),
+    },
+  });
+
+  const result = await get('/locations');
+  assert.equal(result.status, 200);
+  const batches = db.calls
+    .filter(([table, method]) => table === 'plant_map_points' && method === 'in')
+    .map(([, , , ids]) => ids);
+  assert.deepEqual(batches.map(ids => ids.length), [100, 100, 5]);
+  assert.deepEqual(batches.flat(), plants.map(plant => plant.id));
+  assert.deepEqual(result.body.data.rows.map(row => row.plant_tag), plants.map(plant => plant.id));
 });
 
 test('plant source is included in CSV and PDF exports', async t => {
