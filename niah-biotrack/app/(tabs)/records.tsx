@@ -24,6 +24,7 @@ import { useProposalStore, type SpeciesProposal } from '../../src/store/usePropo
 import { buildSyncSummary } from '../../src/services/syncSummary';
 import { plantReviewBadge, reviewOutcomeBadge } from '../../src/utils/reviewStatus';
 import { firstVisitOf, isRecordSubmitted, isVisitSubmitted } from '../../src/utils/submissionState';
+import { routesUploadedText } from '../../src/utils/routeSync';
 
 type SubmissionType = 'All' | 'Plants' | 'Observations' | 'Species';
 
@@ -119,6 +120,10 @@ export default function RecordsScreen() {
   const blocked = useStaffOnly();
   const records = useRecordStore((state) => state.records);
   const syncAll = useRecordStore((state) => state.syncAll);
+  const syncRoutes = useRecordStore((state) => state.syncRoutes);
+  const unsentRouteCount = useRecordStore(
+    (state) => state.routes.filter((route) => route.syncStatus !== 'uploaded').length
+  );
   const refreshReviewStatuses = useRecordStore((state) => state.refreshReviewStatuses);
   const proposals = useProposalStore((state) => state.proposals);
   const syncAllProposals = useProposalStore((state) => state.syncAllProposals);
@@ -205,10 +210,12 @@ export default function RecordsScreen() {
         photosUploaded,
         photoProblems,
       } = await syncAll();
+      // Routes upload on their own path, after the plant/visit sync.
+      const routesResult = await syncRoutes();
       const proposalsResult = await syncAllProposals();
       await refreshProposalStatuses();
 
-      const failed = recordsFailed + proposalsResult.failed;
+      const failed = recordsFailed + proposalsResult.failed + routesResult.failed;
       const parts = [`${uploaded} uploaded`];
       if (failed > 0) parts.push(`${failed} failed`);
       if (skipped > 0) parts.push(`${skipped} already uploading`);
@@ -225,6 +232,12 @@ export default function RecordsScreen() {
           `${proposalsResult.uploaded} species ${
             proposalsResult.uploaded === 1 ? 'proposal' : 'proposals'
           } sent`
+        );
+      }
+      if (routesResult.uploaded > 0) parts.push(routesUploadedText(routesResult.uploaded));
+      if (routesResult.failed > 0) {
+        parts.push(
+          `${routesResult.failed} ${routesResult.failed === 1 ? 'route' : 'routes'} not uploaded`
         );
       }
 
@@ -262,7 +275,7 @@ export default function RecordsScreen() {
       <View style={styles.container}>
         <Text style={styles.headerTitle}>My submissions</Text>
 
-        {(recordsToSync > 0 || unsentProposalCount > 0) && (
+        {(recordsToSync > 0 || unsentProposalCount > 0 || unsentRouteCount > 0) && (
           <View style={styles.syncCard}>
             <Text style={styles.syncTitle}>
               {[
@@ -275,6 +288,9 @@ export default function RecordsScreen() {
                   ? `${unsentProposalCount} species ${
                       unsentProposalCount === 1 ? 'proposal' : 'proposals'
                     }`
+                  : null,
+                unsentRouteCount > 0
+                  ? `${unsentRouteCount} ${unsentRouteCount === 1 ? 'route' : 'routes'}`
                   : null,
               ]
                 .filter(Boolean)

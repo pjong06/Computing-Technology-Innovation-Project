@@ -57,6 +57,14 @@ import {
   metresToCm,
 } from '../utils/units';
 
+import {
+  buildRouteUpload,
+  linkedPlantServerId,
+  migrateRoutesToV10,
+  routesToUpload,
+  type RouteSyncStatus,
+} from '../utils/routeSync';
+
 /* =========================================================
  * ENUMS
  * ======================================================= */
@@ -402,6 +410,23 @@ export interface RecordedRoute {
   linkedPlantId?: string;
 
   createdAt: string;
+
+  /*
+   * Route upload (separate from the plant/visit
+   * sync; see src/utils/routeSync.ts).
+   * clientRouteId never changes, so a repeated
+   * upload finds the same server row.
+   */
+  clientRouteId?: string;
+
+  syncStatus?: RouteSyncStatus;
+
+  serverId?: string;
+
+  /*
+   * Plain reason when the last upload failed.
+   */
+  syncError?: string | null;
 }
 
 export type SyncResult =
@@ -455,6 +480,34 @@ export type SubmitResult =
 /* =========================================================
  * HELPERS
  * ======================================================= */
+
+/*
+ * One route upload run at a time (Sync now and the
+ * automatic sync can both start one).
+ */
+let routeSyncRunning = false;
+
+/*
+ * Plain reason for a route that did not upload.
+ */
+function routeUploadProblem(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 0) {
+      return 'No connection to the server. It will upload on the next sync.';
+    }
+    if (error.status === 401) {
+      return 'You are signed out. Sign in, then sync again.';
+    }
+    if (isRetryableStatus(error.status)) {
+      return 'The server could not save the route right now. Please try again.';
+    }
+    // 400/403 from POST /api/routes carry a plain message.
+    return error.message;
+  }
+  return error instanceof Error
+    ? error.message
+    : 'The route could not be uploaded. Please try again.';
+}
 
 const uploadsInProgress =
   new Set<string>();
@@ -968,6 +1021,16 @@ interface RecordState {
     routeId: string,
     plantId: string
   ) => Promise<void>;
+
+  /*
+   * Uploads saved routes with POST /api/routes,
+   * one at a time. Separate from syncAll(): it
+   * never touches plant records or the outbox.
+   */
+  syncRoutes: () => Promise<{
+    uploaded: number;
+    failed: number;
+  }>;
 
   discardDraftRoute:
     () => void;
@@ -3395,6 +3458,14 @@ export const useRecordStore =
 
               createdAt:
                 new Date().toISOString(),
+
+              clientRouteId:
+                randomUUID(),
+
+              syncStatus:
+                'not_uploaded',
+
+              syncError: null,
             };
 
             set(
@@ -3411,6 +3482,93 @@ export const useRecordStore =
 
             return route;
           },
+
+        /* -------------------------------------------------
+         * ROUTE UPLOAD (separate from syncAll)
+         * ------------------------------------------------ */
+
+        syncRoutes: async () => {
+          if (routeSyncRunning) {
+            return { uploaded: 0, failed: 0 };
+          }
+          routeSyncRunning = true;
+
+          let uploaded = 0;
+          let failed = 0;
+
+          // Changes one saved route only; plant records are never touched.
+          const updateRoute = (
+            routeId: string,
+            changes: Partial<RecordedRoute>
+          ) =>
+            set((state) => ({
+              routes: state.routes.map((item) =>
+                item.id === routeId ? { ...item, ...changes } : item
+              ),
+              activeDraftRoute:
+                state.activeDraftRoute?.id === routeId
+                  ? { ...state.activeDraftRoute, ...changes }
+                  : state.activeDraftRoute,
+            }));
+
+          try {
+            const pending = routesToUpload(
+              get().routes,
+              get().activeDraftRoute?.id ?? null,
+              Date.now()
+            );
+
+            // One at a time.
+            for (const route of pending) {
+              const clientRouteId = route.clientRouteId || randomUUID();
+              updateRoute(route.id, {
+                clientRouteId,
+                syncStatus: 'uploading',
+                syncError: null,
+              });
+
+              try {
+                // Read the route again: it may have been linked meanwhile.
+                const current =
+                  get().routes.find((item) => item.id === route.id) ?? route;
+                const body = buildRouteUpload(
+                  { ...current, clientRouteId },
+                  // Option A: the plant only when it has already synced.
+                  linkedPlantServerId(current, get().records)
+                );
+                // 201 for a new route, 200 when it was uploaded before (same id).
+                const result = await apiFetch<{ data?: { id?: string } }>(
+                  '/api/routes',
+                  { method: 'POST', body }
+                );
+                updateRoute(route.id, {
+                  syncStatus: 'uploaded',
+                  serverId: result?.data?.id,
+                  syncError: null,
+                });
+                uploaded += 1;
+              } catch (error) {
+                failed += 1;
+                updateRoute(route.id, {
+                  syncStatus: 'failed',
+                  syncError: routeUploadProblem(error),
+                });
+                // Offline or signed out: the others would fail the same way; they
+                // stay "Not uploaded" for the next sync.
+                if (
+                  error instanceof ApiError &&
+                  (error.status === 0 || error.status === 401)
+                ) {
+                  break;
+                }
+              }
+            }
+          } finally {
+            routeSyncRunning = false;
+          }
+
+          return { uploaded, failed };
+        },
 
         linkRouteToPlant:
           async (
@@ -3590,7 +3748,7 @@ export const useRecordStore =
               AsyncStorage
           ),
 
-        version: 9,
+        version: 10,
 
         migrate: (
           persistedState,
@@ -3602,6 +3760,14 @@ export const useRecordStore =
                 string,
                 unknown
               >[];
+              routes?: Record<
+                string,
+                unknown
+              >[];
+              activeDraftRoute?: Record<
+                string,
+                unknown
+              > | null;
             };
 
           /*
@@ -3926,6 +4092,36 @@ export const useRecordStore =
                   };
                 }
               );
+          }
+
+          /*
+           * v10:
+           * routes get an upload ID and
+           * "not uploaded" (route sync). Plant
+           * records are not touched.
+           */
+          if (
+            version < 10 &&
+            Array.isArray(
+              state.routes
+            )
+          ) {
+            state.routes =
+              migrateRoutesToV10(
+                state.routes,
+                randomUUID
+              );
+
+            // Keep the route waiting on Link route in step with its copy in the list.
+            const draftId =
+              state.activeDraftRoute?.id;
+            if (draftId) {
+              state.activeDraftRoute =
+                state.routes.find(
+                  (route) =>
+                    route.id === draftId
+                ) ?? null;
+            }
           }
 
           return state as unknown as

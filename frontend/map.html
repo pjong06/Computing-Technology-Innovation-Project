@@ -32,10 +32,15 @@
       <option value="DD">Data Deficient</option>
     </select>
     <button class="btn ghost" onclick="resetMapFilters()">Show all on map</button>
+    <label class="map-toggle">
+      <input type="checkbox" id="map-show-routes" checked onchange="toggleRoutes(this.checked)">
+      Show routes
+    </label>
   </div>
   <div class="card">
     <div id="map-box"></div>
     <p class="muted" id="map-message"></p>
+    <p class="muted" id="map-route-note">Routes from the last 90 days.</p>
   </div>
 </section>
 </main>

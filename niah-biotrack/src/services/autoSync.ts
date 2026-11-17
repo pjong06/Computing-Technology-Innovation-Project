@@ -27,6 +27,8 @@ async function triggerAutoSync(): Promise<boolean> {
     if (!data.session) return false;
 
     await useRecordStore.getState().syncAll();
+    // Trace routes: their own upload path, after the plant/visit sync.
+    await useRecordStore.getState().syncRoutes();
     await useProposalStore.getState().syncAllProposals();
     return true;
   } catch (error) {
