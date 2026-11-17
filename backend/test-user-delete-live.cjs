@@ -10,6 +10,12 @@ const API = 'https://niah-backend.onrender.com';
 const authOptions = { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false };
 class PreflightError extends Error {}
 
+function readOfficerEmail(env = process.env) {
+  const email = typeof env.TASK4_OFFICER_EMAIL === 'string' ? env.TASK4_OFFICER_EMAIL.trim() : '';
+  if (!email) throw new PreflightError('Set TASK4_OFFICER_EMAIL locally before running this test.');
+  return email;
+}
+
 function readPassword() {
   const command = '[Console]::Error.Write("Officer password (hidden): "); ' +
     '$s=Read-Host -AsSecureString; $p=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($s); ' +
@@ -35,6 +41,7 @@ async function main() {
   }
   require('dotenv').config({ path: [path.join(__dirname, '.env'),
     path.resolve(__dirname, '../../Steven-Sprint2-Security/backend/.env')], quiet: true });
+  const officerEmail = readOfficerEmail();
   const url = process.env.SUPABASE_URL;
   const publicKey = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY;
   const serverKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.IOT_DATABASE_SERVER_KEY;
@@ -55,7 +62,6 @@ async function main() {
   if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(run)) throw new PreflightError('Invalid cleanup run ID.');
   const email = `sec-task4-${run}@example.com`;
   const name = `Task 4 disposable ${run}`;
-  const officerEmail = process.env.TASK4_OFFICER_EMAIL || 'stevenchengyujay@gmail.com';
   const output = path.join(__dirname, `user-delete-${Date.now()}-results.json`);
   const report = { run, mode: recoveryArg ? 'cleanup-only' : 'acceptance', status: 'IN PROGRESS',
     api: API, started_at: new Date().toISOString(), rows: [],
@@ -222,4 +228,4 @@ if (require.main === module) main().catch(error => {
   process.exitCode = 1;
 });
 
-module.exports = { main };
+module.exports = { main, readOfficerEmail };

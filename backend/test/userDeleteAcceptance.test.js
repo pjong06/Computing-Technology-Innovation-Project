@@ -1,6 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { runUserDeleteAcceptance } = require('../test-support/userDeleteAcceptance');
+const { readOfficerEmail } = require('../test-user-delete-live.cjs');
+
+test('user-delete runner requires explicit Officer email configuration without a personal fallback', () => {
+  for (const value of [undefined, '', '  ', null]) {
+    assert.throws(() => readOfficerEmail({ TASK4_OFFICER_EMAIL: value }), /Set TASK4_OFFICER_EMAIL/);
+  }
+  assert.equal(readOfficerEmail({ TASK4_OFFICER_EMAIL: ' officer@example.com ' }), 'officer@example.com');
+});
 
 function fixture(overrides = {}) {
   const calls = [];
