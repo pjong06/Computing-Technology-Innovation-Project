@@ -102,7 +102,7 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  // "Explore without an account". Any saved login is removed first, so a guest never
+  // "Continue as guest" on the login screen. Any saved login is removed first, so a guest never
   // sends a token: every server call is either public or refused before it's sent.
   const setVisitorMode = async () => {
     await signOutOnThisPhone();
