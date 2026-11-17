@@ -106,11 +106,55 @@ test('only officers can use the review API', async () => {
     await withApp(async base => {
       assert.equal((await call(`${base}/pending`)).status, 403);
       assert.equal((await call(`${base}/rejected`)).status, 403);
+      assert.equal((await call(`${base}/${OBS}/photos`)).status, 403);
       assert.equal((await call(`${base}/${OBS}/decision`, 'POST', { decision: 'approved' })).status, 403);
     });
     assert.equal(db.calls.length, 0);
   }
   role = 'officer';
+});
+
+test('pending and rejected observations return short-lived photo links to officers', async () => {
+  const media = { id: 'photo-1', file_path: 'visits/leaf.jpg', caption: 'Leaf' };
+  const signedUrl = 'https://example.test/signed-leaf';
+
+  for (const review_status of ['pending', 'rejected']) {
+    db = fakeDb({
+      'observations:single': { data: { id: OBS, review_status, deleted_at: null }, error: null },
+      observation_media: [media],
+    });
+    db.storage = {
+      from(bucket) {
+        assert.equal(bucket, 'observation-media');
+        return {
+          async createSignedUrls(paths, expiresIn) {
+            assert.deepEqual(paths, [media.file_path]);
+            assert.equal(expiresIn, 60);
+            return { data: [{ path: media.file_path, signedUrl }], error: null };
+          },
+        };
+      },
+    };
+
+    await withApp(async base => {
+      const result = await call(`${base}/${OBS}/photos`);
+      assert.equal(result.status, 200);
+      assert.deepEqual(result.body, { data: [{ ...media, url: signedUrl, expires_in: 60 }] });
+    });
+  }
+});
+
+test('approved and deleted observations do not use the review photo lookup', async () => {
+  for (const record of [
+    { review_status: 'approved', deleted_at: null },
+    { review_status: 'rejected', deleted_at: '2026-11-02T00:00:00Z' },
+  ]) {
+    db = fakeDb({
+      'observations:single': { data: { id: OBS, ...record }, error: null },
+    });
+    await withApp(async base => assert.equal((await call(`${base}/${OBS}/photos`)).status, 409));
+    assert.ok(db.calls.every(([table]) => table === 'observations'));
+  }
 });
 
 test('pending observations come with plant, species and botanist details', async () => {

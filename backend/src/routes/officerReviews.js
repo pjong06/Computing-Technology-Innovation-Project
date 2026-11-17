@@ -145,7 +145,7 @@ router.get("/rejected", async (req, res) => {
     }
 });
 
-// Return short-lived photo links for an observation awaiting officer review.
+// Return short-lived photo links for pending and rejected observations.
 router.get("/:observationId/photos", async (req, res) => {
     const observationId = req.params.observationId;
     const uuidPattern =
@@ -176,9 +176,9 @@ router.get("/:observationId/photos", async (req, res) => {
         });
     }
 
-    if (observation.review_status !== "pending" || observation.deleted_at !== null) {
+    if (!["pending", "rejected"].includes(observation.review_status) || observation.deleted_at !== null) {
         return res.status(409).json({
-            message: "Photos are available only for pending observations"
+            message: "Photos are available only for pending or rejected observations"
         });
     }
 
