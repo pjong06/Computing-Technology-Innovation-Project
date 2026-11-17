@@ -651,6 +651,25 @@ tr.row:hover td {
 }
 
 /* Map page */
+
+/* "Show routes" checkbox in the map's filter bar */
+.map-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.map-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--pri);
+}
 #map-box {
   height: 480px;
   border-radius: 14px;
