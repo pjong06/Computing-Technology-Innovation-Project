@@ -220,9 +220,15 @@ test('the species catalogue and editor render iNaturalist photo credits', () => 
   assert.match(shared, /cc0: 'CC0'/);
   assert.doesNotMatch(creditRenderer, /createElement\(['"]a['"]\)|\.href\s*=|source_url/);
 
+  // The app builds the same plain-text credit in src/utils/photoCredit.ts
+  // (photoCredit.test.js checks web and app give the same text).
   const mobileCredit = read('niah-biotrack/src/components/SpeciesPhotoCredit.tsx');
-  assert.match(mobileCredit, /Photo: \$\{name\}, \$\{licence \?\? 'Unknown licence'\} via iNaturalist/);
-  assert.doesNotMatch(mobileCredit, /Linking|onPress|accessibilityRole|source_url|creativecommons\.org/);
+  const mobileCreditText = read('niah-biotrack/src/utils/photoCredit.ts');
+  assert.match(mobileCredit, /\{photoCreditText\(photo\)\}/);
+  assert.match(mobileCreditText, /Photo: \$\{photoCreditName\(photo\)\}, \$\{licence\} via iNaturalist/);
+  for (const source of [mobileCredit, mobileCreditText]) {
+    assert.doesNotMatch(source, /Linking|onPress|accessibilityRole|source_url|creativecommons\.org/);
+  }
 });
 
 test('web and mobile species screens do not use legacy reference-photo fields', () => {

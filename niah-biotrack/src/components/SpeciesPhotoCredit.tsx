@@ -1,12 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text } from 'react-native';
 import type { SpeciesMedia } from '../api/species';
-
-const LICENCES = {
-  'cc-by': 'CC BY',
-  'cc-by-sa': 'CC BY-SA',
-  cc0: 'CC0',
-};
+import { photoCreditText } from '../utils/photoCredit';
 
 interface SpeciesPhotoCreditProps {
   photo: SpeciesMedia | null | undefined;
@@ -19,12 +14,10 @@ export default function SpeciesPhotoCredit({
 }: SpeciesPhotoCreditProps) {
   if (!photo || photo.source !== 'inaturalist') return null;
 
-  const licence = photo.licence_code ? LICENCES[photo.licence_code] : undefined;
-  const name = photo.photographer?.trim() || photo.attribution?.trim() || 'Unknown photographer';
-
+  // "Photo: <name>, <licence> via iNaturalist" (never the whole attribution sentence).
   return (
     <Text style={[styles.credit, compact && styles.compact]}>
-      {`Photo: ${name}, ${licence ?? 'Unknown licence'} via iNaturalist`}
+      {photoCreditText(photo)}
     </Text>
   );
 }

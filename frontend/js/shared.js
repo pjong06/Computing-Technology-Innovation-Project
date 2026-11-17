@@ -180,12 +180,50 @@ async function speciesPhoto(species) {
   return { ...chosen, ...result };
 }
 
+// ---- photo credit (same logic as niah-biotrack/src/utils/photoCredit.ts) ----
+// The plain-text credit under an iNaturalist reference photo:
+//   "Photo: <name>, <licence> via iNaturalist"
+// backend/test/photoCredit.test.js runs this code and the app's copy on the same examples.
+
+// The photographer's name from iNaturalist's credit sentence, or '' when it has none.
+//   "(c) Samuel Frankel, some rights reserved (CC BY), uploaded by Samuel Frankel" -> "Samuel Frankel"
+//   "no rights reserved, uploaded by Meng-Ying Tsai" (CC0) -> "Meng-Ying Tsai"
+//   "Jane Doe" -> "Jane Doe";  "no rights reserved" -> ""
+function nameFromAttribution(text) {
+  const value = String(text ?? '').trim();
+  if (!value) return '';
+
+  const copyright = /^(?:\(c\)|©)\s*/i.exec(value);
+  if (copyright) return value.slice(copyright[0].length).split(',')[0].trim();
+
+  const uploadedAt = value.toLowerCase().indexOf('uploaded by ');
+  if (uploadedAt !== -1) return value.slice(uploadedAt + 'uploaded by '.length).split(',')[0].trim();
+
+  const first = value.split(',')[0].trim();
+  return first.toLowerCase().includes('rights reserved') ? '' : first;
+}
+
+// The name to show: the photographer field, otherwise the name inside the attribution.
+// A photographer field that holds a whole credit sentence is cleaned the same way.
+function photoCreditName(photo) {
+  const photographer = String(photo.photographer ?? '').trim();
+  const fromPhotographer = /^(?:\(c\)|©)/i.test(photographer)
+    ? nameFromAttribution(photographer)
+    : photographer;
+  return fromPhotographer || nameFromAttribution(photo.attribution) || 'Unknown photographer';
+}
+
+function photoCreditText(photo) {
+  const licence = (photo.licence_code && SPECIES_PHOTO_LICENSES[photo.licence_code]) || 'Unknown licence';
+  return `Photo: ${photoCreditName(photo)}, ${licence} via iNaturalist`;
+}
+// ---- end photo credit ----
+
 function makeSpeciesPhotoCredit(photo, compact) {
   if (!photo || photo.source !== 'inaturalist') return null;
 
-  const licence = SPECIES_PHOTO_LICENSES[photo.licence_code] || 'Unknown licence';
-  const name = photo.photographer?.trim() || photo.attribution?.trim() || 'Unknown photographer';
-  const fullCredit = `Photo: ${name}, ${licence} via iNaturalist`;
+  // Plain text, never the whole attribution sentence.
+  const fullCredit = photoCreditText(photo);
   const credit = document.createElement('div');
   credit.className = 'species-photo-credit' + (compact ? ' compact' : '');
   credit.title = fullCredit;
