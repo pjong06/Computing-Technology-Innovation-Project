@@ -23,6 +23,7 @@ import {
 import { useProposalStore, type SpeciesProposal } from '../../src/store/useProposalStore';
 import { buildSyncSummary } from '../../src/services/syncSummary';
 import { reviewOutcomeBadge } from '../../src/utils/reviewStatus';
+import { isRecordSubmitted, isVisitSubmitted, recordSubmitProblem } from '../../src/utils/submissionState';
 
 type SubmissionType = 'All' | 'Plants' | 'Observations' | 'Species';
 
@@ -45,12 +46,23 @@ function formatDate(value?: string): string {
 
 function submissionBadge(
   syncStatus: SyncStatus,
-  reviewStatus?: string
+  reviewStatus?: string,
+  submitted = true
 ): { label: string; bg: string; text: string } {
   if (syncStatus !== SyncStatus.UPLOADED) {
     return { label: 'Not synced', bg: '#FDF4D8', text: '#8C5E03' };
   }
-  return reviewOutcomeBadge(reviewStatus, 'Pending');
+  return reviewOutcomeBadge(reviewStatus, 'Pending', submitted);
+}
+
+// Why an uploaded plant or visit has not been sent for review (server refusal, photo over
+// 5 MB), so "Not submitted yet" always comes with a reason when there is one.
+function submitProblem(item: SubmissionItem): string | null {
+  if (item.type === 'visit') {
+    return isVisitSubmitted(item.visit) ? null : item.visit.submitError ?? null;
+  }
+  if (item.type === 'plant') return recordSubmitProblem(item.record);
+  return null;
 }
 
 function submissionName(item: SubmissionItem): string {
@@ -337,9 +349,10 @@ export default function RecordsScreen() {
             const badge = item.type === 'species'
               ? submissionBadge(item.proposal.syncStatus, item.proposal.review)
               : item.type === 'visit'
-                ? submissionBadge(item.visit.syncStatus, item.visit.reviewStatus)
-                : submissionBadge(item.record.syncStatus, item.record.reviewStatus);
+                ? submissionBadge(item.visit.syncStatus, item.visit.reviewStatus, isVisitSubmitted(item.visit))
+                : submissionBadge(item.record.syncStatus, item.record.reviewStatus, isRecordSubmitted(item.record));
             const reason = rejectionReason(item);
+            const notSentReason = submitProblem(item);
             const tagCode = item.type === 'species' ? null : item.record.tagCode;
             const date = item.type === 'plant'
               ? formatDate(item.record.createdAtIso || item.record.createdAt)
@@ -383,6 +396,9 @@ export default function RecordsScreen() {
                 <Text style={styles.recordSpecies}>{submissionName(item)}</Text>
                 <Text style={styles.recordMeta}>{metadata}</Text>
                 {reason ? <Text style={styles.reasonText}>Officer's reason: {reason}</Text> : null}
+                {notSentReason ? (
+                  <Text style={styles.reasonText}>Not sent for review: {notSentReason}</Text>
+                ) : null}
 
                 {isProposalExpanded && item.type === 'species' ? (
                   <View style={styles.proposalDetails}>

@@ -25,6 +25,7 @@ import { conservationStatusColors, plainConservationStatus } from '../../src/uti
 import SpeciesPhotoCredit from '../../src/components/SpeciesPhotoCredit';
 import { preferredSpeciesPhoto } from '../../src/utils/speciesPhoto';
 import { reviewOutcomeBadge } from '../../src/utils/reviewStatus';
+import { isRecordSubmitted, recordSubmitProblem } from '../../src/utils/submissionState';
 
 const FEATURED_COUNT = 4;
 
@@ -124,10 +125,10 @@ export default function HomeScreen() {
 
   // Before upload: the upload status. After upload: the officer's decision, with the same
   // logic as My submissions (so a record never shows "Uploaded" here and "Pending" there).
-  const getStatusBadge = (status: SyncStatus, reviewStatus?: string) => {
+  const getStatusBadge = (status: SyncStatus, reviewStatus?: string, submitted = true) => {
     switch (status) {
       case SyncStatus.UPLOADED: {
-        const review = reviewOutcomeBadge(reviewStatus, 'Uploaded · Waiting for review');
+        const review = reviewOutcomeBadge(reviewStatus, 'Uploaded · Waiting for review', submitted);
         return { ...review, label: `• ${review.label}` };
       }
       case SyncStatus.NOT_UPLOADED:
@@ -323,7 +324,9 @@ export default function HomeScreen() {
                 keyExtractor={(item) => item.id}
                 showsVerticalScrollIndicator={false}
                 renderItem={({ item }) => {
-                  const badge = getStatusBadge(item.syncStatus, item.reviewStatus);
+                  const badge = getStatusBadge(item.syncStatus, item.reviewStatus, isRecordSubmitted(item));
+                  const notSentReason =
+                    item.syncStatus === SyncStatus.UPLOADED ? recordSubmitProblem(item) : null;
                   return (
                     <View style={styles.recordItem}>
                       <TouchableOpacity
@@ -357,6 +360,12 @@ export default function HomeScreen() {
                           </View>
                         )}
                       </TouchableOpacity>
+
+                      {notSentReason ? (
+                        <View style={styles.errorSubRow}>
+                          <Text style={styles.errorSubText}>Not sent for review: {notSentReason}</Text>
+                        </View>
+                      ) : null}
 
                       {item.syncStatus === SyncStatus.FAILED && (
                         <View style={styles.errorSubRow}>
