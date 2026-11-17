@@ -22,13 +22,16 @@ import {
 } from '../../src/store/useRecordStore';
 import { useProposalStore, type SpeciesProposal } from '../../src/store/useProposalStore';
 import { buildSyncSummary } from '../../src/services/syncSummary';
-import { reviewOutcomeBadge } from '../../src/utils/reviewStatus';
-import { isRecordSubmitted, isVisitSubmitted, recordSubmitProblem } from '../../src/utils/submissionState';
+import { plantReviewBadge, reviewOutcomeBadge } from '../../src/utils/reviewStatus';
+import { firstVisitOf, isRecordSubmitted, isVisitSubmitted } from '../../src/utils/submissionState';
 
 type SubmissionType = 'All' | 'Plants' | 'Observations' | 'Species';
 
+// A newly registered plant and its first visit are one submission, so they share one
+// "New plant" row (with the first visit's status). Only later visits (revisits) get their
+// own "Visit" row.
 type SubmissionItem =
-  | { key: string; type: 'plant'; timestamp: number; record: PlantRecord }
+  | { key: string; type: 'plant'; timestamp: number; record: PlantRecord; firstVisit: ObservationVisit | null }
   | { key: string; type: 'visit'; timestamp: number; record: PlantRecord; visit: ObservationVisit }
   | { key: string; type: 'species'; timestamp: number; proposal: SpeciesProposal };
 
@@ -61,7 +64,9 @@ function submitProblem(item: SubmissionItem): string | null {
   if (item.type === 'visit') {
     return isVisitSubmitted(item.visit) ? null : item.visit.submitError ?? null;
   }
-  if (item.type === 'plant') return recordSubmitProblem(item.record);
+  if (item.type === 'plant' && item.firstVisit) {
+    return isVisitSubmitted(item.firstVisit) ? null : item.firstVisit.submitError ?? null;
+  }
   return null;
 }
 
@@ -87,22 +92,24 @@ function searchableValues(item: SubmissionItem): (string | undefined)[] {
     item.record.family,
     item.record.locationName,
     item.record.tagCode ?? undefined,
-    item.type === 'visit' ? item.visit.notes : undefined,
+    item.type === 'visit' ? item.visit.notes : item.firstVisit?.notes,
   ];
 }
 
 function rejectionReason(item: SubmissionItem): string | null {
+  // A new plant's row follows its first visit (the plant record itself when there is none).
+  const visit = item.type === 'visit' ? item.visit : item.type === 'plant' ? item.firstVisit : null;
   const review = item.type === 'species'
     ? item.proposal.review
-    : item.type === 'visit'
-      ? item.visit.reviewStatus
+    : visit
+      ? visit.reviewStatus
       : item.record.reviewStatus;
   if (String(review) !== 'rejected') return null;
 
   const reason = item.type === 'species'
     ? item.proposal.reviewComment
-    : item.type === 'visit'
-      ? item.visit.reviewComment
+    : visit
+      ? visit.reviewComment
       : item.record.reviewComment;
   return reason?.trim() || 'No reason was given.';
 }
@@ -132,21 +139,26 @@ export default function RecordsScreen() {
   );
 
   const submissions = useMemo(() => {
-    const items: SubmissionItem[] = records.flatMap((record) => [
-      {
-        key: `plant:${record.id}`,
-        type: 'plant' as const,
-        timestamp: timestampFor(record.createdAtIso || record.createdAt),
-        record,
-      },
-      ...record.observations.map((visit) => ({
-        key: `visit:${record.id}:${visit.id}`,
-        type: 'visit' as const,
-        timestamp: timestampFor(visit.observedAt || visit.date),
-        record,
-        visit,
-      })),
-    ]);
+    const items: SubmissionItem[] = records.flatMap((record) => {
+      const firstVisit = firstVisitOf(record);
+      return [
+        {
+          key: `plant:${record.id}`,
+          type: 'plant' as const,
+          timestamp: timestampFor(record.createdAtIso || record.createdAt),
+          record,
+          firstVisit,
+        },
+        // Revisits only: the first visit is part of the "New plant" row.
+        ...record.observations.filter((visit) => visit !== firstVisit).map((visit) => ({
+          key: `visit:${record.id}:${visit.id}`,
+          type: 'visit' as const,
+          timestamp: timestampFor(visit.observedAt || visit.date),
+          record,
+          visit,
+        })),
+      ];
+    });
 
     items.push(
       ...proposals.map((proposal) => ({
@@ -237,6 +249,13 @@ export default function RecordsScreen() {
   if (blocked) return null;
 
   const filters: SubmissionType[] = ['All', 'Plants', 'Observations', 'Species'];
+  // Short chip labels so all four fit on one line on a 360 px phone ("Observations" wrapped).
+  const filterLabels: Record<SubmissionType, string> = {
+    All: 'All',
+    Plants: 'Plants',
+    Observations: 'Visits',
+    Species: 'Species',
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -299,10 +318,14 @@ export default function RecordsScreen() {
                 onPress={() => setSelectedType(filter)}
                 style={[styles.filterChip, isActive && styles.activeFilterChip]}
                 accessibilityRole="button"
+                accessibilityLabel={filter === 'Observations' ? 'Visits (observations)' : filter}
                 accessibilityState={{ selected: isActive }}
               >
-                <Text style={[styles.filterLabel, isActive && styles.activeFilterLabel]}>
-                  {filter}
+                <Text
+                  style={[styles.filterLabel, isActive && styles.activeFilterLabel]}
+                  numberOfLines={1}
+                >
+                  {filterLabels[filter]}
                 </Text>
               </TouchableOpacity>
             );
@@ -346,11 +369,23 @@ export default function RecordsScreen() {
             </View>
           }
           renderItem={({ item }) => {
+            // A new plant shows its first visit's status. Once approved, waiting revisits add a
+            // small "1 visit waiting for review" line (they also have their own Visit rows).
+            const plantSynced =
+              item.type === 'plant' &&
+              (item.firstVisit?.syncStatus ?? item.record.syncStatus) === SyncStatus.UPLOADED;
+            const plantReview =
+              item.type === 'plant' && plantSynced ? plantReviewBadge(item.record, 'Pending') : null;
             const badge = item.type === 'species'
               ? submissionBadge(item.proposal.syncStatus, item.proposal.review)
               : item.type === 'visit'
                 ? submissionBadge(item.visit.syncStatus, item.visit.reviewStatus, isVisitSubmitted(item.visit))
-                : submissionBadge(item.record.syncStatus, item.record.reviewStatus, isRecordSubmitted(item.record));
+                : plantReview?.badge ??
+                  submissionBadge(
+                    item.firstVisit?.syncStatus ?? item.record.syncStatus,
+                    item.record.reviewStatus,
+                    isRecordSubmitted(item.record)
+                  );
             const reason = rejectionReason(item);
             const notSentReason = submitProblem(item);
             const tagCode = item.type === 'species' ? null : item.record.tagCode;
@@ -381,20 +416,28 @@ export default function RecordsScreen() {
                   router.push({ pathname: '/plant-detail', params: { id: item.record.id } } as any);
                 }}
                 accessibilityRole="button"
-                accessibilityLabel={`${item.type} submission: ${submissionName(item)}`}
+                accessibilityLabel={`${item.type === 'plant' ? 'new plant' : item.type} submission: ${submissionName(item)}`}
               >
                 <View style={styles.rowTop}>
                   <View style={styles.typeBadge}>
-                    <Text style={styles.typeBadgeText}>
-                      {item.type === 'plant' ? 'PLANT' : item.type === 'visit' ? 'VISIT' : 'SPECIES'}
+                    <Text style={styles.typeBadgeText} numberOfLines={1}>
+                      {item.type === 'plant' ? 'NEW PLANT' : item.type === 'visit' ? 'VISIT' : 'SPECIES'}
                     </Text>
                   </View>
                   <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
-                    <Text style={[styles.statusBadgeText, { color: badge.text }]}>{badge.label}</Text>
+                    <Text style={[styles.statusBadgeText, { color: badge.text }]} numberOfLines={1}>
+                      {badge.label}
+                    </Text>
                   </View>
                 </View>
+                {plantReview?.waitingNote ? (
+                  <Text style={styles.waitingNote}>{plantReview.waitingNote}</Text>
+                ) : null}
                 <Text style={styles.recordSpecies}>{submissionName(item)}</Text>
                 <Text style={styles.recordMeta}>{metadata}</Text>
+                {item.type === 'plant' && item.firstVisit ? (
+                  <Text style={styles.recordMeta}>Includes first visit</Text>
+                ) : null}
                 {reason ? <Text style={styles.reasonText}>Officer's reason: {reason}</Text> : null}
                 {notSentReason ? (
                   <Text style={styles.reasonText}>Not sent for review: {notSentReason}</Text>
@@ -483,7 +526,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#E9EEEA',
   },
   activeFilterChip: { backgroundColor: '#213B2A' },
-  filterLabel: { fontSize: 12.5, color: '#68776D', fontWeight: '600' },
+  filterLabel: { fontSize: 12.5, color: '#68776D', fontWeight: '600', paddingHorizontal: 4 },
   activeFilterLabel: { color: '#FFFFFF', fontWeight: '700' },
   listContent: { paddingBottom: 12 },
   emptyList: { flexGrow: 1 },
@@ -508,8 +551,9 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   typeBadgeText: { fontSize: 9.5, letterSpacing: 0.5, fontWeight: '800', color: '#526158' },
-  statusBadge: { paddingVertical: 5, paddingHorizontal: 10, borderRadius: 16 },
+  statusBadge: { flexShrink: 1, marginLeft: 8, paddingVertical: 5, paddingHorizontal: 10, borderRadius: 16 },
   statusBadgeText: { fontSize: 11, fontWeight: '700' },
+  waitingNote: { fontSize: 11.5, fontWeight: '600', color: '#1F4E8C', marginTop: -2, marginBottom: 6 },
   recordSpecies: { fontSize: 15, fontWeight: '700', color: '#1E2B22' },
   recordMeta: { fontSize: 12.5, color: '#68776D', marginTop: 4 },
   reasonText: { fontSize: 12, fontWeight: '600', color: '#9B1C1C', marginTop: 6 },

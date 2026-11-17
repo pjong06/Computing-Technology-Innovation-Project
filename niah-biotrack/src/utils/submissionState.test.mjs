@@ -9,6 +9,9 @@ import {
   recordSubmitProblem,
   applyServerReview,
   oversizedPhotoMessage,
+  firstVisitOf,
+  newPlantReview,
+  waitingVisitsText,
 } from './submissionState.ts';
 
 test('a visit uploaded but still draft on the server is not submitted', () => {
@@ -96,4 +99,46 @@ test('oversized photo message is plain and says what to do', () => {
     'A photo is over 5 MB, so this visit was not sent for review. Remove it on the plant page, then sync again.'
   );
   assert.match(oversizedPhotoMessage(3), /^3 photos are over 5 MB/);
+});
+
+test('the first visit of a plant is the registration visit (its creation time), else the oldest', () => {
+  const registration = { id: 'r', observedAt: '2026-11-01T02:00:00.000Z' };
+  const revisit = { id: 'v', observedAt: '2026-11-10T02:00:00.000Z' };
+  // New visits are added to the front of the list.
+  assert.equal(firstVisitOf({ createdAtIso: registration.observedAt, observations: [revisit, registration] }), registration);
+  assert.equal(firstVisitOf({ observations: [revisit, registration] }), registration);
+  assert.equal(firstVisitOf({ observations: [{ id: 'a' }, { id: 'b' }] }).id, 'b');
+  assert.equal(firstVisitOf({ observations: [] }), null);
+});
+
+test('a new plant row uses its first visit status, plus revisits waiting once approved', () => {
+  const createdAtIso = '2026-11-01T02:00:00.000Z';
+  const first = { serverId: 'a', observedAt: createdAtIso, submittedForReview: true };
+  const later = { serverId: 'b', observedAt: '2026-11-10T02:00:00.000Z', submittedForReview: true };
+
+  // First visit waiting: the plant row says waiting, whatever the revisits say.
+  assert.deepEqual(
+    newPlantReview({ createdAtIso, reviewStatus: 'pending', observations: [{ ...later, reviewStatus: 'approved' }, { ...first, reviewStatus: 'pending' }] }),
+    { firstVisit: { ...first, reviewStatus: 'pending' }, outcome: 'pending', waitingRevisits: 0 }
+  );
+  // First visit approved, one revisit waiting: "Approved" + 1 waiting (the plant record says pending).
+  const approvedFirst = { ...first, reviewStatus: 'approved' };
+  const result = newPlantReview({
+    createdAtIso,
+    reviewStatus: 'pending',
+    observations: [{ ...later, reviewStatus: 'pending' }, approvedFirst],
+  });
+  assert.equal(result.outcome, 'approved');
+  assert.equal(result.waitingRevisits, 1);
+  assert.equal(result.firstVisit, approvedFirst);
+  // First visit rejected or not submitted yet.
+  assert.equal(newPlantReview({ createdAtIso, observations: [{ ...first, reviewStatus: 'rejected' }] }).outcome, 'rejected');
+  assert.equal(newPlantReview({ createdAtIso, observations: [{ serverId: 'a', observedAt: createdAtIso, reviewStatus: 'draft' }] }).outcome, 'not_submitted');
+  // A draft plant with no visit yet uses the plant record.
+  assert.deepEqual(
+    newPlantReview({ reviewStatus: 'draft', observations: [] }),
+    { firstVisit: null, outcome: 'not_submitted', waitingRevisits: 0 }
+  );
+  assert.equal(waitingVisitsText(1), '1 visit waiting for review');
+  assert.equal(waitingVisitsText(3), '3 visits waiting for review');
 });

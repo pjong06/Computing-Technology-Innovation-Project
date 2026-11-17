@@ -1,5 +1,5 @@
 import { ReviewStatus } from '../store/useRecordStore';
-import { reviewOutcome } from './submissionState';
+import { newPlantReview, reviewOutcome, waitingVisitsText, type DatedVisit, type ReviewOutcome } from './submissionState';
 
 // Label and colours for each review status, shared by every screen.
 export const REVIEW_BADGE: Record<ReviewStatus, { label: string; bg: string; text: string }> = {
@@ -22,7 +22,12 @@ export function reviewOutcomeBadge(
   pendingLabel: string,
   submitted = true
 ): { label: string; bg: string; text: string } {
-  switch (reviewOutcome(reviewStatus, submitted)) {
+  return outcomeBadge(reviewOutcome(reviewStatus, submitted), pendingLabel);
+}
+
+// The badge for each outcome. pendingLabel is the screen's word for "waiting for review".
+function outcomeBadge(outcome: ReviewOutcome, pendingLabel: string): { label: string; bg: string; text: string } {
+  switch (outcome) {
     case 'rejected':
       return REVIEW_BADGE[ReviewStatus.REJECTED];
     case 'approved':
@@ -32,4 +37,20 @@ export function reviewOutcomeBadge(
     default:
       return { ...REVIEW_BADGE[ReviewStatus.PENDING], label: pendingLabel };
   }
+}
+
+// The badge for an uploaded plant registered on this phone: the status of its first visit
+// (registering a plant and its first visit are one submission), plus a small note when the
+// plant is approved but revisits are waiting ("1 visit waiting for review").
+// Used by My submissions, Home and the Species tab, so they always agree.
+export function plantReviewBadge<T extends DatedVisit>(
+  record: { createdAtIso?: string; reviewStatus?: string | null; observations: T[] },
+  pendingLabel: string
+): { badge: { label: string; bg: string; text: string }; waitingNote: string | null; firstVisit: T | null } {
+  const { firstVisit, outcome, waitingRevisits } = newPlantReview(record);
+  return {
+    badge: outcomeBadge(outcome, pendingLabel),
+    waitingNote: waitingRevisits > 0 ? waitingVisitsText(waitingRevisits) : null,
+    firstVisit,
+  };
 }
