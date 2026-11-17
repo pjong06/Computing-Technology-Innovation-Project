@@ -27,6 +27,8 @@ import { useProposalStore } from '../../src/store/useProposalStore';
 
 import { buildSyncSummary } from '../../src/services/syncSummary';
 
+import { routesUploadedText } from '../../src/utils/routeSync';
+
 import {
   getLastSuccessfulSync,
 } from '../../src/services/offlineDatabase';
@@ -57,6 +59,25 @@ export default function ProfileScreen() {
 
   const syncAll = useRecordStore(
     (state) => state.syncAll
+  );
+
+  const syncRoutes = useRecordStore(
+    (state) => state.syncRoutes
+  );
+
+  // Saved trace routes still to upload, and how many of those failed last time.
+  const routesNotUploaded = useRecordStore(
+    (state) =>
+      state.routes.filter(
+        (route) => route.syncStatus !== 'uploaded'
+      ).length
+  );
+
+  const routesFailed = useRecordStore(
+    (state) =>
+      state.routes.filter(
+        (route) => route.syncStatus === 'failed'
+      ).length
   );
 
   const unsentProposalCount = useProposalStore(
@@ -258,6 +279,13 @@ export default function ProfileScreen() {
         await syncAll();
 
       /*
+       * Trace routes upload on their own path, after
+       * the plant/visit sync (never inside syncAll).
+       */
+      const routeResult =
+        await syncRoutes();
+
+      /*
        * Main also has Species Proposal synchronization.
        * Keep it part of the manual Sync now operation.
        */
@@ -280,12 +308,18 @@ export default function ProfileScreen() {
 
       const totalFailed =
         recordResult.failed +
-        proposalResult.failed;
+        proposalResult.failed +
+        routeResult.failed;
+
+      const routesLine =
+        routeResult.uploaded > 0
+          ? ` ${routesUploadedText(routeResult.uploaded)}.`
+          : '';
 
       if (totalFailed > 0) {
         Alert.alert(
           'Sync needs attention',
-          `${totalFailed} item(s) could not be uploaded. They remain safely stored on this phone and can retry automatically when connectivity returns.`
+          `${totalFailed} item(s) could not be uploaded. They remain safely stored on this phone and can retry automatically when connectivity returns.${routesLine}`
         );
 
         return;
@@ -297,8 +331,8 @@ export default function ProfileScreen() {
 
       Alert.alert(
         'Sync complete',
-        processed > 0
-          ? `${processed} item(s) processed successfully.`
+        processed > 0 || routeResult.uploaded > 0
+          ? `${processed} item(s) processed successfully.${routesLine}`
           : 'The local sync queue was checked successfully.'
       );
     } catch (error) {
@@ -876,6 +910,19 @@ export default function ProfileScreen() {
               </View>
             </View>
 
+            {routesNotUploaded > 0 ? (
+              <Text
+                style={
+                  styles.routesLine
+                }
+              >
+                Routes: {routesNotUploaded} not uploaded
+                {routesFailed > 0
+                  ? ` · ${routesFailed} failed (Sync now to retry)`
+                  : ''}
+              </Text>
+            ) : null}
+
             <View
               style={
                 styles.syncFooterRow
@@ -1318,6 +1365,14 @@ const styles =
       fontSize: 11.5,
       color: '#76877B',
       textAlign: 'center',
+    },
+
+    routesLine: {
+      fontSize: 12,
+      color: '#526659',
+      fontWeight: '600',
+      textAlign: 'center',
+      marginBottom: 8,
     },
 
     syncSummaryText: {

@@ -78,6 +78,9 @@ app.use('/api/web-data', webDataRoutes);
 app.use('/api/sync', requireAuth, requireRole('botanist'), syncRoutes);
 
 app.use('/api/officer/map', officerMapRoutes);
+
+// Trace routes uploaded from the phone (botanists only; separate from /api/sync).
+app.use('/api/routes', require('./routes/fieldRoutes'));
 app.use('/api/officer/plants', officerPlantsRoutes);
 
 // Public plant routes

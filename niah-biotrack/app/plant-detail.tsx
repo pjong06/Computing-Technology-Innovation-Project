@@ -39,6 +39,7 @@ import { formatDiameterCm, formatHeightFromCm, parseMeasurement } from '../src/u
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
 import SpeciesPhotoCredit from '../src/components/SpeciesPhotoCredit';
 import { preferredSpeciesPhoto } from '../src/utils/speciesPhoto';
+import { routeSyncLabel, routesUploadedText } from '../src/utils/routeSync';
 
 const TAG_PROBLEM_TEXT: Record<'in_use' | 'locked', string> = {
   in_use:
@@ -132,8 +133,23 @@ export default function PlantDetailScreen() {
   const submitForReview = useRecordStore((state) => state.submitForReview);
   const removePhoto = useRecordStore((state) => state.removePhoto);
   const deleteRecord = useRecordStore((state) => state.deleteRecord);
+  const syncRoutes = useRecordStore((state) => state.syncRoutes);
 
   const { width } = useWindowDimensions();
+
+  // Retry for a route that did not upload: runs the route upload only (not the plant sync).
+  const [retryingRoute, setRetryingRoute] = useState(false);
+  const retryRouteUpload = async () => {
+    setRetryingRoute(true);
+    try {
+      const result = await syncRoutes();
+      if (result.uploaded > 0 && result.failed === 0) {
+        Alert.alert('Route uploaded', routesUploadedText(result.uploaded) + '.');
+      }
+    } finally {
+      setRetryingRoute(false);
+    }
+  };
 
   const [photoIndex, setPhotoIndex] = useState(0);
   const [brokenPhotos, setBrokenPhotos] = useState<Record<string, boolean>>({});
@@ -682,6 +698,34 @@ export default function PlantDetailScreen() {
                 />
               </>
             )}
+            {linkedRoute ? (
+              <>
+                <DetailRow
+                  label="Route upload"
+                  value={routeSyncLabel(linkedRoute.syncStatus)}
+                />
+                {linkedRoute.syncStatus === 'failed' ? (
+                  <View style={styles.routeProblemRow}>
+                    <Text style={styles.routeProblemText}>
+                      {linkedRoute.syncError || 'The route could not be uploaded.'}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => void retryRouteUpload()}
+                      disabled={retryingRoute}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel="Retry route upload"
+                    >
+                      {retryingRoute ? (
+                        <ActivityIndicator size="small" color="#9B1C1C" />
+                      ) : (
+                        <Text style={styles.routeRetry}>Retry</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+              </>
+            ) : null}
           </View>
 
           {/* Photos Upload Status */}
@@ -927,6 +971,27 @@ export default function PlantDetailScreen() {
 }
 
 const styles = StyleSheet.create({
+  routeProblemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#EEF2EF',
+  },
+  routeProblemText: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 12,
+    color: '#9B1C1C',
+    lineHeight: 17,
+  },
+  routeRetry: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#9B1C1C',
+    textDecorationLine: 'underline',
+  },
   tagProblemBox: {
     paddingVertical: 8,
     borderTopWidth: 1,
