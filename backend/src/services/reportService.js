@@ -210,14 +210,12 @@ async function locationsReport(client, from, to) {
     plantQuery = applyDateRange(plantQuery, "created_at", from, to);
     const plantRows = await readReportRows(plantQuery, "plant");
     const plantIds = plantRows.map(plant => plant.id);
-    const points = plantIds.length
-        ? await readReportRows(
-            client.from("plant_map_points")
-                .select("id, species_id, qr_code_value, plant_status, location_description, latitude, longitude, data_source, source_observer")
-                .in("id", plantIds),
-            "plant location"
-        )
-        : [];
+    const points = await rowsByIds(
+        client,
+        "plant_map_points",
+        "id, species_id, qr_code_value, plant_status, location_description, latitude, longitude, data_source, source_observer",
+        plantIds
+    );
     const species = await rowsByIds(client, "species", "id, scientific_name", points.map(point => point.species_id));
     const speciesById = new Map(species.map(item => [item.id, item]));
 
