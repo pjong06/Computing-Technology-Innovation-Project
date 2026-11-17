@@ -44,6 +44,10 @@ import {
   type SyncRunResult,
 } from '../services/syncEngine';
 import { requestSyncRetry } from '../services/syncRetry';
+import {
+  applyServerReview,
+  oversizedPhotoMessage,
+} from '../utils/submissionState';
 
 import {
   checkDiameterCm,
@@ -216,6 +220,15 @@ export interface ObservationVisit {
    * The officer's reason, when rejected.
    */
   reviewComment?:
+    | string
+    | null;
+
+  /*
+   * Why this visit could not be sent for review
+   * (the server's refusal, or a photo over 5 MB),
+   * in plain words. Cleared once it is submitted.
+   */
+  submitError?:
     | string
     | null;
 }
@@ -1906,6 +1919,58 @@ export const useRecordStore =
                 photoProblems >
                 0
               ) {
+                /*
+                 * Tell the botanist on each affected visit
+                 * (My submissions and Home show it), so the
+                 * skipped submit is never silent.
+                 */
+                const oversizedByVisit =
+                  new Map<string, number>();
+                for (const observation of refreshed.observations) {
+                  const count = Object.values(
+                    observation.photoMeta ?? {}
+                  ).filter(
+                    (meta) =>
+                      !meta.uploaded &&
+                      meta.problem === 'too_large'
+                  ).length;
+                  if (count > 0) {
+                    oversizedByVisit.set(observation.id, count);
+                  }
+                }
+                if (oversizedByVisit.size > 0) {
+                  refreshed = {
+                    ...refreshed,
+                    observations:
+                      refreshed.observations.map(
+                        (observation) =>
+                          oversizedByVisit.has(observation.id)
+                            ? {
+                                ...observation,
+                                submitError:
+                                  oversizedPhotoMessage(
+                                    oversizedByVisit.get(observation.id)!
+                                  ),
+                              }
+                            : observation
+                      ),
+                  };
+                  await persistRecordSnapshot(
+                    refreshed
+                  );
+                  set(
+                    (state) => ({
+                      records:
+                        state.records.map(
+                          (item) =>
+                            item.id === id
+                              ? refreshed!
+                              : item
+                        ),
+                    })
+                  );
+                }
+
                 return {
                   ok: false,
 
@@ -1942,6 +2007,16 @@ export const useRecordStore =
                 const submittedIds =
                   new Set<string>();
 
+                /*
+                 * Visits the server refused to send for
+                 * review (4xx), with its message. They stay
+                 * "Not submitted yet" and are tried again on
+                 * the next sync. Network and server errors
+                 * still fail the whole sync, as before.
+                 */
+                const refusedById =
+                  new Map<string, string>();
+
                 for (
                   const observation of [
                     ...refreshed.observations,
@@ -1969,13 +2044,28 @@ export const useRecordStore =
                     continue;
                   }
 
-                  await apiFetch(
-                    `/api/observations/${observation.serverId}/submit`,
-                    {
-                      method:
-                        'PATCH',
+                  try {
+                    await apiFetch(
+                      `/api/observations/${observation.serverId}/submit`,
+                      {
+                        method:
+                          'PATCH',
+                      }
+                    );
+                  } catch (error) {
+                    if (
+                      error instanceof ApiError &&
+                      !isRetryableStatus(error.status) &&
+                      error.status !== 401
+                    ) {
+                      refusedById.set(
+                        observation.id,
+                        error.message
+                      );
+                      continue;
                     }
-                  );
+                    throw error;
+                  }
 
                   submittedIds.add(
                     observation.id
@@ -1984,7 +2074,9 @@ export const useRecordStore =
 
                 if (
                   submittedIds.size >
-                  0
+                    0 ||
+                  refusedById.size >
+                    0
                 ) {
                   refreshed =
                     {
@@ -2006,8 +2098,38 @@ export const useRecordStore =
 
                                   submissionRequested:
                                     false,
+
+                                  submitError:
+                                    null,
+
+                                  /*
+                                   * The server has it as pending now
+                                   * (a refresh may have said draft).
+                                   */
+                                  reviewStatus:
+                                    observation.reviewStatus ===
+                                      ReviewStatus.DRAFT
+                                      ? ReviewStatus.PENDING
+                                      : observation.reviewStatus,
                                 }
-                              : observation
+                              : refusedById.has(
+                                    observation.id
+                                  )
+                                ? {
+                                    ...observation,
+
+                                    submittedForReview:
+                                      false,
+
+                                    submissionRequested:
+                                      true,
+
+                                    submitError:
+                                      refusedById.get(
+                                        observation.id
+                                      ),
+                                  }
+                                : observation
                         ),
                     };
 
@@ -2031,6 +2153,13 @@ export const useRecordStore =
                   );
                 }
               }
+
+              const refusal =
+                refreshed.observations.find(
+                  (observation) =>
+                    observation.submitError &&
+                    !observation.submittedForReview
+                )?.submitError;
 
               /* =========================================
                * 7. FINAL RESULT
@@ -2130,6 +2259,27 @@ export const useRecordStore =
                 metadataCompletelyUploaded &&
                 plantPhotosReady &&
                 observationPhotosReady;
+
+              /*
+               * Everything uploaded, but the server refused
+               * to send a visit for review: say so (Sync now
+               * and Retry show this reason).
+               */
+              if (
+                completelyUploaded &&
+                refusal
+              ) {
+                return {
+                  ok: false,
+
+                  reason:
+                    `Uploaded, but not sent for review: ${refusal}`,
+
+                  photosUploaded,
+
+                  photoProblems,
+                };
+              }
 
               if (
                 completelyUploaded
@@ -2552,9 +2702,12 @@ export const useRecordStore =
               )
               .filter(
                 (observation) =>
-                  observation.serverId &&
-                  (observation.submittedForReview ||
-                    observation.reviewStatus)
+                  /*
+                   * Every visit the server has, including
+                   * drafts, so the phone learns the real
+                   * status (e.g. a submit that never happened).
+                   */
+                  Boolean(observation.serverId)
               )
               .map(
                 (observation) =>
@@ -2610,17 +2763,6 @@ export const useRecordStore =
               return;
             }
 
-            const toStatus = (
-              value: string
-            ): ReviewStatus | null =>
-              value === 'approved'
-                ? ReviewStatus.APPROVED
-                : value === 'rejected'
-                  ? ReviewStatus.REJECTED
-                  : value === 'pending'
-                    ? ReviewStatus.PENDING
-                    : null; // e.g. still 'draft' on the server: not reviewed
-
             const changedRecords:
               PlantRecord[] = [];
 
@@ -2641,68 +2783,22 @@ export const useRecordStore =
                           )
                         : undefined;
 
-                    const status = row
-                      ? toStatus(
-                          row.review_status
-                        )
-                      : null;
-
-                    if (!row || !status) {
+                    if (!row) {
                       return observation;
                     }
 
-                    /*
-                     * A visit resubmitted on the phone but
-                     * not uploaded yet keeps its new state
-                     * until the next sync (the server still
-                     * shows the old decision).
-                     */
-                    if (
-                      !observation.submittedForReview &&
-                      observation.reviewStatus ===
-                        ReviewStatus.REJECTED &&
-                      status ===
-                        ReviewStatus.REJECTED
-                    ) {
-                      return observation;
+                    // Rules in src/utils/submissionState.ts (tested there).
+                    const next =
+                      applyServerReview(
+                        observation,
+                        row.review_status,
+                        row.rejection_comment
+                      ) as ObservationVisit;
+
+                    if (next !== observation) {
+                      changed = true;
                     }
-
-                    const comment =
-                      status ===
-                      ReviewStatus.REJECTED
-                        ? row.rejection_comment
-                        : null;
-
-                    if (
-                      observation.reviewStatus ===
-                        status &&
-                      (observation.reviewComment ??
-                        null) === comment
-                    ) {
-                      return observation;
-                    }
-
-                    changed = true;
-
-                    return {
-                      ...observation,
-
-                      reviewStatus:
-                        status,
-
-                      reviewComment:
-                        comment,
-
-                      /*
-                       * Rejected: the botanist fixes it and
-                       * submits again, which must send it again.
-                       */
-                      submittedForReview:
-                        status ===
-                        ReviewStatus.REJECTED
-                          ? false
-                          : observation.submittedForReview,
-                    };
+                    return next;
                   }
                 );
 
@@ -2727,7 +2823,9 @@ export const useRecordStore =
                 observations.filter(
                   (observation) =>
                     observation.serverId &&
-                    observation.reviewStatus
+                    observation.reviewStatus &&
+                    observation.reviewStatus !==
+                      ReviewStatus.DRAFT
                 );
 
               const resubmitting =
