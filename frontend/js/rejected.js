@@ -23,7 +23,7 @@ function makeDetailCard(observation) {
   const photoSection = document.createElement('div');
   photoSection.textContent = 'Loading photos...';
   card.appendChild(photoSection);
-  loadRejectedPhotos(observation.id, photoSection);
+  void loadRejectedPhotos(observation.id, photoSection);
 
   addInfo(card, 'Reason for rejection', observation.rejection_comment || 'No reason recorded');
   if (observation.rejected_at) {
