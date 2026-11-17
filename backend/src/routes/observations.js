@@ -300,6 +300,14 @@ router.patch("/:id/submit", async (req, res) => {
             .maybeSingle();
 
     if (updateError) {
+        // Row-level security refused the change (42501). Say so plainly with a 4xx, so the
+        // app shows the reason on the visit instead of retrying a server error on every sync.
+        if (updateError.code === "42501") {
+            return res.status(403).json({
+                message: "This visit can't be sent for review. Please contact the officer."
+            });
+        }
+
         console.error("Observation submission error:", updateError);
 
         return res.status(500).json({
@@ -341,6 +349,23 @@ router.patch("/:id/submit", async (req, res) => {
 // bucket). Upload photos BEFORE submitting the visit for review.
 const PHOTO_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PHOTOS_LOCKED_MESSAGE = "Photos can't be added after submission";
+const PHOTO_REFUSED_MESSAGE =
+    "The server refused this photo. It stays on this phone and will be tried again on the next sync. If this keeps happening, contact the officer.";
+
+// The database refused a photo (storage upload or observation_media row). Only call it
+// "locked" when the visit really was submitted meanwhile; while the visit is still a draft
+// (or sent back) it is a different refusal, so the app keeps the photo and tries again.
+async function photoRefusalResponse(req, res, observationId) {
+    const { data: current } = await req.supabase
+        .from("observations")
+        .select("review_status")
+        .eq("id", observationId)
+        .maybeSingle();
+    if (current && !["draft", "rejected"].includes(current.review_status)) {
+        return res.status(409).json({ message: PHOTOS_LOCKED_MESSAGE, code: "photos_locked" });
+    }
+    return res.status(403).json({ message: PHOTO_REFUSED_MESSAGE, code: "photo_refused" });
+}
 
 function isRlsRefusal(error) {
     return !!error && (
@@ -437,7 +462,8 @@ router.post("/:id/photo", async (req, res, next) => {
 
         if (uploadError) {
             if (isRlsRefusal(uploadError)) {
-                return res.status(409).json({ message: PHOTOS_LOCKED_MESSAGE, code: "photos_locked" });
+                console.error("Observation photo storage refused:", uploadError);
+                return photoRefusalResponse(req, res, observationId);
             }
             console.error("Observation photo storage error:", uploadError);
             return res.status(500).json({ message: "Failed to upload observation photo" });
@@ -478,7 +504,8 @@ router.post("/:id/photo", async (req, res, next) => {
                 }
             }
             if (isRlsRefusal(mediaError)) {
-                return res.status(409).json({ message: PHOTOS_LOCKED_MESSAGE, code: "photos_locked" });
+                console.error("Observation media insert refused:", mediaError);
+                return photoRefusalResponse(req, res, observationId);
             }
             console.error("Observation media insert error:", mediaError);
             return res.status(500).json({ message: "Failed to save observation photo record" });

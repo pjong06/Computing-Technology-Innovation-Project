@@ -8,6 +8,7 @@ import type {
   PlantRecord,
 } from '../store/useRecordStore';
 import { resolveStoredPhotoUri } from '../utils/photoStorage';
+import { uploadablePhotoFile } from './uploadablePhoto';
 
 const UPLOADED = 'Uploaded' as PlantPhotoEntry['syncStatus'];
 const NOT_UPLOADED = 'Not uploaded' as PlantPhotoEntry['syncStatus'];
@@ -58,6 +59,9 @@ async function uploadPlantPhoto(
     );
   }
 
+  // JPEG/PNG/WebP only on the server: a HEIC photo is sent as a JPEG copy.
+  const uploadFile = await uploadablePhotoFile(file);
+
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
 
@@ -69,8 +73,8 @@ async function uploadPlantPhoto(
 
   formData.append(
     'photo',
-    file,
-    uploadName(resolvedUri)
+    uploadFile,
+    uploadName(uploadFile.uri)
   );
 
   formData.append(

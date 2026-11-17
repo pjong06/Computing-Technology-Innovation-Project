@@ -432,12 +432,16 @@ export default function RecordsScreen() {
                   router.push({ pathname: '/plant-detail', params: { id: item.record.id } } as any);
                 }}
                 accessibilityRole="button"
-                accessibilityLabel={`${item.type === 'plant' ? 'new plant' : item.type} submission: ${submissionName(item)}`}
+                accessibilityLabel={`${item.type === 'plant' ? (item.firstVisit ? 'new plant' : 'plant') : item.type} submission: ${submissionName(item)}`}
               >
                 <View style={styles.rowTop}>
                   <View style={styles.typeBadge}>
                     <Text style={styles.typeBadgeText} numberOfLines={1}>
-                      {item.type === 'plant' ? 'NEW PLANT' : item.type === 'visit' ? 'VISIT' : 'SPECIES'}
+                      {/* "New plant" only for a plant registered on this phone (it has a first
+                          visit); a scanned plant registered by someone else is just "Plant". */}
+                      {item.type === 'plant'
+                        ? item.firstVisit ? 'NEW PLANT' : 'PLANT'
+                        : item.type === 'visit' ? 'VISIT' : 'SPECIES'}
                     </Text>
                   </View>
                   <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>

@@ -44,8 +44,10 @@ import {
   type SyncRunResult,
 } from '../services/syncEngine';
 import { requestSyncRetry } from '../services/syncRetry';
+import { uploadablePhotoFile } from '../services/uploadablePhoto';
 import {
   applyServerReview,
+  isPhotoLockFinal,
   oversizedPhotoMessage,
 } from '../utils/submissionState';
 
@@ -1838,10 +1840,19 @@ export const useRecordStore =
                     );
                   }
 
+                  /*
+                   * "Locked" is final only once the visit is waiting
+                   * for review or approved. A photo marked locked while
+                   * the visit is still a draft (or sent back) is tried
+                   * again (older app versions marked any refusal locked).
+                   */
                   if (
                     meta.uploaded ||
-                    meta.problem ===
-                      'locked'
+                    (meta.problem ===
+                      'locked' &&
+                      isPhotoLockFinal(
+                        currentObservation.reviewStatus
+                      ))
                   ) {
                     continue;
                   }
@@ -1885,6 +1896,16 @@ export const useRecordStore =
                   }
 
                   try {
+                    /*
+                     * The backend takes JPEG/PNG/WebP only: an iPhone
+                     * library photo saved as HEIC is converted to a
+                     * JPEG copy first (the saved original stays).
+                     */
+                    const uploadFile =
+                      await uploadablePhotoFile(
+                        read.file
+                      );
+
                     await apiUpload(
                       `/api/observations/${currentObservation.serverId}/photo`,
 
@@ -1893,7 +1914,7 @@ export const useRecordStore =
                           meta.id,
                       },
 
-                      read.file
+                      uploadFile
                     );
 
                     await saveObservationPhotoMeta(
