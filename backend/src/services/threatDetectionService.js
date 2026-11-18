@@ -109,9 +109,10 @@ function evaluateDatabaseRules(reading, rules) {
       : null,
     soil_moisture_pct: reading.soil_moisture_pct,
     rain_intensity_pct: reading.rain_intensity_pct,
-    movement_nearby_cm: reading.distance_valid === true
-      ? reading.distance_cm
-      : null,
+    movement_nearby_cm:
+    reading.motion_detected === true && reading.distance_valid === true
+    ? reading.distance_cm
+    : null,
     movement_detected: typeof reading.motion_detected === 'boolean'
       ? Number(reading.motion_detected)
       : null,
