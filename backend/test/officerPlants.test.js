@@ -441,3 +441,23 @@ test('officer plant detail returns species photo fallback only when no plant pho
   assert.doesNotMatch(columns[2], /\*/);
   assert.doesNotMatch(columns[2], /uploaded_by/);
 });
+
+test('facet statuses and sources are sorted with a compare function (SonarCloud S2871)', async () => {
+  role = 'officer';
+  db = fakeDb({
+    plants: {
+      data: [
+        { species_id: null, registered_by: null, plant_status: 'rejected', data_source: 'inaturalist' },
+        { species_id: null, registered_by: null, plant_status: 'pending', data_source: 'field' },
+        { species_id: null, registered_by: null, plant_status: 'approved', data_source: 'inaturalist' },
+      ],
+      error: null,
+    },
+    profiles: { data: [], error: null },
+  });
+
+  const result = await callRoute('/api/officer/plants', router, { path: '/facets' });
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.data.plant_statuses, ['approved', 'pending', 'rejected']);
+  assert.deepEqual(result.body.data.data_sources, ['field', 'inaturalist']);
+});

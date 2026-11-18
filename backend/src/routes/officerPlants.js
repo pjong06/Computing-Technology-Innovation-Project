@@ -235,8 +235,8 @@ router.get("/facets", async (req, res) => {
                 registered_by: [...profileIds]
                     .map((id) => ({ id, name: names.get(id) || "Unknown staff member" }))
                     .sort((a, b) => a.name.localeCompare(b.name)),
-                plant_statuses: [...statuses].sort(),
-                data_sources: [...dataSources].sort(),
+                plant_statuses: [...statuses].sort((a, b) => a.localeCompare(b)),
+                data_sources: [...dataSources].sort((a, b) => a.localeCompare(b)),
             },
         });
     } catch (error) {

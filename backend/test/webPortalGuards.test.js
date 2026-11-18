@@ -441,3 +441,22 @@ test('the map page keeps its element ids, and map.js reads only ids that exist',
   }
   assert.match(map, /L\.map\('map-box'\)/);
 });
+
+test('species proposals load the taxonomy once, on the first approval that needs it', async () => {
+  const vm = require('node:vm');
+  const proposals = read('frontend/js/proposals.js');
+  assert.match(proposals, /^let taxonomyRows = null;$/m);
+  const line = proposals.split('\n').find(text => /taxonomyRows = await loadTaxonomy\(\)/.test(text));
+  assert.ok(line, 'proposals.js loads the taxonomy when approving');
+  // Run that line as written, twice: the first approval loads, the second reuses the list.
+  const context = { loads: 0 };
+  vm.runInNewContext(`
+    var taxonomyRows = null;
+    async function loadTaxonomy() { loads += 1; return [{ id: 't1', family: 'Nepenthaceae' }]; }
+    async function approve() { ${line.trim()} return taxonomyRows; }
+    this.done = approve().then(approve);
+  `, context);
+  const rows = await context.done;
+  assert.equal(context.loads, 1);
+  assert.equal(rows[0].family, 'Nepenthaceae');
+});
