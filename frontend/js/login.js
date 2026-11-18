@@ -13,17 +13,6 @@ function showAuthError(message) {
   box.hidden = (message === '');
 }
 
-// Tells a suspended botanist to contact the officer, with a link that opens their email program.
-function showSuspended() {
-  const box = document.getElementById('auth-error');
-  box.textContent = 'This account is suspended. Please contact the officer at ';
-  const link = document.createElement('a');
-  link.href = 'mailto:' + OFFICER_CONTACT_EMAIL;
-  link.textContent = OFFICER_CONTACT_EMAIL;
-  box.appendChild(link);
-  box.hidden = false;
-}
-
 // Checks the username, email and password with Supabase. If they are right, logs in and opens the website.
 async function doLogin() {
   const username = document.getElementById('login-username').value.trim();

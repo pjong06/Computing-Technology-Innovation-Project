@@ -141,6 +141,24 @@ function drawUsers() {
   }
 }
 
+// A plain message for an account Supabase refused to create (its own text stays in the console).
+function plainAccountError(error) {
+  const text = String((error && error.message) || '');
+  if (/already (been )?registered|already exists/i.test(text)) {
+    return 'An account with this email already exists.';
+  }
+  if (/password/i.test(text)) {
+    return 'The temporary password was not accepted. Use a longer password and try again.';
+  }
+  if (/invalid.*email|email.*invalid/i.test(text)) {
+    return 'That email address is not valid.';
+  }
+  if (/rate limit|too many/i.test(text)) {
+    return 'Too many accounts were created just now. Please wait a minute and try again.';
+  }
+  return 'The account could not be created. Please try again.';
+}
+
 // Adds the user typed in the boxes. This makes a real login account with the Botanist role.
 async function addUser() {
   const username = document.getElementById('new-username').value.trim();
@@ -176,7 +194,8 @@ async function addUser() {
   });
   const result = await createAccount(otherClient, username, email, password);
   if (result.error) {
-    showToast(result.error.message);
+    console.error('Account could not be created:', result.error);
+    showToast(plainAccountError(result.error));
     return;
   }
 

@@ -93,7 +93,7 @@ function makePopup(plant) {
     : 'Source: Field record (registered in the app)';
   return '<strong><em>' + escapePopupText(scientificName) + '</em></strong>' +
     '<div>Common name: ' + escapePopupText(commonName) + '</div>' +
-    '<div>Tag: ' + escapePopupText(plant.tag || 'No tag') + '</div>' +
+    '<div>Tag: ' + escapePopupText(displayTag(plant.tag, 'No tag')) + '</div>' +
     '<div>Status: ' + escapePopupText(plant.status || 'Not recorded') + '</div>' +
     '<div>Landmark: ' + escapePopupText(plant.landmark || 'Not recorded') + '</div>' +
     '<div>' + escapePopupText(sourceLine) + '</div>' +
@@ -235,7 +235,7 @@ function displayWalkingTime(seconds) {
 function makeRoutePopup(route) {
   const plant = route.plant;
   const plantLine = plant
-    ? 'Plant: ' + escapePopupText(plant.tag || 'No tag') +
+    ? 'Plant: ' + escapePopupText(displayTag(plant.tag, 'No tag')) +
       (plant.scientific_name ? ' · <em>' + escapePopupText(plant.scientific_name) + '</em>' : '')
     : escapePopupText('Not linked to a plant');
   return '<strong>Trace route</strong>' +

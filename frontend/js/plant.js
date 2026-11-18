@@ -138,7 +138,7 @@ function renderMap(plant) {
 
 function renderPlant(plant) {
   byId('plant-detail').hidden = false;
-  byId('plant-tag').textContent = plant.tag_code || 'No tag code';
+  byId('plant-tag').textContent = displayTag(plant.tag_code, 'No tag code');
   byId('plant-title').textContent = plant.species?.common_name || plant.species?.scientific_name || 'Plant';
   byId('plant-species').textContent = plant.species?.scientific_name || 'Species not recorded';
   byId('plant-source').textContent = plant.data_source === 'inaturalist'
@@ -157,9 +157,7 @@ function renderPlant(plant) {
   byId('plant-last-observation').textContent = displayDate(plant.last_observation_at);
   byId('plant-location').textContent = plant.location_description || 'Not recorded';
   byId('plant-conservation').textContent = plant.species?.conservation_status || 'Not assessed';
-  byId('plant-coordinates').textContent = plant.latitude === null || plant.longitude === null
-    ? 'Not recorded'
-    : `${plant.latitude}, ${plant.longitude}`;
+  byId('plant-coordinates').textContent = displayCoordinates(plant.latitude, plant.longitude);
   byId('plant-observation-count').textContent = String(plant.observation_count);
   renderPhotos(plant.photos || [], plant.species_photo);
   renderObservations(plant.observations || []);
