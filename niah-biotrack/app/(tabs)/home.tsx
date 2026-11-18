@@ -18,7 +18,11 @@ import Toast from 'react-native-toast-message';
 import { useAuthRole } from '../../src/context/AuthRoleContext';
 import { useRecordStore, SyncStatus, IdentificationStatus, type PlantRecord } from '../../src/store/useRecordStore';
 import { buildSyncSummary } from '../../src/services/syncSummary';
-import { resumePausedRecordRetries } from '../../src/services/offlineDatabase';
+import {
+  resumeAllPausedRecordRetries,
+  resumePausedRecordRetries,
+} from '../../src/services/offlineDatabase';
+import { pullServerRecords, serverPullError } from '../../src/services/serverPull';
 import { useProposalStore } from '../../src/store/useProposalStore';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
@@ -85,35 +89,55 @@ export default function HomeScreen() {
 
   const handleSyncNow = async () => {
     setSyncingAll(true);
-    const { uploaded, failed: recordsFailed, skipped, photosUploaded, photoProblems } = await syncAll();
-    // Routes upload on their own path, after the plant/visit sync.
-    const routesResult = await syncRoutes();
-    const proposalsResult = await syncAllProposals();
-    await refreshProposalStatuses();
-    setSyncingAll(false);
+    try {
+      await resumeAllPausedRecordRetries();
+      const { uploaded, failed: recordsFailed, skipped, photosUploaded, photoProblems } = await syncAll();
+      const routesResult = await syncRoutes();
+      const proposalsResult = await syncAllProposals();
+      await refreshProposalStatuses();
 
-    const failed = recordsFailed + proposalsResult.failed + routesResult.failed;
-    const parts = [`${uploaded} uploaded`];
-    if (failed > 0) parts.push(`${failed} failed`);
-    if (skipped > 0) parts.push(`${skipped} already uploading`);
-    if (photosUploaded > 0) parts.push(`${photosUploaded} ${photosUploaded === 1 ? 'photo' : 'photos'} uploaded`);
-    if (photoProblems > 0) {
-      parts.push(`${photoProblems} ${photoProblems === 1 ? 'photo' : 'photos'} over 5 MB (see the plant page)`);
-    }
-    if (proposalsResult.uploaded > 0) {
-      parts.push(`${proposalsResult.uploaded} species ${proposalsResult.uploaded === 1 ? 'proposal' : 'proposals'} sent`);
-    }
-    if (routesResult.uploaded > 0) parts.push(routesUploadedText(routesResult.uploaded));
-    if (routesResult.failed > 0) {
-      parts.push(`${routesResult.failed} ${routesResult.failed === 1 ? 'route' : 'routes'} not uploaded`);
-    }
+      let downloaded = 0;
+      let downloadError: string | null = null;
+      try {
+        downloaded = (await pullServerRecords()).downloaded;
+      } catch (error) {
+        downloadError = serverPullError(error);
+      }
 
-    Toast.show({
-      type: failed > 0 ? 'error' : 'success',
-      text1: failed > 0 ? 'Some records did not upload' : 'Sync complete',
-      text2: failed > 0 ? `${parts.join(' · ')}. Tap Retry to try again.` : parts.join(' · '),
-      position: 'bottom',
-    });
+      const failed = recordsFailed + proposalsResult.failed + routesResult.failed;
+      const parts = [`${uploaded} uploaded`];
+      if (downloaded > 0) parts.push(`${downloaded} downloaded`);
+      if (failed > 0) parts.push(`${failed} failed`);
+      if (skipped > 0) parts.push(`${skipped} already uploading`);
+      if (photosUploaded > 0) parts.push(`${photosUploaded} ${photosUploaded === 1 ? 'photo' : 'photos'} uploaded`);
+      if (photoProblems > 0) {
+        parts.push(`${photoProblems} ${photoProblems === 1 ? 'photo' : 'photos'} over 5 MB (see the plant page)`);
+      }
+      if (proposalsResult.uploaded > 0) {
+        parts.push(`${proposalsResult.uploaded} species ${proposalsResult.uploaded === 1 ? 'proposal' : 'proposals'} sent`);
+      }
+      if (routesResult.uploaded > 0) parts.push(routesUploadedText(routesResult.uploaded));
+      if (routesResult.failed > 0) {
+        parts.push(`${routesResult.failed} ${routesResult.failed === 1 ? 'route' : 'routes'} not uploaded`);
+      }
+
+      const problem = proposalsResult.reasons[0] ?? downloadError;
+      Toast.show({
+        type: failed > 0 || downloadError ? 'error' : 'success',
+        text1: failed > 0 ? 'Some records did not upload' : downloadError ? 'Upload complete; download pending' : 'Sync complete',
+        text2: problem ? `${parts.join(' · ')}. ${problem}` : parts.join(' · '),
+        position: 'bottom',
+      });
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Sync could not finish',
+        text2: error instanceof Error ? error.message : 'Please try again.',
+        position: 'bottom',
+      });
+    } finally {
+      setSyncingAll(false);
+    }
   };
 
   const handleRetry = async (id: string) => {

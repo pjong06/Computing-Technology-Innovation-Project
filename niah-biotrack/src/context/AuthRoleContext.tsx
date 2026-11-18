@@ -26,7 +26,7 @@ interface AuthRoleContextType {
   canEdit: boolean;
   userName: string;
   setVisitorMode: () => Promise<void>;
-  checkUserRole: () => Promise<void>;
+  checkUserRole: () => Promise<UserRole>;
   logout: () => Promise<void>;
 }
 
@@ -38,7 +38,7 @@ const AuthRoleContext = createContext<AuthRoleContextType>({
   canEdit: false,
   userName: 'Visitor',
   setVisitorMode: async () => {},
-  checkUserRole: async () => {},
+  checkUserRole: async () => 'visitor',
   logout: async () => {},
 });
 
@@ -55,7 +55,7 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
         setRole('visitor');
         setUserName('Park Visitor');
         setIsGuest(true);
-        return;
+        return 'visitor';
       }
       setIsGuest(false);
 
@@ -69,28 +69,34 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
 
         // Couldn't read the profile (e.g. no signal): keep the role we already have
         // rather than guessing, so offline staff aren't locked out or promoted.
-        if (profileError) return;
+        if (profileError) return role;
 
         if (profile && profile.account_status === 'active' && STAFF_ROLES.has(profile.role)) {
-          setRole(profile.role as UserRole);
+          const activeRole = profile.role as UserRole;
+          setRole(activeRole);
           setUserName(profile.full_name || authData.user.email || '');
+          return activeRole;
         } else if (profile && profile.account_status === 'active' && profile.role === 'visitor') {
           // A visitor account ("Create a free account"): the visitor experience, signed in.
           setRole('visitor');
           setUserName(profile.full_name || authData.user.email || '');
+          return 'visitor';
         } else {
           // Never default to botanist: a pending, suspended or role-less account gets
           // the "Account awaiting approval" screen (the server refuses it anyway).
           setRole('pending');
           setUserName(profile?.full_name || authData.user.email || '');
+          return 'pending';
         }
       } else {
         setRole('visitor');
         setUserName('Park Visitor');
+        return 'visitor';
       }
     } catch {
       setRole('visitor');
       setUserName('Park Visitor');
+      return 'visitor';
     }
   };
 

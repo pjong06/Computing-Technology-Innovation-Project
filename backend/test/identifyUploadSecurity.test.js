@@ -27,7 +27,11 @@ require.cache[servicePath] = {
   },
 };
 
-const { createIdentifyRouter } = require('../src/routes/identify');
+const {
+  createIdentifyRouter,
+  limitIdentifyRequestSize,
+  MAX_IDENTIFY_REQUEST_BYTES,
+} = require('../src/routes/identify');
 
 // Restore the original module cache so other tests are unaffected.
 if (originalService) {
@@ -64,6 +68,29 @@ function jpegBlob(size = 4) {
   bytes[2] = 0xff;
   bytes[3] = 0xd9;
   return new Blob([bytes], { type: 'image/jpeg' });
+}
+
+function checkRequestLength(value) {
+  let responseStatus;
+  let responseBody;
+  let nextCalled = false;
+  const req = {
+    get: name => name.toLowerCase() === 'content-length' ? value : undefined,
+  };
+  const res = {
+    status(status) {
+      responseStatus = status;
+      return this;
+    },
+    json(body) {
+      responseBody = body;
+      return this;
+    },
+  };
+  limitIdentifyRequestSize(req, res, () => {
+    nextCalled = true;
+  });
+  return { responseStatus, responseBody, nextCalled };
 }
 
 async function uploadImage(base, options = {}) {
@@ -161,6 +188,18 @@ test('Identify: rejects images larger than 10 MiB', async () => {
     assert.match(result.body.message, /10 MB/);
     assert.equal(identifyCalls, 0);
   });
+});
+
+test('Identify: rejects oversized HTTP requests before Multer reads the body', () => {
+  const result = checkRequestLength(String(MAX_IDENTIFY_REQUEST_BYTES + 1));
+  assert.equal(result.responseStatus, 413);
+  assert.equal(result.responseBody.success, false);
+  assert.equal(result.nextCalled, false);
+});
+
+test('Identify: accepts a safe or missing Content-Length and still relies on Multer', () => {
+  assert.equal(checkRequestLength(String(MAX_IDENTIFY_REQUEST_BYTES)).nextCalled, true);
+  assert.equal(checkRequestLength(undefined).nextCalled, true);
 });
 
 test('Identify: rejects unexpected multipart fields', async () => {

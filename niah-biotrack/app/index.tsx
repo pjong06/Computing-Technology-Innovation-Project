@@ -20,6 +20,7 @@ import FormScrollView from '../src/components/FormScrollView';
 import { supabase } from '../src/lib/supabase';
 import { useAuthRole } from '../src/context/AuthRoleContext';
 import { hasSavedSession } from '../src/lib/auth';
+import { pullServerRecords, serverPullError } from '../src/services/serverPull';
 
 export default function LoginScreen() {
   // RN 0.88: a TextInput ref holds a TextInputInstance, not the TextInput component.
@@ -34,12 +35,35 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
 
+  const downloadRecords = () => {
+    void pullServerRecords()
+      .then((result) => {
+        if (result.downloaded > 0) {
+          Toast.show({
+            type: 'success',
+            text1: 'Plants updated',
+            text2: `${result.downloaded} server ${result.downloaded === 1 ? 'change' : 'changes'} downloaded.`,
+            position: 'bottom',
+          });
+        }
+      })
+      .catch((error: unknown) => {
+        Toast.show({
+          type: 'info',
+          text1: 'Signed in; download is pending',
+          text2: serverPullError(error),
+          position: 'bottom',
+        });
+      });
+  };
+
   useEffect(() => {
     hasSavedSession()
       .then(async (signedIn) => {
         if (signedIn) {
-          await checkUserRole();
+          const userRole = await checkUserRole();
           router.replace('/(tabs)/home');
+          if (userRole === 'botanist') downloadRecords();
         } else {
           setCheckingSession(false);
         }
@@ -93,9 +117,10 @@ export default function LoginScreen() {
         return;
       }
 
-      await checkUserRole();
+      const userRole = await checkUserRole();
       setPassword('');
       router.replace('/(tabs)/home');
+      if (userRole === 'botanist') downloadRecords();
     } catch (err: any) {
       setErrorMessage(err.message || 'Login failed.');
     } finally {

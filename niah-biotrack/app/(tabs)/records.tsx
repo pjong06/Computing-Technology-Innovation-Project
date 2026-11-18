@@ -25,6 +25,8 @@ import { buildSyncSummary } from '../../src/services/syncSummary';
 import { plantReviewBadge, reviewOutcomeBadge } from '../../src/utils/reviewStatus';
 import { firstVisitOf, isRecordSubmitted, isVisitSubmitted } from '../../src/utils/submissionState';
 import { routesUploadedText } from '../../src/utils/routeSync';
+import { resumeAllPausedRecordRetries } from '../../src/services/offlineDatabase';
+import { pullServerRecords, serverPullError } from '../../src/services/serverPull';
 
 type SubmissionType = 'All' | 'Plants' | 'Observations' | 'Species';
 
@@ -203,6 +205,7 @@ export default function RecordsScreen() {
   const handleSyncNow = async () => {
     setSyncingAll(true);
     try {
+      await resumeAllPausedRecordRetries();
       const {
         uploaded,
         failed: recordsFailed,
@@ -215,8 +218,17 @@ export default function RecordsScreen() {
       const proposalsResult = await syncAllProposals();
       await refreshProposalStatuses();
 
+      let downloaded = 0;
+      let downloadError: string | null = null;
+      try {
+        downloaded = (await pullServerRecords()).downloaded;
+      } catch (error) {
+        downloadError = serverPullError(error);
+      }
+
       const failed = recordsFailed + proposalsResult.failed + routesResult.failed;
       const parts = [`${uploaded} uploaded`];
+      if (downloaded > 0) parts.push(`${downloaded} downloaded`);
       if (failed > 0) parts.push(`${failed} failed`);
       if (skipped > 0) parts.push(`${skipped} already uploading`);
       if (photosUploaded > 0) {
@@ -241,10 +253,11 @@ export default function RecordsScreen() {
         );
       }
 
+      const problem = proposalsResult.reasons[0] ?? downloadError;
       Toast.show({
-        type: failed > 0 ? 'error' : 'success',
-        text1: failed > 0 ? 'Some records did not upload' : 'Sync complete',
-        text2: failed > 0 ? `${parts.join(' · ')}. Tap Retry to try again.` : parts.join(' · '),
+        type: failed > 0 || downloadError ? 'error' : 'success',
+        text1: failed > 0 ? 'Some records did not upload' : downloadError ? 'Upload complete; download pending' : 'Sync complete',
+        text2: problem ? `${parts.join(' · ')}. ${problem}` : parts.join(' · '),
         position: 'bottom',
       });
     } catch (error) {

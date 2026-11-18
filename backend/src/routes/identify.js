@@ -9,6 +9,37 @@ const {
   PlantAiError,
 } = require('../services/plantAiService');
 
+const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
+const MAX_MULTIPART_OVERHEAD_BYTES = 256 * 1024;
+const MAX_IDENTIFY_REQUEST_BYTES = MAX_IMAGE_SIZE_BYTES + MAX_MULTIPART_OVERHEAD_BYTES;
+
+function limitIdentifyRequestSize(req, res, next) {
+  const rawLength = req.get('content-length');
+  if (rawLength === undefined) {
+    next();
+    return;
+  }
+
+  if (!/^\d+$/.test(rawLength)) {
+    res.status(400).json({
+      success: false,
+      message: 'Invalid Content-Length header.',
+    });
+    return;
+  }
+
+  const contentLength = Number(rawLength);
+  if (!Number.isSafeInteger(contentLength) || contentLength > MAX_IDENTIFY_REQUEST_BYTES) {
+    res.status(413).json({
+      success: false,
+      message: 'The photo must be 10 MB or smaller.',
+    });
+    return;
+  }
+
+  next();
+}
+
 function createIdentifyRouter({
   ipLimit = 20, userLimit = 10, windowMs = 60000, now = Date.now,
 } = {}) {
@@ -19,8 +50,6 @@ const ipLimiter = createIdentifyRateLimit({
 const userLimiter = createIdentifyRateLimit({
   limit: userLimit, windowMs, now, keyFor: req => req.user.id,
 });
-
-const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
 
 const MAX_CONCURRENT_IDENTIFICATIONS = 2;
 let activeIdentifications = 0;
@@ -53,7 +82,7 @@ const upload = multer({
   storage: multer.memoryStorage(),
 
   limits: {
-    fileSize: MAX_IMAGE_SIZE,
+    fileSize: MAX_IMAGE_SIZE_BYTES,
     files: 1,
     fields: 0,
     parts: 1,
@@ -180,6 +209,7 @@ router.post(
   requireAuth,
   requireRole('botanist', 'officer'),
   userLimiter,
+  limitIdentifyRequestSize,
   limitConcurrentIdentifications,
   uploadImage,
   async (req, res) => {
@@ -274,3 +304,5 @@ return router;
 
 module.exports = createIdentifyRouter();
 module.exports.createIdentifyRouter = createIdentifyRouter;
+module.exports.limitIdentifyRequestSize = limitIdentifyRequestSize;
+module.exports.MAX_IDENTIFY_REQUEST_BYTES = MAX_IDENTIFY_REQUEST_BYTES;

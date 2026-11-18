@@ -31,7 +31,9 @@ import { routesUploadedText } from '../../src/utils/routeSync';
 
 import {
   getLastSuccessfulSync,
+  resumeAllPausedRecordRetries,
 } from '../../src/services/offlineDatabase';
+import { pullServerRecords, serverPullError } from '../../src/services/serverPull';
 
 const NOT_RECORDED = 'Not recorded';
 
@@ -271,6 +273,7 @@ export default function ProfileScreen() {
     setIsSyncing(true);
 
     try {
+      await resumeAllPausedRecordRetries();
       /*
        * syncAll() also processes the durable SQLite outbox first,
        * including operations such as an offline delete.
@@ -299,6 +302,14 @@ export default function ProfileScreen() {
         // successful field-record synchronization.
       }
 
+      let downloaded = 0;
+      let downloadError: string | null = null;
+      try {
+        downloaded = (await pullServerRecords()).downloaded;
+      } catch (error) {
+        downloadError = serverPullError(error);
+      }
+
       const latestSuccessfulSync =
         await getLastSuccessfulSync();
 
@@ -317,11 +328,17 @@ export default function ProfileScreen() {
           : '';
 
       if (totalFailed > 0) {
+        const reason = proposalResult.reasons[0] ?? downloadError;
         Alert.alert(
           'Sync needs attention',
-          `${totalFailed} item(s) could not be uploaded. They remain safely stored on this phone and can retry automatically when connectivity returns.${routesLine}`
+          `${totalFailed} item(s) could not be uploaded. They remain safely stored on this phone.${reason ? ` ${reason}` : ''}${routesLine}`
         );
 
+        return;
+      }
+
+      if (downloadError) {
+        Alert.alert('Upload complete; download pending', downloadError);
         return;
       }
 
@@ -331,9 +348,9 @@ export default function ProfileScreen() {
 
       Alert.alert(
         'Sync complete',
-        processed > 0 || routeResult.uploaded > 0
-          ? `${processed} item(s) processed successfully.${routesLine}`
-          : 'The local sync queue was checked successfully.'
+        processed > 0 || routeResult.uploaded > 0 || downloaded > 0
+          ? `${processed} item(s) uploaded and ${downloaded} server change(s) downloaded.${routesLine}`
+          : 'The local and server sync queues were checked successfully.'
       );
     } catch (error) {
       Alert.alert(
