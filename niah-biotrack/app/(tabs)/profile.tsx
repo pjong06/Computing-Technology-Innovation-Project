@@ -384,7 +384,7 @@ export default function ProfileScreen() {
     );
   };
 
-  const handleGuestLogIn =
+  const handleGuestLogOut =
     async () => {
       await logout();
 
@@ -1078,7 +1078,7 @@ export default function ProfileScreen() {
 
           onPress={
             isGuest
-              ? handleGuestLogIn
+              ? handleGuestLogOut
               : handleLogout
           }
         >
@@ -1087,9 +1087,7 @@ export default function ProfileScreen() {
               styles.logoutText
             }
           >
-            {isGuest
-              ? 'Log in'
-              : 'Log out'}
+            Log out
           </Text>
         </TouchableOpacity>
       </ScrollView>
