@@ -105,7 +105,9 @@ async function reviewProposal(proposal, decision, comment) {
     const body = { decision };
     if (decision === 'rejected') body.comment = comment;
     if (decision === 'approved' && proposal.proposed_family) {
-      if (taxonomyRows === null) taxonomyRows = await loadTaxonomy();
+      // Loaded once, on the first approval that needs a family; reused afterwards
+      // (taxonomyIdFor adds any family it creates to this list).
+      if (!Array.isArray(taxonomyRows)) taxonomyRows = await loadTaxonomy();
       body.taxonomy_id = await taxonomyIdFor(
         taxonomyRows,
         proposal.proposed_family,
