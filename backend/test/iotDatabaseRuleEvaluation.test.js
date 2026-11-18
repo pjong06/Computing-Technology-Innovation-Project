@@ -34,12 +34,15 @@ function rule(metric, operator, threshold, overrides = {}) {
 }
 
 test('evaluates all four IoT sensor thresholds at their boundaries', () => {
-  const results = evaluateDatabaseRules(reading(), [
-    rule('temperature_c', '>=', 35),
-    rule('soil_moisture_pct', '<=', 20),
-    rule('rain_intensity_pct', '>=', 70),
-    rule('movement_nearby_cm', '<=', 50),
-  ]);
+  const results = evaluateDatabaseRules(
+    reading({ motion_detected: true }),
+    [
+      rule('temperature_c', '>=', 35),
+      rule('soil_moisture_pct', '<=', 20),
+      rule('rain_intensity_pct', '>=', 70),
+      rule('movement_nearby_cm', '<=', 50),
+    ],
+  );
 
   assert.equal(results.length, 4);
   assert.ok(results.every((result) => result.evaluated));
@@ -81,7 +84,7 @@ test('invalid DHT readings cannot trigger temperature alerts', () => {
 
 test('invalid distance readings cannot trigger proximity alerts', () => {
   const results = evaluateDatabaseRules(
-    reading({ distance_valid: false }),
+    reading({ motion_detected: true, distance_valid: false }),
     [rule('movement_nearby_cm', '<=', 50)],
   );
 
@@ -89,12 +92,23 @@ test('invalid distance readings cannot trigger proximity alerts', () => {
   assert.equal(results[0].triggered, false);
 });
 
-test('proximity evaluation does not require motion detection', () => {
+test('proximity alerts require motion detection', () => {
   const results = evaluateDatabaseRules(
-    reading({ motion_detected: false }),
+    reading({ motion_detected: false, distance_valid: true }),
     [rule('movement_nearby_cm', '<=', 50)],
   );
 
+  assert.equal(results[0].evaluated, false);
+  assert.equal(results[0].triggered, false);
+});
+
+test('valid distance with detected motion triggers proximity alerts', () => {
+  const results = evaluateDatabaseRules(
+    reading({ motion_detected: true, distance_valid: true }),
+    [rule('movement_nearby_cm', '<=', 50)],
+  );
+
+  assert.equal(results[0].evaluated, true);
   assert.equal(results[0].triggered, true);
 });
 
