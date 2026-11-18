@@ -169,11 +169,15 @@ client.on('message', (_messageTopic, bytes) => {
         }
       }
 
-      console.log(
-        persisted
-          ? 'MQTT telemetry persisted and processed'
-          : 'MQTT telemetry processed in memory'
-      );
+      // One line per telemetry message is too noisy for production logs; set
+      // IOT_DEBUG=true to see it while debugging.
+      if (process.env.IOT_DEBUG === 'true') {
+        console.log(
+          persisted
+            ? 'MQTT telemetry persisted and processed'
+            : 'MQTT telemetry processed in memory'
+        );
+      }
 
     } catch {
       console.error(

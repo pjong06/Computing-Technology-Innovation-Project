@@ -4533,7 +4533,7 @@ async function loadDashboard({
 
     setDashboardStatus(
       'live',
-      'Supabase synced'
+      'Live data'
     );
   } catch (error) {
     if (

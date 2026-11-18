@@ -378,7 +378,13 @@ test('route popups escape every value (botanist, plant tag, scientific name)', (
   const vm = require('node:vm');
   const map = read('frontend/js/map.js');
   const piece = (start, end) => map.slice(map.indexOf(start), map.indexOf(end, map.indexOf(start)));
+  const shared = read('frontend/js/shared.js');
+  const sharedHelpers = shared.slice(
+    shared.indexOf('// ---- Display helpers for plant tags and coordinates ----'),
+    shared.indexOf('// Starts the big detail card')
+  );
   const code = [
+    sharedHelpers,
     piece('function escapePopupText(', 'function makePopup('),
     piece('function displayRouteDistance(', '// [lat, lng, time, accuracy]'),
     'this.makeRoutePopup = makeRoutePopup;',
@@ -407,7 +413,11 @@ test('route popups escape every value (botanist, plant tag, scientific name)', (
   const popupSource = piece('function makeRoutePopup(', '// [lat, lng, time, accuracy]');
   assert.doesNotMatch(popupSource, /\+\s*(route|plant)\.[a-z_]+/);
   assert.match(popupSource, /escapePopupText\(route\.recorded_by/);
-  assert.match(popupSource, /escapePopupText\(plant\.tag/);
+  assert.match(popupSource, /escapePopupText\(displayTag\(plant\.tag, 'No tag'\)\)/);
+  // A placeholder tag is never shown.
+  const placeholder = context.makeRoutePopup({ recorded_by: 'Aron', plant: { tag: 'plant:3f6c1a2e-0000-4000-8000-000000000000' } });
+  assert.match(placeholder, /Plant: No physical tag yet/);
+  assert.doesNotMatch(placeholder, /plant:3f6c/);
   assert.match(popupSource, /escapePopupText\(plant\.scientific_name\)/);
   assert.match(popupSource, /escapePopupText\('Not linked to a plant'\)/);
 });
@@ -459,4 +469,95 @@ test('species proposals load the taxonomy once, on the first approval that needs
   const rows = await context.done;
   assert.equal(context.loads, 1);
   assert.equal(rows[0].family, 'Nepenthaceae');
+});
+
+// ---- Pre-freeze fixes ----
+
+function sharedDisplayHelpers() {
+  const vm = require('node:vm');
+  const shared = read('frontend/js/shared.js');
+  const code = shared.slice(
+    shared.indexOf('// ---- Display helpers for plant tags and coordinates ----'),
+    shared.indexOf('// Starts the big detail card')
+  ) + '\nthis.displayTag = displayTag; this.displayCoordinates = displayCoordinates;';
+  const context = {};
+  vm.runInNewContext(code, context);
+  return context;
+}
+
+test('placeholder "plant:" tags show as "No physical tag yet" on every web page', () => {
+  const { displayTag } = sharedDisplayHelpers();
+  assert.equal(displayTag('plant:3f6c1a2e-0000-4000-8000-000000000000'), 'No physical tag yet');
+  assert.equal(displayTag('PLANT:abc', 'No tag'), 'No physical tag yet');
+  assert.equal(displayTag('NIAH-PLT-00042'), 'NIAH-PLT-00042');
+  assert.equal(displayTag('', 'No tag'), 'No tag');
+  assert.equal(displayTag(null, 'No tag code'), 'No tag code');
+
+  assert.match(read('frontend/js/plants.js'), /'Tag: ' \+ displayTag\(plant\.tag_code, 'No tag'\)/);
+  assert.match(read('frontend/js/plant.js'), /byId\('plant-tag'\)\.textContent = displayTag\(plant\.tag_code, 'No tag code'\)/);
+  assert.match(read('frontend/js/map.js'), /'<div>Tag: ' \+ escapePopupText\(displayTag\(plant\.tag, 'No tag'\)\)/);
+  assert.match(read('frontend/js/shared.js'), /'Tag ' \+ displayTag\(plant\.tag_code\)/);
+  assert.match(read('frontend/js/reports.js'), /column\.key === 'plant_tag' && text\) \{\s*text = displayTag\(text, text\);/);
+  // No page prints a stored tag directly any more.
+  for (const file of ['plants.js', 'plant.js', 'map.js']) {
+    assert.doesNotMatch(read(`frontend/js/${file}`), /\(plant\.(tag|tag_code) \|\|/, file);
+  }
+});
+
+test('plant detail shows coordinates rounded to 6 decimals', () => {
+  const { displayCoordinates } = sharedDisplayHelpers();
+  assert.equal(displayCoordinates(3.81761234567, 113.7810449999), '3.817612, 113.781045');
+  assert.equal(displayCoordinates('3.8', '113.78'), '3.800000, 113.780000');
+  assert.equal(displayCoordinates(null, 113.78), 'Not recorded');
+  assert.equal(displayCoordinates('x', 'y'), 'Not recorded');
+  assert.match(read('frontend/js/plant.js'), /byId\('plant-coordinates'\)\.textContent = displayCoordinates\(plant\.latitude, plant\.longitude\)/);
+});
+
+test('a request that never reaches the server says so plainly, not "Failed to fetch"', async () => {
+  const vm = require('node:vm');
+  const shared = read('frontend/js/shared.js');
+  const start = shared.indexOf('const SERVER_UNREACHABLE_MESSAGE');
+  const end = shared.indexOf('// ---------- The real species catalogue', start);
+  const errors = [];
+  const context = {
+    window: { getOfficerAccessToken: async () => 'token' },
+    fetch: async () => { throw new TypeError('Failed to fetch'); },
+    console: { error: (...args) => errors.push(args) },
+    FormData: class {},
+  };
+  vm.runInNewContext(shared.slice(start, end) + '\nthis.api = api;', context);
+  await assert.rejects(
+    () => context.api('/reports/summary'),
+    { message: 'Could not reach the server. Check your connection and try again.' }
+  );
+  assert.equal(errors.length, 1, 'the browser error is kept in the console');
+});
+
+test('user admin shows a plain message when an account cannot be created', () => {
+  const vm = require('node:vm');
+  const users = read('frontend/js/users.js');
+  const code = users.slice(users.indexOf('function plainAccountError('), users.indexOf('// Adds the user typed in the boxes'));
+  const context = {};
+  vm.runInNewContext(code + '\nthis.plainAccountError = plainAccountError;', context);
+  const plain = message => context.plainAccountError({ message });
+  assert.equal(plain('User already registered'), 'An account with this email already exists.');
+  assert.match(plain('Password should be at least 6 characters.'), /password was not accepted/);
+  assert.equal(plain('Unable to validate email address: invalid format'), 'That email address is not valid.');
+  assert.match(plain('Email rate limit exceeded'), /wait a minute/);
+  assert.equal(plain('AuthRetryableFetchError: 500'), 'The account could not be created. Please try again.');
+  assert.match(users, /showToast\(plainAccountError\(result\.error\)\)/);
+  assert.doesNotMatch(users, /showToast\(result\.error\.message\)/);
+});
+
+test('pre-freeze clean-ups: no dead login code, "Live data" chip, matching index link, quiet MQTT log', () => {
+  const login = read('frontend/js/login.js');
+  assert.doesNotMatch(login, /OFFICER_CONTACT_EMAIL|showSuspended/);
+  const alerts = read('frontend/js/alerts.js');
+  assert.match(alerts, /setDashboardStatus\(\s*'live',\s*'Live data'\s*\)/);
+  assert.doesNotMatch(alerts, /Supabase synced/);
+  const index = read('frontend/index.html');
+  assert.match(index, /url=species\.html/);
+  assert.match(index, /<a href="species\.html">Species catalogue<\/a>/);
+  const mqtt = read('backend/src/services/mqttIngestionService.js');
+  assert.match(mqtt, /if \(process\.env\.IOT_DEBUG === 'true'\) \{\s*console\.log\(\s*persisted/);
 });

@@ -46,6 +46,8 @@ async function sendToLoginExpired() {
   location.replace('login.html');
 }
 
+const SERVER_UNREACHABLE_MESSAGE = 'Could not reach the server. Check your connection and try again.';
+
 // Calls the backend with the officer's login token. If the backend says the token is no
 // longer valid (401), the login is renewed once and the request sent again; if that
 // fails too, the person is sent to the login page.
@@ -59,7 +61,13 @@ async function api(path, options) {
     if (token) {
       headers.Authorization = 'Bearer ' + token;
     }
-    return fetch('/api' + path, Object.assign({}, options, { headers: headers }));
+    try {
+      return await fetch('/api' + path, Object.assign({}, options, { headers: headers }));
+    } catch (error) {
+      // No answer at all (offline, server down): the browser's own text is "Failed to fetch".
+      console.error('Request to /api' + path + ' failed:', error);
+      throw new Error(SERVER_UNREACHABLE_MESSAGE);
+    }
   }
 
   let response = await send(await window.getOfficerAccessToken());
@@ -677,6 +685,29 @@ function makeObservationListCard(observation, selected, picture, onSelect) {
   return card;
 }
 
+// ---- Display helpers for plant tags and coordinates ----
+
+// The tag to show on screen. "plant:..." values are placeholders the database gives a plant
+// that has no physical tag yet; they are never shown. Real tags (NIAH-PLT-00001) unchanged.
+// CSV/PDF exports keep the stored value.
+const NO_PHYSICAL_TAG = 'No physical tag yet';
+function displayTag(tag, fallback) {
+  const value = String(tag ?? '').trim();
+  if (value === '') return fallback === undefined ? NO_PHYSICAL_TAG : fallback;
+  return /^plant:/i.test(value) ? NO_PHYSICAL_TAG : value;
+}
+
+// "3.817612, 113.781045" for display (6 decimals). Stored values and exports are unchanged.
+function displayCoordinates(latitude, longitude) {
+  if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) {
+    return 'Not recorded';
+  }
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return 'Not recorded';
+  return lat.toFixed(6) + ', ' + lng.toFixed(6);
+}
+
 // Starts the big detail card for an observation: its scientific name and plant tag.
 function makeObservationDetailCard(observation) {
   const card = document.createElement('div');
@@ -693,7 +724,7 @@ function makeObservationDetailCard(observation) {
   const plant = observation.plant || {};
   const record = document.createElement('p');
   record.className = 'muted';
-  record.textContent = plant.tag_code ? 'Tag ' + plant.tag_code : 'No tag attached';
+  record.textContent = plant.tag_code ? 'Tag ' + displayTag(plant.tag_code) : 'No tag attached';
   card.appendChild(record);
   return card;
 }

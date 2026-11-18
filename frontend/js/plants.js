@@ -35,7 +35,7 @@ function makePlantRow(plant) {
   const link = document.createElement('a');
   link.className = 'card plant-row';
   link.href = 'plant.html?id=' + encodeURIComponent(plant.id);
-  link.setAttribute('aria-label', 'View plant ' + (plant.tag_code || 'without a tag code'));
+  link.setAttribute('aria-label', 'View plant ' + displayTag(plant.tag_code, 'without a tag code'));
 
   const speciesPhoto = plant.photo_thumbnail?.url ? null : plant.species_photo;
   const photoWrapper = document.createElement('div');
@@ -80,7 +80,7 @@ function makePlantRow(plant) {
 
   const meta = document.createElement('div');
   meta.className = 'plant-meta';
-  meta.textContent = 'Tag: ' + (plant.tag_code || 'No tag') +
+  meta.textContent = 'Tag: ' + displayTag(plant.tag_code, 'No tag') +
     ' · Location: ' + (plant.location_description || 'Not recorded');
   info.appendChild(meta);
 

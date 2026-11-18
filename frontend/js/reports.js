@@ -56,7 +56,12 @@ async function loadSummary() {
 
 function makeReportCell(column, value) {
   const td = document.createElement('td');
-  const text = value === null || value === undefined ? '' : String(value);
+  let text = value === null || value === undefined ? '' : String(value);
+  // On screen only: placeholder tags (plant:...) read "No physical tag yet". CSV and PDF
+  // exports are built from the report data, so they keep the stored value.
+  if (column.key === 'plant_tag' && text) {
+    text = displayTag(text, text);
+  }
   if (column.key === 'scientific_name' && text) {
     const italic = document.createElement('i');
     italic.className = 'sci';

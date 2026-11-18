@@ -231,7 +231,7 @@ export default function LinkRouteScreen() {
           style: 'destructive',
           onPress: () => {
             discardDraftRoute();
-            router.replace('/(tabs)' as any);
+            router.replace('/(tabs)/home' as any);
           },
         },
       ]
