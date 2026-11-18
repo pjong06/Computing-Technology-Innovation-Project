@@ -51,6 +51,11 @@ app.use(require('./middleware/jsonErrorHandler'));
 
 // API ROUTES
 
+// Mount before the generic IoT router so shared AI reads keep their own staff guard.
+// Importing this app in tests never starts background processing.
+const { installCameraAI } = require('../camera-ai/install.cjs');
+const cameraAI = installCameraAI(app, requireAuth, process.env, { startProcessing: false });
+
 app.use('/api/plants', plantRoutes);
 
 app.use('/api/identify', identifyRoutes);
@@ -173,10 +178,18 @@ app.use((err, req, res, next) => {
 // Only when run directly (`npm start` / `node src/server.js`). Tests load the app without
 // opening a port or connecting to MQTT.
 if (require.main === module) {
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Backend server running on port ${PORT}`);
 
-    startMqttIngestion();
+    // AI is opt-in; missing AI configuration must not take the existing API down.
+    try {
+      cameraAI.start();
+      console.log(cameraAI.enabled ? 'Camera AI worker enabled' : 'Camera AI worker disabled');
+    } catch {
+      console.error('Camera AI worker unavailable; check private configuration');
+    }
+    const mqttClient = startMqttIngestion();
+    require('../camera-ai/server-lifecycle.cjs').registerBackendShutdown({ server, cameraAI, mqttClient });
   });
 }
 

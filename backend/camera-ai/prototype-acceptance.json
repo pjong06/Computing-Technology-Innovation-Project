@@ -32,5 +32,8 @@
   "real_account_ui_acceptance": "User confirmed photo bytes visible and human review submitted; independent database check confirmed active Officer review history and original alert remained open. Other roles have local HTTP/SQL-role checks, not live-session acceptance this run.",
   "security_advisor": "Authenticated SECURITY DEFINER warning for camera_ai_review_human is intentional: explicit active staff and auth.uid checks, fixed empty search_path, no anon/service_role EXECUTE; caller cannot supply reviewer identity. Not a claim that all project advisors are resolved.",
   "render_deployment": "not performed",
+  "formal_backend_integration": "User-authorised server.js registration added, before generic IoT routes; worker starts only in direct server entrypoint, configuration failure keeps API available; bounded SIGTERM/SIGINT shutdown added. Regression results recorded separately from deployment.",
+  "backend_integration_regression": {"pass":557,"fail":0,"command":"npm test","includes_real_server_route_and_lifecycle_checks":true},
+  "integration_intermediate_run": "One initial run terminated speciesProposals.test.js (534 pass, one file fail; cause unconfirmed). Image decoder loading was changed to on-demand, followed by full 556/556 and final 557/557 passing runs. No species proposal source edits.",
   "delivery_limit": "At-least-once processing; crash between successful API response and database completion can cause another API call"
 }

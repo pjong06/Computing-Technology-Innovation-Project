@@ -13,7 +13,7 @@
 
 | where | what happen | why | 后果 | how to fix |
 |---|---|---|---|---|
-| 最新 main／Render；Gerald／Backend owner | 新模块尚未接入部署 | 本轮遵守不修改其他成员现有代码 | 目前只有本机 worker 自动处理 | 按 PROTOTYPE-REVIEW.md 接入 installCameraAI；配置私有变量，PR 后部署 |
+| PR #121／Render；Backend／Render owner | 用户授权后已在正式 server.js 接线，尚未部署 | 新版本需合并后运行 | 当前 Render 未确认包含新代码 | Review 最新 PR，配置私有变量、合并部署；无需再手工注册 AI 模块 |
 | IoT Dashboard；页面 owner | 只有独立 prototype 页面 | 未修改现有 Dashboard | 原 Dashboard 不会自动出现 AI 结果 | 调用新增查询／照片／人工复核接口 |
 | 持久化任务 | 保存成功前若进程崩溃，可能再调用 Gemini | 外部 API 与数据库不是同一事务 | 有重复调用可能；结果保存有唯一约束和 lease 保护 | 保持低额度、核对 attempts；不承诺恰好一次 |
 | 免费 Render | 休眠时不处理任务 | 免费实例运行限制 | pending 等待唤醒；不保证实时 | 恢复后领取；需实时则采用持续运行服务 |
@@ -29,4 +29,4 @@ node camera-ai/prototype-server.cjs
 
 打开 http://127.0.0.1:3003/camera-ai-demo 。当前数据库只允许 steven-sprint2-test-01 的新照片，UTC 每天最多 10 次领取；本轮已用 1 次，不重置预算。退出页面用“退出”，停止本机服务用 Ctrl+C。
 
-仅新增 camera-ai 模块和 migration 20261118120218；线上新增对象经用户批准。未 push，未修改 Render 配置、原 alert 规则或照片 RLS。
+正式 server.js 接线及两份 migration 均已获批准；未修改 Render 配置、原 alert 规则或照片 RLS。PR #121 已建立，检查状态以最新提交为准。

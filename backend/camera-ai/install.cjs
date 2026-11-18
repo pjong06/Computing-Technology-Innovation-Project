@@ -3,7 +3,7 @@ const { createAIRouter } = require('./router.cjs');
 const { startWorker } = require('./worker.cjs');
 
 // Call once after environment loading and before final error/404 middleware.
-function installCameraAI(app, requireAuth, env = process.env) {
+function installCameraAI(app, requireAuth, env = process.env, { startProcessing = true } = {}) {
   app.use('/api/iot/camera-ai',requireAuth,createAIRouter({supabaseUrl:env.SUPABASE_URL}));
   const path = require('node:path');
   let publicConfig;
@@ -22,7 +22,17 @@ function installCameraAI(app, requireAuth, env = process.env) {
   app.get('/camera-ai-demo/config',(req,res) => publicConfig ? res.json(publicConfig) : res.sendStatus(503));
   app.get('/camera-ai-demo/app.js',(req,res) => res.sendFile(path.join(__dirname,'demo.js')));
   app.get('/camera-ai-demo',(req,res) => res.sendFile(path.join(__dirname,'demo.html')));
-  const worker = startWorker(env);
-  return worker;
+  let worker;
+  const controller = {
+    enabled: false,
+    start() {
+      if (!worker) worker = startWorker(env);
+      controller.enabled = worker.enabled;
+      return controller;
+    },
+    async stop() { if (worker) await worker.stop(); },
+  };
+  if (startProcessing) controller.start();
+  return controller;
 }
 module.exports = { installCameraAI };

@@ -1,6 +1,5 @@
 'use strict';
 
-const sharp = require('sharp');
 const { readBoundedResponse } = require('./bounded-response.cjs');
 const MODEL = 'gemini-3.5-flash-lite';
 const LIMIT = 5 * 1024 * 1024;
@@ -17,6 +16,7 @@ const schema = {
 async function prepareImage(bytes) {
   if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length > LIMIT) throw new Error('IMAGE_SIZE_INVALID');
   try {
+    const sharp = require('sharp');
     const image = sharp(bytes, { limitInputPixels: 25000000, animated: false });
     const meta = await image.metadata();
     if (!['jpeg', 'png', 'webp'].includes(meta.format) || (meta.pages || 1) !== 1) throw new Error('format');

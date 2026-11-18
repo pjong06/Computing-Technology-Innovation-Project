@@ -1,6 +1,6 @@
 # 1. Gemini 单张照片测试
 
-本节说明单张测试入口；自动队列、私有照片和独立演示页已另行验证，见 RESULTS.md。尚未接入现有 Render backend／IoT Dashboard。只新增文件，不修改现有模块或 package.json，不安装新依赖。
+本节说明单张测试入口；自动队列、私有照片和独立演示页已另行验证，见 RESULTS.md。正式 server.js 接线已获用户授权并完成，尚未合并部署 Render；IoT Dashboard 待页面 owner 接入。不修改 package.json，不安装新依赖。
 
 | 项目 | 内容 |
 |---|---|

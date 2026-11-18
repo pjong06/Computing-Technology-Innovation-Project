@@ -2,7 +2,7 @@
 
 | where | what happen | why | 后果 | how to fix |
 |---|---|---|---|---|
-| backend/camera-ai/ | 已新增队列、worker、结果接口、人工复核和演示页；获用户批准后已应用 SQL | 单张测试后接入自动链路 | 已在本机 worker＋线上 Supabase＋Gemini 验证；Render 尚未接入 | Backend owner 按第 2 节接入并部署 |
+| backend/camera-ai/ | 已新增队列、worker、接口和演示页；SQL 已应用；用户授权后已接入正式 server.js | 完成自动链路及正式启动接线 | PR 合并部署后可运行，Render 当前版本尚未更新 | Review PR、合并、配置环境变量并部署 |
 | 新 public.camera_ai_reviews | 保存 pending／processing／completed／failed、模型、尝试次数及分类 | 重启后恢复任务并关联 evidence | 仅三个 active staff 可读，客户端不能直接写 AI 结果 | 通过 server-only claim／finish RPC 处理 |
 | 新 public.camera_ai_human_reviews | 记录人工确认／错误／无法确认 | 不能覆盖 AI 原始结果 | 不会改变原 alert 的 acknowledge／resolve | 通过用户 JWT 的 human review RPC 写入 |
 | 新 camera_ai_private.settings | 应用时默认关闭，核对权限后已按批准启用指定 station；UTC 每天最多 10 次领取 | 避免历史照片和超量调用 | 达到上限后任务等待次日，不自动加购额度 | 可随时关闭；调用尝试按领取计数，失败及崩溃也占额度 |
@@ -10,16 +10,16 @@
 | Render backend | 需要接入两行安装代码、添加环境变量 | 免费服务休眠时 worker 同时暂停 | 恢复后继续；不承诺实时，也不承诺 API 恰好调用一次 | 队列领取锁、3 分钟 lease、最多 3 次尝试和结果 fencing |
 | Dashboard | 已新增独立 /camera-ai-demo 页面 | 避免修改其他成员页面 | 不是现有 IoT Dashboard 已完成整合 | Dashboard owner 按下方接口接入 |
 
-## 2. 给 Backend owner 的接入代码
+## 2. 正式 Backend 已接入
 
-在 server.js 已加载环境变量、创建 app、已有 requireAuth 后，最终错误／404 middleware 前注册一次：
+用户已授权修改 server.js；以下注册已经完成，owner 不要再次重复注册：
 
 ```javascript
 const { installCameraAI } = require('../camera-ai/install.cjs');
-const cameraAI = installCameraAI(app, requireAuth);
+const cameraAI = installCameraAI(app, requireAuth, process.env, { startProcessing: false });
 ```
 
-正常关机流程中调用 `await cameraAI.stop()`。原摄像头及 MQTT 流程不替换；Render 不操作 laptop 摄像头。不用新增 package 或独立 GPU 服务。
+正常直接启动 server 后才调用 cameraAI.start()；测试导入 app 不调用 AI。SIGTERM／SIGINT 会关闭 HTTP、MQTT 并等待 AI，最多 20 秒。AI 配置错误时保留原 API 运行。原摄像头及 MQTT ingestion 不替换；Render 不操作 laptop 摄像头。不用新增 package 或独立 GPU 服务。
 
 ## 3. 私有环境配置
 
@@ -73,9 +73,9 @@ node camera-ai/prototype-server.cjs
 - 真实账号页面验收：用户确认照片可见及人工复核成功；独立 SQL 确认 active Officer 的复核记录，原 alert 仍为 open。Botanist／Researcher 本轮只有本地 HTTP／SQL-role 验证，不能声称已完成真实 session 验收。
 - Fixture 已清理并独立确认：测试 alert、evidence、AI 结果、人工复核记录及 Storage 对象均为 0；原有 106 条 evidence 保留。页面刷新后测试任务消失属于正常清理。
 - Supabase advisor 对 camera_ai_review_human 给出 authenticated SECURITY DEFINER 提示；这是有意的受限写入口，函数固定 search_path、检查 auth.uid＋active staff，匿名不能执行、不能指定其他 reviewer_id；需由 owner review，不代表全项目 advisor 全通过。
-- 待完成：main 接入、PR／CI／Sonar、Render 部署及部署后复测；现有 IoT Dashboard 整合由对应 owner 完成。
+- 正式 backend 接线已完成并添加实际 server 路由／启动隔离／关闭测试；待最新提交 CI／Sonar、PR 合并、Render 配置部署及上线复测。现有 IoT Dashboard 整合由对应 owner 完成。
 - 进程若在 Gemini 成功后、保存结果前崩溃，恢复时可能再次调用；唯一记录和 lease 防止重复保存，不宣称恰好一次调用。
 - Laptop 漏拍和 movement／PIR 条件不同的问题仍需单独解决；AI 不补拍过去现场。
 - 现有 Sonar 组织 LOC 上限问题不能由本功能规避；不能把本地 secrets scan 当成云端 Quality Gate。
 
-本次只新增 camera-ai 文件和与线上版本一致的 migration 文件；经用户批准新增数据库对象并启用指定 station，没有修改其他成员代码、原 alert 规则／RLS 或 Render 配置，未 push。
+新增 AI 模块和与线上版本一致的 migration；数据库变更及 server.js 接线均经用户批准。未修改原 alert 规则／RLS、Dashboard 或 Render 配置。PR #121 承载代码，最终检查以最新 SHA 为准。
