@@ -17,6 +17,7 @@ const express=require('express');const path=require('node:path');const assert=re
    if(url.hostname==='unpkg.com')return route.fulfill({body:'',contentType:p.endsWith('.css')?'text/css':'application/javascript'});
    if(p==='/api/me')return json({id:'officer',role:'officer',email:'officer@example.com'});
    if(p.endsWith('/session'))return json({data:{id:'officer',role:'officer',ai_auto_resolution:true}});
+   if(p.endsWith('/botanists'))return json({data:[{id:'botanist',full_name:'<img src=x onerror=window.injected=true>'}]});
    if(p.endsWith('/counts'))return json({data:{unresolved:hostile?'<img src=x onerror=window.injected=true>':1}});
    if(p.endsWith('/stations'))return json({data:[{id:station,station_code:'North station',latitude:null,longitude:null,station_status:'active',latest:null}]});
    if(p.endsWith('/alert-stations'))return json({data:[{id:station,station_code:'North station'}]});
@@ -47,6 +48,7 @@ const express=require('express');const path=require('node:path');const assert=re
   await page.waitForFunction(()=>document.querySelectorAll('#evidence-choice option').length===2&&document.querySelector('.ai-result')?.textContent.includes('completed'));
   await page.locator('#evidence-choice').selectOption('photo-1');
   await page.waitForFunction(()=>document.querySelector('.ai-result')?.textContent.includes('animal'));
+  assert.equal(await page.locator('#assignee option').last().textContent(),'<img src=x onerror=window.injected=true>');
   assert.equal(await page.locator('#menu .who button').innerText(),'Log out');
   assert.equal(await page.locator('.alert-copy strong').innerText(),'Movement detected near station');
   await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);

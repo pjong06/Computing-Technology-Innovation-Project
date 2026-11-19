@@ -1,7 +1,7 @@
 'use strict';
 void (async()=>{
   const root=document.getElementById('app');
-  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const esc=v=>String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
   const glyph=name=>`<svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${({station:'<rect x="8" y="9" width="8" height="12" rx="2"/><path d="M9 6a5 5 0 0 1 6 0M6 3a10 10 0 0 1 12 0M11 17h2"/>',alert:'<path d="m12 3 10 18H2L12 3Z"/><path d="M12 9v5m0 3v1"/>',check:'<path d="m5 12 4 4L19 6"/>',camera:'<rect x="2" y="6" width="20" height="15" rx="3"/><circle cx="12" cy="13" r="4"/>',leaf:'<path d="M20 4C9 2 3 8 6 15s15 5 14-11Z"/><path d="m5 21 10-12"/>',search:'<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/>',refresh:'<path d="M20 7v5h-5M4 17v-5h5M5 8a8 8 0 0 1 13-3l2 3M4 16l2 3a8 8 0 0 0 13-3"/>'})[name]||'<path d="M3 5h18M3 12h18M3 19h18"/>'}</svg>`;
   let sb,identity,photos;
   const state={page:'overview',status:'open',station:null,alertStation:'all',resolution:'all',alertStations:[],range:'6h',metric:'temperature_c',from:'',to:'',severity:'all',query:'',selected:null,alertPage:1,hasMore:false,alerts:[],stations:[],botanists:[],readings:[],evidence:[],evidenceId:null,location:null,ai:null,error:'',busy:false,loading:false,menu:false,resolving:false,readingsPage:1,readingsMore:false};
