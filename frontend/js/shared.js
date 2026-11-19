@@ -685,6 +685,20 @@ function makeObservationListCard(observation, selected, picture, onSelect) {
   return card;
 }
 
+// ---- Review status words and colours (one scheme for the portal and the mobile app) ----
+// Waiting for review (blue) · Approved (green) · Needs changes (red) · Draft (grey).
+// css is the class for .plant-status / .status-badge in style.css.
+const REVIEW_STATUS_DISPLAY = {
+  pending: { label: 'Waiting for review', css: 'pending' },
+  approved: { label: 'Approved', css: 'approved' },
+  rejected: { label: 'Needs changes', css: 'rejected' },
+  draft: { label: 'Draft', css: 'draft' }
+};
+function reviewStatusDisplay(value) {
+  const status = String(value || 'unknown').toLowerCase();
+  return REVIEW_STATUS_DISPLAY[status] || { label: String(value || 'unknown').replaceAll('_', ' '), css: '' };
+}
+
 // ---- Display helpers for plant tags and coordinates ----
 
 // The tag to show on screen. "plant:..." values are placeholders the database gives a plant
@@ -906,11 +920,6 @@ async function logout() {
   location.href = 'login.html';
 }
 
-// Opens the first page after logging in. Botanists and officers both start at the Species catalogue.
-function goToHome() {
-  location.href = 'species.html';
-}
-
 // Pages that need no login
 const OPEN_PAGES = [
   'login.html',
@@ -976,18 +985,149 @@ function guardPages() {
   return true;
 }
 
-const MENU = [
-  { file: 'species.html', label: 'Species catalogue' },
-  { file: 'proposals.html', label: 'Species proposals' },
-  { file: 'plants.html', label: 'Plant catalogue' },
-  { file: 'editor.html', label: 'Species record editor' },
-  { file: 'queue.html', label: 'Observation approval queue' },
-  { file: 'rejected.html', label: 'Rejected observations' },
-  { file: 'map.html', label: 'Distribution map' },
-  { file: 'reports.html', label: 'Reports & export' },
-  { file: 'users.html', label: 'User & role admin' },
-  { file: 'alerts.html', label: 'IoT alerts' }
+// ---- Navigation: menu sections, tab bars, review counts and the landing page ----
+//
+// Officers see five menu sections. A section with more than one page shows a tab bar at the
+// top of its pages (drawn here, not in each page's HTML). Botanists only see "Species".
+// The species editor is not in the menu: the catalogue's Add species / Edit buttons open it
+// (openSpeciesEditor), and "Species" stays highlighted there.
+const NAV_SECTIONS = [
+  {
+    label: 'Review',
+    countId: 'review-menu-count',
+    pages: [
+      { file: 'queue.html', label: 'Field records', countId: 'field-records-count' },
+      { file: 'proposals.html', label: 'Species proposals', countId: 'species-proposals-count' },
+      { file: 'rejected.html', label: 'Rejected history' }
+    ]
+  },
+  {
+    label: 'Species',
+    alsoActiveOn: ['editor.html'],
+    pages: [
+      { file: 'species.html', label: 'Species catalogue' }
+    ]
+  },
+  {
+    label: 'Plants',
+    carrySpecies: true,
+    pages: [
+      { file: 'plants.html', label: 'List', alsoActiveOn: ['plant.html'] },
+      { file: 'map.html', label: 'Map' }
+    ]
+  },
+  {
+    label: 'IoT alerts',
+    pages: [
+      { file: 'alerts.html', label: 'IoT alerts' }
+    ]
+  },
+  {
+    label: 'Admin',
+    pages: [
+      { file: 'reports.html', label: 'Reports' },
+      { file: 'users.html', label: 'Users' }
+    ]
+  }
 ];
+
+// Every page reachable from the menu or a tab bar, in order.
+const MENU = NAV_SECTIONS.reduce((all, section) => all.concat(section.pages), []);
+
+function pageMatches(page, file) {
+  return page.file === file || (page.alsoActiveOn || []).indexOf(file) !== -1;
+}
+
+// "?species=<id>" when the current address has one, so Plants List <-> Map keeps the filter.
+function speciesQuery(search) {
+  const id = new URLSearchParams(search || '').get('species');
+  return id ? '?species=' + encodeURIComponent(id) : '';
+}
+
+// What the menu and tab bar show for this person on this page (no page drawing here).
+// Returns { sections: [{ label, href, active, countId }], tabs: [{ label, href, active, countId }] }.
+// Only pages the person may open are included, so no section is ever empty.
+function navFor(user, activeFile, search) {
+  const sections = [];
+  let tabs = [];
+  for (const section of NAV_SECTIONS) {
+    const pages = section.pages.filter(page => user === null || canOpen(user, page.file));
+    if (pages.length === 0) {
+      continue;
+    }
+    const activePage = pages.find(page => pageMatches(page, activeFile)) || null;
+    const active = activePage !== null || (section.alsoActiveOn || []).indexOf(activeFile) !== -1;
+    sections.push({
+      label: section.label,
+      href: pages[0].file,
+      active: active,
+      countId: section.countId || null
+    });
+    if (activePage !== null && pages.length > 1) {
+      const query = section.carrySpecies ? speciesQuery(search) : '';
+      tabs = pages.map(page => ({
+        label: page.label,
+        href: page.file + query,
+        active: page === activePage,
+        countId: page.countId || null
+      }));
+    }
+  }
+  return { sections: sections, tabs: tabs };
+}
+
+// ---- Waiting-for-review counts (officers only) ----
+// Field records: GET /api/reports/summary (officer-only), pending_observation_count.
+// Species proposals: the existing pending-proposals call. The Review menu entry shows the sum.
+const reviewCounts = { records: null, proposals: null };
+
+function validCount(count, what) {
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new Error('The ' + what + ' count was unavailable.');
+  }
+  return count;
+}
+
+async function fetchFieldRecordsCount() {
+  const result = await api('/reports/summary');
+  return validCount(result?.data?.pending_observation_count, 'field records');
+}
+
+async function fetchSpeciesProposalCount() {
+  const result = await api('/knowledge/species/proposals/pending?page=1&page_size=1');
+  return validCount(result?.pagination?.total, 'pending proposal');
+}
+
+// ---- Landing page after login ----
+// Officers: the review page when anything waits for review, otherwise the map.
+// Botanists: the species catalogue. If the counts don't arrive quickly (or fail), officers
+// go to the species catalogue, so logging in is never held up.
+const HOME_COUNT_TIMEOUT_MS = 2500;
+
+async function homePageFor(user) {
+  if (user === null || isBotanist(user)) {
+    return 'species.html';
+  }
+  try {
+    const counts = Promise.all([fetchFieldRecordsCount(), fetchSpeciesProposalCount()]);
+    let timer;
+    const timeout = new Promise((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('The review counts took too long.')), HOME_COUNT_TIMEOUT_MS);
+    });
+    const [records, proposals] = await Promise.race([counts, timeout]).finally(() => clearTimeout(timer));
+    return records + proposals > 0 ? 'queue.html' : 'map.html';
+  } catch (error) {
+    console.warn('Landing page counts unavailable; opening the species catalogue.', error);
+    return 'species.html';
+  }
+}
+
+// Opens the first page after logging in (see homePageFor).
+async function goToHome() {
+  location.href = await homePageFor(getCurrentUser());
+}
+
+// ---- end of navigation ----
 
 // Shows a warning at the top of the page when the database could not be loaded, so an
 // empty page is never mistaken for "no data".
@@ -1008,7 +1148,18 @@ function showDatabaseProblem() {
   main.insertBefore(box, main.firstChild);
 }
 
-// Builds the left menu inside <nav id="menu"> and highlights the page we are on (activeFile).
+// A small count badge (hidden until a count arrives, and at 0).
+function makeCountBadge(id) {
+  const badge = document.createElement('span');
+  badge.id = id;
+  badge.className = 'menu-count';
+  badge.hidden = true;
+  return badge;
+}
+
+// Builds the left menu inside <nav id="menu"> and highlights the section of this page
+// (activeFile). Pages in a section with more than one page also get a tab bar at the top
+// of <main>.
 function drawMenu(activeFile) {
   const nav = document.getElementById('menu');
   if (nav === null) {
@@ -1039,32 +1190,22 @@ function drawMenu(activeFile) {
   }
   nav.appendChild(sub);
 
-  for (let i = 0; i < MENU.length; i++) {
-    if (user !== null && canOpen(user, MENU[i].file) === false) {
-      continue;
-    }
+  const view = navFor(user, activeFile, location.search);
+  for (const section of view.sections) {
     const link = document.createElement('a');
-    link.href = MENU[i].file;
-    if (MENU[i].file === 'proposals.html') {
-      link.appendChild(document.createTextNode(MENU[i].label));
-      const badge = document.createElement('span');
-      badge.id = 'species-proposals-count';
-      badge.className = 'menu-count';
-      badge.hidden = true;
-      link.appendChild(badge);
-      if (user !== null && isBotanist(user) === false && thisPageName() !== 'proposals.html') {
-        refreshSpeciesProposalMenuCount().catch(error => {
-          showToast('Pending proposal count could not be loaded. ' + error.message);
-        });
-      }
-    } else {
-      link.textContent = MENU[i].label;
+    link.href = section.href;
+    link.appendChild(document.createTextNode(section.label));
+    if (section.countId) {
+      link.appendChild(makeCountBadge(section.countId));
     }
-    if (MENU[i].file === activeFile) {
+    if (section.active) {
       link.className = 'on';
+      link.setAttribute('aria-current', 'page');
     }
     nav.appendChild(link);
   }
+
+  drawSectionTabs(view.tabs);
 
   const who = document.createElement('div');
   who.className = 'who';
@@ -1081,27 +1222,87 @@ function drawMenu(activeFile) {
   };
   who.appendChild(out);
   nav.appendChild(who);
+
+  // Waiting-for-review counts, for officers. The proposals and field records pages set their
+  // own count after loading their list.
+  if (user !== null && isBotanist(user) === false) {
+    if (thisPageName() !== 'proposals.html') {
+      refreshSpeciesProposalMenuCount().catch(error => {
+        showToast('Pending proposal count could not be loaded. ' + error.message);
+      });
+    }
+    if (thisPageName() !== 'queue.html') {
+      refreshFieldRecordsCount().catch(error => {
+        showToast('Field record count could not be loaded. ' + error.message);
+      });
+    }
+  }
 }
 
-function updateSpeciesProposalMenuCount(count) {
-  const badge = document.getElementById('species-proposals-count');
-  if (!badge) return;
-  if (!Number.isSafeInteger(count) || count < 0) {
-    throw new Error('The pending proposal count was invalid.');
+// The tab bar for a section with more than one page (e.g. Review: Field records · Species
+// proposals · Rejected history), at the top of <main>. Not a <nav> element: the menu's
+// nav styles would apply to it.
+function drawSectionTabs(tabs) {
+  const main = document.querySelector('main');
+  if (main === null || tabs.length === 0 || document.getElementById('section-tabs') !== null) {
+    return;
   }
+  const bar = document.createElement('div');
+  bar.id = 'section-tabs';
+  bar.className = 'section-tabs';
+  bar.setAttribute('role', 'navigation');
+  bar.setAttribute('aria-label', 'Pages in this section');
+  for (const tab of tabs) {
+    const link = document.createElement('a');
+    link.href = tab.href;
+    link.appendChild(document.createTextNode(tab.label));
+    if (tab.countId) {
+      link.appendChild(makeCountBadge(tab.countId));
+    }
+    if (tab.active) {
+      link.className = 'on';
+      link.setAttribute('aria-current', 'page');
+    }
+    bar.appendChild(link);
+  }
+  main.insertBefore(bar, main.firstChild);
+}
+
+// Shows a count on a badge (hidden at 0). noun is singular, e.g. "pending species proposal".
+function setCountBadge(id, count, noun) {
+  const badge = document.getElementById(id);
+  if (!badge) return;
   badge.textContent = String(count);
   badge.hidden = count === 0;
-  badge.title = count + ' pending species proposal' + (count === 1 ? '' : 's');
+  badge.title = count + ' ' + noun + (count === 1 ? '' : 's');
   badge.setAttribute('aria-label', badge.title);
 }
 
+// The Review menu entry: field records + species proposals waiting.
+function updateReviewMenuCount() {
+  if (reviewCounts.records === null && reviewCounts.proposals === null) return;
+  setCountBadge('review-menu-count', (reviewCounts.records || 0) + (reviewCounts.proposals || 0),
+    'item waiting for review');
+}
+
+function updateSpeciesProposalMenuCount(count) {
+  reviewCounts.proposals = validCount(count, 'pending proposal');
+  setCountBadge('species-proposals-count', count, 'pending species proposal');
+  updateReviewMenuCount();
+}
+
+function updateFieldRecordsCount(count) {
+  reviewCounts.records = validCount(count, 'field records');
+  setCountBadge('field-records-count', count, 'field record waiting for review');
+  updateReviewMenuCount();
+}
+
 async function refreshSpeciesProposalMenuCount() {
-  const result = await api('/knowledge/species/proposals/pending?page=1&page_size=1');
-  const count = result?.pagination?.total;
-  if (!Number.isSafeInteger(count) || count < 0) {
-    throw new Error('The pending proposal count was unavailable.');
-  }
-  updateSpeciesProposalMenuCount(count);
+  updateSpeciesProposalMenuCount(await fetchSpeciesProposalCount());
+}
+
+async function refreshFieldRecordsCount() {
+  updateFieldRecordsCount(await fetchFieldRecordsCount());
 }
 
 // Hides the small pop-up message.

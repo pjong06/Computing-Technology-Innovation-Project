@@ -174,8 +174,10 @@ test('species proposals page is officer-only, guarded, and its controls match th
     shared.indexOf('];', shared.indexOf('const BOTANIST_PAGES'))
   );
   assert.doesNotMatch(botanistPages, /proposals\.html/);
-  assert.match(shared, /file: 'proposals\.html', label: 'Species proposals'/);
-  assert.match(shared, /badge\.id = 'species-proposals-count'/);
+  // A Review tab with its own count badge (id kept; proposals.js updates it after loading).
+  assert.match(shared, /\{ file: 'proposals\.html', label: 'Species proposals', countId: 'species-proposals-count' \}/);
+  assert.match(shared, /function makeCountBadge\(id\) \{\s*const badge = document\.createElement\('span'\);\s*badge\.id = id;/);
+  assert.match(read('frontend/js/proposals.js'), /updateSpeciesProposalMenuCount\(proposals\.length\)/);
   assert.match(shared, /refreshSpeciesProposalMenuCount\(\)/);
   assert.match(shared, /api\('\/knowledge\/species\/proposals\/pending\?page=1&page_size=1'\)/);
 
@@ -264,7 +266,8 @@ test('the distribution map is officer-only in the menu, the page list and on the
   // only BOTANIST_PAGES, and the menu hides every page canOpen() refuses.
   const botanistPages = shared.slice(shared.indexOf('const BOTANIST_PAGES'), shared.indexOf('];', shared.indexOf('const BOTANIST_PAGES')));
   assert.doesNotMatch(botanistPages, /map\.html/);
-  assert.match(shared, /if \(user !== null && canOpen\(user, MENU\[i\]\.file\) === false\) \{\s*continue;/);
+  // The menu and tab bars only list pages canOpen() allows; empty sections are skipped.
+  assert.match(shared, /const pages = section\.pages\.filter\(page => user === null \|\| canOpen\(user, page\.file\)\);\s*if \(pages\.length === 0\) \{\s*continue;/);
   // Opening map.html directly sends a non-officer away with a message.
   assert.match(shared, /if \(canOpen\(user, file\) === false\) \{\s*rememberToast\(OFFICER_ONLY_PAGE_MESSAGE\);\s*location\.replace\('species\.html'\);\s*return false;/);
   assert.match(shared, /const pageAllowed = guardPages\(\);/);
@@ -284,12 +287,11 @@ test('the plant catalogue is officer-only, linked from the menu and its page con
   );
   assert.doesNotMatch(botanistPages, /plants\.html|plant\.html/);
 
-  const menu = shared.slice(shared.indexOf('const MENU'), shared.indexOf('];', shared.indexOf('const MENU')));
-  const speciesPosition = menu.indexOf("file: 'species.html'");
-  const plantsPosition = menu.indexOf("file: 'plants.html'");
-  const editorPosition = menu.indexOf("file: 'editor.html'");
-  assert.ok(speciesPosition < plantsPosition && plantsPosition < editorPosition);
-  assert.match(menu, /file: 'plants\.html', label: 'Plant catalogue'/);
+  // Plants section: List (plant catalogue, also for plant detail) then Map; the species
+  // editor is no longer a menu page.
+  const sections = shared.slice(shared.indexOf('const NAV_SECTIONS'), shared.indexOf('// Every page reachable from the menu'));
+  assert.match(sections, /label: 'Plants',\s*carrySpecies: true,\s*pages: \[\s*\{ file: 'plants\.html', label: 'List', alsoActiveOn: \['plant\.html'\] \},\s*\{ file: 'map\.html', label: 'Map' \}/);
+  assert.doesNotMatch(sections, /file: 'editor\.html'/);
 
   const catalogue = read('frontend/js/plants.js');
   const detail = read('frontend/js/plant.js');
@@ -560,4 +562,206 @@ test('pre-freeze clean-ups: no dead login code, "Live data" chip, matching index
   assert.match(index, /<a href="species\.html">Species catalogue<\/a>/);
   const mqtt = read('backend/src/services/mqttIngestionService.js');
   assert.match(mqtt, /if \(process\.env\.IOT_DEBUG === 'true'\) \{\s*console\.log\(\s*persisted/);
+});
+
+// ---- Simpler navigation: menu sections, tab bars, landing page (lecturer feedback) ----
+
+// The real navigation code from shared.js, run on its own with a fake API and user.
+function loadNavigation({ apiAnswers = {}, apiError = null, apiNeverAnswers = false } = {}) {
+  const vm = require('node:vm');
+  const shared = read('frontend/js/shared.js');
+  const between = (start, end) => {
+    const from = shared.indexOf(start);
+    const to = shared.indexOf(end, from);
+    assert.ok(from !== -1 && to > from, `shared.js must contain ${start}`);
+    return shared.slice(from, to);
+  };
+  const calls = [];
+  const context = {
+    URLSearchParams,
+    setTimeout,
+    clearTimeout,
+    console: { warn() {}, error() {} },
+    api: async path => {
+      calls.push(path);
+      if (apiNeverAnswers) return new Promise(() => {});
+      if (apiError) throw apiError;
+      return apiAnswers[path];
+    },
+  };
+  const code = [
+    between('const BOTANIST_PAGES', '\n];') + '\n];',
+    between('function isBotanist(', '\n}') + '\n}',
+    between('function canOpen(', '\n}') + '\n}',
+    between('// ---- Navigation: menu sections', '// ---- end of navigation ----'),
+    'this.navFor = navFor; this.homePageFor = homePageFor; this.HOME_COUNT_TIMEOUT_MS = HOME_COUNT_TIMEOUT_MS;',
+  ].join('\n');
+  vm.runInNewContext(code, context);
+  return { nav: context, calls };
+}
+
+const OFFICER = { role: 'Conservation Officer' };
+const BOTANIST_USER = { role: 'Botanist' };
+const plain = value => JSON.parse(JSON.stringify(value));
+
+test('officers see five menu sections, in order; the Review entry carries the review count', () => {
+  const { nav } = loadNavigation();
+  const view = plain(nav.navFor(OFFICER, 'map.html', ''));
+  assert.deepEqual(view.sections.map(s => [s.label, s.href]), [
+    ['Review', 'queue.html'],
+    ['Species', 'species.html'],
+    ['Plants', 'plants.html'],
+    ['IoT alerts', 'alerts.html'],
+    ['Admin', 'reports.html'],
+  ]);
+  assert.equal(view.sections[0].countId, 'review-menu-count');
+  assert.deepEqual(view.sections.filter(s => s.active).map(s => s.label), ['Plants']);
+});
+
+test('botanists only see Species, with no tab bar; the editor highlights Species', () => {
+  const { nav } = loadNavigation();
+  for (const page of ['species.html', 'editor.html']) {
+    const view = plain(nav.navFor(BOTANIST_USER, page, ''));
+    assert.deepEqual(view.sections.map(s => s.label), ['Species'], page);
+    assert.equal(view.sections[0].active, true, page);
+    assert.deepEqual(view.tabs, [], page);
+  }
+});
+
+test('tab bars per section for officers, with the current page marked', () => {
+  const { nav } = loadNavigation();
+  const tabs = (page, search = '') => plain(nav.navFor(OFFICER, page, search).tabs);
+  const review = [
+    { label: 'Field records', href: 'queue.html', countId: 'field-records-count' },
+    { label: 'Species proposals', href: 'proposals.html', countId: 'species-proposals-count' },
+    { label: 'Rejected history', href: 'rejected.html', countId: null },
+  ];
+  for (const [page, activeIndex] of [['queue.html', 0], ['proposals.html', 1], ['rejected.html', 2]]) {
+    assert.deepEqual(tabs(page), review.map((tab, i) => ({ ...tab, active: i === activeIndex })), page);
+  }
+  assert.deepEqual(tabs('plants.html').map(t => [t.label, t.href, t.active]), [['List', 'plants.html', true], ['Map', 'map.html', false]]);
+  // Plant detail belongs to the Plants list.
+  assert.deepEqual(tabs('plant.html', '?id=1').map(t => [t.label, t.active]), [['List', true], ['Map', false]]);
+  assert.deepEqual(tabs('map.html').map(t => [t.label, t.active]), [['List', false], ['Map', true]]);
+  assert.deepEqual(tabs('reports.html').map(t => [t.label, t.href, t.active]), [['Reports', 'reports.html', true], ['Users', 'users.html', false]]);
+  assert.deepEqual(tabs('users.html').map(t => t.active), [false, true]);
+  // One-page sections have no tab bar; the editor highlights Species.
+  for (const page of ['species.html', 'alerts.html', 'editor.html']) {
+    assert.deepEqual(tabs(page), [], page);
+  }
+  const editor = plain(nav.navFor(OFFICER, 'editor.html', ''));
+  assert.deepEqual(editor.sections.filter(s => s.active).map(s => s.label), ['Species']);
+});
+
+test('switching Plants List <-> Map keeps ?species= (and only there)', () => {
+  const { nav } = loadNavigation();
+  const plantsTabs = plain(nav.navFor(OFFICER, 'plants.html', '?species=abc-123').tabs);
+  assert.deepEqual(plantsTabs.map(t => t.href), ['plants.html?species=abc-123', 'map.html?species=abc-123']);
+  const mapTabs = plain(nav.navFor(OFFICER, 'map.html', '?species=abc-123').tabs);
+  assert.deepEqual(mapTabs.map(t => t.href), ['plants.html?species=abc-123', 'map.html?species=abc-123']);
+  assert.deepEqual(plain(nav.navFor(OFFICER, 'plants.html', '').tabs).map(t => t.href), ['plants.html', 'map.html']);
+  assert.deepEqual(plain(nav.navFor(OFFICER, 'queue.html', '?species=abc-123').tabs).map(t => t.href),
+    ['queue.html', 'proposals.html', 'rejected.html']);
+});
+
+test('landing page: officers go to Review when anything waits, otherwise the map; botanists the catalogue', async () => {
+  const answers = (records, proposals) => ({
+    '/reports/summary': { data: { pending_observation_count: records } },
+    '/knowledge/species/proposals/pending?page=1&page_size=1': { pagination: { total: proposals } },
+  });
+  assert.equal(await loadNavigation({ apiAnswers: answers(3, 0) }).nav.homePageFor(OFFICER), 'queue.html');
+  assert.equal(await loadNavigation({ apiAnswers: answers(0, 2) }).nav.homePageFor(OFFICER), 'queue.html');
+  assert.equal(await loadNavigation({ apiAnswers: answers(0, 0) }).nav.homePageFor(OFFICER), 'map.html');
+
+  const botanist = loadNavigation({ apiAnswers: answers(5, 5) });
+  assert.equal(await botanist.nav.homePageFor(BOTANIST_USER), 'species.html');
+  assert.deepEqual(botanist.calls, [], 'no officer-only count is requested for a botanist');
+  assert.equal(await botanist.nav.homePageFor(null), 'species.html');
+});
+
+test('landing page: if the counts fail or are slow, officers go to the species catalogue', async () => {
+  const failed = loadNavigation({ apiError: new Error('Could not reach the server.') });
+  assert.equal(await failed.nav.homePageFor(OFFICER), 'species.html');
+
+  const invalid = loadNavigation({ apiAnswers: { '/reports/summary': { data: {} } } });
+  assert.equal(await invalid.nav.homePageFor(OFFICER), 'species.html');
+
+  const slow = loadNavigation({ apiNeverAnswers: true });
+  assert.ok(slow.nav.HOME_COUNT_TIMEOUT_MS <= 3000, 'login is never held up for long');
+  const started = Date.now();
+  assert.equal(await slow.nav.homePageFor(OFFICER), 'species.html');
+  assert.ok(Date.now() - started < slow.nav.HOME_COUNT_TIMEOUT_MS + 1000);
+});
+
+test('review counts: field records from the officer-only summary, the Review entry shows the sum', () => {
+  const shared = read('frontend/js/shared.js');
+  assert.match(shared, /async function fetchFieldRecordsCount\(\) \{\s*const result = await api\('\/reports\/summary'\);\s*return validCount\(result\?\.data\?\.pending_observation_count/);
+  assert.match(read('backend/src/routes/reports.js'), /router\.get\("\/summary", requireAuth, requireRole\("officer"\)/);
+  assert.match(shared, /setCountBadge\('review-menu-count', \(reviewCounts\.records \|\| 0\) \+ \(reviewCounts\.proposals \|\| 0\)/);
+  // Counts are only requested for officers; each review page sets its own after loading.
+  assert.match(shared, /if \(user !== null && isBotanist\(user\) === false\) \{\s*if \(thisPageName\(\) !== 'proposals\.html'\)/);
+  assert.match(shared, /if \(thisPageName\(\) !== 'queue\.html'\) \{\s*refreshFieldRecordsCount\(\)/);
+  assert.match(read('frontend/js/queue.js'), /drawQueue\(\);\s*\/\/[^\n]*\n\s*refreshFieldRecordsCount\(\)/);
+  // Login waits for the landing page choice; the page guard still falls back to the catalogue.
+  assert.match(read('frontend/js/login.js'), /await goToHome\(\);/);
+  assert.match(shared, /async function goToHome\(\) \{\s*location\.href = await homePageFor\(getCurrentUser\(\)\);/);
+});
+
+test('tab bars are drawn by shared.js as a div (not a <nav>, which has the menu styles)', () => {
+  const shared = read('frontend/js/shared.js');
+  assert.match(shared, /function drawSectionTabs\(tabs\) \{/);
+  assert.match(shared, /const bar = document\.createElement\('div'\);\s*bar\.id = 'section-tabs';\s*bar\.className = 'section-tabs';\s*bar\.setAttribute\('role', 'navigation'\);/);
+  assert.match(shared, /main\.insertBefore\(bar, main\.firstChild\);/);
+  for (const page of ['queue.html', 'proposals.html', 'rejected.html', 'plants.html', 'plant.html', 'map.html', 'reports.html', 'users.html']) {
+    assert.doesNotMatch(read(`frontend/${page}`), /section-tabs|class="tabs"/, `${page} has no tab bar of its own`);
+  }
+  const css = read('frontend/css/style.css');
+  assert.match(css, /\.section-tabs \{/);
+  assert.match(css, /@media \(max-width: 600px\) \{\s*\.section-tabs \{\s*width: 100%;\s*flex-wrap: nowrap;\s*overflow-x: auto;/);
+});
+
+test('review page headings, and a one-sentence description under every page heading', () => {
+  assert.match(read('frontend/queue.html'), /<h1>Field records <span>to review<\/span><\/h1>/);
+  assert.match(read('frontend/proposals.html'), /<h1>Species <span>proposals<\/span><\/h1>/);
+  assert.match(read('frontend/rejected.html'), /<h1>Rejected <span>history<\/span><\/h1>/);
+  for (const page of ['species', 'editor', 'proposals', 'queue', 'rejected', 'plants', 'plant', 'map', 'alerts', 'reports', 'users']) {
+    const html = read(`frontend/${page}.html`);
+    const lead = html.match(/<p class="lead"[^>]*>([\s\S]*?)<\/p>/);
+    assert.ok(lead && lead[1].replace(/<[^>]+>/g, '').trim().length > 20, `${page}.html has a description`);
+    assert.match(lead[1], /officer|botanist/i, `${page}.html says who the page is for`);
+  }
+});
+
+test('one review status scheme: Waiting for review blue, Approved green, Needs changes red, Draft grey', () => {
+  const vm = require('node:vm');
+  const shared = read('frontend/js/shared.js');
+  const context = {};
+  vm.runInNewContext(shared.slice(
+    shared.indexOf('// ---- Review status words and colours'),
+    shared.indexOf('// ---- Display helpers for plant tags and coordinates ----')
+  ) + '\nthis.reviewStatusDisplay = reviewStatusDisplay;', context);
+  const show = value => plain(context.reviewStatusDisplay(value));
+  assert.deepEqual(show('pending'), { label: 'Waiting for review', css: 'pending' });
+  assert.deepEqual(show('APPROVED'), { label: 'Approved', css: 'approved' });
+  assert.deepEqual(show('rejected'), { label: 'Needs changes', css: 'rejected' });
+  assert.deepEqual(show('draft'), { label: 'Draft', css: 'draft' });
+  assert.deepEqual(show('in_review'), { label: 'in review', css: '' });
+  assert.match(read('frontend/js/plants.js'), /function formattedStatus\(value\) \{\s*return reviewStatusDisplay\(value\);/);
+  assert.match(read('frontend/js/plant.js'), /function plantStatus\(value\) \{\s*return reviewStatusDisplay\(value\);/);
+
+  const css = read('frontend/css/style.css');
+  assert.match(css, /\.plant-status\.pending,\s*\.status-badge\.pending \{\s*background: var\(--info\);\s*color: var\(--infot\);/);
+  assert.match(css, /\.plant-status\.approved,\s*\.status-badge\.approved \{\s*background: var\(--ok\);/);
+  assert.match(css, /\.plant-status\.rejected,\s*\.status-badge\.rejected \{\s*background: var\(--er\);/);
+  assert.match(css, /\.plant-status\.draft,\s*\.status-badge\.draft \{\s*background: var\(--neutral\);/);
+  // Blue and grey exist in the light theme and both dark themes.
+  assert.equal((css.match(/--info: /g) || []).length, 3);
+  assert.equal((css.match(/--neutral: /g) || []).length, 3);
+  // No page keeps its own copy of the status colours, and each IoT status is defined once.
+  for (const page of ['plants.html', 'plant.html']) {
+    assert.doesNotMatch(read(`frontend/${page}`), /\.plant-status\.(pending|approved|rejected)/, page);
+  }
+  for (const state of ['live', 'loading', 'error']) {
+    assert.equal((css.match(new RegExp(`\\.iot-status-${state} \\{`, 'g')) || []).length, 1, `.iot-status-${state}`);
+  }
 });

@@ -13,6 +13,11 @@
   --wat: #a67c00;
   --er: #d99b99;
   --ert: #a01818;
+  /* Review status colours (same meaning as the mobile app) */
+  --info: #dbe8f6;     /* Waiting for review: blue */
+  --infot: #1f4e8c;
+  --neutral: #eef1ef;  /* Draft: grey */
+  --neutralt: #4a5a50;
 
   box-sizing: border-box;
   padding-top: env(safe-area-inset-top, 0px);
@@ -36,6 +41,10 @@
     --wat: #f6e4a0;
     --er: #5a2a29;
     --ert: #f0b3b1;
+    --info: #1d3350;
+    --infot: #b8d4f5;
+    --neutral: #2a312d;
+    --neutralt: #c3cec7;
   }
 }
 
@@ -53,6 +62,10 @@
   --wat: #f6e4a0;
   --er: #5a2a29;
   --ert: #f0b3b1;
+  --info: #1d3350;
+  --infot: #b8d4f5;
+  --neutral: #2a312d;
+  --neutralt: #c3cec7;
 }
 
 /* Base */
@@ -162,9 +175,14 @@ nav a.on {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) nav a.on {
+  :root:not([data-theme="light"]) nav a.on,
+  :root:not([data-theme="light"]) .section-tabs a.on {
     color: #10170f;
   }
+}
+
+:root[data-theme="dark"] .section-tabs a.on {
+  color: #10170f;
 }
 
 nav .who {
@@ -366,6 +384,99 @@ tr.row:hover td {
 .pill.e {
   background: var(--er);
   color: var(--ert);
+}
+
+/* Review status, one scheme for the whole portal (same colours as the mobile app):
+   Waiting for review = blue, Approved = green, Needs changes / Rejected = red, Draft = grey.
+   Used by the plant catalogue and plant detail (.plant-status), and anywhere else with
+   .status-badge. */
+.plant-status,
+.status-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--neutral);
+  color: var(--neutralt);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.plant-status.pending,
+.status-badge.pending {
+  background: var(--info);
+  color: var(--infot);
+}
+
+.plant-status.approved,
+.status-badge.approved {
+  background: var(--ok);
+  color: var(--okt);
+}
+
+.plant-status.rejected,
+.status-badge.rejected {
+  background: var(--er);
+  color: var(--ert);
+}
+
+.plant-status.draft,
+.status-badge.draft {
+  background: var(--neutral);
+  color: var(--neutralt);
+}
+
+/* Tab bar at the top of a menu section with more than one page (drawn by shared.js). */
+.section-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 18px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  width: fit-content;
+  max-width: 100%;
+}
+
+.section-tabs a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.section-tabs a:hover {
+  background: var(--mint);
+}
+
+.section-tabs a.on {
+  background: var(--pri);
+  color: #fff;
+}
+
+.section-tabs .menu-count {
+  float: none;
+}
+
+/* Phones: the tabs fill the width and scroll sideways if they don't fit. */
+@media (max-width: 600px) {
+  .section-tabs {
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .section-tabs a {
+    flex: 1 0 auto;
+    justify-content: center;
+  }
 }
 
 /* Images / Thumbnails */
@@ -1058,10 +1169,11 @@ table.big .btn {
   background: #9ca3af;
 }
 
+/* One definition for light and dark: the colour tokens change with the theme. */
 .iot-status-live {
-  color: #166534;
-  border-color: #bbdfc5;
-  background: #f0fdf4;
+  color: var(--okt);
+  border-color: var(--ok);
+  background: var(--ok);
 }
 
 .iot-status-live .iot-live-dot {
@@ -1071,9 +1183,9 @@ table.big .btn {
 }
 
 .iot-status-loading {
-  color: #8a6a00;
-  border-color: #ead99a;
-  background: #fffbea;
+  color: var(--wat);
+  border-color: var(--wa);
+  background: var(--wa);
 }
 
 .iot-status-loading .iot-live-dot {
@@ -1081,9 +1193,9 @@ table.big .btn {
 }
 
 .iot-status-error {
-  color: #991b1b;
-  border-color: #efc4c4;
-  background: #fff5f5;
+  color: var(--ert);
+  border-color: var(--er);
+  background: var(--er);
 }
 
 .iot-status-error .iot-live-dot {
@@ -1714,27 +1826,6 @@ table.big .btn {
 @media (prefers-color-scheme: dark) {
 
   :root:not([data-theme="light"])
-  .iot-status-live {
-    color: #b9e8c5;
-    border-color: #315c3b;
-    background: #1c3021;
-  }
-
-  :root:not([data-theme="light"])
-  .iot-status-loading {
-    color: #f4de89;
-    border-color: #61521d;
-    background: #302b17;
-  }
-
-  :root:not([data-theme="light"])
-  .iot-status-error {
-    color: #efb2b2;
-    border-color: #693333;
-    background: #351e1e;
-  }
-
-  :root:not([data-theme="light"])
   .iot-sensor-warning .iot-sensor-icon {
     background: #463d18;
   }
@@ -1745,27 +1836,6 @@ table.big .btn {
   }
 }
 
-
-:root[data-theme="dark"]
-.iot-status-live {
-  color: #b9e8c5;
-  border-color: #315c3b;
-  background: #1c3021;
-}
-
-:root[data-theme="dark"]
-.iot-status-loading {
-  color: #f4de89;
-  border-color: #61521d;
-  background: #302b17;
-}
-
-:root[data-theme="dark"]
-.iot-status-error {
-  color: #efb2b2;
-  border-color: #693333;
-  background: #351e1e;
-}
 
 :root[data-theme="dark"]
 .iot-sensor-warning

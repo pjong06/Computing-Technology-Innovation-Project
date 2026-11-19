@@ -120,15 +120,15 @@ function drawQueue() {
   if (pending.length === 0) {
     document.getElementById('queue-area').hidden = true;
     document.getElementById('queue-empty').hidden = false;
-    document.getElementById('queue-count').textContent = '0 field observations waiting for review.';
+    document.getElementById('queue-count').textContent = '0 field records waiting for review.';
     return;
   }
   document.getElementById('queue-area').hidden = false;
   document.getElementById('queue-empty').hidden = true;
 
-  let word = 'observations';
+  let word = 'records';
   if (pending.length === 1) {
-    word = 'observation';
+    word = 'record';
   }
   document.getElementById('queue-count').textContent =
     pending.length + ' field ' + word + ' waiting for review.';
@@ -204,7 +204,7 @@ async function reviewObservation(id, decision) {
       method: 'POST',
       body: JSON.stringify({ decision: decision, comments: comments }),
     });
-    showToast(decision === 'approved' ? 'Observation approved' : 'Observation rejected');
+    showToast(decision === 'approved' ? 'Field record approved' : 'Field record sent back (Needs changes)');
     delete photosById[id];
   } catch (error) {
     // e.g. "Observation must be Pending; approval requires an approved species"
@@ -228,6 +228,10 @@ async function loadQueue() {
     return;
   }
   drawQueue();
+  // Keep the Field records and Review badges in step after every load (and so after each decision).
+  refreshFieldRecordsCount().catch(error => {
+    showToast('Field record count could not be loaded. ' + error.message);
+  });
 }
 
 loadQueue().catch(showUnexpectedError);

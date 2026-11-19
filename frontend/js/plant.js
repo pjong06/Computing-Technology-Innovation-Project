@@ -18,16 +18,9 @@ function displayDate(value) {
     });
 }
 
+// Waiting for review / Approved / Needs changes / Draft, with its colour class (shared.js).
 function plantStatus(value) {
-  const status = String(value || 'unknown');
-  return {
-    label: {
-      pending: 'Pending',
-      approved: 'Approved',
-      rejected: 'Needs changes',
-    }[status.toLowerCase()] || status.replaceAll('_', ' '),
-    css: ['pending', 'approved', 'rejected'].includes(status.toLowerCase()) ? status.toLowerCase() : '',
-  };
+  return reviewStatusDisplay(value);
 }
 
 function cell(row, value, className) {
@@ -105,8 +98,14 @@ function renderObservations(observations) {
     cell(row, observation.life_stage);
     cell(row, formatHeight(observation.height_cm));
     cell(row, formatDiameter(observation.diameter_cm));
+    // Review status as a coloured badge, the same scheme as everywhere else.
     const review = plantStatus(observation.review_status);
-    cell(row, review.label, review.css === 'rejected' ? 'review-rejected' : '');
+    const statusCell = document.createElement('td');
+    const statusBadge = document.createElement('span');
+    statusBadge.className = ('status-badge ' + review.css).trim();
+    statusBadge.textContent = review.label;
+    statusCell.appendChild(statusBadge);
+    row.appendChild(statusCell);
     cell(row, observation.reviewer_comment);
     body.appendChild(row);
   });
