@@ -118,8 +118,30 @@ const alertActionsInProgress =
 
 const cameraEvidenceState =
   new Map();
+const CAMERA_REFRESH_COOLDOWN_MS = 10000;
 
+const cameraRefreshCooldowns = new Map();
+function updateCameraRefreshButtons() {
+  document.querySelectorAll('[data-camera-refresh-id]').forEach((button) => {
+    const alertId = button.dataset.cameraRefreshId;
+    const remaining = Math.max(
+      0,
+      Math.ceil(
+        ((cameraRefreshCooldowns.get(alertId) || 0) - Date.now()) / 1000
+      )
+    );
 
+    const loading = getCameraState(alertId).status === 'loading';
+
+    button.textContent = loading
+      ? 'Loading photo...'
+      : remaining > 0
+        ? `Refresh in ${remaining}s`
+        : 'Refresh photo';
+
+    button.disabled = loading || remaining > 0;
+  });
+}
 /* General helpers */
 
 function formatNumber(
@@ -1782,13 +1804,9 @@ async function fetchCameraEvidence(
       alert.id
     );
 
-  if (
-    current.status ===
-      'loading' &&
-    !force
-  ) {
-    return current;
-  }
+if (current.status === 'loading') {
+  return current;
+}
 
   setCameraState(
     alert.id,
@@ -2090,15 +2108,33 @@ function getCameraState(
 }
 
 
-async function refreshCameraAlert(
-  alert
-) {
-  await fetchCameraEvidence(
-    alert,
-    true
+async function refreshCameraAlert(alert) {
+  const now = Date.now();
+  const state = getCameraState(alert.id);
+
+  if (state.status === 'loading') {
+    return;
+  }
+
+  const nextAllowedAt =
+    cameraRefreshCooldowns.get(alert.id) || 0;
+
+  if (now < nextAllowedAt) {
+    return;
+  }
+
+  cameraRefreshCooldowns.set(
+    alert.id,
+    now + CAMERA_REFRESH_COOLDOWN_MS
   );
 
   renderAlerts();
+
+  try {
+    await fetchCameraEvidence(alert, true);
+  } finally {
+    renderAlerts();
+  }
 }
 
 function showPhotoPopup(
@@ -3370,16 +3406,23 @@ if (
 
   refreshPhoto.className =
     'btn ghost';
+refreshPhoto.dataset.cameraRefreshId = alert.id;
+const remainingCooldown = Math.max(
+  0,
+  Math.ceil(
+    ((cameraRefreshCooldowns.get(alert.id) || 0) - Date.now()) / 1000
+  )
+);
 
-  refreshPhoto.textContent =
-    state.status ===
-      'loading'
-      ? 'Loading photo...'
+refreshPhoto.textContent =
+  state.status === 'loading'
+    ? 'Loading photo...'
+    : remainingCooldown > 0
+      ? `Refresh in ${remainingCooldown}s`
       : 'Refresh photo';
 
-  refreshPhoto.disabled =
-    state.status ===
-    'loading';
+refreshPhoto.disabled =
+  state.status === 'loading' || remainingCooldown > 0;
 
   refreshPhoto.addEventListener(
     'click',
@@ -4662,3 +4705,10 @@ clearSensorDisplay();
 void loadDashboard();
 
 startAutoRefresh();
+
+
+setInterval(() => {
+  if (!document.hidden) {
+    updateCameraRefreshButtons();
+  }
+}, 1000);
