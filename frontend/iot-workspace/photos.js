@@ -4,7 +4,7 @@
   class PhotoQueue {
     constructor(limit=2){this.limit=limit;this.active=0;this.waiting=[];}
     run(fn){return new Promise((resolve,reject)=>{this.waiting.push({fn,resolve,reject});this.pump();});}
-    pump(){while(this.active<this.limit&&this.waiting.length){const job=this.waiting.shift();this.active++;Promise.resolve().then(job.fn).then(job.resolve,job.reject).finally(()=>{this.active--;this.pump();});}}
+    pump(){while(this.active<this.limit&&this.waiting.length){const job=this.waiting.shift();this.active++;Promise.resolve().then(job.fn).then(value=>job.resolve(value),error=>job.reject(error)).finally(()=>{this.active--;this.pump();}).catch(error=>job.reject(error));}}
   }
   async function retryPhoto(load,{sleep=ms=>new Promise(r=>setTimeout(r,ms)),onFailure=()=>{}}={}){
     for(let attempt=0;attempt<=3;attempt++){
