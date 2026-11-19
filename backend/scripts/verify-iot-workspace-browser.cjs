@@ -51,11 +51,11 @@ const express=require('express');const path=require('node:path');const assert=re
   assert.equal(await page.locator('.alert-copy strong').innerText(),'Movement detected near station');
   await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   hostile=true;await page.locator('[data-action=refresh]').click();await page.locator('.alert-row').click();
-  await page.waitForFunction(()=>document.querySelector('.ai-result')?.textContent.includes('completed'));
+  await page.waitForFunction(()=>document.querySelector('#workspace-error')?.textContent.includes('Invalid record identifier'));
   assert.equal(await page.locator('#unresolved-count img').count(),0);
   assert.equal(await page.evaluate(()=>window.injected===true),false);
-  assert(requested.some(p=>p.includes('/alerts/..%2Foutside%3Fx%3D1/location')));
-  assert(requested.some(p=>p.includes('/camera-ai/alerts/..%2Foutside%3Fx%3D1/evidence/')));
+  assert(!requested.some(p=>p.includes('outside')));
+
   assert.deepEqual(errors,[]);assert(queries.some(q=>q.page==='2'));
   console.log('PASS: loaded history retained, popup paging, selected evidence/AI refresh, switched-photo analysis, shared navigation, labels, mobile layout.');
  }finally{await browser.close();await new Promise(resolve=>{server.closeAllConnections();server.close(resolve);});}

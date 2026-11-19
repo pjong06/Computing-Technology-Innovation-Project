@@ -29,6 +29,10 @@ void (async()=>{
     if(!session){location.replace('login.html');throw Object.assign(new Error('Please sign in.'),{status:401,permanent:true});}
     return session.access_token;
   }
+  function pathId(value){
+    if(typeof value!=='string'||!/^[a-zA-Z0-9-]+$/.test(value))throw new Error('Invalid record identifier.');
+    return value;
+  }
   async function api(path,options={}){
     const response=await fetch('/api/iot-workspace'+path,{...options,headers:{'Content-Type':'application/json',Authorization:'Bearer '+await token()},cache:'no-store',signal:AbortSignal.timeout(20000)});
     if(response.status===401){photos?.clear();location.replace('login.html');}
@@ -49,7 +53,7 @@ void (async()=>{
   function summaries(){
     if(!officer())return `<section class="summary botanist-summary"><div class="summary-item"><div class="summary-label">${glyph('check')}Assigned tasks</div><div class="summary-value" id="task-count">${esc(state.taskCount??'—')}</div></div></section>`;
     const online=state.stations.filter(s=>s.latest?.received_at&&Date.now()-Date.parse(s.latest.received_at)<60000&&s.station_status==='active').length;
-    return `<section class="summary"><div class="summary-item"><div class="summary-label">${glyph('station')}Monitored stations</div><div class="summary-value">${state.stations.length}<span class="metric-tag">${online} online</span></div></div><div class="summary-item"><div class="summary-label">${glyph('alert')}Unresolved alerts</div><div class="summary-value" id="unresolved-count">${esc(state.unresolved??'—')}</div></div></section>`;
+    return `<section class="summary"><div class="summary-item"><div class="summary-label">${glyph('station')}Monitored stations</div><div class="summary-value">${Number(state.stations.length)}<span class="metric-tag">${online} online</span></div></div><div class="summary-item"><div class="summary-label">${glyph('alert')}Unresolved alerts</div><div class="summary-value" id="unresolved-count">${esc(state.unresolved??'—')}</div></div></section>`;
   }
   function chart(){
     const meta=metrics[state.metric];const rows=state.readings.filter(r=>r[state.metric]!==null&&Number.isFinite(Number(r[state.metric])));
@@ -123,7 +127,7 @@ void (async()=>{
   async function loadAnalysis(generation=detailGeneration){
     const a=current(),e=state.evidenceId;if(!officer()||!a||!e)return;
     try{
-      const r=await fetch(`/api/iot/camera-ai/alerts/${encodeURIComponent(a.id)}/evidence/${encodeURIComponent(e)}`,{headers:{Authorization:'Bearer '+await token()},signal:AbortSignal.timeout(15000)});
+      const r=await fetch(`/api/iot/camera-ai/alerts/${pathId(a.id)}/evidence/${pathId(e)}`,{headers:{Authorization:'Bearer '+await token()},signal:AbortSignal.timeout(15000)});
       if(!r.ok)return;const body=await r.json();
       if(generation===detailGeneration&&state.selected===a.id&&state.evidenceId===e){state.ai=body.data;render();}
     }catch(error){if(generation===detailGeneration)showError(error);}
@@ -132,7 +136,7 @@ void (async()=>{
     const a=current();if(!a)return;const generation=++detailGeneration,previous=state.evidenceId;
     if(!preserve){state.loading=true;state.evidence=[];state.evidenceId=null;state.location=null;state.ai=null;render();}
     try{
-      const [location,evidence]=await Promise.all([api(`/alerts/${encodeURIComponent(a.id)}/location`),api(`/alerts/${encodeURIComponent(a.id)}/evidence`)]);
+      const [location,evidence]=await Promise.all([api(`/alerts/${pathId(a.id)}/location`),api(`/alerts/${pathId(a.id)}/evidence`)]);
       if(generation!==detailGeneration||state.selected!==a.id)return;
       state.location=location.data;state.evidence=evidence.data;
       state.evidenceId=preserve&&evidence.data.some(e=>e.id===previous)?previous:evidence.data[0]?.id||null;
@@ -176,7 +180,7 @@ void (async()=>{
         if(action==='assign'&&!body.assigned_to)throw new Error('Select a botanist.');
         if(action==='resolve'&&!body.resolution_notes.trim())throw new Error('Add a handling note.');
         state.busy=true;b.disabled=true;
-        try{await api(`/alerts/${encodeURIComponent(a.id)}/${action}`,{method:'PATCH',body:JSON.stringify(body)});state.status=action==='assign'?'acknowledged':'resolved';await loadAlerts();await counts();state.busy=false;render();}finally{state.busy=false;b.disabled=false;}
+        try{await api(`/alerts/${pathId(a.id)}/${action}`,{method:'PATCH',body:JSON.stringify(body)});state.status=action==='assign'?'acknowledged':'resolved';await loadAlerts();await counts();state.busy=false;render();}finally{state.busy=false;b.disabled=false;}
       }
     }catch(error){showError(error);}
   });
