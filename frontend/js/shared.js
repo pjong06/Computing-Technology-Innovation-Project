@@ -931,7 +931,8 @@ const OPEN_PAGES = [
 // The Distribution map and Plant catalogue are not here; their data is officer-only.
 const BOTANIST_PAGES = [
   'species.html',
-  'editor.html'
+  'editor.html',
+  'iot-workspace.html'
 ];
 
 const OFFICER_ONLY_PAGE_MESSAGE = 'That page is for conservation officers only.';
@@ -967,6 +968,7 @@ function tellIfSuspended() {
 // Returns true when this person may stay on this page. Page scripts check pageAllowed
 // before calling the backend, so nothing is requested while the browser is leaving.
 function guardPages() {
+  if (document.currentScript?.hasAttribute('data-navigation-only')) return true;
   const file = thisPageName();
   if (OPEN_PAGES.indexOf(file) !== -1) {
     return true;
@@ -1019,7 +1021,8 @@ const NAV_SECTIONS = [
   {
     label: 'IoT alerts',
     pages: [
-      { file: 'alerts.html', label: 'IoT alerts' }
+      { file: 'alerts.html', label: 'IoT alerts' },
+      { file: 'iot-workspace.html', label: 'Workspace' }
     ]
   },
   {
@@ -1432,7 +1435,11 @@ function makeCell(text) {
   return td;
 }
 
-loadFromDatabase();
+// The IoT workspace verifies /api/iot-workspace/session itself and only needs
+// this file's existing navigation/session helpers, not the website-user list.
+// All existing pages retain their original bootstrap and page guards.
+const navigationOnly = document.currentScript?.hasAttribute('data-navigation-only') === true;
+if (!navigationOnly) loadFromDatabase();
 
 const pageAllowed = guardPages();
 

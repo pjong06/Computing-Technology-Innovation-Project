@@ -39,7 +39,10 @@ function validateResult(result) {
       (result.scene_status === 'target_detected' && !result.targets.length) ||
       (result.scene_status === 'no_target_detected' && (result.targets.length || result.uncertain)) ||
       (result.scene_status === 'unclear' && !result.uncertain)) throw new Error('AI_RESULT_INVALID');
-  return { targets: [...result.targets], uncertain: result.uncertain, scene_status: result.scene_status, human_review_required: true };
+  const humanReview = result.targets.includes('person') || result.uncertain || result.scene_status === 'unclear';
+  // This classifies the image only. The database separately checks every photo,
+  // assignment, station scope and lease before allowing automatic alert closure.
+  return { targets: [...result.targets], uncertain: result.uncertain, scene_status: result.scene_status, human_review_required: humanReview };
 }
 
 async function reviewImage({ jpeg, apiKey, model = MODEL, fetchImpl = fetch }) {

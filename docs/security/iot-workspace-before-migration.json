@@ -1,0 +1,182 @@
+{
+  "counts": {
+    "alerts": 5,
+    "objects": 654,
+    "evidence": 3,
+    "readings": 1519
+  },
+  "policies": [
+    {
+      "cmd": "SELECT",
+      "qual": "(( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['botanist'::text, 'researcher'::text]))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "sensor_readings",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists and researchers read sensor readings",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(current_app_role() = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "sensor_readings",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers read sensor readings",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['officer'::text, 'botanist'::text, 'researcher'::text])) AND (EXISTS ( SELECT 1\n   FROM alert_camera_evidence e\n  WHERE (e.id = camera_ai_reviews.evidence_id))))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "camera_ai_reviews",
+      "permissive": "PERMISSIVE",
+      "policyname": "camera_ai_staff_read",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['officer'::text, 'botanist'::text, 'researcher'::text])) AND (EXISTS ( SELECT 1\n   FROM camera_ai_reviews r\n  WHERE (r.id = camera_ai_human_reviews.review_id))))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "camera_ai_human_reviews",
+      "permissive": "PERMISSIVE",
+      "policyname": "camera_ai_human_staff_read",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['botanist'::text, 'researcher'::text]))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "alert_camera_evidence",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists_researchers_read_camera_evidence",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(( SELECT current_app_role() AS current_app_role) = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "alert_camera_evidence",
+      "permissive": "PERMISSIVE",
+      "policyname": "camera_evidence_officer_read",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "((bucket_id = 'camera-evidence'::text) AND (( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['botanist'::text, 'researcher'::text])) AND (EXISTS ( SELECT 1\n   FROM alert_camera_evidence e\n  WHERE (e.file_path = objects.name))))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "objects",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists_researchers_read_camera_objects",
+      "schemaname": "storage",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(current_app_role() = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "sensor_stations",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers read stations",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['botanist'::text, 'researcher'::text]))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "sensor_stations",
+      "permissive": "PERMISSIVE",
+      "policyname": "staff_read_sensor_stations",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['botanist'::text, 'researcher'::text]))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "alerts",
+      "permissive": "PERMISSIVE",
+      "policyname": "botanists and researchers read alerts",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "DELETE",
+      "qual": "(( SELECT current_app_role() AS current_app_role) = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "alerts",
+      "permissive": "PERMISSIVE",
+      "policyname": "officer_delete_iot_alerts",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(current_app_role() = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "alerts",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers read alerts",
+      "schemaname": "public",
+      "with_check": null
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "(current_app_role() = 'officer'::text)",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "alerts",
+      "permissive": "PERMISSIVE",
+      "policyname": "officers update alerts",
+      "schemaname": "public",
+      "with_check": "(current_app_role() = 'officer'::text)"
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "(( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['botanist'::text, 'researcher'::text]))",
+      "roles": [
+        "authenticated"
+      ],
+      "tablename": "alerts",
+      "permissive": "PERMISSIVE",
+      "policyname": "staff_handle_alerts",
+      "schemaname": "public",
+      "with_check": "(( SELECT current_app_role() AS current_app_role) = ANY (ARRAY['botanist'::text, 'researcher'::text]))"
+    }
+  ],
+  "functions": [
+    "CREATE OR REPLACE FUNCTION public.camera_ai_review_human(p_review uuid, p_decision text)\n RETURNS uuid\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO ''\nAS $function$\nDECLARE new_id uuid;\nBEGIN\n  IF auth.uid() IS NULL OR public.current_app_role() IS NULL OR\n     public.current_app_role() NOT IN ('officer','botanist','researcher') THEN RAISE EXCEPTION 'STAFF_REQUIRED' USING ERRCODE='42501'; END IF;\n  IF p_decision IS NULL OR p_decision NOT IN ('confirmed','incorrect','uncertain') THEN RAISE EXCEPTION 'DECISION_INVALID'; END IF;\n  IF NOT EXISTS (SELECT 1 FROM public.camera_ai_reviews WHERE id=p_review AND status='completed') THEN RAISE EXCEPTION 'REVIEW_NOT_COMPLETED'; END IF;\n  INSERT INTO public.camera_ai_human_reviews(review_id,reviewer_id,decision) VALUES (p_review,auth.uid(),p_decision) RETURNING id INTO new_id;\n  RETURN new_id;\nEND $function$\n",
+    "CREATE OR REPLACE FUNCTION public.enforce_alert_staff_transition()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO ''\nAS $function$\nBEGIN\n  IF NEW.alert_status IS NOT DISTINCT FROM OLD.alert_status THEN\n    IF NEW.resolution_notes IS DISTINCT FROM OLD.resolution_notes THEN\n      RAISE EXCEPTION 'Notes can only be changed while resolving an alert' USING ERRCODE='23514';\n    END IF;\n    RETURN NEW;\n  END IF;\n  IF (SELECT public.current_app_role()) IS NULL OR\n     (SELECT public.current_app_role()) NOT IN ('officer','botanist','researcher') OR auth.uid() IS NULL THEN\n    RAISE EXCEPTION 'Active staff required' USING ERRCODE='42501';\n  END IF;\n  IF OLD.alert_status='open' AND NEW.alert_status='acknowledged' THEN\n    IF NEW.resolution_notes IS DISTINCT FROM OLD.resolution_notes THEN\n      RAISE EXCEPTION 'Notes require resolution' USING ERRCODE='23514';\n    END IF;\n    NEW.acknowledged_by := auth.uid();\n    NEW.acknowledged_at := now();\n    NEW.resolved_by := OLD.resolved_by;\n    NEW.resolved_at := OLD.resolved_at;\n  ELSIF OLD.alert_status='acknowledged' AND NEW.alert_status='resolved' THEN\n    NEW.acknowledged_by := OLD.acknowledged_by;\n    NEW.acknowledged_at := OLD.acknowledged_at;\n    NEW.resolved_by := auth.uid();\n    NEW.resolved_at := now();\n  ELSE\n    RAISE EXCEPTION 'Invalid alert state transition' USING ERRCODE='23514';\n  END IF;\n  RETURN NEW;\nEND;\n$function$\n"
+  ]
+}
