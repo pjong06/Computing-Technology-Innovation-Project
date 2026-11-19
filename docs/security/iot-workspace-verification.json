@@ -1,0 +1,13 @@
+{
+  "backend_tests": {"passed": 583, "failed": 0, "new_workspace_tests": 9},
+  "isolated_postgres_checks": {"passed": 25, "scope": "Migration syntax, RLS, assignment, optimistic concurrency and completion in an isolated PostgreSQL runtime"},
+  "hosted_migration": "20261119082701_assigned_iot_workspace",
+  "hosted_rollback_checks": ["Officer assigns", "Assigned Botanist reads task and location", "Assigned Botanist resolves with notes", "Other Botanist denied", "Botanist telemetry denied", "Researcher IoT denied"],
+  "hosted_check_method": "Database role/claim simulation, not a real JWT browser acceptance",
+  "data_after": {"alerts": 5, "evidence": 3, "sensor_readings": 1519, "storage_objects": 654, "rollback_fixtures": 0},
+  "browser_fixture_checks": ["No photo request on initial overview or unselected alerts", "Thumbnail only after selecting visible evidence", "Refresh reuses decoded image DOM and does not download it again", "Original only on View photo", "Assignment and completion", "Botanist has no monitoring view", "Mobile has no horizontal overflow", "Failed downloads stop after initial attempt plus three retries", "New signature does not reset failure count", "Rerender does not restart exhausted requests", "Manual Refresh available after retry exhaustion"],
+  "local_http_checks": {"new_dashboard": 200, "original_dashboard": 200, "anonymous_workspace_api": 401},
+  "original_dashboard_files": "frontend/alerts.html and frontend/js/alerts.js unchanged",
+  "deployment": "Local connected server only; branch not pushed or deployed to Render",
+  "real_account_browser_acceptance": "Page entry confirmed by user; alert/photo acceptance pending"
+}

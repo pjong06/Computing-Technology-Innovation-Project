@@ -53,6 +53,9 @@ app.use(require('./middleware/jsonErrorHandler'));
 
 // Mount before the generic IoT router so shared AI reads keep their own staff guard.
 // Importing this app in tests never starts background processing.
+// Legacy monitoring/local-camera endpoints remain Officer-only. Assigned Botanist
+// tasks use /api/iot-workspace, with a scoped user client and RLS on every read.
+app.use('/api/iot', requireAuth, requireRole('officer'));
 const { installCameraAI } = require('../camera-ai/install.cjs');
 const cameraAI = installCameraAI(app, requireAuth, process.env, { startProcessing: false });
 
@@ -63,6 +66,8 @@ app.use('/api/identify', identifyRoutes);
 // Camera router distinguishes shared photo reads from Officer-only operations.
 app.use('/api/iot', requireAuth, require('./routes/iotCamera').createCameraRouter());
 app.use('/api/iot', requireAuth, iotRoutes);
+// Separate workspace; the original /portal/alerts.html remains available.
+app.use('/api/iot-workspace', requireAuth, require('./routes/iotWorkspace').createWorkspaceRouter());
 
 app.use('/api/knowledge', knowledgeRoutes);
 

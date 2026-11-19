@@ -1,0 +1,18 @@
+{
+  "counts": {
+    "alerts": 5,
+    "reviews": 0,
+    "evidence": 3,
+    "readings": 1519,
+    "storage_objects": 654
+  },
+  "settings": {
+    "enabled": true,
+    "daily_limit": 10,
+    "station_code": "steven-sprint2-test-01"
+  },
+  "triggers": [
+    "CREATE TRIGGER biotrack_audit_alerts AFTER INSERT OR DELETE OR UPDATE ON public.alerts FOR EACH ROW EXECUTE FUNCTION record_biotrack_audit()",
+    "CREATE TRIGGER enforce_alert_staff_transition BEFORE UPDATE ON public.alerts FOR EACH ROW EXECUTE FUNCTION enforce_alert_staff_transition()"
+  ]
+}

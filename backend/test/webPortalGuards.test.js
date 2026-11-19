@@ -618,11 +618,12 @@ test('officers see five menu sections, in order; the Review entry carries the re
   assert.deepEqual(view.sections.filter(s => s.active).map(s => s.label), ['Plants']);
 });
 
-test('botanists only see Species, with no tab bar; the editor highlights Species', () => {
+test('botanists see Species and their workspace; the editor highlights Species', () => {
   const { nav } = loadNavigation();
   for (const page of ['species.html', 'editor.html']) {
     const view = plain(nav.navFor(BOTANIST_USER, page, ''));
-    assert.deepEqual(view.sections.map(s => s.label), ['Species'], page);
+    assert.deepEqual(view.sections.map(s => s.label), ['Species','IoT alerts'], page);
+    assert.equal(view.sections[1].href,'iot-workspace.html');
     assert.equal(view.sections[0].active, true, page);
     assert.deepEqual(view.tabs, [], page);
   }
@@ -646,9 +647,11 @@ test('tab bars per section for officers, with the current page marked', () => {
   assert.deepEqual(tabs('reports.html').map(t => [t.label, t.href, t.active]), [['Reports', 'reports.html', true], ['Users', 'users.html', false]]);
   assert.deepEqual(tabs('users.html').map(t => t.active), [false, true]);
   // One-page sections have no tab bar; the editor highlights Species.
-  for (const page of ['species.html', 'alerts.html', 'editor.html']) {
+  for (const page of ['species.html', 'editor.html']) {
     assert.deepEqual(tabs(page), [], page);
   }
+  assert.deepEqual(tabs('alerts.html').map(t=>[t.href,t.active]),[['alerts.html',true],['iot-workspace.html',false]]);
+  assert.deepEqual(tabs('iot-workspace.html').map(t=>[t.href,t.active]),[['alerts.html',false],['iot-workspace.html',true]]);
   const editor = plain(nav.navFor(OFFICER, 'editor.html', ''));
   assert.deepEqual(editor.sections.filter(s => s.active).map(s => s.label), ['Species']);
 });
