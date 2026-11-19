@@ -31,7 +31,7 @@ function makeDetailCard(observation) {
   }
   addPlantAndRecorder(card, observation);
   addInfo(card, 'Notes', observation.notes || 'No notes');
-  addInfo(card, 'What happens next', 'The botanist needs to fix the observation and submit it again. It then comes back to the Observation approval queue.');
+  addInfo(card, 'What happens next', 'The botanist needs to fix this field record and submit it again. It then comes back to Field records to review.');
 
   return card;
 }
@@ -64,15 +64,15 @@ function drawRejected() {
   if (rejected.length === 0) {
     document.getElementById('rejected-area').hidden = true;
     document.getElementById('rejected-empty').hidden = false;
-    document.getElementById('rejected-count').textContent = '0 rejected observations.';
+    document.getElementById('rejected-count').textContent = '0 rejected field records.';
     return;
   }
   document.getElementById('rejected-area').hidden = false;
   document.getElementById('rejected-empty').hidden = true;
 
-  let word = 'observations';
+  let word = 'field records';
   if (rejected.length === 1) {
-    word = 'observation';
+    word = 'field record';
   }
   document.getElementById('rejected-count').textContent =
     rejected.length + ' rejected ' + word + ', waiting for the botanist to fix and resubmit.';
@@ -96,7 +96,7 @@ function drawRejected() {
 
 // Loads the rejected observations from the backend.
 async function loadRejected() {
-  document.getElementById('rejected-count').textContent = 'Loading rejected observations...';
+  document.getElementById('rejected-count').textContent = 'Loading rejected field records...';
   try {
     const result = await api('/officer/reviews/rejected');
     rejected = result.data || [];
@@ -104,7 +104,7 @@ async function loadRejected() {
     rejected = [];
     document.getElementById('rejected-area').hidden = true;
     document.getElementById('rejected-empty').hidden = true;
-    document.getElementById('rejected-count').textContent = 'Could not load rejected observations: ' + error.message;
+    document.getElementById('rejected-count').textContent = 'Could not load rejected field records: ' + error.message;
     return;
   }
   drawRejected();

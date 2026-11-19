@@ -65,7 +65,9 @@ async function doLogin() {
 
   showAuthError('');
   startSession(me, savedName || username);
-  goToHome();
+  // Officers land on the review page when anything is waiting (or the map); botanists on
+  // the species catalogue. Never waits more than a moment for the counts.
+  await goToHome();
 }
 
 // Pressing Enter in the password box also logs in.

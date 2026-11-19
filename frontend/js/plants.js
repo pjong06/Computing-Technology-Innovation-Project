@@ -10,17 +10,9 @@ let totalPages = 0;
 
 const byId = id => document.getElementById(id);
 
+// Waiting for review / Approved / Needs changes / Draft, with its colour class (shared.js).
 function formattedStatus(value) {
-  const status = String(value || 'unknown');
-  const label = {
-    pending: 'Pending',
-    approved: 'Approved',
-    rejected: 'Needs changes'
-  }[status.toLowerCase()] || status.replaceAll('_', ' ');
-  const css = ['pending', 'approved', 'rejected'].includes(status.toLowerCase())
-    ? status.toLowerCase()
-    : '';
-  return { label, css };
+  return reviewStatusDisplay(value);
 }
 
 function displayDate(value) {

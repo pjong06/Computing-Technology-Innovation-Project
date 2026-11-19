@@ -62,6 +62,10 @@ function makeReportCell(column, value) {
   if (column.key === 'plant_tag' && text) {
     text = displayTag(text, text);
   }
+  // On screen only: the review status in words (exports keep the stored value).
+  if (column.key === 'review_status' && text) {
+    text = reviewStatusDisplay(text).label;
+  }
   if (column.key === 'scientific_name' && text) {
     const italic = document.createElement('i');
     italic.className = 'sci';
