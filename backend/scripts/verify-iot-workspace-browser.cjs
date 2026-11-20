@@ -9,7 +9,7 @@ const express=require('express');const path=require('node:path');const assert=re
   const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[],queries=[];
   page.on('pageerror',e=>errors.push(e.message));
   const station='11111111-1111-4111-8111-111111111111',alert='22222222-2222-4222-8222-222222222222';
-  let evidenceCount=1,analysisStatus='pending',hostile=false;const requested=[];
+  let evidenceCount=1,analysisStatus='pending',hostile=false,alertTotal=101;const requested=[];
   await page.route('**/*',async route=>{
    const url=new URL(route.request().url()),p=url.pathname,json=data=>route.fulfill({json:data});requested.push(p);
    if(p.endsWith('/iot-workspace.html')){const r=await route.fetch();return route.fulfill({response:r,body:(await r.text()).replace(/ integrity="[^"]+"/g,'')});}
@@ -25,7 +25,7 @@ const express=require('express');const path=require('node:path');const assert=re
     queries.push(Object.fromEntries(url.searchParams));const n=Number(url.searchParams.get('page'));
     return json({data:Array.from({length:n===1?500:1},(_,i)=>({id:String(i),recorded_at:new Date(Date.now()-3600000+i*1000).toISOString(),temperature_c:28,humidity_percent:80,soil_moisture_pct:40,rain_intensity_pct:0})),has_more:n===1});
    }
-   if(p.endsWith('/alerts'))return json({data:[{id:hostile?'../outside?x=1':alert,station_id:station,alert_message:'Camera movement within range (movement_nearby_cm)',severity:'high',alert_status:'open',triggered_at:new Date().toISOString()}],has_more:false});
+   if(p.endsWith('/alerts'))return json({data:[{id:hostile?'../outside?x=1':alert,station_id:station,alert_message:'Camera movement within range (movement_nearby_cm)',severity:'high',alert_status:'open',triggered_at:new Date().toISOString()}],has_more:Number(url.searchParams.get('page'))<Math.max(1,Math.ceil(alertTotal/50)),total:alertTotal,total_pages:Math.max(1,Math.ceil(alertTotal/50))});
    if(p.endsWith('/location'))return json({data:{station_code:'North station',latitude:null,longitude:null}});
    if(p.endsWith('/evidence'))return json({data:Array.from({length:evidenceCount},(_,i)=>({id:'photo-'+i,sha256:'fixture',captured_at:new Date().toISOString()}))});
    if(p.endsWith('/thumbnail'))return route.fulfill({status:403,body:'Denied'});
@@ -41,7 +41,12 @@ const express=require('express');const path=require('node:path');const assert=re
   await page.locator('[data-action=history]').click();await page.locator('.history-dialog[open]').waitFor();
   await page.locator('[data-history=next]').click();await page.waitForFunction(()=>document.querySelector('.history-pages span')?.textContent.includes('Page 2'));
   await page.keyboard.press('Escape');
-  await page.locator('[data-action=page][data-value=alerts]').click();await page.locator('.alert-row').click();
+  await page.locator('[data-action=page][data-value=alerts]').click();
+  await page.waitForFunction(()=>document.querySelector('.pagination span')?.textContent==='Page 1 / 3');
+  await page.locator('[data-action=next-page]').click();await page.waitForFunction(()=>document.querySelector('.pagination span')?.textContent==='Page 2 / 3');
+  alertTotal=1;await page.locator('[data-action=refresh]').click();await page.waitForFunction(()=>document.querySelector('.pagination span')?.textContent==='Page 1 / 1');
+  assert.equal(await page.locator('[data-action=next-page]').isDisabled(),true);
+  await page.locator('.alert-row').click();
   await page.waitForFunction(()=>document.querySelector('.ai-result')?.textContent.includes('pending'));
   evidenceCount=2;analysisStatus='completed';
   await page.locator('[data-action=refresh]').click();
