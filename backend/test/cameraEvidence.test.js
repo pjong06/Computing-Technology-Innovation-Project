@@ -44,7 +44,9 @@ test('durable alert linkage, local bytes, duplicate and cooldown survive service
   const restarted = createCameraEvidenceService({ enabled: true, directory, capture: async () => jpeg, now: () => clock });
   assert.equal((await restarted.trigger(event())).outcome, 'duplicate');
   assert.equal((await restarted.trigger(event(2))).outcome, 'cooldown');
-  clock += 30000;
+  clock += 119999;
+  assert.equal((await restarted.trigger(event(2))).outcome, 'cooldown');
+  clock += 1;
   assert.equal((await restarted.trigger(event(2))).outcome, 'captured');
   assert.equal((await restarted.list(event().alert.id)).length, 2);
   assert.equal(await restarted.image(randomUUID(), result.evidence.id), null);
@@ -67,7 +69,7 @@ test('invalid capture produces no evidence; capacity prevents unbounded retentio
   assert.deepEqual(await invalid.service.list(event().alert.id), []);
   let clock = 100000;
   const bounded = await fixture(t, { maxRecords: 1, now: () => clock });
-  await bounded.service.trigger(event()); clock += 31000;
+  await bounded.service.trigger(event()); clock += 121000;
   assert.equal((await bounded.service.trigger(event(2))).outcome, 'capacity_reached');
 });
 test('cloud failure retains local capture and stable ID for retry; duplicate retry skips upload', async t => {

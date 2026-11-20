@@ -125,6 +125,7 @@ function createMqttHarness(options = {}) {
     connect: () => client,
     ruleClient: options.ruleClient ?? null,
     persistTelemetry: options.persistTelemetry ?? null,
+    getCameraService: options.getCameraService,
   });
 
   const handler = client.listeners('message')[0];
@@ -298,4 +299,102 @@ test('MQTT continues processing after a failed persistence request', async () =>
       [2]
     );
   });
+});
+
+test('cloud camera requires a new persisted proximity alert', async () => {
+  const previousEnabled = process.env.CAMERA_ENABLED;
+  const previousStorage = process.env.CAMERA_STORAGE_ENABLED;
+  const captures = [];
+
+  try {
+    process.env.CAMERA_ENABLED = 'true';
+    process.env.CAMERA_STORAGE_ENABLED = 'true';
+
+    const proximityRule = makeRule(
+      'proximity-rule',
+      'movement_nearby_cm',
+      50,
+      { operator: '<=' }
+    );
+
+    await runScenario({
+      ruleClient: fakeRuleDatabase([proximityRule]),
+      persistTelemetry: async (payload) => ({
+        reading_id: `reading-${payload.sequence}`,
+        movement_alert_id:
+          payload.sequence === 2 ? null : 'persisted-movement-alert',
+      }),
+      getCameraService: () => ({
+        trigger: async (input) => {
+          captures.push(input);
+          return { outcome: 'captured' };
+        },
+      }),
+    }, async ({ send }) => {
+      const movement = {
+        motion_detected: true,
+        distance_valid: true,
+        distance_cm: 10,
+      };
+
+      // A new database alert permits capture.
+      await send(sampleTelemetry({
+        ...movement,
+        sequence: 1,
+      }));
+
+      assert.deepEqual(
+        captures.map((item) => item.reading.sequence),
+        [1]
+      );
+      assert.equal(captures[0].databaseReadingId, 'reading-1');
+
+      // Database cooldown suppressed this alert.
+      await send(sampleTelemetry({
+        ...movement,
+        sequence: 2,
+      }));
+
+      assert.deepEqual(
+        captures.map((item) => item.reading.sequence),
+        [1]
+      );
+
+      // A later reading with a new alert permits capture.
+      await send(sampleTelemetry({
+        ...movement,
+        sequence: 3,
+      }));
+
+      assert.deepEqual(
+        captures.map((item) => item.reading.sequence),
+        [1, 3]
+      );
+
+      // Local-only camera mode remains supported.
+      process.env.CAMERA_STORAGE_ENABLED = 'false';
+
+      await send(sampleTelemetry({
+        ...movement,
+        sequence: 4,
+      }));
+
+      assert.deepEqual(
+        captures.map((item) => item.reading.sequence),
+        [1, 3, 4]
+      );
+    });
+  } finally {
+    if (previousEnabled === undefined) {
+      delete process.env.CAMERA_ENABLED;
+    } else {
+      process.env.CAMERA_ENABLED = previousEnabled;
+    }
+
+    if (previousStorage === undefined) {
+      delete process.env.CAMERA_STORAGE_ENABLED;
+    } else {
+      process.env.CAMERA_STORAGE_ENABLED = previousStorage;
+    }
+  }
 });

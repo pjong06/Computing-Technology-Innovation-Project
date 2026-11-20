@@ -16,8 +16,8 @@ test('cooldown migration adds configurable rule durations', () => {
   assert.match(sql, /cooldown_seconds BETWEEN 0 AND 86400/i);
 });
 
-test('movement alerts have a 10-second cooldown', () => {
-  assert.match(sql, /SET cooldown_seconds = 10/i);
+test('movement alerts have a 120-second cooldown', () => {
+  assert.match(sql, /SET cooldown_seconds = 120/i);
   assert.match(sql, /'movement_nearby_cm'/);
   assert.match(sql, /'movement_detected'/);
 });
