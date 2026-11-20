@@ -118,7 +118,7 @@ void (async()=>{
     state.alerts=r.data;state.hasMore=r.has_more;
     if(state.selected&&!current()){detailGeneration++;state.selected=null;state.loading=false;state.evidence=[];state.evidenceId=null;state.location=null;photos.clear();}
   }
-  async function counts(){const r=await api('/counts');if(officer())state.unresolved=Number(r.data.unresolved);else state.taskCount=Number(r.data.assigned);const node=root.querySelector(officer()?'#unresolved-count':'#task-count');if(node)node.textContent=officer()?state.unresolved:state.taskCount;}
+  async function counts(){const r=await api('/counts');const count=validCount(officer()?r.data.unresolved:r.data.assigned,'IoT alert');if(officer())state.unresolved=count;else state.taskCount=count;updateIotAlertMenuCount(count);const node=root.querySelector(officer()?'#unresolved-count':'#task-count');if(node)node.textContent=officer()?state.unresolved:state.taskCount;}
   async function refresh({automatic=false}={}){
     state.error='';
     try{

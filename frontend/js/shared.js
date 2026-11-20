@@ -1020,6 +1020,7 @@ const NAV_SECTIONS = [
   },
   {
     label: 'IoT alerts',
+    countId: 'iot-alert-menu-count',
     pages: [
       { file: 'alerts.html', label: 'IoT alerts' },
       { file: 'iot-workspace.html', label: 'Workspace' }
@@ -1160,6 +1161,34 @@ function makeCountBadge(id) {
   return badge;
 }
 
+let iotAlertMenuTimer = null;
+
+function updateIotAlertMenuCount(count) {
+  setCountBadge('iot-alert-menu-count', validCount(count, 'IoT alert'),
+    isBotanist(getCurrentUser() || {}) ? 'assigned task' : 'unresolved alert');
+}
+
+async function refreshIotAlertMenuCount() {
+  const user = getCurrentUser();
+  if (!user || !['Conservation Officer', 'Botanist'].includes(user.role)) return;
+  const result = await api('/iot-workspace/counts');
+  updateIotAlertMenuCount(isBotanist(user) ? result.data?.assigned : result.data?.unresolved);
+}
+
+function startIotAlertMenuCount() {
+  if (iotAlertMenuTimer !== null) clearInterval(iotAlertMenuTimer);
+  // The workspace already refreshes this same count with its summary cards.
+  if (thisPageName() === 'iot-workspace.html') return;
+  const refresh = () => refreshIotAlertMenuCount().catch(() => {
+    const badge = document.getElementById('iot-alert-menu-count');
+    if (badge) badge.hidden = true;
+  });
+  void refresh();
+  iotAlertMenuTimer = setInterval(() => {
+    if (!document.hidden) void refresh();
+  }, 30000);
+}
+
 // Builds the left menu inside <nav id="menu"> and highlights the section of this page
 // (activeFile). Pages in a section with more than one page also get a tab bar at the top
 // of <main>.
@@ -1209,6 +1238,7 @@ function drawMenu(activeFile) {
   }
 
   drawSectionTabs(view.tabs);
+  startIotAlertMenuCount();
 
   const who = document.createElement('div');
   who.className = 'who';
