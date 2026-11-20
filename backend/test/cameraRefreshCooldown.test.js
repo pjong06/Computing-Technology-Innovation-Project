@@ -126,3 +126,89 @@ test('cooldown refresh updates the alert display', async () => {
 
   assert.equal(app.getRenders(), 2);
 });
+
+function loadCameraStateHelpers(now = 100000) {
+  const context = {
+    Date: { now: () => now },
+  };
+
+  vm.runInNewContext(
+    extractFunction('cameraNeedsRefresh'),
+    context
+  );
+  vm.runInNewContext(
+    extractFunction('cameraImageFailureState'),
+    context
+  );
+
+  return context;
+}
+
+test('expired signed links wait for manual refresh', () => {
+  const app = loadCameraStateHelpers();
+
+  assert.equal(
+    app.cameraNeedsRefresh({
+      status: 'ready',
+      url: 'https://example.invalid/expired',
+      expiresAt: 99000,
+    }),
+    false
+  );
+
+  assert.equal(
+    app.cameraNeedsRefresh({
+      status: 'ready',
+      url: null,
+      expiresAt: 0,
+    }),
+    false
+  );
+});
+
+test('image load errors require a manual refresh', () => {
+  const app = loadCameraStateHelpers();
+  const failed = app.cameraImageFailureState({
+    status: 'ready',
+    url: 'https://example.invalid/photo',
+    expiresAt: 160000,
+    retryCount: 0,
+  });
+
+  assert.equal(failed.status, 'error');
+  assert.equal(failed.manualRefreshRequired, true);
+  assert.equal(failed.url, null);
+  assert.match(failed.message, /Refresh photo/);
+  assert.equal(app.cameraNeedsRefresh(failed), false);
+});
+
+test('initial transient errors keep bounded automatic retries', () => {
+  const app = loadCameraStateHelpers();
+
+  assert.equal(
+    app.cameraNeedsRefresh({
+      status: 'error',
+      retryCount: 2,
+      nextRetryAt: 90000,
+      manualRefreshRequired: false,
+    }),
+    true
+  );
+
+  assert.equal(
+    app.cameraNeedsRefresh({
+      status: 'error',
+      retryCount: 3,
+      nextRetryAt: 90000,
+      manualRefreshRequired: false,
+    }),
+    false
+  );
+});
+
+test('viewing an expired photo never requests a new link automatically', () => {
+  assert.doesNotMatch(
+    extractFunction('openFullPhoto'),
+    /fetchCameraEvidence/
+  );
+});

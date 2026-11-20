@@ -1804,6 +1804,9 @@ async function fetchCameraEvidence(
       alert.id
     );
 
+  const manualRequest =
+    force === true;
+
 if (current.status === 'loading') {
   return current;
 }
@@ -1855,6 +1858,8 @@ if (current.status === 'loading') {
     ) + 1;
 
   const emptyState = {
+    ...previous,
+
     status:
       'empty',
 
@@ -1878,6 +1883,9 @@ if (current.status === 'loading') {
     nextRetryAt:
       Date.now() +
       5000,
+
+    manualRefreshRequired:
+      manualRequest,
   };
 
   setCameraState(
@@ -1915,6 +1923,8 @@ if (current.status === 'loading') {
       );
 
     const readyState = {
+      ...current,
+
       status:
         'ready',
 
@@ -1943,6 +1953,9 @@ if (current.status === 'loading') {
         0,
       nextRetryAt:
         0,
+
+      manualRefreshRequired:
+        false,
     };
 
     setCameraState(
@@ -1988,6 +2001,9 @@ if (current.status === 'loading') {
     nextRetryAt:
       Date.now() +
       5000,
+
+    manualRefreshRequired:
+      manualRequest,
   };
 
     setCameraState(
@@ -2002,6 +2018,12 @@ if (current.status === 'loading') {
 function cameraNeedsRefresh(
   state
 ) {
+  if (
+    state.manualRefreshRequired
+  ) {
+    return false;
+  }
+
   if (
     state.status ===
     'idle'
@@ -2027,15 +2049,43 @@ function cameraNeedsRefresh(
     state.status ===
       'ready'
   ) {
-    return (
-      !state.url ||
-      Date.now() >=
-        state.expiresAt -
-          3000
-    );
+    return false;
   }
 
   return false;
+}
+
+function cameraImageFailureState(
+  state
+) {
+  return {
+    ...state,
+
+    status:
+      'error',
+
+    url:
+      null,
+
+    expiresAt:
+      0,
+
+    message:
+      'The photo link expired or could not be loaded. Use Refresh photo to request a new link.',
+
+    retryCount:
+      Math.max(
+        3,
+        state.retryCount ||
+          0
+      ),
+
+    nextRetryAt:
+      0,
+
+    manualRefreshRequired:
+      true,
+  };
 }
 
 function queueCameraLoad(
@@ -2103,6 +2153,9 @@ function getCameraState(
 
       nextRetryAt:
         0,
+
+      manualRefreshRequired:
+        false,
     }
   );
 }
@@ -2361,7 +2414,7 @@ function showPhotoPopup(
 async function openFullPhoto(
   alert
 ) {
-  let state =
+  const state =
     getCameraState(
       alert.id
     );
@@ -2374,22 +2427,8 @@ async function openFullPhoto(
       state.expiresAt -
         3000
   ) {
-    state =
-      await fetchCameraEvidence(
-        alert,
-        true
-      );
-
-    renderAlerts();
-  }
-
-  if (
-    state.status !==
-      'ready' ||
-    !state.url
-  ) {
     notify(
-      'No camera photo is available for this alert.'
+      'The photo link has expired or is unavailable. Use Refresh photo to request a new link.'
     );
 
     return;
@@ -2811,18 +2850,9 @@ function renderCameraAlertCard( alert) {
       () => {
         setCameraState(
           alert.id,
-          {
-            ...state,
-
-            status:
-              'idle',
-
-            url:
-              null,
-
-            expiresAt:
-              0,
-          }
+          cameraImageFailureState(
+            state
+          )
         );
 
         renderAlerts();
@@ -2924,6 +2954,16 @@ function renderCameraAlertCard( alert) {
       text.textContent =
         state.message ||
         'Camera evidence unavailable.';
+    } else if (
+      state.status ===
+        'ready' &&
+      state.url &&
+      Date.now() >=
+        state.expiresAt -
+          3000
+    ) {
+      text.textContent =
+        'Photo link expired. Use Refresh photo to request a new link.';
     } else {
       text.textContent =
         'Checking camera evidence...';
@@ -3366,7 +3406,10 @@ if (
   if (
     state.status ===
     'ready' &&
-    state.url
+    state.url &&
+    Date.now() <
+      state.expiresAt -
+        3000
   ) {
     const fullPhoto =
       document.createElement(
