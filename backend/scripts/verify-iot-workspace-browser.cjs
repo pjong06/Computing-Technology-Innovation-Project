@@ -76,9 +76,14 @@ const express=require('express');const path=require('node:path');const assert=re
   await page.locator('[data-action=status][data-value=resolved]').click();await page.locator('.alert-row').click();
   await page.waitForFunction(()=>document.querySelector('.ai-detection')?.textContent==='Animal detected');
   assert.equal(await page.locator('label[for=resolution-filter]').innerText(),'Resolved by');
-  assert.match(await page.locator('.review-title').innerText(),/AI resolved/i);
+  assert.deepEqual(await page.locator('.review-title .badge').allTextContents(),['Resolved by AI','High']);
+  assert.deepEqual(await page.locator('.alert-badges .badge').allTextContents(),['Resolved by AI','High']);
   assert.equal(await page.locator('.resolved-by').innerText(),'Resolved by: AI');
   assert.equal(await page.locator('.saved-note p').innerText(),'No person detected in all reviewed photos.');
+  alertFields={...alertFields,resolution_source:'staff'};await page.locator('[data-action=refresh]').click();
+  await page.waitForFunction(()=>document.querySelector('.review-title .badge')?.textContent==='Resolved');
+  assert.deepEqual(await page.locator('.review-title .badge').allTextContents(),['Resolved','High']);
+  assert.deepEqual(await page.locator('.alert-badges .badge').allTextContents(),['Resolved','High']);
   analysisOverride={};alertFields={};await page.locator('[data-action=status][data-value=open]').click();await page.locator('.alert-row').click();
   await page.waitForFunction(()=>document.querySelector('#assignee'));
   assert.equal(await page.locator('#assignee option').last().textContent(),'<img src=x onerror=window.injected=true>');
