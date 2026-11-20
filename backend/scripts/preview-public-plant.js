@@ -12,6 +12,7 @@ for (const name of ['SUPABASE_URL', 'SUPABASE_KEY']) {
 
 const { publicClient } = require('../src/config/supabase');
 const app = express();
+app.disable('x-powered-by');
 const port = Number(process.argv[2] || 3040);
 app.use(publicPlants.createPublicPlantsRouter({ client: publicClient }));
 app.listen(port, '127.0.0.1').on('listening', () => {
