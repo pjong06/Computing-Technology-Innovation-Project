@@ -18,7 +18,7 @@ async function fixture(t,role='officer',options={}){
       return {data:[]};
     };
     const q={};for(const name of ['select','eq','in','order','range','limit','gte','lte'])q[name]=(...args)=>{conditions.push([name,...args]);if(name==='select')columns=args[0];return q;};
-    q.maybeSingle=async()=>result();q.then=(yes,no)=>Promise.resolve({...result(),data:table==='alerts'?[]:[],count:2}).then(yes,no);
+    q.maybeSingle=async()=>result();q.then=(yes,no)=>Promise.resolve({...result(),data:table==='alerts'?(options.rows||[]):[],count:options.count===undefined?2:options.count}).then(yes,no);
     queries.push({table,conditions,get columns(){return columns;}});return q;
   },async rpc(name,args){calls.push({name,args});return options.error?{error:{code:options.error}}:{data:{id:ID}};},storage:{from(bucket){assert.equal(bucket,'camera-evidence');return {async createSignedUrl(path,ttl){calls.push({path,ttl});return {data:{signedUrl:'https://project.supabase.co/storage/v1/object/sign/camera-evidence/station/photo.jpg?token=test'}};}};}}};
   const app=express();app.disable('x-powered-by');app.use(express.json());
@@ -106,4 +106,19 @@ test('plain alert labels preserve high/low meaning and support existing rule nam
  const title=require('../../frontend/iot-workspace/alert-labels');
  for(const [raw,want] of [['Camera movement within range (movement_nearby_cm)','Movement detected near station'],['IoT high temperature (temperature_c)','High temperature'],['Steven Sprint2 TEST temperature >35 (temperature_c)','High temperature'],['Low temperature (temperature_c)','Low temperature'],['IoT low soil moisture (soil_moisture_pct)','Low soil moisture'],['IoT heavy rain (rain_intensity_pct)','Heavy rain detected'],['Humidity rule (humidity_percent)','Humidity alert']])assert.equal(title(raw),want);
  assert.equal(title('Unknown alarm'),'Unknown alarm');
+});
+
+
+test('alert pagination counts the filtered RLS-visible dataset and returns exact page totals',async t=>{
+ for(const [count,page,pages,more]of [[0,1,1,false],[50,1,1,false],[51,1,2,true],[100,2,2,false],[101,2,3,true]]){
+  const f=await fixture(t,'botanist',{count});const r=await f.call('/alerts?status=resolved&station='+ID+'&resolution=ai&page='+page);
+  assert.equal(r.status,200);const body=JSON.parse(r.body);assert.equal(body.total,count);assert.equal(body.total_pages,pages);assert.equal(body.has_more,more);
+  const conditions=f.queries[0].conditions;
+  assert(conditions.some(c=>c[0]==='select'&&c[2]?.count==='exact'));
+  for(const [key,value]of [['assigned_to',OTHER],['station_id',ID],['alert_status','resolved'],['resolution_source','ai']])assert(conditions.some(c=>c[0]==='eq'&&c[1]===key&&c[2]===value));
+  assert.deepEqual(conditions.find(c=>c[0]==='range'),['range',(page-1)*50,page*50-1]);
+ }
+});
+test('alert pagination never treats unavailable counts as an empty successful list',async t=>{
+ const f=await fixture(t,'officer',{count:null});assert.equal((await f.call('/alerts')).status,503);
 });

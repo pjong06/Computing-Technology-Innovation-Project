@@ -88,12 +88,15 @@ function createWorkspaceRouter({ readPhoto = downloadPhoto, resize = async bytes
     const resolution=req.query.resolution;
     if(!['open','acknowledged','resolved'].includes(status)||!Number.isInteger(page)||page<1||page>1000||(station!==undefined&&(typeof station!=='string'||!UUID.test(station)))||(resolution!==undefined&&!['ai','staff'].includes(resolution)))return res.sendStatus(400);
     try {
-      let q=req.supabase.from('alerts').select(ALERT_COLUMNS).eq('alert_status',status);
+      let q=req.supabase.from('alerts').select(ALERT_COLUMNS,{count:'exact'}).eq('alert_status',status);
       if(req.profile.role==='botanist')q=q.eq('assigned_to',req.user.id);
       if(station)q=q.eq('station_id',station);
       if(resolution)q=q.eq('resolution_source',resolution);
-      const r=await q.order('triggered_at',{ascending:false}).order('id',{ascending:false}).range((page-1)*50,page*50);
-      return r.error?fail(res,r.error):res.json({data:(r.data||[]).slice(0,50),has_more:(r.data||[]).length>50,page});
+      const r=await q.order('triggered_at',{ascending:false}).order('id',{ascending:false}).range((page-1)*50,page*50-1);
+      if(r.error)return fail(res,r.error);
+      if(!Number.isSafeInteger(r.count)||r.count<0)return fail(res);
+      const totalPages=Math.max(1,Math.ceil(r.count/50));
+      return res.json({data:r.data||[],has_more:page<totalPages,page,total:r.count,total_pages:totalPages});
     }catch{return fail(res);}
   });
   async function visibleTask(req) {
