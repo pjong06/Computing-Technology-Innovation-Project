@@ -15,6 +15,7 @@ import {
   filterAndSortPlants,
   listSummary,
   mergePlants,
+  navigablePlantRows,
   mostUrgent,
   plantKey,
   needsActionCount,
@@ -216,6 +217,62 @@ test('no two rows share a key, and every key is a non-empty "plant:" string', ()
   for (const key of keys) assert.match(key, /^plant:\S+$/);
   assert.equal(plantKey({ serverId: ' ', localId: '', tagCode: null }), null);
   assert.equal(plantKey({ tagCode: 'niah-plt-00001' }), 'plant:NIAH-PLT-00001');
+});
+
+test('Find plant: the same plant from the phone and the saved server positions gives one row', () => {
+  const local = [
+    // Own plant on the phone, with its own GPS fix.
+    { plant: 'phone-a', identity: { serverId: 'S1', localId: 'L1', tagCode: 'NIAH-PLT-00001' }, coordinates: { latitude: 3.81, longitude: 113.78 } },
+    // Opened plant on the phone without coordinates: takes them from the server entry (matched by tag, any case).
+    { plant: 'phone-b', identity: { serverId: null, localId: 'L2', tagCode: 'niah-plt-00002' }, coordinates: null },
+    // No identity at all: left out.
+    { plant: 'phone-c', identity: { serverId: ' ', localId: '', tagCode: null }, coordinates: { latitude: 3.8, longitude: 113.7 } },
+    // No coordinates anywhere: left out.
+    { plant: 'phone-d', identity: { localId: 'L4' }, coordinates: null },
+    // The same plant twice on the phone: kept once.
+    { plant: 'phone-a-again', identity: { serverId: 'S1', localId: 'L1b' }, coordinates: { latitude: 3.81, longitude: 113.78 } },
+  ];
+  const server = [
+    { plant: 'saved-a', identity: { serverId: 'S1', tagCode: 'NIAH-PLT-00001' }, coordinates: { latitude: 3.9, longitude: 113.9 } },
+    { plant: 'saved-b', identity: { serverId: 'S2', tagCode: 'NIAH-PLT-00002' }, coordinates: { latitude: 3.82, longitude: 113.79 } },
+    { plant: 'saved-e', identity: { serverId: 'S5', tagCode: null }, coordinates: { latitude: 3.83, longitude: 113.77 } },
+    { plant: 'saved-e-again', identity: { serverId: 'S5', tagCode: null }, coordinates: { latitude: 3.83, longitude: 113.77 } },
+    { plant: 'saved-bad', identity: { serverId: 'S6' }, coordinates: { latitude: 95, longitude: 113 } },
+  ];
+  const rows = navigablePlantRows(local, server);
+  assert.deepEqual(rows.map((row) => [row.source, row.plant]), [
+    ['local', 'phone-a'],
+    ['local', 'phone-b'],
+    ['server', 'saved-e'],
+  ]);
+  // The phone's copy wins and keeps its own coordinates; a phone copy without them takes the server's.
+  assert.deepEqual([rows[0].latitude, rows[0].longitude], [3.81, 113.78]);
+  assert.deepEqual([rows[1].latitude, rows[1].longitude], [3.82, 113.79]);
+  // No two rows share a key; every key is "plant:" + id or tag.
+  const keys = rows.map((row) => row.key);
+  assert.equal(new Set(keys).size, keys.length);
+  for (const key of keys) assert.match(key, /^plant:\S+$/);
+
+  // Many overlapping entries: still no repeated key.
+  const manyLocal = Array.from({ length: 40 }, (_, i) => ({
+    plant: i,
+    identity: { serverId: i % 4 === 0 ? 'S' + (i % 15) : null, localId: 'L' + (i % 30), tagCode: i % 3 ? 'NIAH-PLT-' + String(i % 9).padStart(5, '0') : null },
+    coordinates: i % 5 ? { latitude: 3.8, longitude: 113.78 } : null,
+  }));
+  const manyServer = Array.from({ length: 40 }, (_, i) => ({
+    plant: 100 + i,
+    identity: { serverId: 'S' + (i % 20), tagCode: 'niah-plt-' + String(i % 11).padStart(5, '0') },
+    coordinates: { latitude: 3.81, longitude: 113.79 },
+  }));
+  const manyKeys = navigablePlantRows(manyLocal, manyServer).map((row) => row.key);
+  assert.equal(new Set(manyKeys).size, manyKeys.length);
+});
+
+test('Find plant screen: rows come from navigablePlantRows and are keyed by row.key', () => {
+  const screen = read('../../app/navigate-plant.tsx');
+  assert.ok(screen.includes('navigablePlantRows<NavigableInfo, NavigableInfo>('));
+  assert.ok(screen.includes('key={item.key}'));
+  assert.ok(!screen.includes('key={item.plant.id}'));
 });
 
 test('Plants screen: rows come from mergePlants and the list is keyed by them', () => {

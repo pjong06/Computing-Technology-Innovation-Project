@@ -229,3 +229,64 @@ export function mergePlants<L, R>(
   }
   return merged;
 }
+
+// ---- "Find plant": one row per plant with coordinates ----
+
+export interface PlantCoordinates {
+  latitude: number;
+  longitude: number;
+}
+
+const validCoordinates = (value: PlantCoordinates | null | undefined): value is PlantCoordinates =>
+  Boolean(value) &&
+  Number.isFinite(value!.latitude) && Number.isFinite(value!.longitude) &&
+  Math.abs(value!.latitude) <= 90 && Math.abs(value!.longitude) <= 180;
+
+// The plants "Find plant" can navigate to: the plants on the phone and the server positions
+// saved on the phone (savedPlantPositions.ts), merged with mergePlants (one row per plant by
+// server id, then phone id, then tag; the phone's copy wins, it has more data). A phone copy
+// without coordinates takes them from the server entry for the same plant. Plants with no
+// identity or no coordinates are left out. Each row's key ("plant:" + id or tag) is unique.
+export function navigablePlantRows<L, R>(
+  local: { plant: L; identity: PlantIdentity; coordinates: PlantCoordinates | null }[],
+  server: { plant: R; identity: PlantIdentity; coordinates: PlantCoordinates | null }[]
+): (({ key: string; source: 'local'; plant: L } | { key: string; source: 'server'; plant: R }) & PlantCoordinates)[] {
+  // Server coordinates by every identity they can be matched on.
+  const serverCoordinates = new Map<string, PlantCoordinates>();
+  for (const entry of server) {
+    if (!entry?.identity || !validCoordinates(entry.coordinates)) continue;
+    const serverId = clean(entry.identity.serverId);
+    const localId = clean(entry.identity.localId);
+    const tag = clean(entry.identity.tagCode)?.toUpperCase() ?? null;
+    if (serverId !== null && !serverCoordinates.has(`s:${serverId}`)) serverCoordinates.set(`s:${serverId}`, entry.coordinates);
+    if (localId !== null && !serverCoordinates.has(`l:${localId}`)) serverCoordinates.set(`l:${localId}`, entry.coordinates);
+    if (tag !== null && !serverCoordinates.has(`t:${tag}`)) serverCoordinates.set(`t:${tag}`, entry.coordinates);
+  }
+  const fromServer = (identity: PlantIdentity): PlantCoordinates | null => {
+    const serverId = clean(identity.serverId);
+    const localId = clean(identity.localId);
+    const tag = clean(identity.tagCode)?.toUpperCase() ?? null;
+    return (serverId !== null ? serverCoordinates.get(`s:${serverId}`) : undefined) ??
+      (localId !== null ? serverCoordinates.get(`l:${localId}`) : undefined) ??
+      (tag !== null ? serverCoordinates.get(`t:${tag}`) : undefined) ??
+      null;
+  };
+
+  const merged = mergePlants(
+    local.map((entry) => ({ plant: entry, identity: entry?.identity })),
+    server.map((entry) => ({ plant: entry, identity: entry?.identity }))
+  );
+  const rows: (({ key: string; source: 'local'; plant: L } | { key: string; source: 'server'; plant: R }) & PlantCoordinates)[] = [];
+  for (const row of merged) {
+    const own = validCoordinates(row.plant.coordinates) ? row.plant.coordinates : null;
+    const coordinates = own ?? (row.source === 'local' ? fromServer(row.plant.identity) : null);
+    if (!coordinates) continue;
+    const { latitude, longitude } = coordinates;
+    rows.push(
+      row.source === 'local'
+        ? { key: row.key, source: 'local', plant: row.plant.plant as L, latitude, longitude }
+        : { key: row.key, source: 'server', plant: row.plant.plant as R, latitude, longitude }
+    );
+  }
+  return rows;
+}

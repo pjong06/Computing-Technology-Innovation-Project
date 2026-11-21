@@ -31,6 +31,7 @@ import {
 } from '../src/utils/formatCoordinates';
 import { isPhysicalTag } from '../src/utils/myTags';
 import { navigableCoordinates } from '../src/utils/plantDetails';
+import { navigablePlantRows } from '../src/utils/recordsList';
 import TransectMapView, {
   type MapTargetPoint,
 } from '../src/components/TransectMapView';
@@ -48,6 +49,8 @@ const ARRIVAL_THRESHOLD_M = 10;
 type NavigableInfo = Pick<PlantRecord, 'id' | 'serverId' | 'scientificName' | 'commonName' | 'tagCode' | 'locationName'>;
 
 interface NavigablePlant {
+  // Unique, stable row key: "plant:" + server id, else phone id, else tag (recordsList.ts).
+  key: string;
   plant: NavigableInfo;
   latitude: number;
   longitude: number;
@@ -180,55 +183,43 @@ export default function NavigatePlantScreen() {
   }, [records, selectedPlantId]);
 
   const navigablePlants = useMemo<NavigablePlant[]>(() => {
-    const list: NavigablePlant[] = [];
-    for (const plant of records) {
-      const coords = resolvePlantCoordinates(plant, routes);
-      if (!coords) continue;
-
-      const dist = currentPoint
-        ? haversineMeters(
-            currentPoint.latitude,
-            currentPoint.longitude,
-            coords.latitude,
-            coords.longitude
-          )
-        : null;
-
-      list.push({
+    // One row per plant: the plants on the phone and the server positions saved on the phone
+    // can be the same plant, so they are merged (phone copy first; it takes the server's
+    // coordinates when it has none). Plants without an identity or coordinates are left out.
+    const rows = navigablePlantRows<NavigableInfo, NavigableInfo>(
+      records.map((plant) => ({
         plant,
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-        distanceMeters: dist,
-      });
-    }
+        identity: { serverId: plant.serverId, localId: plant.id, tagCode: plant.tagCode },
+        coordinates: resolvePlantCoordinates(plant, routes),
+      })),
+      savedPositions.map((saved) => {
+        const species = saved.speciesId
+          ? speciesList.find((item) => item.id === saved.speciesId)
+          : undefined;
+        return {
+          plant: {
+            id: saved.serverId,
+            serverId: saved.serverId,
+            scientificName: species?.scientific_name ?? '',
+            commonName: species?.common_name ?? '',
+            tagCode: saved.tagCode,
+            locationName: saved.locationNote ?? '',
+          },
+          identity: { serverId: saved.serverId, tagCode: saved.tagCode },
+          coordinates: { latitude: saved.latitude, longitude: saved.longitude },
+        };
+      })
+    );
 
-    // Listed plants not on the phone as records (opened ones already are, with coordinates).
-    for (const saved of savedPositions) {
-      const onPhone = records.some(
-        (record) =>
-          record.serverId === saved.serverId ||
-          (saved.tagCode !== null && record.tagCode === saved.tagCode)
-      );
-      if (onPhone) continue;
-      const species = saved.speciesId
-        ? speciesList.find((item) => item.id === saved.speciesId)
-        : undefined;
-      list.push({
-        plant: {
-          id: saved.serverId,
-          serverId: saved.serverId,
-          scientificName: species?.scientific_name ?? '',
-          commonName: species?.common_name ?? '',
-          tagCode: saved.tagCode,
-          locationName: saved.locationNote ?? '',
-        },
-        latitude: saved.latitude,
-        longitude: saved.longitude,
-        distanceMeters: currentPoint
-          ? haversineMeters(currentPoint.latitude, currentPoint.longitude, saved.latitude, saved.longitude)
-          : null,
-      });
-    }
+    const list: NavigablePlant[] = rows.map((row) => ({
+      key: row.key,
+      plant: row.plant,
+      latitude: row.latitude,
+      longitude: row.longitude,
+      distanceMeters: currentPoint
+        ? haversineMeters(currentPoint.latitude, currentPoint.longitude, row.latitude, row.longitude)
+        : null,
+    }));
 
     if (currentPoint) {
       list.sort(
@@ -555,7 +546,7 @@ export default function NavigatePlantScreen() {
               <View style={styles.plantList}>
                 {filteredPlants.map((item) => (
                   <TouchableOpacity
-                    key={item.plant.id}
+                    key={item.key}
                     style={styles.plantOptionRow}
                     onPress={() => {
                       setSelectedPlantId(item.plant.id);
@@ -621,19 +612,21 @@ export default function NavigatePlantScreen() {
                     here={currentPoint}
                     headingDegrees={headingDegrees}
                     target={{
-                      key: selectedTarget.plant.id,
+                      key: selectedTarget.key,
                       latitude: selectedTarget.latitude,
                       longitude: selectedTarget.longitude,
                       title: selectedTarget.plant.scientificName || 'Target plant',
                     }}
                     others={navigablePlants.map((item) => ({
-                      key: item.plant.id,
+                      key: item.key,
                       latitude: item.latitude,
                       longitude: item.longitude,
                       title: item.plant.scientificName || 'Plant',
                     }))}
                     onSelect={(key) => {
-                      setSelectedPlantId(key);
+                      const chosen = navigablePlants.find((item) => item.key === key);
+                      if (!chosen) return;
+                      setSelectedPlantId(chosen.plant.id);
                       setShowPicker(false);
                     }}
                   />
