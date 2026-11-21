@@ -695,6 +695,7 @@ test('tab bars per section for officers, with the current page marked', () => {
   // IoT alerts has one page (the workspace) since 63385ac, so no tab bar either.
   assert.deepEqual(tabs('iot-workspace.html'), []);
   assert.deepEqual(tabs('alerts.html'), []);
+  assert.deepEqual(plain(nav.navFor(OFFICER, 'iot-workspace.html', '')).sections.filter(s => s.active).map(s => s.label), ['IoT alerts']);
   const editor = plain(nav.navFor(OFFICER, 'editor.html', ''));
   assert.deepEqual(editor.sections.filter(s => s.active).map(s => s.label), ['Species']);
 });
