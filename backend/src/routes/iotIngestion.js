@@ -58,7 +58,32 @@ function createIngestionRouter(env = process.env, injectedClient) {
         uptime_ms: reading.uptime_ms,
       }).select('id').single();
       if (inserted.error) return res.sendStatus(503);
-      return res.status(201).json({ reading_id: inserted.data.id });
+      let movementAlertId = null;
+
+      // The database trigger has completed before the insert returns.
+      // Only a new proximity alert for this exact reading permits a
+      // cloud-linked camera capture.
+      if (reading.motion_detected === true && reading.distance_valid === true) {
+        const match = await client.from('alerts')
+          .select('id')
+          .eq('reading_id', inserted.data.id)
+          .eq('station_id', station.data.id)
+          .like('alert_message', '% (movement_nearby_cm)')
+          .order('triggered_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        // Fail closed for camera capture if the alert lookup fails.
+        // The sensor reading itself has already been persisted.
+        if (!match.error) {
+          movementAlertId = match.data?.id ?? null;
+        }
+      }
+
+      return res.status(201).json({
+        reading_id: inserted.data.id,
+        movement_alert_id: movementAlertId,
+      });
     } catch { return res.sendStatus(503); }
   });
   return router;

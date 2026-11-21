@@ -376,7 +376,7 @@ export interface RouteWaypoint {
   number: number;
 
   label: string;
-
+  description?: string;
   latitude: number;
 
   longitude: number;
@@ -391,6 +391,10 @@ export interface RecordedRoute {
 
   durationSeconds: number;
 
+  startDescription?: string;
+
+  endDescription?: string;
+  
   endGps: string;
 
   endLatitude?: number;
@@ -4130,3 +4134,4 @@ export const useRecordStore =
       }
     )
   );
+

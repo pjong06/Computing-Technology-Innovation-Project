@@ -52,6 +52,7 @@ function createAlertRuleClient(env = process.env) {
 }
 
 function startMqttIngestion(dependencies = {}) {
+  const cameraService = dependencies.getCameraService || getCameraEvidenceService;
   const brokerUrl = process.env.MQTT_URL;
 
   if (!brokerUrl) {
@@ -149,8 +150,14 @@ client.on('message', (_messageTopic, bytes) => {
               ['motion_detected', 'proximity_breach'].includes(item.type)
           );
 
-          if (alert) {
-            void getCameraEvidenceService()
+          if (
+            alert &&
+            (
+              process.env.CAMERA_STORAGE_ENABLED !== 'true' ||
+              Boolean(persisted?.movement_alert_id)
+            )
+          ) {
+            void cameraService()
               .trigger({
                 reading,
                 alert,

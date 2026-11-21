@@ -21,7 +21,7 @@ WHERE alert_rule_id IS NOT NULL;
 
 -- Movement-related alerts use a shorter cooldown.
 UPDATE public.alert_rules
-SET cooldown_seconds = 10
+SET cooldown_seconds = 120
 WHERE metric IN (
   'movement_nearby_cm',
   'movement_detected'

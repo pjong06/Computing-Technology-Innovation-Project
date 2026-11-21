@@ -16,7 +16,7 @@ function cameraCapture(env = process.env) {
   });
 }
 
-function createCameraEvidenceService({ enabled = false, directory = path.resolve(__dirname, '../../.camera-evidence'), cooldownMs = 30000, distanceCm = 100, maxRecords = 1000, capture = cameraCapture(), cloud = null, now = Date.now } = {}) {
+function createCameraEvidenceService({ enabled = false, directory = path.resolve(__dirname, '../../.camera-evidence'), cooldownMs = 120000, distanceCm = 100, maxRecords = 1000, capture = cameraCapture(), cloud = null, now = Date.now } = {}) {
   if (!Number.isFinite(cooldownMs) || cooldownMs < 1000 || !Number.isFinite(distanceCm) || distanceCm <= 0 || !Number.isInteger(maxRecords) || maxRecords < 1) throw new Error('Invalid camera configuration');
   let busy = false;
   const root = path.resolve(directory);
@@ -99,7 +99,7 @@ function getCameraEvidenceService() {
   if (!singleton) {
     const env = process.env;
     const cloud = env.CAMERA_STORAGE_ENABLED === 'true' ? require('./cameraStorage').createCameraStorage(env) : null;
-    singleton = createCameraEvidenceService({ enabled: env.CAMERA_ENABLED === 'true', cooldownMs: Number(env.CAMERA_COOLDOWN_MS || 30000), distanceCm: Number(env.CAMERA_DISTANCE_CM || 100), capture: cameraCapture(env), cloud });
+    singleton = createCameraEvidenceService({ enabled: env.CAMERA_ENABLED === 'true', cooldownMs: Number(env.CAMERA_COOLDOWN_MS || 120000), distanceCm: Number(env.CAMERA_DISTANCE_CM || 100), capture: cameraCapture(env), cloud });
   }
   return singleton;
 }
