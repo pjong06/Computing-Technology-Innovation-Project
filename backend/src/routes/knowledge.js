@@ -4,6 +4,7 @@ const sharp = require("sharp");
 const { randomUUID } = require("node:crypto");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { removeLegacyObservationSource } = require("../utils/speciesDescription");
+const { createKnowledgeRateLimit } = require("../middleware/knowledgeRateLimit");
 
 function parsePagination(query, defaultSize = 50) {
     const { page = "1", page_size = String(defaultSize) } = query;
@@ -50,8 +51,10 @@ function validOptionalText(field, value) {
 }
 
 function createKnowledgeRouter({ supabase = require("../config/supabase").publicClient,
-    requireAuth: authenticate = requireAuth, requireRole: authorize = requireRole } = {}) {
+    requireAuth: authenticate = requireAuth, requireRole: authorize = requireRole,
+    rateLimitOptions } = {}) {
     const router = express.Router();
+    router.use(createKnowledgeRateLimit(rateLimitOptions));
 
     const photoUpload = multer({
         storage: multer.memoryStorage(),

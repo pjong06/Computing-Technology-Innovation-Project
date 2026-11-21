@@ -99,6 +99,14 @@ function createWorkspaceRouter({ readPhoto = downloadPhoto, resize = async bytes
       return res.json({data:r.data||[],has_more:page<totalPages,page,total:r.count,total_pages:totalPages});
     }catch{return fail(res);}
   });
+  router.delete('/alerts/:alertId',officer,async(req,res) => {
+    try {
+      const result=await req.supabase.from('alerts').delete().eq('id',req.params.alertId).select('id').maybeSingle();
+      if(result.error)return fail(res,result.error);
+      if(!result.data)return res.sendStatus(404);
+      return res.json({data:{id:result.data.id}});
+    }catch{return fail(res);}
+  });
   async function visibleTask(req) {
     let q=req.supabase.from('alerts').select(ALERT_COLUMNS).eq('id',req.params.alertId);
     if(req.profile.role==='botanist')q=q.eq('assigned_to',req.user.id);

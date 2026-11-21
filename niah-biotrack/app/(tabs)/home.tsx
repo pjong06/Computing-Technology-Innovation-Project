@@ -334,18 +334,6 @@ export default function HomeScreen() {
               </View>
             </View>
 
-            <TouchableOpacity
-              style={styles.routePill}
-              activeOpacity={0.85}
-              onPress={() => router.push('/record-route')}
-            >
-              <View style={styles.routeLeft}>
-                <Ionicons name="navigate-outline" size={20} color="#284632" style={{ marginRight: 8 }} />
-                <Text style={styles.routeLabel}>Record Transect Route</Text>
-              </View>
-              <Text style={styles.routeTag}>GPS Canvas</Text>
-            </TouchableOpacity>
-
             <View style={styles.sectionRow}>
               <Text style={styles.sectionHeading}>Recent Field Records</Text>
               <TouchableOpacity onPress={() => router.push('/(tabs)/records')}>
@@ -555,7 +543,7 @@ const styles = StyleSheet.create({
   },
   actionSection: {
     gap: 10,
-    marginBottom: 12,
+    marginBottom: 16,
   },
   actionRow: {
     flexDirection: 'row',
@@ -578,21 +566,6 @@ const styles = StyleSheet.create({
     color: '#284632',
     textAlign: 'center',
   },
-  routePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: '#284632',
-    borderRadius: 25,
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    marginBottom: 16,
-  },
-  routeLeft: { flexDirection: 'row', alignItems: 'center' },
-  routeLabel: { fontSize: 14, fontWeight: '700', color: '#284632' },
-  routeTag: { fontSize: 11.5, color: '#5C7163', fontWeight: '700' },
   sectionRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

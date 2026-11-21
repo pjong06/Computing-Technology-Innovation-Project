@@ -11,7 +11,7 @@
     "test:camera:live": "node camera/test-access-live.cjs",
     "test:auth": "node test-auth.js",
     "test:user-delete:live": "node test-user-delete-live.cjs",
-    "test:knowledge": "node --test test/knowledge.test.js",
+    "test:knowledge": "node --test test/knowledge.test.js test/knowledgeRateLimit.test.js test/knowledgeServerRateLimit.test.js",
     "test:coverage": "node --test --experimental-test-coverage test/*.test.js",
     "benchmark:knowledge": "node scripts/benchmark-knowledge.js",
     "test:security:live": "node test-sec77-deployed.cjs",
@@ -26,10 +26,11 @@
     "@supabase/supabase-js": "^2.117.3",
     "dotenv": "^18.0.7",
     "express": "^5.3.0",
+    "express-rate-limit": "8.7.5",
     "mqtt": "^5.16.0",
-"multer": "^2.4.0",
-"pdfkit": "^0.20.2",
-"qrcode": "^1.5.4",
-"sharp": "0.35.5"
+    "multer": "^2.4.0",
+    "pdfkit": "^0.20.2",
+    "qrcode": "^1.5.4",
+    "sharp": "0.35.5"
   }
 }
