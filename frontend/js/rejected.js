@@ -8,13 +8,22 @@ drawMenu('rejected.html');
 
 let rejected = [];
 let selectedId = null;
+let sortOrder = SORT_NEWEST; // newest rejection first; the select switches it
 
 // Makes one small card for the list on the left.
 function makeListCard(observation) {
-  return makeObservationListCard(observation, observation.id === selectedId, PICTURE_BLANK, function () {
+  // The thumbnail comes with the list (signed in one batch), so no click is needed.
+  const card = makeObservationListCard(observation, observation.id === selectedId, observation.thumbnail_url || PICTURE_BLANK, function () {
     selectedId = observation.id;
     drawRejected();
   });
+  // The reason is visible in the list, without opening the record.
+  const reason = document.createElement('span');
+  reason.className = 'list-note';
+  reason.textContent = 'Reason: ' + (observation.rejection_comment || 'No reason recorded');
+  reason.title = reason.textContent;
+  card.appendChild(reason);
+  return card;
 }
 
 // Makes the big card on the right with the details and the reason.
@@ -77,16 +86,22 @@ function drawRejected() {
   document.getElementById('rejected-count').textContent =
     rejected.length + ' rejected ' + word + ', waiting for the botanist to fix and resubmit.';
 
-  let selected = findObservation(rejected, selectedId);
+  addListSortSelect('rejected-count', 'rejected-sort', function (order) {
+    sortOrder = order;
+    drawRejected();
+  });
+  const ordered = sortByDate(rejected, item => item.rejected_at || item.observed_at, sortOrder);
+
+  let selected = findObservation(ordered, selectedId);
   if (selected === null) {
-    selected = rejected[0];
+    selected = ordered[0];
     selectedId = selected.id;
   }
 
   const listBox = document.getElementById('rejected-list');
   listBox.innerHTML = '';
-  for (let i = 0; i < rejected.length; i++) {
-    listBox.appendChild(makeListCard(rejected[i]));
+  for (let i = 0; i < ordered.length; i++) {
+    listBox.appendChild(makeListCard(ordered[i]));
   }
 
   const detailBox = document.getElementById('rejected-detail');

@@ -131,12 +131,29 @@ function makeUserRow(user, index) {
   return row;
 }
 
+// Newest account first by default. Accounts are stored in the order they were added
+// (website_users.sort_order: each new account gets the next number), so newest first is
+// that order reversed. Rows keep their stored index: the role and delete actions use it.
+let userSort = SORT_NEWEST;
+
 // Draws the table of users.
 function drawUsers() {
   const list = getUsers();
+  const count = document.getElementById('users-count');
+  if (count) {
+    count.textContent = list.length === 0
+      ? 'No accounts yet. Add a botanist above.'
+      : list.length + ' account' + (list.length === 1 ? '' : 's') + '.';
+    addListSortSelect('users-count', 'users-sort', function (order) {
+      userSort = order;
+      drawUsers();
+    });
+  }
   const body = document.getElementById('user-body');
   body.innerHTML = '';
-  for (let i = 0; i < list.length; i++) {
+  const indexes = list.map((_, i) => i);
+  if (userSort === SORT_NEWEST) indexes.reverse();
+  for (const i of indexes) {
     body.appendChild(makeUserRow(list[i], i));
   }
 }
@@ -234,9 +251,13 @@ function toggleUser(index) {
     return;
   }
   list[index].active = !list[index].active;
+  const name = list[index].name || list[index].username || 'The account';
   if (writeStorage(USERS_KEY, list)) {
     // The sync trigger has changed the profile; show its new status.
     profileStatus[list[index].id] = list[index].active ? 'active' : 'suspended';
+    showToast(name + (list[index].active ? ' is now active.' : ' is now suspended.'));
+  } else {
+    showToast('The change could not be saved. Reload the page and try again.');
   }
   drawUsers();
 }

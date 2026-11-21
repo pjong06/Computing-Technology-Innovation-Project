@@ -15,12 +15,9 @@ function formattedStatus(value) {
   return reviewStatusDisplay(value);
 }
 
+// The portal's one date format, date only here: "21 Nov 2026" (shared.js formatDay).
 function displayDate(value) {
-  if (!value) return 'None recorded';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? String(value)
-    : date.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  return formatDay(value, 'None recorded');
 }
 
 function makePlantRow(plant) {
@@ -43,12 +40,10 @@ function makePlantRow(plant) {
   speciesPhotoLabel.hidden = !speciesPhoto?.url;
   photoWrapper.appendChild(image);
   if (speciesPhoto?.url) photoWrapper.appendChild(speciesPhotoLabel);
-  let speciesPhotoCredit = null;
   image.onerror = function () {
     image.onerror = null;
     image.src = PICTURE_BLANK;
     speciesPhotoLabel.hidden = true;
-    speciesPhotoCredit?.remove();
   };
   link.appendChild(photoWrapper);
 
@@ -83,8 +78,7 @@ function makePlantRow(plant) {
     : 'Registered by: ' + (plant.registered_by || 'Unknown')) +
     ' · Last visit: ' + displayDate(plant.last_observation_at);
   info.appendChild(registered);
-  speciesPhotoCredit = makeSpeciesPhotoCredit(speciesPhoto, true);
-  if (speciesPhotoCredit) info.appendChild(speciesPhotoCredit);
+  // No photo credit in the list: it is on plant detail and the Photo credits page.
   link.appendChild(info);
 
   const status = formattedStatus(plant.plant_status);
@@ -129,6 +123,8 @@ async function loadPlants() {
   if (conservation) params.set('conservation_status', conservation);
   if (registeredBy) params.set('registered_by', registeredBy);
   if (source) params.set('source', source);
+  // Newest registered first unless the officer picks Oldest first.
+  if (byId('plant-sort').value === 'oldest') params.set('sort', 'oldest');
 
   try {
     const result = await api('/officer/plants?' + params.toString());
@@ -218,7 +214,7 @@ if (pageAllowed === false) {
     currentPage = 1;
     void loadPlants();
   });
-  ['plant-species', 'plant-status-filter', 'conservation-filter', 'registered-by-filter', 'source-filter']
+  ['plant-species', 'plant-status-filter', 'conservation-filter', 'registered-by-filter', 'source-filter', 'plant-sort']
     .forEach(id => byId(id).addEventListener('change', () => {
       currentPage = 1;
       void loadPlants();

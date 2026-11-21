@@ -66,6 +66,10 @@ function makeReportCell(column, value) {
   if (column.key === 'review_status' && text) {
     text = reviewStatusDisplay(text).label;
   }
+  // On screen only: the portal's date format ("21 Nov 2026").
+  if (column.key === 'observed_at' && text) {
+    text = formatDay(text, text);
+  }
   if (column.key === 'scientific_name' && text) {
     const italic = document.createElement('i');
     italic.className = 'sci';
@@ -85,6 +89,27 @@ function reportTableParts() {
     return null;
   }
   return { head: table.tHead, body: table.tBodies[0] };
+}
+
+// On screen: newest first by default (Oldest first from the select). Field observations sort
+// by their date; plant locations come newest first from the server, so oldest first is that
+// order reversed. The species inventory is an A-Z summary with no dates, so it stays A-Z.
+// Exports keep the server's order.
+function orderedReportRows(report) {
+  const select = document.getElementById('report-sort');
+  const dated = report.type === 'botanist' || report.type === 'locations';
+  if (select) {
+    select.disabled = !dated;
+    select.title = dated ? '' : 'The species inventory is listed A-Z.';
+  }
+  const order = select && dated ? select.value : SORT_NEWEST;
+  if (report.type === 'botanist') return sortByDate(report.rows, row => row.observed_at, order);
+  if (report.type === 'locations' && order === SORT_OLDEST) return [...report.rows].reverse();
+  return report.rows;
+}
+
+function redrawReport() {
+  if (currentReport) drawReport(currentReport);
 }
 
 const REPORT_TABLE_MISSING = 'The report table is missing from this page, so the report cannot be shown. Reload the page, or tell the system administrator.';
@@ -109,7 +134,7 @@ function drawReport(report) {
   });
   head.appendChild(headRow);
 
-  report.rows.forEach(row => {
+  orderedReportRows(report).forEach(row => {
     const tr = document.createElement('tr');
     report.columns.forEach(column => tr.appendChild(makeReportCell(column, row[column.key])));
     body.appendChild(tr);
