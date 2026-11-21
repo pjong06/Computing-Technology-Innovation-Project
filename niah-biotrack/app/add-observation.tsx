@@ -216,7 +216,7 @@ export default function AddObservationScreen() {
       Toast.show({
         type: 'info',
         text1: 'Maximum Limit Reached',
-        text2: 'You can upload a maximum of 4 photos per observation visit.',
+        text2: 'You can upload a maximum of 4 photos per observation.',
       });
       return;
     }
@@ -357,7 +357,7 @@ export default function AddObservationScreen() {
       Toast.show({
         type: 'error',
         text1: 'Photo Limit Exceeded',
-        text2: 'Maximum 4 photos allowed per visit.',
+        text2: 'Maximum 4 photos allowed per observation.',
       });
       return;
     }
@@ -733,7 +733,7 @@ export default function AddObservationScreen() {
             <View style={styles.card}>
               <View style={styles.cardHeader}>
                 <Text style={styles.cardIcon}>📍</Text>
-                <Text style={styles.cardTitle}>Visit GPS Location *</Text>
+                <Text style={styles.cardTitle}>Observation GPS Location *</Text>
               </View>
               {locationStatus === 'capturing' ? (
                 <View style={styles.locationLoadingRow}>

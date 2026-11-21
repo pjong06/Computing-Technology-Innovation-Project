@@ -122,6 +122,44 @@ async function publicPlantPhotoExists(database, tag) {
     }
 }
 
+// photo_url for staff lists and lookups: for each plant that is on the public QR page (the
+// same check as the visitor page, public_plant_by_qr_v2) and has a public photo copy, the
+// visitor photo address "/p/<tag>/photo". Map plant id -> url; plants without one are left
+// out. Reads only the public copies bucket and the public QR function, with the caller's
+// client: no storage paths, no signed links, no new permissions. Never throws.
+async function publicPhotoUrlsFor(database, plants) {
+    const urls = new Map();
+    try {
+        const candidates = (plants || []).filter(plant =>
+            plant && plant.id && plant.plant_status === "approved" && publicPhotoPath(plant.qr_code_value));
+        if (candidates.length === 0) return urls;
+
+        // Which copies exist: one listing of the bucket (paged).
+        const copies = new Set();
+        const bucket = database.storage.from(PUBLIC_PHOTO_BUCKET);
+        for (let offset = 0; ; offset += 1000) {
+            const { data, error } = await bucket.list("", { limit: 1000, offset });
+            if (error) throw error;
+            for (const file of data || []) if (file?.name) copies.add(file.name);
+            if (!data || data.length < 1000) break;
+        }
+        const withCopy = candidates.filter(plant => copies.has(publicPhotoPath(plant.qr_code_value)));
+
+        // The visitor page's own rule, a few at a time.
+        for (let start = 0; start < withCopy.length; start += 8) {
+            const batch = withCopy.slice(start, start + 8);
+            const visible = await Promise.all(batch.map(plant =>
+                isPubliclyVisible(database, plant.qr_code_value).catch(() => false)));
+            batch.forEach((plant, index) => {
+                if (visible[index]) urls.set(plant.id, publicPhotoUrl(plant.qr_code_value));
+            });
+        }
+    } catch (error) {
+        console.error("Public photo address error:", error?.message || error);
+    }
+    return urls;
+}
+
 // The visitor-facing address of a plant's photo (served by GET /p/:tag/photo).
 function publicPhotoUrl(tag) {
     return publicPhotoPath(tag) ? `/p/${tag}/photo` : null;
@@ -136,4 +174,5 @@ module.exports = {
     removePublicPlantPhotoByTag,
     readPublicPlantPhoto,
     publicPlantPhotoExists,
+    publicPhotoUrlsFor,
 };

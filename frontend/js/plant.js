@@ -118,18 +118,11 @@ function renderPlant(plant) {
   byId('plant-tag').textContent = displayTag(plant.tag_code, 'No tag code');
   byId('plant-title').textContent = plant.species?.common_name || plant.species?.scientific_name || 'Plant';
   byId('plant-species').textContent = plant.species?.scientific_name || 'Species not recorded';
-  byId('plant-source').textContent = plant.data_source === 'inaturalist'
-    ? `Source: iNaturalist observation · Observer: ${plant.source_observer || 'Unknown'} · Licence: ${plant.source_licence || 'Unknown'}`
-    : 'Source: Field record (registered in the app)';
   const status = plantStatus(plant.plant_status);
   const statusElement = byId('plant-status');
   statusElement.textContent = status.label;
   statusElement.className = 'detail-value plant-status ' + status.css;
-  const imported = plant.data_source === 'inaturalist';
-  byId('plant-registered-label').textContent = imported ? 'Imported source' : 'Registered by';
-  byId('plant-registered-by').textContent = imported
-    ? `Imported from iNaturalist · Observer: ${plant.source_observer || 'Unknown'}`
-    : plant.registered_by || 'Unknown';
+  byId('plant-registered-by').textContent = plant.registered_by || 'Not recorded';
   byId('plant-registered-at').textContent = displayDate(plant.registered_at);
   byId('plant-last-observation').textContent = displayDate(plant.last_observation_at);
   byId('plant-location').textContent = plant.location_description || 'Not recorded';

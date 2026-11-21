@@ -100,7 +100,7 @@ export function buildSyncSummary(
   } else if (records.length > 0) {
     overallStatus = 'Up to date';
     overallMessage =
-      'All local records and observation visits have an uploaded status.';
+      'All local records and observations have an uploaded status.';
     overallTone = 'synced';
   }
 

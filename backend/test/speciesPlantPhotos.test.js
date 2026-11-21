@@ -258,6 +258,7 @@ test('catalogue cards show a plant photo with "From plant <tag>", else the place
     assert.match(read(`niah-biotrack/${screen}`), /plantPhotoCaption\(/, screen);
   }
   // Plant pages: no species photo fallback.
-  assert.doesNotMatch(read('niah-biotrack/app/plant-detail.tsx'), /useSpeciesStore|species_media|Species photo/);
+  // (It reads the species store only for "About this species" text, never a species photo.)
+  assert.doesNotMatch(read('niah-biotrack/app/plant-detail.tsx'), /plantPhotosBySpeciesId|imageUrisBySpeciesId|species_media|Species photo/);
   assert.doesNotMatch(read('niah-biotrack/app/(tabs)/records.tsx'), /plantPhotosBySpeciesId|imageUrisBySpeciesId/);
 });

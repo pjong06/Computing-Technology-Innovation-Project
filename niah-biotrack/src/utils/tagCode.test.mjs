@@ -17,6 +17,15 @@ test('tag codes are cleaned up and checked', () => {
   assert.equal(parseTagCode(''), null);
 });
 
+test('tags typed in any case, without dashes or with other separators are recognised', () => {
+  for (const typed of ['niahplt00015', 'NIAHPLT00015', 'niah plt 00015', 'Niah_Plt-00015', ' niah-plt-00015 ', 'https://x.com/p/niahplt00015']) {
+    assert.equal(parseTagCode(typed), 'NIAH-PLT-00015', typed);
+  }
+  for (const typed of ['niahplt0015', 'niahplt000150', 'NIAH-PLT-1A345', 'PLT-00015']) {
+    assert.equal(parseTagCode(typed), null, typed);
+  }
+});
+
 test('no leftover TODO notes in the tag parser', () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   assert.doesNotMatch(fs.readFileSync(path.join(here, 'tagCode.ts'), 'utf8'), /TODO/);

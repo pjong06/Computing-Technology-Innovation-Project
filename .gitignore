@@ -10,3 +10,5 @@ scripts/inat-plant-photos/.cache/
 species-photo-review-by-species-REVIEWED.csv
 # Plant photo metadata cleanup report
 scripts/photo-metadata/*.csv
+# Plant tag report
+scripts/plant-tags/*.csv

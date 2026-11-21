@@ -161,7 +161,7 @@ test('species.js and editor.js use /api/knowledge, not the old website copy', ()
   assert.match(proposals, /proposal\.habitat/);
   assert.match(read('frontend/proposals.html'), /id="reject-reason"/);
   assert.doesNotMatch(proposals, /prompt\(/);
-  assert.match(proposals, /Proposed habitat \/ location note/);
+  assert.match(proposals, /Habitat \/ location note/);
   assert.match(proposals, /No reference photo provided/);
   // Botanists only propose.
   assert.match(read('frontend/js/editor.js'), /'\/knowledge\/species\/proposals'/);
@@ -175,7 +175,7 @@ test('species proposals page is officer-only, guarded, and its controls match th
   );
   assert.doesNotMatch(botanistPages, /proposals\.html/);
   // A Review tab with its own count badge (id kept; proposals.js updates it after loading).
-  assert.match(shared, /\{ file: 'proposals\.html', label: 'Species proposals', countId: 'species-proposals-count' \}/);
+  assert.match(shared, /\{ file: 'proposals\.html', label: 'Species requests', countId: 'species-proposals-count' \}/);
   assert.match(shared, /function makeCountBadge\(id\) \{\s*const badge = document\.createElement\('span'\);\s*badge\.id = id;/);
   assert.match(read('frontend/js/proposals.js'), /updateSpeciesProposalMenuCount\(proposals\.length\)/);
   assert.match(shared, /refreshSpeciesProposalMenuCount\(\)/);
@@ -207,65 +207,68 @@ test('approval queue labels pending first plant records NEW PLANT and visits OBS
   assert.match(reviews, /plant_status: plant\.plant_status/);
 });
 
-test('photo credits appear only on the credits page; no photo shows a credit', () => {
+test('no page or app screen shows a photo credit, source or licence; there is no Photo credits page', () => {
   const shared = read('frontend/js/shared.js');
-  // The rule: iNaturalist photos that are not CC0; SFC's own photos never.
-  assert.match(shared, /function needsPhotoCredit\(photo\) \{\s*return !!photo && photo\.source === 'inaturalist' && photo\.licence_code !== 'cc0';/);
-  assert.doesNotMatch(shared, /function makeSpeciesPhotoCredit\(/);
-  assert.match(shared, /function makePhotoCreditInfo\(photo\) \{\s*if \(!needsPhotoCredit\(photo\)\) return null;/);
-  // Plain text only: no links in the credit.
-  const infoStart = shared.indexOf('function makePhotoCreditInfo(');
-  const info = shared.slice(infoStart, shared.indexOf('\n}', infoStart));
-  assert.match(info, /tip\.textContent = text;/);
-  assert.doesNotMatch(info, /createElement\(['"]a['"]\)|\.href\s*=|source_url/);
-  assert.match(shared, /'cc-by': 'CC BY'/);
-  assert.match(shared, /'cc-by-sa': 'CC BY-SA'/);
-  assert.match(shared, /cc0: 'CC0'/);
-
-  // Species reference photos are no longer shown, and plant photos never show a credit:
-  // no page puts a credit on a photo (the editor and plant page had one on the species photo).
-  for (const file of ['editor.js', 'plant.js', 'species.js', 'plants.js', 'map.js', 'queue.js', 'rejected.js', 'proposals.js']) {
-    assert.doesNotMatch(read(`frontend/js/${file}`), /makeSpeciesPhotoCredit|makePhotoCreditInfo|photoCreditText/, file);
-  }
+  assert.doesNotMatch(shared, /needsPhotoCredit|makePhotoCreditInfo|photoCreditText|photoCreditName|SPECIES_PHOTO_LICENSES|credits\.html/);
+  assert.equal(fs.existsSync(path.join(repoRoot, 'frontend/credits.html')), false);
+  assert.equal(fs.existsSync(path.join(repoRoot, 'frontend/js/credits.js')), false);
+  assert.doesNotMatch(read('frontend/species.html'), /credits|page-footer/);
   const css = read('frontend/css/style.css');
-  assert.match(css, /\.photo-credit-info:hover \.photo-credit-tip,\s*\.photo-credit-info:focus-within \.photo-credit-tip,\s*\.photo-credit-info\.open \.photo-credit-tip \{\s*display: block;/);
-  assert.doesNotMatch(css + read('frontend/species.html'), /\.species-photo-credit/);
+  assert.doesNotMatch(css, /photo-credit|credits-table|page-footer/);
 
-  // The Photo credits page: linked from the Species page footer, open to officers and botanists.
-  assert.match(read('frontend/species.html'), /<p class="page-footer">[^<]*<a href="credits\.html">Photo credits<\/a><\/p>/);
-  const botanistPages = shared.slice(shared.indexOf('const BOTANIST_PAGES'), shared.indexOf('];', shared.indexOf('const BOTANIST_PAGES')));
-  assert.match(botanistPages, /'credits\.html'/);
-  assert.match(shared, /alsoActiveOn: \['editor\.html', 'credits\.html'\]/);
-  const credits = read('frontend/js/credits.js');
-  assert.match(credits, /if \(!needsPhotoCredit\(photo\)\) continue;/);
-  assert.match(credits, /photographer: photoCreditName\(photo\)/);
-  assert.match(credits, /SPECIES_PHOTO_LICENSES\[photo\.licence_code\]/);
-  assert.match(credits, /if \(pageAllowed !== false\)/);
-  assert.doesNotMatch(credits, /\.href\s*=|source_url/);
-  // Only photos still shown: plant photos from iNaturalist sightings, not species photos.
-  assert.match(credits, /api\('\/plants\/photo-credits'\)/);
-  assert.doesNotMatch(credits, /\/knowledge\/species|species_media/);
-  const creditsHtml = read('frontend/credits.html');
-  assert.match(creditsHtml, /<script src="js\/shared\.js"><\/script>\s*<script src="js\/credits\.js"><\/script>/);
-  for (const id of Array.from(credits.matchAll(/getElementById\('([^']+)'\)/g), m => m[1])) {
-    assert.match(creditsHtml, new RegExp(`id="${id}"`), `credits.html has #${id}`);
+  // No "Source: …", "Observer: …", "Licence: …" or "Imported from …" line, badge or filter.
+  const sourceText = /Source:|Observer:|Licen[cs]e:|Imported from|Imported source|source-badge|source-filter|plant-source/;
+  for (const file of ['plant.js', 'plants.js', 'map.js', 'queue.js', 'rejected.js', 'proposals.js', 'species.js', 'editor.js']) {
+    assert.doesNotMatch(read(`frontend/js/${file}`), sourceText, file);
   }
+  for (const file of ['plant.html', 'plants.html', 'map.html', 'queue.html', 'species.html', 'reports.html']) {
+    assert.doesNotMatch(read(`frontend/${file}`), sourceText, file);
+  }
+  assert.doesNotMatch(read('backend/src/routes/publicPlants.js'), /Source:|source_observer|source_licence/);
+  assert.doesNotMatch(read('backend/src/services/reportService.js'), /key: "source"|source_observer/);
 
-  // The app: the same rule and text in src/utils/photoCredit.ts (photoCredit.test.js checks
-  // web and app agree); no photo shows a credit any more; the Photo credits screen stays.
-  const appCredit = read('niah-biotrack/src/utils/photoCredit.ts');
-  assert.match(appCredit, /export function needsPhotoCredit\([^)]*\): boolean \{\s*return !!photo && photo\.source === 'inaturalist' && photo\.licence_code !== 'cc0';/);
-  assert.match(appCredit, /return `Photo: \$\{photoCreditName\(photo\)\}, \$\{photoLicenceLabel\(photo\.licence_code\)\} via iNaturalist`;/);
-  const info2 = read('niah-biotrack/src/components/PhotoCreditInfo.tsx');
-  assert.match(info2, /if \(!needsPhotoCredit\(photo\)\) return null;/);
-  assert.doesNotMatch(info2, /Linking|source_url|creativecommons\.org/);
+  // The app: no credit component or helper, no source lines.
+  for (const file of ['niah-biotrack/src/components/PhotoCreditInfo.tsx', 'niah-biotrack/src/utils/photoCredit.ts',
+    'niah-biotrack/src/components/SpeciesPhotoCredit.tsx', 'niah-biotrack/app/photo-credits.tsx']) {
+    assert.equal(fs.existsSync(path.join(repoRoot, file)), false, file);
+  }
   for (const screen of ['app/plant-detail.tsx', 'app/plant-info.tsx', 'app/species-reference/[id].tsx',
-    'app/(tabs)/home.tsx', 'app/(tabs)/plants.tsx', 'app/(tabs)/records.tsx']) {
-    assert.doesNotMatch(read(`niah-biotrack/${screen}`), /SpeciesPhotoCredit|PhotoCreditInfo|photoCreditText/, screen);
+    'app/(tabs)/home.tsx', 'app/(tabs)/plants.tsx', 'app/(tabs)/records.tsx', 'app/(tabs)/profile.tsx', 'app/_layout.tsx']) {
+    const text = read(`niah-biotrack/${screen}`);
+    assert.doesNotMatch(text, /PhotoCreditInfo|photoCreditText|photo-credits|Photo credits/, screen);
+    assert.doesNotMatch(text, sourceText, screen);
   }
-  assert.equal(fs.existsSync(path.join(repoRoot, 'niah-biotrack/src/components/SpeciesPhotoCredit.tsx')), false);
-  assert.match(read('niah-biotrack/app/photo-credits.tsx'), /photoCreditRows\(species\)/);
-  assert.match(read('niah-biotrack/app/(tabs)/profile.tsx'), /router\.push\('\/photo-credits' as never\)/);
+  assert.doesNotMatch(read('niah-biotrack/src/services/tagLookup.ts'), /sourceObserver|sourceLicence|dataSource/);
+});
+
+// Every file that makes up a page or screen people see: the web portal (HTML, scripts,
+// styles), the visitor QR page, and the app's screens and their code.
+function userFacingFiles() {
+  const files = [];
+  const walk = (dir, keep) => {
+    for (const entry of fs.readdirSync(path.join(repoRoot, dir), { withFileTypes: true })) {
+      const rel = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (!['node_modules', 'vendor', 'images', 'android', 'ios', 'assets'].includes(entry.name)) walk(rel, keep);
+      } else if (keep(entry.name)) {
+        files.push(rel);
+      }
+    }
+  };
+  walk('frontend', name => /\.(html|js|css)$/.test(name));
+  walk('niah-biotrack/app', name => /\.(tsx?|js)$/.test(name));
+  walk('niah-biotrack/src', name => /\.(tsx?|js)$/.test(name) && !/\.test\./.test(name));
+  files.push('backend/src/routes/publicPlants.js', 'backend/src/services/reportService.js',
+    'backend/src/services/qrPdfService.js', 'backend/public/plant.css');
+  return files.filter(file => fs.existsSync(path.join(repoRoot, file)));
+}
+
+test('no user-facing web or app file contains "iNaturalist"', () => {
+  const files = userFacingFiles();
+  assert.ok(files.length > 50, `found ${files.length} files`);
+  assert.ok(files.includes('frontend/plants.html') && files.includes('niah-biotrack/app/plant-info.tsx'));
+  const offenders = files.filter(file => read(file).includes('iNaturalist'));
+  assert.deepEqual(offenders, []);
 });
 
 test('web and mobile species screens do not use legacy reference-photo fields', () => {
@@ -310,7 +313,7 @@ test('the distribution map is officer-only in the menu, the page list and on the
   const guard = map.indexOf('if (pageAllowed === false)');
   assert.ok(guard !== -1, 'map.js must check pageAllowed');
   assert.ok(guard < map.indexOf('loadPlants().catch'), 'map.js must check pageAllowed before loading plants');
-  assert.match(map, /Imported from iNaturalist · Observer:/);
+  assert.doesNotMatch(map, /Imported from|Observer:|Licence:/);
   assert.match(read('frontend/map.html'), /<script src="js\/shared\.js"><\/script>\s*<script src="js\/map\.js"><\/script>/);
 });
 
@@ -336,11 +339,11 @@ test('the plant catalogue is officer-only, linked from the menu and its page con
   assert.ok(detail.indexOf('if (pageAllowed === false)') < detail.indexOf('loadPlant().catch'));
   assert.match(catalogue, /api\('\/officer\/plants\?/);
   assert.match(detail, /api\('\/officer\/plants\//);
-  assert.match(catalogue, /Imported from iNaturalist · Observer:/);
+  assert.doesNotMatch(catalogue, /Imported from|Observer:|source-filter/);
   // A plant without its own photo shows the placeholder: no species photo, no credit.
   assert.match(catalogue, /image\.src = plant\.photo_thumbnail\?\.url \|\| PICTURE_BLANK;/);
   assert.doesNotMatch(catalogue, /species_photo|Species photo|makeSpeciesPhotoCredit|makePhotoCreditInfo|photoCreditText/);
-  assert.match(detail, /Imported from iNaturalist · Observer:/);
+  assert.doesNotMatch(detail, /Imported from|Observer:|plant-source/);
   assert.match(detail, /renderPhotos\(plant\.photos \|\| \[\]\);/);
   assert.match(detail, /byId\('plant-no-photos'\)\.hidden = photos\.length > 0;/);
   assert.doesNotMatch(detail, /species_photo|speciesFallback|makePhotoCreditInfo|Species reference photo/);
@@ -692,7 +695,7 @@ test('tab bars per section for officers, with the current page marked', () => {
   const tabs = (page, search = '') => plain(nav.navFor(OFFICER, page, search).tabs);
   const review = [
     { label: 'Field records', href: 'queue.html', countId: 'field-records-count' },
-    { label: 'Species proposals', href: 'proposals.html', countId: 'species-proposals-count' },
+    { label: 'Species requests', href: 'proposals.html', countId: 'species-proposals-count' },
     { label: 'Rejected history', href: 'rejected.html', countId: null },
   ];
   for (const [page, activeIndex] of [['queue.html', 0], ['proposals.html', 1], ['rejected.html', 2]]) {
@@ -786,7 +789,7 @@ test('tab bars are drawn by shared.js as a div (not a <nav>, which has the menu 
 test('review page headings, and a one-sentence description under every page heading', () => {
   // Review > Field records: the section name as the heading, then one plain line.
   assert.match(read('frontend/queue.html'), /<h1>Review<\/h1>\s*<p class="lead">Check field records before they become official, for the conservation officer\.<\/p>/);
-  assert.match(read('frontend/proposals.html'), /<h1>Species <span>proposals<\/span><\/h1>/);
+  assert.match(read('frontend/proposals.html'), /<h1>Species <span>requests<\/span><\/h1>/);
   assert.match(read('frontend/rejected.html'), /<h1>Rejected <span>history<\/span><\/h1>/);
   for (const page of ['species', 'editor', 'proposals', 'queue', 'rejected', 'plants', 'plant', 'map', 'alerts', 'reports', 'users']) {
     const html = read(`frontend/${page}.html`);

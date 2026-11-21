@@ -17,7 +17,6 @@
 .detail-fact { min-width: 0; }
 .detail-label { color: var(--mute); font-size: 12px; }
 .detail-value { margin-top: 2px; overflow-wrap: anywhere; font-weight: 600; }
-.plant-source { margin: 8px 0 0; color: var(--mute); font-size: 13px; overflow-wrap: anywhere; }
 .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin-top: 14px; }
 .photo-grid img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 10px; background: var(--mint); }
 #plant-map { height: 260px; margin-top: 12px; border-radius: 10px; background: var(--mint); }
@@ -45,7 +44,7 @@
 <main>
 <section class="page on">
   <a class="back-link" href="plants.html">‹ Plant catalogue</a>
-  <p class="lead">One plant's details, photos, location and visit history, for conservation officers.</p>
+  <p class="lead">One plant's details, photos, location and observations, for conservation officers.</p>
   <div class="card plant-state" id="plant-loading" role="status">Loading plant details...</div>
   <div class="card plant-state" id="plant-error" role="alert" hidden></div>
   <div id="plant-detail" hidden>
@@ -54,7 +53,6 @@
         <p class="tag-line" id="plant-tag"></p>
         <h1 id="plant-title">Plant</h1>
         <p class="lead" id="plant-species"></p>
-        <p class="plant-source" id="plant-source"></p>
         <div class="detail-facts">
           <div class="detail-fact"><div class="detail-label">Plant status</div><div class="detail-value" id="plant-status"></div></div>
           <div class="detail-fact"><div class="detail-label" id="plant-registered-label">Registered by</div><div class="detail-value" id="plant-registered-by"></div></div>
@@ -77,7 +75,7 @@
     </div>
     <article class="card history-card">
       <div class="detail-card">
-        <h2>Observation history</h2>
+        <h2>Observations</h2>
         <p class="muted" id="observations-count"></p>
       </div>
       <div class="table-wrap">

@@ -146,3 +146,43 @@ export async function apiUpload<T>(path: string, fields: Record<string, string>,
     clearTimeout(timer);
   }
 }
+
+// POSTs JSON and returns the response body as bytes (e.g. a PDF), with the login token.
+// Same errors as apiFetch: ApiError, status 0 = never reached the server.
+export async function apiDownload(path: string, body: unknown): Promise<Uint8Array> {
+  if (!BASE_URL) {
+    throw new ApiError('EXPO_PUBLIC_API_BASE_URL is not set', 0);
+  }
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new ApiError('You are not signed in', 401);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+  try {
+    let response;
+    try {
+      response = await expoFetch(`${BASE_URL}${path}`, {
+        method: 'POST',
+        headers: { Accept: 'application/pdf, application/json', 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch {
+      throw new ApiError(`Could not reach the server at ${BASE_URL}`, 0);
+    }
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      let message: string | undefined;
+      try {
+        message = (JSON.parse(text) as { message?: string }).message;
+      } catch {
+        // not JSON
+      }
+      throw new ApiError(message ?? `Server returned ${response.status}`, response.status);
+    }
+    return new Uint8Array(await response.arrayBuffer());
+  } finally {
+    clearTimeout(timer);
+  }
+}

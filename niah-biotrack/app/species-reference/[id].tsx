@@ -2,7 +2,6 @@ import React, { useEffect, useMemo } from 'react';
 import {
   ActivityIndicator,
   Image,
-  Linking,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -233,32 +232,6 @@ export default function SpeciesReferenceDetailScreen() {
           </View>
         )}
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Sources</Text>
-          {detail.sources && detail.sources.length > 0 ? (
-            detail.sources.map((source, index) => (
-              <View key={`${source.name}-${index}`} style={styles.sourceBlock}>
-                <Text style={styles.sourceName}>{source.name}</Text>
-                {source.citation ? (
-                  <Text style={styles.sourceMeta}>{source.citation}</Text>
-                ) : null}
-                {source.license ? (
-                  <Text style={styles.sourceMeta}>License: {source.license}</Text>
-                ) : null}
-                {source.url ? (
-                  <TouchableOpacity onPress={() => void Linking.openURL(source.url!)}>
-                    <Text style={styles.sourceLink}>Open source</Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-            ))
-          ) : (
-            <Text style={styles.missingSource}>
-              Source attribution has not been recorded in the current database.
-            </Text>
-          )}
-        </View>
-
         <View style={styles.cacheCard}>
           <Text style={styles.cacheTitle}>Offline reference</Text>
           <Text style={styles.cacheText}>
@@ -373,11 +346,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#263B2D',
   },
-  sourceBlock: { marginBottom: 12 },
-  sourceName: { fontSize: 14, fontWeight: '700', color: '#263B2D' },
-  sourceMeta: { fontSize: 12.5, color: '#68776D', marginTop: 3, lineHeight: 17 },
-  sourceLink: { fontSize: 12.5, fontWeight: '700', color: '#27633C', marginTop: 6 },
-  missingSource: { fontSize: 13, color: '#8A5A23', lineHeight: 19 },
   cacheCard: {
     backgroundColor: '#EAF2EC',
     borderRadius: 18,

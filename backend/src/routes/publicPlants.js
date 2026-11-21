@@ -12,7 +12,7 @@ header{display:flex;justify-content:space-between;gap:20px;align-items:center;pa
 main{padding-top:48px;padding-bottom:56px}.tag{font-size:14px;font-weight:650;color:#48604e;overflow-wrap:anywhere}
 h1{font-family:Georgia,"Times New Roman",serif;font-weight:400;font-style:italic;font-size:clamp(36px,7vw,62px);line-height:1.08;margin:18px 0 14px;overflow-wrap:anywhere}
 .common{font-size:23px;margin:0 0 10px}.local{color:#516353;margin:0}.status{display:inline-block;margin:28px 0 12px;padding:9px 14px;background:#dfebcf;font-size:14px;font-weight:650}
-section{margin-top:34px;max-width:68ch}h2{font-size:18px;line-height:1.4;margin:0 0 10px}p{line-height:1.75;margin:0;white-space:pre-line;overflow-wrap:anywhere}
+section{margin-top:34px;max-width:68ch}section section{margin-top:22px}h2{font-size:18px;line-height:1.4;margin:0 0 10px}h3{font-size:15px;line-height:1.4;margin:0 0 8px;color:#355241}.part>.status{margin-top:4px}p{line-height:1.75;margin:0;white-space:pre-line;overflow-wrap:anywhere}
 .plant-photo{margin:24px 0 0;max-width:540px}.plant-photo img{display:block;width:100%;height:auto;border-radius:10px;background:#dfebcf}
 .demo{margin:20px 0;padding:16px 18px;background:#f5e8c9;color:#574421;font-size:15px;line-height:1.6}footer{color:#516353;font-size:13px;padding-bottom:38px}.notice{margin-top:20px;font-size:14px;color:#516353}
 @media(max-width:480px){header,main,footer{padding-left:22px;padding-right:22px}header{align-items:flex-start;flex-direction:column;gap:8px}main{padding-top:24px}.common{font-size:21px}}
@@ -49,27 +49,26 @@ function publicPlantHtml(tag, row, hasPhoto = false) {
     const isDemo = Object.values(plant).some(value => /\bDEMO\b/i.test(value));
     const status = plant.conservation_status.trim();
     const statusLabel = STATUS_NAMES[status] || status || 'Not recorded';
-    const sections = [['About this species', plant.description], ['Appearance', plant.morphology],
+    // "About this species": true of every plant of this species.
+    const speciesSections = [['Description', plant.description], ['Appearance', plant.morphology],
         ['Habitat', plant.habitat], ['Cultural significance', plant.cultural_significance]];
-    const sourceLine = row.data_source === 'inaturalist'
-        ? `<p class="notice">Source: iNaturalist observation by ${escapeHtml(
-            typeof row.source_observer === 'string' ? row.source_observer.slice(0, 200) : 'Unknown'
-        )} (${escapeHtml(
-            typeof row.source_licence === 'string' ? row.source_licence.slice(0, 100) : 'Unknown'
-        )})</p>`
-        : '';
     return documentHtml(plant.scientific_name || 'Plant information',
         `<div class="tag">${escapeHtml(tag)}</div>` +
         (isDemo ? '<aside class="demo"><strong>Demonstration record</strong><br>Not real research data. Approved status is for demonstration only and does not represent officer review.</aside>' : '') +
         `<h1>${escapeHtml(plant.scientific_name || 'Plant information')}</h1>` +
         (plant.common_name ? `<p class="common">${escapeHtml(plant.common_name)}</p>` : '') +
         (plant.local_name ? `<p class="local">Local name: ${escapeHtml(plant.local_name)}</p>` : '') +
-        sourceLine +
+        // This plant: the one in front of the visitor (its tag and photo).
+        `<section class="part"><h2>This plant</h2><p>Tag: ${escapeHtml(tag)}</p>` +
         (hasPhoto ? `<figure class="plant-photo"><img src="/p/${escapeHtml(tag)}/photo" alt="${escapeHtml(plant.scientific_name || 'Plant')}, plant ${escapeHtml(tag)}"></figure>` : '') +
+        '</section>' +
+        // About this species.
+        '<section class="part"><h2>About this species</h2>' +
         `<div class="status">Conservation status: ${escapeHtml(statusLabel)}</div>` +
-        sections.filter(([, value]) => value.trim()).map(([label, value]) =>
-            `<section><h2>${label}</h2><p>${escapeHtml(value)}</p></section>`).join('') +
-        (!plant.description.trim() ? '<p class="notice">A species description has not yet been provided.</p>' : ''));
+        speciesSections.filter(([, value]) => value.trim()).map(([label, value]) =>
+            `<section><h3>${label}</h3><p>${escapeHtml(value)}</p></section>`).join('') +
+        (!plant.description.trim() ? '<p class="notice">A species description has not yet been provided.</p>' : '') +
+        '</section>');
 }
 
 const { publicQrData } = require('../middleware/publicQrProtection');

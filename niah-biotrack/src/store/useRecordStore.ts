@@ -274,6 +274,13 @@ export interface PlantRecord {
    */
   otherBotanist?: boolean;
 
+  /*
+   * For a plant this botanist didn't register (another botanist's or an imported one) that
+   * is on the public QR page: the address of its public stripped photo ("/p/<tag>/photo",
+   * from the tag lookup). Shown when the phone has no photo of the plant itself.
+   */
+  publicPhotoUrl?: string | null;
+
   tagCode:
     | string
     | null;
@@ -840,7 +847,7 @@ function buildRegistrationVisit(
 
     notes:
       record.description?.trim() ||
-      'Registration visit (added on submit).',
+      'Registration observation (added on submit).',
 
     syncStatus:
       SyncStatus.NOT_UPLOADED,

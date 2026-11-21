@@ -34,7 +34,12 @@ import PlantNotFound from '../src/components/PlantNotFound';
 import { resolveStoredPhotoUri } from '../src/utils/photoStorage';
 import { formatCoordinates } from '../src/utils/formatCoordinates';
 import { fetchPlantQr, saveQrImage, type PlantQr } from '../src/api/plantQr';
-import { ApiError } from '../src/api/client';
+import { ApiError, BASE_URL } from '../src/api/client';
+import RemotePhoto from '../src/components/RemotePhoto';
+import { isPhysicalTag } from '../src/utils/myTags';
+import { useSpeciesStore } from '../src/store/useSpeciesStore';
+import { plainConservationStatus } from '../src/utils/conservationStatus';
+import { publicPhotoUri } from '../src/utils/publicPhoto';
 import { formatDiameterCm, formatHeightFromCm, parseMeasurement } from '../src/utils/units';
 import { routeSyncLabel, routesUploadedText } from '../src/utils/routeSync';
 
@@ -102,6 +107,15 @@ function visitChips(observation: ObservationVisit): string[] {
   return chips;
 }
 
+// The newest observation's health or life stage, in plain words ("Seedling sapling").
+function latestCondition(visits: ObservationVisit[], field: 'health' | 'stage'): string | null {
+  const newest = [...visits]
+    .filter((visit) => Boolean(visit?.[field]))
+    .sort((a, b) => Date.parse(b.observedAt || b.date || '') - Date.parse(a.observedAt || a.date || ''))[0];
+  const value = String(newest?.[field] ?? '').replace(/_/g, ' ').trim();
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : null;
+}
+
 function DetailRow({
   label,
   value,
@@ -157,6 +171,12 @@ export default function PlantDetailScreen() {
   const [qrError, setQrError] = useState('');
 
   const matched = records.find((record) => record.id === id);
+  // "About this species": the species saved on this phone (its details once loaded).
+  const speciesId = matched?.speciesId ?? null;
+  const speciesDetail = useSpeciesStore((state) => (speciesId ? state.detailsById[speciesId] ?? null : null));
+  const speciesListItem = useSpeciesStore((state) =>
+    speciesId ? state.species.find((item) => item.id === speciesId) ?? null : null
+  );
   if (!matched) {
     return <PlantNotFound code={id} />;
   }
@@ -186,7 +206,7 @@ export default function PlantDetailScreen() {
         uri,
         meta: observation.photoMeta?.[uri],
         obsId: observation.id,
-        label: `Visit ${observation.date}`,
+        label: `Observation ${observation.date}`,
       }))
     ),
   ];
@@ -346,7 +366,7 @@ export default function PlantDetailScreen() {
             }
 
             const reason = result.sync.ok
-              ? 'A visit was added while uploading and still needs to be sent.'
+              ? 'An observation was added while uploading and still needs to be sent.'
               : result.sync.reason;
 
             Alert.alert(
@@ -436,15 +456,23 @@ export default function PlantDetailScreen() {
               }
             />
           ) : (
-            <View
-              style={[
-                styles.heroPhoto,
-                styles.heroEmpty,
-                { width },
-              ]}
-            >
-              <Text style={styles.heroEmptyText}>No photos recorded</Text>
-            </View>
+            // No photo on this phone. For a plant someone else registered (or an imported
+            // one) that is public: its public stripped photo; otherwise the placeholder.
+            <RemotePhoto
+              uri={matched.otherBotanist ? publicPhotoUri(BASE_URL, matched.publicPhotoUrl) : null}
+              style={[styles.heroPhoto, { width }]}
+              placeholder={
+                <View
+                  style={[
+                    styles.heroPhoto,
+                    styles.heroEmpty,
+                    { width },
+                  ]}
+                >
+                  <Text style={styles.heroEmptyText}>No photos recorded</Text>
+                </View>
+              }
+            />
           )}
 
           <TouchableOpacity
@@ -543,23 +571,13 @@ export default function PlantDetailScreen() {
             </Text>
           ) : null}
 
-          {/* Species Details: Split Height and Diameter */}
-          <Text style={styles.heading}>SPECIES DETAILS</Text>
+          {/* This plant: its tag, place, measurements, condition and observations. */}
+          <Text style={styles.heading}>THIS PLANT</Text>
 
           <View style={styles.detailCard}>
-            <DetailRow label="Common name" value={matched.commonName} />
-            <DetailRow label="Family" value={matched.family} />
-            <DetailRow
-              label="Height (m)"
-              value={latestHeight(matched)}
-            />
-            <DetailRow
-              label="Diameter (cm)"
-              value={latestDiameter(matched)}
-            />
             <DetailRow
               label="Plant tag"
-              value={matched.tagCode ?? 'No tag attached'}
+              value={isPhysicalTag(matched.tagCode) ? matched.tagCode : 'No tag attached'}
             />
 
             {matched.tagProblem ? (
@@ -587,6 +605,19 @@ export default function PlantDetailScreen() {
                 ) : null}
               </View>
             ) : null}
+            <DetailRow label="Location note" value={matched.locationName} />
+            <DetailRow label="Coordinates" value={coordinates} />
+            <DetailRow
+              label="Height (m)"
+              value={latestHeight(matched)}
+            />
+            <DetailRow
+              label="Diameter (cm)"
+              value={latestDiameter(matched)}
+            />
+            <DetailRow label="Health" value={latestCondition(matched.observations ?? [], 'health')} />
+            <DetailRow label="Life stage" value={latestCondition(matched.observations ?? [], 'stage')} />
+            <DetailRow label="Observations" value={String((matched.observations ?? []).length)} />
           </View>
 
           <Text style={styles.heading}>MORPHOLOGICAL CHARACTERISTICS</Text>
@@ -609,14 +640,25 @@ export default function PlantDetailScreen() {
             {matched.description?.trim() || NOT_RECORDED}
           </Text>
 
-          {/* Location Landmark & GPS Coordinates */}
-          <Text style={styles.heading}>LOCATION</Text>
+          {/* About this species: what is known about the species in general. */}
+          <Text style={styles.heading}>ABOUT THIS SPECIES</Text>
           <View style={styles.detailCard}>
             <DetailRow
-              label="Location landmark"
-              value={matched.locationName}
+              label="Scientific name"
+              value={speciesDetail?.scientific_name ?? speciesListItem?.scientific_name ?? matched.scientificName}
             />
-            <DetailRow label="Coordinates" value={coordinates} />
+            <DetailRow
+              label="Common name"
+              value={speciesDetail?.common_name ?? speciesListItem?.common_name ?? matched.commonName}
+            />
+            <DetailRow label="Local name" value={speciesDetail?.local_name ?? speciesListItem?.local_name} />
+            <DetailRow label="Family" value={speciesDetail?.taxonomy?.family ?? speciesListItem?.taxonomy?.family ?? matched.family} />
+            <DetailRow
+              label="Conservation status"
+              value={plainConservationStatus(speciesDetail?.conservation_status ?? speciesListItem?.conservation_status).label}
+            />
+            <DetailRow label="Habitat" value={speciesDetail?.habitat} />
+            <DetailRow label="Description" value={speciesDetail?.description ?? speciesListItem?.description} />
           </View>
 
           {/* Photos Upload Status */}
@@ -679,11 +721,13 @@ export default function PlantDetailScreen() {
               <Text style={styles.actionBtnText}>🧭 Find plant</Text>
             </TouchableOpacity>
 
-            {matched.tagCode ? (
+            {/* A real tag: its QR. No tag yet (or only the "plant:<id>" placeholder) on
+                this botanist's own plant: Attach tag. */}
+            {isPhysicalTag(matched.tagCode) ? (
               <TouchableOpacity style={styles.actionBtn} onPress={() => void openQr()}>
                 <Text style={styles.actionBtnText}>🔳 Show QR</Text>
               </TouchableOpacity>
-            ) : (
+            ) : matched.otherBotanist ? null : (
               <TouchableOpacity
                 style={styles.actionBtn}
                 onPress={() =>
@@ -701,11 +745,11 @@ export default function PlantDetailScreen() {
             )}
           </View>
 
-          {/* Observation Visits History */}
+          {/* Observations */}
           <View style={styles.obsHeaderRow}>
-            <Text style={styles.heading}>OBSERVATION HISTORY</Text>
+            <Text style={styles.heading}>OBSERVATIONS</Text>
             <Text style={styles.obsCount}>
-              {(matched.observations ?? []).length} visits
+              {(matched.observations ?? []).length} {(matched.observations ?? []).length === 1 ? 'observation' : 'observations'}
             </Text>
           </View>
 
@@ -760,6 +804,10 @@ export default function PlantDetailScreen() {
               </View>
             </View>
           ))}
+
+          {(matched.observations ?? []).length === 0 ? (
+            <Text style={styles.noObservations}>No observations recorded yet.</Text>
+          ) : null}
 
           <TouchableOpacity
             style={styles.addObsBtn}
@@ -1169,6 +1217,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     marginBottom: 12,
   },
+  noObservations: { fontSize: 13, color: '#68776D', marginBottom: 12 },
   obsCount: {
     fontSize: 12,
     color: '#68776D',

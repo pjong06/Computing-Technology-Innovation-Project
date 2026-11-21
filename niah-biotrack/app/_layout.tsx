@@ -96,7 +96,6 @@ export default function RootLayout() {
         <Stack.Screen name="index" />
         <Stack.Screen name="forgot-password" />
         <Stack.Screen name="change-password" />
-        <Stack.Screen name="photo-credits" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="new-record" />
         <Stack.Screen name="save-confirm" />
@@ -104,6 +103,7 @@ export default function RootLayout() {
         <Stack.Screen name="species-reference/index" />
         <Stack.Screen name="species-reference/[id]" />
         <Stack.Screen name="attach-tag" />
+        <Stack.Screen name="my-tags" />
         <Stack.Screen name="add-observation" />
         <Stack.Screen name="navigate-plant" />
         <Stack.Screen name="manual-qr" />

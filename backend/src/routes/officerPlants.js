@@ -23,10 +23,10 @@ const PHOTO_URL_TTL_SECONDS = 600;
 
 const PLANT_COLUMNS =
     "id, qr_code_value, species_id, location_description, plant_status, " +
-    "registered_by, registered_at, data_source, source_observer, source_licence";
+    "registered_by, registered_at";
 const SPECIES_COLUMNS = "id, scientific_name, common_name, conservation_status";
 const SPECIES_PHOTO_COLUMNS =
-    "id, species_id, file_path, is_primary, source, licence_code, attribution, photographer";
+    "id, species_id, file_path, is_primary, source";
 const OBSERVATION_COLUMNS =
     "id, plant_id, observer_id, observed_at, height_cm, diameter_cm, " +
     "health_status, life_stage, review_status";
@@ -189,10 +189,6 @@ function publicSpeciesPhoto(photo, urls) {
     if (!photo) return null;
     return {
         url: urls.get(photo.file_path),
-        source: photo.source || null,
-        licence_code: photo.licence_code || null,
-        attribution: photo.attribution || null,
-        photographer: photo.photographer || null,
     };
 }
 
@@ -431,9 +427,6 @@ router.get("/", async (req, res) => {
                     species: speciesById.get(plant.species_id) || null,
                     location_description: plant.location_description || null,
                     plant_status: plant.plant_status || null,
-                    data_source: plant.data_source || "field",
-                    source_observer: plant.source_observer || null,
-                    source_licence: plant.source_licence || null,
                     registered_by: profileNames.get(plant.registered_by) || null,
                     last_observation_at: summary.last,
                     photo_thumbnail: primaryPhotoByPlant.get(plant.id) || null,
@@ -523,9 +516,6 @@ router.get("/:id", async (req, res) => {
                 species: speciesById.get(plant.species_id) || null,
                 location_description: plant.location_description || null,
                 plant_status: plant.plant_status || null,
-                data_source: plant.data_source || "field",
-                source_observer: plant.source_observer || null,
-                source_licence: plant.source_licence || null,
                 registered_by: profileNames.get(plant.registered_by) || null,
                 registered_at: plant.registered_at || null,
                 last_observation_at: summary.last,

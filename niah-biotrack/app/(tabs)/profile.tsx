@@ -387,8 +387,8 @@ export default function ProfileScreen() {
     unsentProposalCount > 0
       ? `${unsentProposalCount} species ${
           unsentProposalCount === 1
-            ? 'proposal'
-            : 'proposals'
+            ? 'request'
+            : 'requests'
         }`
       : null,
   ]
@@ -1039,6 +1039,36 @@ export default function ProfileScreen() {
           </View>
         )}
 
+        {/* My QR tags - botanists: reserved tags and "Get new tags" (PDF of QR labels). */}
+
+        {role === 'botanist' && (
+          <TouchableOpacity
+            style={[styles.actionRowCard, styles.actionRowSpaced]}
+            activeOpacity={0.8}
+            onPress={() => router.push('/my-tags' as never)}
+            accessibilityRole="button"
+            accessibilityLabel="My QR tags"
+          >
+            <View style={styles.actionRowLeft}>
+              <View style={styles.actionIconBox}>
+                <Ionicons
+                  name="qr-code-outline"
+                  size={18}
+                  color="#213B2A"
+                />
+              </View>
+              <Text style={styles.actionRowTitle}>
+                My QR tags
+              </Text>
+            </View>
+            <Ionicons
+              name="chevron-forward"
+              size={18}
+              color="#76877B"
+            />
+          </TouchableOpacity>
+        )}
+
         {/* Account Security - Signed-in accounts only */}
 
         {!isGuest && (
@@ -1066,34 +1096,6 @@ export default function ProfileScreen() {
             />
           </TouchableOpacity>
         )}
-
-        {/* Photo credits - everyone (the species photos are public) */}
-
-        <TouchableOpacity
-          style={[styles.actionRowCard, styles.actionRowSpaced]}
-          activeOpacity={0.8}
-          onPress={() => router.push('/photo-credits' as never)}
-          accessibilityRole="button"
-          accessibilityLabel="Photo credits"
-        >
-          <View style={styles.actionRowLeft}>
-            <View style={styles.actionIconBox}>
-              <Ionicons
-                name="images-outline"
-                size={18}
-                color="#213B2A"
-              />
-            </View>
-            <Text style={styles.actionRowTitle}>
-              Photo credits
-            </Text>
-          </View>
-          <Ionicons
-            name="chevron-forward"
-            size={18}
-            color="#76877B"
-          />
-        </TouchableOpacity>
 
         {/* Actions */}
 

@@ -19,6 +19,8 @@ interface PlantListResponse {
     qr_code_value?: string | null;
     plant_status?: string | null;
     registered_at?: string | null;
+    // Public photo address ("/p/<tag>/photo") when the plant is public and has a photo.
+    photo_url?: string | null;
   }[];
   pagination?: { page: number; page_size: number; total: number | null };
 }
@@ -28,6 +30,7 @@ export interface OtherApprovedPlant {
   speciesId: string | null;
   tagCode: string | null;
   registeredAt: string | null;
+  photoUrl: string | null;
 }
 
 // The server sends 50 a page; stop after this many pages so a slow network can't hang the tab.
@@ -51,6 +54,7 @@ export async function fetchOtherApprovedPlants(ownServerIds: Set<string>): Promi
         speciesId: row.species_id ?? null,
         tagCode: row.qr_code_value ?? null,
         registeredAt: row.registered_at ?? null,
+        photoUrl: typeof row.photo_url === 'string' ? row.photo_url : null,
       });
     }
     const total = response?.pagination?.total;

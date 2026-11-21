@@ -41,7 +41,7 @@ test('times read "Today 09:42", "Yesterday 16:20", otherwise "19 Nov 15:30"', ()
 
 test('header "Review", one line, then the section tabs with counts', () => {
   assert.match(html, /<div id="queue-header">\s*<h1>Review<\/h1>\s*<p class="lead">Check field records before they become official, for the conservation officer\.<\/p>\s*<\/div>/);
-  // shared.js draws the tabs (Field records · Species proposals · Rejected history, with
+  // shared.js draws the tabs (Field records · Species requests · Rejected history, with
   // counts); this page moves them under its heading.
   assert.match(queue, /const tabs = document\.getElementById\('section-tabs'\);[\s\S]*?header\.insertAdjacentElement\('afterend', tabs\)/);
   assert.match(read('frontend/js/shared.js'), /\{ file: 'queue\.html', label: 'Field records', countId: 'field-records-count' \}/);

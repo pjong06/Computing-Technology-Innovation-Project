@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Species proposals - Niah Biotrack</title>
+<title>Species requests - Niah Biotrack</title>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="icon" href="images/logo.png">
 <link rel="stylesheet" href="css/style.css">
@@ -51,26 +51,26 @@
 <nav id="menu"></nav>
 <main class="wide">
 <section class="page on">
-  <h1>Species <span>proposals</span></h1>
-  <p class="lead">New species that botanists proposed from the field, for the conservation officer to approve or reject (a rejection needs a reason, which is shared with the botanist).</p>
-  <p class="muted" id="proposals-count">Loading proposals...</p>
-  <div class="card proposal-state" id="proposals-loading" role="status">Loading species proposals...</div>
+  <h1>Species <span>requests</span></h1>
+  <p class="lead">New species that botanists requested from the field, for the conservation officer to approve or reject (a rejection needs a reason, which is shared with the botanist).</p>
+  <p class="muted" id="proposals-count">Loading species requests...</p>
+  <div class="card proposal-state" id="proposals-loading" role="status">Loading species requests...</div>
   <div class="card proposal-state" id="proposals-error" role="alert" hidden></div>
-  <div class="card proposal-state" id="proposals-empty" hidden>Nothing waiting for review. New species proposals from the mobile app will appear here.</div>
+  <div class="card proposal-state" id="proposals-empty" hidden>Nothing waiting for review. New species requests from the mobile app will appear here.</div>
   <div class="proposal-list" id="proposals-list"></div>
 </section>
 </main>
 </div>
 <dialog class="proposal-dialog" id="reject-dialog" aria-labelledby="reject-title">
   <form id="reject-form">
-    <h2 id="reject-title">Reject species proposal</h2>
+    <h2 id="reject-title">Reject species request</h2>
     <p id="reject-proposal-name"></p>
     <label for="reject-reason">Reason for rejection <span aria-hidden="true">*</span></label>
     <textarea id="reject-reason" required aria-describedby="reject-help"></textarea>
     <p class="muted" id="reject-help">This reason will be sent to the botanist.</p>
     <div class="acts">
       <button class="btn ghost" type="button" id="reject-cancel">Cancel</button>
-      <button class="btn red" type="submit" id="reject-submit">Reject proposal</button>
+      <button class="btn red" type="submit" id="reject-submit">Reject request</button>
     </div>
   </form>
 </dialog>

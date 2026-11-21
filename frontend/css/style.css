@@ -562,69 +562,10 @@ tr.row:hover td {
   object-fit: cover;
 }
 
-/* Photo credit: a small "i" in the photo's corner; hover, focus or tap shows the plain-text
-   credit. The photo's box is position: relative (.pv, .species-photo-fallback). */
+/* Photo boxes are position: relative so overlays sit in their corner. */
 .pv,
 .species-photo-fallback {
   position: relative;
-}
-
-.photo-credit-info {
-  position: absolute;
-  right: 6px;
-  bottom: 6px;
-  z-index: 2;
-}
-
-.photo-credit-button {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  font: italic 700 13px/24px Georgia, serif;
-  text-align: center;
-  cursor: pointer;
-}
-
-.photo-credit-tip {
-  display: none;
-  position: absolute;
-  right: 0;
-  bottom: 30px;
-  width: max-content;
-  max-width: min(260px, 70vw);
-  padding: 6px 10px;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.8);
-  color: #fff;
-  font-size: 12px;
-  line-height: 1.4;
-  white-space: normal;
-}
-
-.photo-credit-info:hover .photo-credit-tip,
-.photo-credit-info:focus-within .photo-credit-tip,
-.photo-credit-info.open .photo-credit-tip {
-  display: block;
-}
-
-/* Photo credits page */
-.credits-table td {
-  overflow-wrap: break-word;
-}
-
-.page-footer {
-  margin-top: 24px;
-  color: var(--mute);
-  font-size: 13px;
-}
-
-.page-footer a {
-  color: var(--pri);
-  font-weight: 600;
 }
 
 /* Flex / Spacing */
@@ -970,7 +911,7 @@ table.big .pill {
   color: var(--wat);
 }
 
-.review-kind.revisit {
+.review-kind.observation {
   background: var(--mint);
   color: var(--ink);
 }

@@ -144,35 +144,39 @@ export default function PlantInfoScreen() {
           {facts.scientificName && facts.commonName ? (
             <Text style={styles.scientific}>{facts.scientificName}</Text>
           ) : null}
-          {facts.localName ? <Text style={styles.localName}>Local name: {facts.localName}</Text> : null}
+          {/* This plant: only for a scanned tag (the one plant in front of the visitor). */}
+          {scanned ? (
+            <>
+              <Text style={styles.heading}>This plant</Text>
+              <Text style={styles.body}>Tag: {scanned.tagCode}</Text>
+            </>
+          ) : null}
 
+          {/* About this species: true of every plant of this species. */}
+          <Text style={styles.heading}>About this species</Text>
+          {facts.localName ? <Text style={styles.localName}>Local name: {facts.localName}</Text> : null}
           <View style={[styles.badge, { backgroundColor: statusColors.bg }]}>
             <Text style={[styles.badgeText, { color: statusColors.text }]}>{status.label}</Text>
           </View>
           <Text style={styles.body}>{status.meaning}</Text>
-          {scanned?.dataSource === 'inaturalist' ? (
-            <Text style={styles.body}>
-              Source: iNaturalist observation by {scanned.sourceObserver || 'Unknown'} ({scanned.sourceLicence || 'Unknown'})
-            </Text>
-          ) : null}
 
           {facts.description ? (
             <>
-              <Text style={styles.heading}>About</Text>
+              <Text style={styles.subheading}>Description</Text>
               <Text style={styles.body}>{facts.description}</Text>
             </>
           ) : null}
 
           {facts.habitat ? (
             <>
-              <Text style={styles.heading}>Where it grows</Text>
+              <Text style={styles.subheading}>Where it grows</Text>
               <Text style={styles.body}>{facts.habitat}</Text>
             </>
           ) : null}
 
           {facts.culturalSignificance ? (
             <>
-              <Text style={styles.heading}>Cultural significance</Text>
+              <Text style={styles.subheading}>Cultural significance</Text>
               <Text style={styles.body}>{facts.culturalSignificance}</Text>
             </>
           ) : null}
@@ -202,6 +206,7 @@ const styles = StyleSheet.create({
   badge: { alignSelf: 'flex-start', paddingVertical: 5, paddingHorizontal: 12, borderRadius: 14, marginTop: 14 },
   badgeText: { fontSize: 12.5, fontWeight: '700' },
   heading: { fontSize: 15, fontWeight: '800', color: '#213B2A', marginTop: 22, marginBottom: 6 },
+  subheading: { fontSize: 13, fontWeight: '700', color: '#526659', marginTop: 12, marginBottom: 4 },
   body: { fontSize: 14, color: '#3A483E', lineHeight: 21, marginTop: 6 },
   footer: { fontSize: 12, color: '#7E8F83', textAlign: 'center', marginTop: 32 },
 });

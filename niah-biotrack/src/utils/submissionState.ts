@@ -82,7 +82,7 @@ export function firstVisitOf<T extends DatedVisit>(record: {
 
 // The review state of a newly registered plant's single list row: the status of its first
 // visit (the plant and that visit are one submission). When the plant is approved and later
-// visits (revisits) are waiting, also says how many, e.g. "1 visit waiting for review".
+// visits (revisits) are waiting, also says how many, e.g. "1 observation waiting for review".
 // With no visit yet (an unsubmitted draft) the plant record's own state is used.
 export function newPlantReview<T extends DatedVisit>(record: {
   createdAtIso?: string;
@@ -110,9 +110,9 @@ export function newPlantReview<T extends DatedVisit>(record: {
   return { firstVisit, outcome, waitingRevisits };
 }
 
-// "1 visit waiting for review" / "2 visits waiting for review".
+// "1 observation waiting for review" / "2 observations waiting for review".
 export function waitingVisitsText(count: number): string {
-  return `${count} visit${count === 1 ? '' : 's'} waiting for review`;
+  return `${count} observation${count === 1 ? '' : 's'} waiting for review`;
 }
 
 // The first problem stopping a visit of this record from being sent for review, if any.
@@ -179,7 +179,7 @@ export function applyServerReview<T extends VisitSubmissionFields>(
 export function oversizedPhotoMessage(count: number): string {
   const photos = count === 1 ? 'A photo is' : `${count} photos are`;
   const them = count === 1 ? 'it' : 'them';
-  return `${photos} over 5 MB, so this visit was not sent for review. Remove ${them} on the plant page, then sync again.`;
+  return `${photos} over 5 MB, so this observation was not sent for review. Remove ${them} on the plant page, then sync again.`;
 }
 
 // A visit photo the server marked "locked" (photos_locked) stays skipped only once the
