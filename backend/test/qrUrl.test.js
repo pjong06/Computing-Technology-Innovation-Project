@@ -1,6 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
+const fs = require('node:fs');
+const path = require('node:path');
 const QRCode = require('qrcode');
 process.env.SUPABASE_URL = 'https://example.supabase.co';
 process.env.SUPABASE_PUBLISHABLE_KEY = 'test-key';
@@ -113,60 +115,25 @@ test('visitor page renders only allowed fields and escapes stored content', asyn
   assert.doesNotMatch(html, /reference-photo/);
 });
 
-test('visitor renders an approved species reference photo with escaped credit and stripped metadata', async t => {
-  const sharp = require('sharp');
-  const original = await sharp({ create: { width: 800, height: 400, channels: 3, background: 'green' } })
-    .withExif({ IFD0: { Copyright: 'PRIVATE_METADATA' } }).jpeg().toBuffer();
-  const filters = [];
-  const downloads = [];
+test('visitor page shows no species reference photo and reads no photo storage', async t => {
+  // Species reference photos are no longer shown, and a plant's own photos are staff-only,
+  // so the visitor page has no photo: it only calls the public QR function.
+  const touched = [];
   const client = {
     rpc: async () => ({ data: [{ scientific_name: 'Shorea albida' }] }),
-    from(table) {
-      return {
-        select() { return this; },
-        eq(...args) { filters.push([table, ...args]); return this; },
-        order() { return this; },
-        limit() { return this; },
-        abortSignal() { return this; },
-        async maybeSingle() { return { data: { id: 'catalogue-species' } }; },
-        then(resolve) { resolve({ data: [
-          { file_path: 'missing' },
-          { file_path: 'invalid' },
-          { file_path: 'private-storage-path', source: 'inaturalist', photographer: '<Name>',
-            licence_code: 'cc-by', source_url: 'https://example.test/location' },
-        ] }); },
-      };
-    },
-    storage: {
-      from(bucket) {
-        assert.equal(bucket, 'species-media');
-        return { async download(filePath) {
-          downloads.push(filePath);
-          if (filePath === 'missing') return { error: new Error('not found') };
-          return { data: new Blob([filePath === 'invalid' ? '<svg/>' : original]) };
-        } };
-      },
-    },
+    from(table) { touched.push(table); throw new Error('no table reads expected'); },
+    storage: { from(bucket) { touched.push(bucket); throw new Error('no storage reads expected'); } },
   };
   const url = await start(t, createPublicPlantsRouter({ client }));
   const response = await fetch(url + '/p/' + TAG);
   const html = await response.text();
   assert.equal(response.status, 200);
-  assert.match(response.headers.get('content-security-policy'), /img-src 'self' data:/);
+  assert.match(html, /Shorea albida/);
   assert.match(html, /Conservation status: Not recorded/);
-  assert.match(html, /Species reference photo · &lt;Name&gt; · iNaturalist · CC-BY/);
-  assert.doesNotMatch(html, /private-storage-path|example\.test\/location/);
-  const image = Buffer.from(html.match(/data:image\/jpeg;base64,([A-Za-z0-9+/=]+)/)[1], 'base64');
-  const metadata = await sharp(image).metadata();
-  assert.equal(metadata.exif, undefined);
-  assert.equal(metadata.width, 720);
-  assert.deepEqual(downloads, ['missing', 'invalid', 'private-storage-path']);
-  assert.deepEqual(filters, [
-    ['species', 'scientific_name', 'Shorea albida'],
-    ['species', 'verification_status', 'approved'],
-    ['species_media', 'species_id', 'catalogue-species'],
-    ['species_media', 'media_type', 'image/jpeg'],
-  ]);
+  assert.doesNotMatch(html, /<figure|<img(?![^>]*class="brand")|data:image|reference photo|iNaturalist ·/i);
+  assert.deepEqual(touched, []);
+  const source = fs.readFileSync(path.join(__dirname, '../src/routes/publicPlants.js'), 'utf8');
+  assert.doesNotMatch(source, /species_media|species-media|plant_media|plant-media|loadReferencePhoto/);
 });
 
 test('iNaturalist source is escaped plain text on the visitor page and exposed by the QR API', async t => {

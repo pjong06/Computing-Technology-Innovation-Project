@@ -29,6 +29,7 @@ import { conservationStatusColors, plainConservationStatus } from '../../src/uti
 import { plantReviewBadge } from '../../src/utils/reviewStatus';
 import { recordSubmitProblem } from '../../src/utils/submissionState';
 import { routesUploadedText } from '../../src/utils/routeSync';
+import { plantPhotoCaption } from '../../src/utils/plantPhotoCaption';
 import MyProposals from '../../src/components/MyProposals';
 
 const FEATURED_COUNT = 4;
@@ -45,7 +46,8 @@ export default function HomeScreen() {
   );
 
   const species = useSpeciesStore((state) => state.species);
-  const imageUrisBySpeciesId = useSpeciesStore((state) => state.imageUrisBySpeciesId);
+  // A species is shown with a photo of one of its plants (staff only; visitors see the leaf).
+  const plantPhotosBySpeciesId = useSpeciesStore((state) => state.plantPhotosBySpeciesId);
   const loadSpecies = useSpeciesStore((state) => state.loadSpecies);
   const loadSpeciesDetail = useSpeciesStore((state) => state.loadSpeciesDetail);
   const featured = species.slice(0, FEATURED_COUNT);
@@ -58,7 +60,7 @@ export default function HomeScreen() {
   useEffect(() => {
     if (!isVisitor) return;
     for (const item of featured) {
-      if (!imageUrisBySpeciesId[item.id]) void loadSpeciesDetail(item.id);
+      if (!plantPhotosBySpeciesId[item.id]) void loadSpeciesDetail(item.id);
     }
   }, [isVisitor, featuredKey]);
 
@@ -449,7 +451,7 @@ export default function HomeScreen() {
                   {featured.map((item) => {
                     const status = plainConservationStatus(item.conservation_status);
                     const colors = conservationStatusColors(status.code);
-                    const photo = imageUrisBySpeciesId[item.id];
+                    const photo = plantPhotosBySpeciesId[item.id];
                     return (
                       <TouchableOpacity
                         key={item.id}
@@ -458,7 +460,10 @@ export default function HomeScreen() {
                         onPress={() => router.push({ pathname: '/plant-info', params: { speciesId: item.id } } as any)}
                       >
                         {photo ? (
-                          <Image source={{ uri: photo }} style={styles.featuredPhoto} resizeMode="cover" />
+                          <>
+                            <Image source={{ uri: photo.uri }} style={styles.featuredPhoto} resizeMode="cover" />
+                            <Text style={styles.featuredCaption} numberOfLines={1}>{plantPhotoCaption(photo.tag)}</Text>
+                          </>
                         ) : (
                           <View style={[styles.featuredPhoto, styles.featuredPlaceholder]}>
                             <Ionicons name="leaf-outline" size={26} color="#46654F" />
@@ -628,6 +633,7 @@ const styles = StyleSheet.create({
   featuredPhoto: { width: '100%', aspectRatio: 4 / 3, borderRadius: 12, backgroundColor: '#E7EFEA' },
   featuredPlaceholder: { justifyContent: 'center', alignItems: 'center' },
   featuredName: { fontSize: 13.5, fontWeight: '700', color: '#1E2B22', marginTop: 8 },
+  featuredCaption: { fontSize: 11, color: '#68776D', marginTop: 4 },
   featuredBadge: { alignSelf: 'flex-start', paddingVertical: 2, paddingHorizontal: 8, borderRadius: 10, marginTop: 4 },
   featuredBadgeText: { fontSize: 10.5, fontWeight: '700' },
   respectBox: { backgroundColor: '#E8F5E9', borderRadius: 14, padding: 14, marginTop: 4 },

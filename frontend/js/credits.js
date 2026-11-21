@@ -1,29 +1,26 @@
-// credits.js - the Photo credits page: every species reference photo from iNaturalist that
-// needs attribution (CC BY / CC BY-SA), with species, photographer and licence. Uses the same
-// species lists as the catalogue and the shared credit helpers (needsPhotoCredit,
-// photoCreditName, SPECIES_PHOTO_LICENSES). CC0 and SFC's own photos are not listed.
+// credits.js - the Photo credits page: every photo still shown in the portal or app that needs
+// attribution. Species reference photos are no longer shown anywhere, so only plant photos
+// taken from iNaturalist sightings are listed (GET /plants/photo-credits), with the plant,
+// species, photographer and licence. Uses the shared credit helpers (needsPhotoCredit,
+// photoCreditName, SPECIES_PHOTO_LICENSES). CC0 photos and field photos are not listed.
+// This page is the only place these credits are shown: plant photos never show one.
 
 drawMenu('credits.html');
 
-const viewer = getCurrentUser();
-const creditsViewerIsOfficer = viewer !== null && isBotanist(viewer) === false;
-
-// One row per credited photo, sorted by species then photographer.
-function creditRows(speciesList) {
+// One row per credited photo, sorted by species then tag.
+function creditRows(photos) {
   const rows = [];
-  for (const species of speciesList) {
-    for (const photo of species.species_media || []) {
-      if (!needsPhotoCredit(photo)) continue;
-      rows.push({
-        species: species.scientific_name || 'Unnamed species',
-        commonName: species.common_name || '',
-        photographer: photoCreditName(photo),
-        licence: (photo.licence_code && SPECIES_PHOTO_LICENSES[photo.licence_code]) || 'Unknown licence'
-      });
-    }
+  for (const photo of photos) {
+    if (!needsPhotoCredit(photo)) continue;
+    rows.push({
+      tag: displayTag(photo.tag, 'Plant without a tag'),
+      species: photo.scientific_name || 'Species not recorded',
+      commonName: photo.common_name || '',
+      photographer: photoCreditName(photo),
+      licence: (photo.licence_code && SPECIES_PHOTO_LICENSES[photo.licence_code]) || 'Unknown licence'
+    });
   }
-  return rows.sort((a, b) =>
-    a.species.localeCompare(b.species) || a.photographer.localeCompare(b.photographer));
+  return rows.sort((a, b) => a.species.localeCompare(b.species) || a.tag.localeCompare(b.tag));
 }
 
 function drawCredits(rows) {
@@ -31,6 +28,7 @@ function drawCredits(rows) {
   body.replaceChildren();
   for (const row of rows) {
     const tr = document.createElement('tr');
+    tr.appendChild(makeCell(row.tag));
     const speciesCell = document.createElement('td');
     const name = document.createElement('i');
     name.className = 'sci';
@@ -51,17 +49,8 @@ function drawCredits(rows) {
 }
 
 async function loadCredits() {
-  // The same lists as the catalogue: officers see approved and archived species,
-  // botanists the approved list.
-  let speciesList;
-  if (creditsViewerIsOfficer) {
-    const all = await fetchAllPages('/knowledge/species/manage');
-    speciesList = all.filter(species =>
-      species.verification_status === 'approved' || species.verification_status === 'archived');
-  } else {
-    speciesList = await fetchAllPages('/knowledge/species');
-  }
-  drawCredits(creditRows(speciesList));
+  const result = await api('/plants/photo-credits');
+  drawCredits(creditRows(Array.isArray(result && result.data) ? result.data : []));
 }
 
 if (pageAllowed !== false) {

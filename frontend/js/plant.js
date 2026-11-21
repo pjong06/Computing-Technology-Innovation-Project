@@ -33,13 +33,13 @@ function formatDiameter(diameterCm) {
     : `${Math.round(Number(diameterCm) * 100) / 100} cm`;
 }
 
-function renderPhotos(photos, speciesPhoto) {
+// The plant's own photos only. A plant without photos shows the placeholder message
+// (species reference photos are not shown, and plant photos never show a credit).
+function renderPhotos(photos) {
   const grid = byId('plant-photos');
   grid.replaceChildren();
-  const speciesFallback = photos.length === 0 && speciesPhoto?.url ? speciesPhoto : null;
-  byId('plant-no-photos').hidden = photos.length > 0 || Boolean(speciesFallback);
-  byId('plant-photo-heading').textContent =
-    speciesFallback ? 'Species reference photo' : 'Plant photos';
+  byId('plant-no-photos').hidden = photos.length > 0;
+  byId('plant-photo-heading').textContent = 'Plant photos';
   photos.forEach(photo => {
     const image = document.createElement('img');
     image.src = photo.url || PICTURE_BLANK;
@@ -51,29 +51,6 @@ function renderPhotos(photos, speciesPhoto) {
     };
     grid.appendChild(image);
   });
-
-  if (speciesFallback) {
-    const figure = document.createElement('figure');
-    figure.className = 'species-photo-fallback';
-    const image = document.createElement('img');
-    image.src = speciesFallback.url;
-    image.alt = 'Species reference photo';
-    image.loading = 'lazy';
-    const caption = document.createElement('figcaption');
-    caption.textContent = 'Species photo';
-    // Photo credit behind a small "i" on the photo (only when the licence needs one).
-    const credit = makePhotoCreditInfo(speciesFallback);
-    image.onerror = function () {
-      image.onerror = null;
-      image.src = PICTURE_BLANK;
-      figure.hidden = true;
-      byId('plant-no-photos').hidden = false;
-    };
-    figure.appendChild(image);
-    figure.appendChild(caption);
-    if (credit) figure.appendChild(credit);
-    grid.appendChild(figure);
-  }
 }
 
 // Visit history: newest first; the select switches to oldest first.
@@ -159,7 +136,7 @@ function renderPlant(plant) {
   byId('plant-conservation').textContent = plant.species?.conservation_status || 'Not assessed';
   byId('plant-coordinates').textContent = displayCoordinates(plant.latitude, plant.longitude);
   byId('plant-observation-count').textContent = String(plant.observation_count);
-  renderPhotos(plant.photos || [], plant.species_photo);
+  renderPhotos(plant.photos || []);
   renderObservations(plant.observations || []);
   renderMap(plant);
 }
