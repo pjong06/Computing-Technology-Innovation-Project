@@ -652,7 +652,7 @@ test('officers see five menu sections, in order; the Review entry carries the re
     ['Review', 'queue.html'],
     ['Species', 'species.html'],
     ['Plants', 'plants.html'],
-    ['IoT alerts', 'alerts.html'],
+    ['IoT alerts', 'iot-workspace.html'],
     ['Admin', 'reports.html'],
   ]);
   assert.equal(view.sections[0].countId, 'review-menu-count');
@@ -691,8 +691,9 @@ test('tab bars per section for officers, with the current page marked', () => {
   for (const page of ['species.html', 'editor.html']) {
     assert.deepEqual(tabs(page), [], page);
   }
-  assert.deepEqual(tabs('alerts.html').map(t=>[t.href,t.active]),[['alerts.html',true],['iot-workspace.html',false]]);
-  assert.deepEqual(tabs('iot-workspace.html').map(t=>[t.href,t.active]),[['alerts.html',false],['iot-workspace.html',true]]);
+  assert.deepEqual(tabs('alerts.html'),[]);
+  assert.deepEqual(tabs('iot-workspace.html'),[]);
+  assert.deepEqual(plain(nav.navFor(OFFICER,'iot-workspace.html','')).sections.filter(s=>s.active).map(s=>s.label),['IoT alerts']);
   const editor = plain(nav.navFor(OFFICER, 'editor.html', ''));
   assert.deepEqual(editor.sections.filter(s => s.active).map(s => s.label), ['Species']);
 });
