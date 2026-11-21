@@ -76,7 +76,7 @@ export default function RecordRouteScreen() {
   const blocked = useStaffOnly();
   const saveRoute = useRecordStore((state) => state.saveRoute);
 
-  const [isTracking, setIsTracking] = useState(true);
+  const [isTracking, setIsTracking] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [acquiringFix, setAcquiringFix] = useState(true);
   const [gpsWarning, setGpsWarning] = useState('');
@@ -94,6 +94,10 @@ export default function RecordRouteScreen() {
 
   const subscriptionRef = useRef<Location.LocationSubscription | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const isTrackingRef = useRef(isTracking);
+  isTrackingRef.current = isTracking;
+
   const isPausedRef = useRef(isPaused);
   isPausedRef.current = isPaused;
 
@@ -115,9 +119,13 @@ export default function RecordRouteScreen() {
     allowCoarseInitial = false
   ) => {
     const accuracy = coords.accuracy ?? null;
-    const maxAllowedAccuracy = allowCoarseInitial
-      ? MAX_INITIAL_ACCURACY_M
-      : MAX_TRACKING_ACCURACY_M;
+    const needsFirstPreviewFix =
+      !isTrackingRef.current && lastVerifiedPointRef.current === null;
+
+    const maxAllowedAccuracy =
+      allowCoarseInitial || needsFirstPreviewFix
+        ? MAX_INITIAL_ACCURACY_M
+        : MAX_TRACKING_ACCURACY_M;
 
     if (accuracy === null || accuracy > maxAllowedAccuracy) {
       setAcquiringFix(false);
@@ -139,7 +147,8 @@ export default function RecordRouteScreen() {
     setAcquiringFix(false);
     setGpsWarning('');
 
-    if (isPausedRef.current) {
+    // Preview mode (before Start is pressed) or Paused: update live position without recording trail
+    if (!isTrackingRef.current || isPausedRef.current) {
       lastVerifiedPointRef.current = rawPoint;
       setCurrentPoint(rawPoint);
       return;
@@ -218,7 +227,7 @@ export default function RecordRouteScreen() {
   useEffect(() => {
     let active = true;
 
-    const startTracking = async () => {
+    const startGpsPreview = async () => {
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (!active) return;
@@ -297,7 +306,7 @@ export default function RecordRouteScreen() {
       }
     };
 
-    void startTracking();
+    void startGpsPreview();
 
     return () => {
       active = false;
@@ -327,7 +336,51 @@ export default function RecordRouteScreen() {
     };
   }, [isTracking, isPaused]);
 
+  const handleStartTracking = () => {
+    const startFix = lastVerifiedPointRef.current ?? currentPoint;
+
+    distanceMetersRef.current = 0;
+    durationSecondsRef.current = 0;
+    waypointsRef.current = [];
+
+    setDistanceMeters(0);
+    setDurationSeconds(0);
+    setWaypoints([]);
+    setIsPaused(false);
+    isPausedRef.current = false;
+
+    if (startFix) {
+      lastAcceptedPointRef.current = startFix;
+      breadcrumbsRef.current = [startFix];
+      setBreadcrumbs([startFix]);
+    } else {
+      lastAcceptedPointRef.current = null;
+      breadcrumbsRef.current = [];
+      setBreadcrumbs([]);
+    }
+
+    isTrackingRef.current = true;
+    setIsTracking(true);
+
+    Toast.show({
+      type: 'success',
+      text1: 'Route tracing started',
+      text2: startFix
+        ? 'Start point anchored at your current GPS position.'
+        : 'Waiting for GPS lock to anchor start point.',
+    });
+  };
+
   const handlePinWaypoint = () => {
+    if (!isTracking) {
+      Toast.show({
+        type: 'info',
+        text1: 'Route not started yet',
+        text2: 'Tap Start route first before pinning points along the transect.',
+      });
+      return;
+    }
+
     const verifiedPoint = lastVerifiedPointRef.current ?? currentPoint;
     if (!verifiedPoint) {
       Toast.show({
@@ -427,6 +480,7 @@ export default function RecordRouteScreen() {
       return;
     }
 
+    isTrackingRef.current = false;
     setIsTracking(false);
     subscriptionRef.current?.remove();
     subscriptionRef.current = null;
@@ -465,6 +519,8 @@ export default function RecordRouteScreen() {
           text: 'Discard',
           style: 'destructive',
           onPress: () => {
+            isTrackingRef.current = false;
+            setIsTracking(false);
             subscriptionRef.current?.remove();
             subscriptionRef.current = null;
             router.back();
@@ -483,7 +539,7 @@ export default function RecordRouteScreen() {
   };
 
   const handleBackPress = () => {
-    if (distanceMeters < 5 && waypoints.length === 0 && durationSeconds < 10) {
+    if (!isTracking) {
       subscriptionRef.current?.remove();
       subscriptionRef.current = null;
       router.back();
@@ -499,6 +555,8 @@ export default function RecordRouteScreen() {
           text: 'Discard & Exit',
           style: 'destructive',
           onPress: () => {
+            isTrackingRef.current = false;
+            setIsTracking(false);
             subscriptionRef.current?.remove();
             subscriptionRef.current = null;
             router.back();
@@ -535,25 +593,49 @@ export default function RecordRouteScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* Status Banner */}
-        <View style={styles.statusBanner}>
+        <View
+          style={[
+            styles.statusBanner,
+            !isTracking && styles.statusBannerReady,
+          ]}
+        >
           <View style={styles.statusLeft}>
             <View
               style={[
                 styles.liveDot,
-                { backgroundColor: isPaused ? '#D97706' : '#2D6A4F' },
+                {
+                  backgroundColor: !isTracking
+                    ? '#6A7D71'
+                    : isPaused
+                    ? '#D97706'
+                    : '#2D6A4F',
+                },
               ]}
             />
             <Text style={styles.statusLabel}>
-              {isPaused ? 'Transect paused' : 'Recording forest transect'}
+              {!isTracking
+                ? 'Ready to record transect'
+                : isPaused
+                ? 'Transect paused'
+                : 'Recording forest transect'}
             </Text>
           </View>
-          <Text style={styles.pointsBadge}>{breadcrumbs.length} pts</Text>
+          <Text
+            style={[
+              styles.pointsBadge,
+              !isTracking && { color: '#526659' },
+            ]}
+          >
+            {!isTracking ? 'Not started' : `${breadcrumbs.length} pts`}
+          </Text>
         </View>
 
         {/* Interactive Map View (Map / Satellite + Markers) */}
         <View style={styles.trailCard}>
           <View style={styles.trailHeader}>
-            <Text style={styles.trailTitle}>LIVE TRANSECT MAP</Text>
+            <Text style={styles.trailTitle}>
+              {isTracking ? 'LIVE TRANSECT MAP' : 'GPS LOCATION PREVIEW'}
+            </Text>
             <View style={styles.legendRow}>
               <View style={styles.legendItem}>
                 <View style={[styles.legendDot, { backgroundColor: '#16A34A' }]} />
@@ -579,9 +661,23 @@ export default function RecordRouteScreen() {
             height={250}
           />
           <Text style={styles.mapHint}>
-            Tap any marker on the map to read its description.
+            {isTracking
+              ? 'Tap any marker on the map to read its description.'
+              : 'Verify your GPS lock above, then tap Start route below.'}
           </Text>
         </View>
+
+        {/* Primary Action: Start Button (shown before recording begins) */}
+        {!isTracking && (
+          <TouchableOpacity
+            style={styles.startPrimaryBtn}
+            onPress={handleStartTracking}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="play-circle-outline" size={22} color="#FFFFFF" />
+            <Text style={styles.startPrimaryBtnText}>Start route</Text>
+          </TouchableOpacity>
+        )}
 
         {/* Primary Telemetry Card */}
         <View style={styles.metricsCard}>
@@ -716,7 +812,7 @@ export default function RecordRouteScreen() {
             returnKeyType="done"
           />
           <TouchableOpacity
-            style={styles.pinBtn}
+            style={[styles.pinBtn, !isTracking && { opacity: 0.55 }]}
             onPress={handlePinWaypoint}
             activeOpacity={0.85}
           >
@@ -764,36 +860,47 @@ export default function RecordRouteScreen() {
           <Text style={styles.logTreeBtnText}>Log tree at current location</Text>
         </TouchableOpacity>
 
-        {/* Bottom Controls: Pause/Resume & Finish */}
-        <View style={styles.controlsRow}>
+        {/* Bottom Controls: Start OR Pause/Resume & Finish */}
+        {!isTracking ? (
           <TouchableOpacity
-            style={[styles.controlBtn, styles.pauseBtn]}
-            onPress={() => setIsPaused((p) => !p)}
+            style={styles.startPrimaryBtn}
+            onPress={handleStartTracking}
             activeOpacity={0.85}
           >
-            <Ionicons
-              name={isPaused ? 'play-outline' : 'pause-outline'}
-              size={18}
-              color="#213B2A"
-            />
-            <Text style={styles.pauseBtnText}>
-              {isPaused ? 'Resume' : 'Pause'}
-            </Text>
+            <Ionicons name="play-circle-outline" size={22} color="#FFFFFF" />
+            <Text style={styles.startPrimaryBtnText}>Start route</Text>
           </TouchableOpacity>
+        ) : (
+          <View style={styles.controlsRow}>
+            <TouchableOpacity
+              style={[styles.controlBtn, styles.pauseBtn]}
+              onPress={() => setIsPaused((p) => !p)}
+              activeOpacity={0.85}
+            >
+              <Ionicons
+                name={isPaused ? 'play-outline' : 'pause-outline'}
+                size={18}
+                color="#213B2A"
+              />
+              <Text style={styles.pauseBtnText}>
+                {isPaused ? 'Resume' : 'Pause'}
+              </Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.controlBtn, styles.finishBtn]}
-            onPress={handleFinishPress}
-            activeOpacity={0.85}
-          >
-            <Ionicons
-              name="checkmark-circle-outline"
-              size={18}
-              color="#FFFFFF"
-            />
-            <Text style={styles.finishBtnText}>Finish</Text>
-          </TouchableOpacity>
-        </View>
+            <TouchableOpacity
+              style={[styles.controlBtn, styles.finishBtn]}
+              onPress={handleFinishPress}
+              activeOpacity={0.85}
+            >
+              <Ionicons
+                name="checkmark-circle-outline"
+                size={18}
+                color="#FFFFFF"
+              />
+              <Text style={styles.finishBtnText}>Finish</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -835,6 +942,9 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     marginTop: 6,
     marginBottom: 14,
+  },
+  statusBannerReady: {
+    backgroundColor: '#EDF2EE',
   },
   statusLeft: {
     flexDirection: 'row',
@@ -907,6 +1017,21 @@ const styles = StyleSheet.create({
     backgroundColor: '#F9FBF9',
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: '#E6ECE8',
+  },
+  startPrimaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#213B2A',
+    marginBottom: 14,
+  },
+  startPrimaryBtnText: {
+    fontSize: 15.5,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   metricsCard: {
     flexDirection: 'row',
