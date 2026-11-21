@@ -85,7 +85,7 @@ async function api(path, options) {
 
   const body = await response.json().catch(function () { return {}; });
   if (response.ok === false) {
-    throw new Error(body.message || ('Request failed (' + response.status + ')'));
+    throw new Error(body.message || 'Something went wrong on the server. Please try again.');
   }
   return body;
 }
@@ -164,111 +164,6 @@ async function taxonomyIdFor(taxonomy, family, scientificName) {
     }
     throw error;
   }
-}
-
-const SPECIES_PHOTO_LICENSES = {
-  'cc-by': 'CC BY',
-  'cc-by-sa': 'CC BY-SA',
-  cc0: 'CC0'
-};
-
-function preferredSpeciesPhoto(photos) {
-  if (!Array.isArray(photos) || photos.length === 0) return null;
-  return photos.find(photo => photo.source === 'sfc' && photo.is_primary) ||
-    photos.find(photo => photo.source === 'sfc') ||
-    photos.find(photo => photo.is_primary) ||
-    photos[0];
-}
-
-// A one-minute signed link and safe attribution details for the species' preferred photo.
-async function speciesPhoto(species) {
-  const chosen = preferredSpeciesPhoto(species.species_media);
-  if (!chosen) return null;
-  const result = await api('/knowledge/species/' + species.id + '/photos/' + chosen.id);
-  return { ...chosen, ...result };
-}
-
-// ---- photo credit (same logic as niah-biotrack/src/utils/photoCredit.ts) ----
-// The plain-text credit under an iNaturalist reference photo:
-//   "Photo: <name>, <licence> via iNaturalist"
-// backend/test/photoCredit.test.js runs this code and the app's copy on the same examples.
-
-// The photographer's name from iNaturalist's credit sentence, or '' when it has none.
-//   "(c) Samuel Frankel, some rights reserved (CC BY), uploaded by Samuel Frankel" -> "Samuel Frankel"
-//   "no rights reserved, uploaded by Meng-Ying Tsai" (CC0) -> "Meng-Ying Tsai"
-//   "Jane Doe" -> "Jane Doe";  "no rights reserved" -> ""
-function nameFromAttribution(text) {
-  const value = String(text ?? '').trim();
-  if (!value) return '';
-
-  const copyright = /^(?:\(c\)|©)\s*/i.exec(value);
-  if (copyright) return value.slice(copyright[0].length).split(',')[0].trim();
-
-  const uploadedAt = value.toLowerCase().indexOf('uploaded by ');
-  if (uploadedAt !== -1) return value.slice(uploadedAt + 'uploaded by '.length).split(',')[0].trim();
-
-  const first = value.split(',')[0].trim();
-  return first.toLowerCase().includes('rights reserved') ? '' : first;
-}
-
-// The name to show: the photographer field, otherwise the name inside the attribution.
-// A photographer field that holds a whole credit sentence is cleaned the same way.
-function photoCreditName(photo) {
-  const photographer = String(photo.photographer ?? '').trim();
-  const fromPhotographer = /^(?:\(c\)|©)/i.test(photographer)
-    ? nameFromAttribution(photographer)
-    : photographer;
-  return fromPhotographer || nameFromAttribution(photo.attribution) || 'Unknown photographer';
-}
-
-function photoCreditText(photo) {
-  const licence = (photo.licence_code && SPECIES_PHOTO_LICENSES[photo.licence_code]) || 'Unknown licence';
-  return `Photo: ${photoCreditName(photo)}, ${licence} via iNaturalist`;
-}
-// A credit is needed only for iNaturalist photos under CC BY / CC BY-SA (and any licence we
-// can't confirm). CC0 photos and SFC's own photos never show one.
-function needsPhotoCredit(photo) {
-  return !!photo && photo.source === 'inaturalist' && photo.licence_code !== 'cc0';
-}
-
-// ---- end photo credit ----
-
-// A small "i" button for the corner of a photo on a detail view. Hover (or tap) shows the
-// plain-text credit "Photo: <name>, <licence> via iNaturalist". No links. null when the photo
-// needs no credit. The photo's box must be position: relative.
-let photoCreditInfoCount = 0;
-function makePhotoCreditInfo(photo) {
-  if (!needsPhotoCredit(photo)) return null;
-  const text = photoCreditText(photo);
-
-  const wrap = document.createElement('span');
-  wrap.className = 'photo-credit-info';
-
-  const tip = document.createElement('span');
-  tip.className = 'photo-credit-tip';
-  tip.id = 'photo-credit-' + (++photoCreditInfoCount);
-  tip.setAttribute('role', 'tooltip');
-  tip.textContent = text;
-
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'photo-credit-button';
-  button.textContent = 'i';
-  button.title = text;
-  button.setAttribute('aria-label', 'Photo credit');
-  button.setAttribute('aria-describedby', tip.id);
-  button.setAttribute('aria-expanded', 'false');
-  button.onclick = function (event) {
-    event.preventDefault();
-    event.stopPropagation();
-    const open = !wrap.classList.contains('open');
-    wrap.classList.toggle('open', open);
-    button.setAttribute('aria-expanded', String(open));
-  };
-
-  wrap.appendChild(button);
-  wrap.appendChild(tip);
-  return wrap;
 }
 
 // Opens the species editor for this species id, or for a new species when id is ''.
@@ -468,7 +363,7 @@ function databaseRequest(method, body) {
       request.send(JSON.stringify(body));
     }
   } catch (error) {
-    return { ok: false, message: 'Could not reach the backend. Is it running?' };
+    return { ok: false, message: SERVER_UNREACHABLE_MESSAGE };
   }
 
   let reply = {};
@@ -482,7 +377,7 @@ function databaseRequest(method, body) {
     return { ok: false, message: SESSION_EXPIRED_MESSAGE, expired: true };
   }
   if (request.status < 200 || request.status >= 300) {
-    return { ok: false, message: reply.message || ('Database error ' + request.status) };
+    return { ok: false, message: reply.message || 'Could not load the user list.' };
   }
   return { ok: true, data: reply.data };
 }
@@ -781,7 +676,17 @@ const REVIEW_STATUS_DISPLAY = {
 };
 function reviewStatusDisplay(value) {
   const status = String(value || 'unknown').toLowerCase();
-  return REVIEW_STATUS_DISPLAY[status] || { label: String(value || 'unknown').replaceAll('_', ' '), css: '' };
+  if (REVIEW_STATUS_DISPLAY[status]) return REVIEW_STATUS_DISPLAY[status];
+  if (!value) return { label: 'Status not recorded', css: '' };
+  const words = String(value).replaceAll('_', ' ');
+  return { label: words.charAt(0).toUpperCase() + words.slice(1), css: '' };
+}
+
+// A stored value in plain words: "healthy" -> "Healthy", "seedling_sapling" -> "Seedling
+// sapling". Empty values stay empty (tables show "—" for them).
+function readableValue(value) {
+  const text = String(value ?? '').replaceAll('_', ' ').trim();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
 }
 
 // ---- Display helpers for plant tags and coordinates ----
@@ -1000,7 +905,7 @@ function startSession(me, username) {
 
 // Logs out of Supabase, forgets the saved user and goes back to the login page.
 async function logout() {
-  await sb.auth.signOut();
+  await sb.auth.signOut({ scope: 'local' });
   localStorage.removeItem(SESSION_KEY);
   location.href = 'login.html';
 }
@@ -1017,8 +922,7 @@ const OPEN_PAGES = [
 const BOTANIST_PAGES = [
   'species.html',
   'editor.html',
-  'iot-workspace.html',
-  'credits.html'
+  'iot-workspace.html'
 ];
 
 const OFFICER_ONLY_PAGE_MESSAGE = 'That page is for conservation officers only.';
@@ -1075,23 +979,29 @@ function guardPages() {
 
 // ---- Navigation: menu sections, tab bars, review counts and the landing page ----
 //
-// Officers see five menu sections. A section with more than one page shows a tab bar at the
+// Officers see six menu sections, Overview first. A section with more than one page shows a tab bar at the
 // top of its pages (drawn here, not in each page's HTML). Botanists only see "Species".
 // The species editor is not in the menu: the catalogue's Add species / Edit buttons open it
 // (openSpeciesEditor), and "Species" stays highlighted there.
 const NAV_SECTIONS = [
   {
+    label: 'Overview',
+    pages: [
+      { file: 'overview.html', label: 'Overview' }
+    ]
+  },
+  {
     label: 'Review',
     countId: 'review-menu-count',
     pages: [
       { file: 'queue.html', label: 'Field records', countId: 'field-records-count' },
-      { file: 'proposals.html', label: 'Species proposals', countId: 'species-proposals-count' },
+      { file: 'proposals.html', label: 'Species requests', countId: 'species-proposals-count' },
       { file: 'rejected.html', label: 'Rejected history' }
     ]
   },
   {
     label: 'Species',
-    alsoActiveOn: ['editor.html', 'credits.html'],
+    alsoActiveOn: ['editor.html'],
     pages: [
       { file: 'species.html', label: 'Species catalogue' }
     ]
@@ -1184,31 +1094,16 @@ async function fetchFieldRecordsCount() {
 
 async function fetchSpeciesProposalCount() {
   const result = await api('/knowledge/species/proposals/pending?page=1&page_size=1');
-  return validCount(result?.pagination?.total, 'pending proposal');
+  return validCount(result?.pagination?.total, 'species request');
 }
 
 // ---- Landing page after login ----
-// Officers: the review page when anything waits for review, otherwise the map.
-// Botanists: the species catalogue. If the counts don't arrive quickly (or fail), officers
-// go to the species catalogue, so logging in is never held up.
-const HOME_COUNT_TIMEOUT_MS = 2500;
-
+// Officers open the overview; botanists open the species catalogue.
 async function homePageFor(user) {
   if (user === null || isBotanist(user)) {
     return 'species.html';
   }
-  try {
-    const counts = Promise.all([fetchFieldRecordsCount(), fetchSpeciesProposalCount()]);
-    let timer;
-    const timeout = new Promise((resolve, reject) => {
-      timer = setTimeout(() => reject(new Error('The review counts took too long.')), HOME_COUNT_TIMEOUT_MS);
-    });
-    const [records, proposals] = await Promise.race([counts, timeout]).finally(() => clearTimeout(timer));
-    return records + proposals > 0 ? 'queue.html' : 'map.html';
-  } catch (error) {
-    console.warn('Landing page counts unavailable; opening the species catalogue.', error);
-    return 'species.html';
-  }
+  return 'overview.html';
 }
 
 // Opens the first page after logging in (see homePageFor).
@@ -1232,7 +1127,7 @@ function showDatabaseProblem() {
   box.id = 'database-problem';
   box.className = 'card';
   box.setAttribute('role', 'alert');
-  box.textContent = 'Could not load data from the database: ' + databaseProblem +
+  box.textContent = 'Could not load data from the database: ' + databaseProblem.replace(/[.\s]+$/, '') +
     '. What you see may be incomplete. Reload the page to try again.';
   main.insertBefore(box, main.firstChild);
 }
@@ -1346,12 +1241,13 @@ function drawMenu(activeFile) {
   if (user !== null && isBotanist(user) === false) {
     if (thisPageName() !== 'proposals.html') {
       refreshSpeciesProposalMenuCount().catch(error => {
-        showToast('Pending proposal count could not be loaded. ' + error.message);
+        showToast('Species request count could not be loaded. ' + error.message);
       });
     }
     if (thisPageName() !== 'queue.html') {
       refreshFieldRecordsCount().catch(error => {
-        showToast('Field record count could not be loaded. ' + error.message);
+        console.error('Field record count failed:', error);
+        showToast('Field record count could not be loaded.');
       });
     }
   }
@@ -1386,13 +1282,15 @@ function drawSectionTabs(tabs) {
   main.insertBefore(bar, main.firstChild);
 }
 
-// Shows a count on a badge (hidden at 0). noun is singular, e.g. "pending species proposal".
-function setCountBadge(id, count, noun) {
+// Shows a count on a badge (hidden at 0). noun is singular, e.g. "species request"; after
+// is optional words that follow it, e.g. "waiting for review" ("3 species requests waiting
+// for review").
+function setCountBadge(id, count, noun, after) {
   const badge = document.getElementById(id);
   if (!badge) return;
   badge.textContent = String(count);
   badge.hidden = count === 0;
-  badge.title = count + ' ' + noun + (count === 1 ? '' : 's');
+  badge.title = count + ' ' + noun + (count === 1 ? '' : 's') + (after ? ' ' + after : '');
   badge.setAttribute('aria-label', badge.title);
 }
 
@@ -1400,18 +1298,18 @@ function setCountBadge(id, count, noun) {
 function updateReviewMenuCount() {
   if (reviewCounts.records === null && reviewCounts.proposals === null) return;
   setCountBadge('review-menu-count', (reviewCounts.records || 0) + (reviewCounts.proposals || 0),
-    'item waiting for review');
+    'item', 'waiting for review');
 }
 
 function updateSpeciesProposalMenuCount(count) {
-  reviewCounts.proposals = validCount(count, 'pending proposal');
-  setCountBadge('species-proposals-count', count, 'pending species proposal');
+  reviewCounts.proposals = validCount(count, 'species request');
+  setCountBadge('species-proposals-count', count, 'species request', 'waiting for review');
   updateReviewMenuCount();
 }
 
 function updateFieldRecordsCount(count) {
   reviewCounts.records = validCount(count, 'field records');
-  setCountBadge('field-records-count', count, 'field record waiting for review');
+  setCountBadge('field-records-count', count, 'field record', 'waiting for review');
   updateReviewMenuCount();
 }
 

@@ -24,22 +24,22 @@ function cell(row, value, className) {
 function formatHeight(heightCm) {
   return heightCm === null || heightCm === undefined
     ? '—'
-    : `${Math.round(Number(heightCm)) / 100} m`;
+    : String(Math.round(Number(heightCm)) / 100);
 }
 
 function formatDiameter(diameterCm) {
   return diameterCm === null || diameterCm === undefined
     ? '—'
-    : `${Math.round(Number(diameterCm) * 100) / 100} cm`;
+    : String(Math.round(Number(diameterCm) * 100) / 100);
 }
 
-function renderPhotos(photos, speciesPhoto) {
+// The plant's own photos only. A plant without photos shows the placeholder message
+// (species reference photos are not shown, and plant photos never show a credit).
+function renderPhotos(photos) {
   const grid = byId('plant-photos');
   grid.replaceChildren();
-  const speciesFallback = photos.length === 0 && speciesPhoto?.url ? speciesPhoto : null;
-  byId('plant-no-photos').hidden = photos.length > 0 || Boolean(speciesFallback);
-  byId('plant-photo-heading').textContent =
-    speciesFallback ? 'Species reference photo' : 'Plant photos';
+  byId('plant-no-photos').hidden = photos.length > 0;
+  byId('plant-photo-heading').textContent = 'Plant photos';
   photos.forEach(photo => {
     const image = document.createElement('img');
     image.src = photo.url || PICTURE_BLANK;
@@ -51,29 +51,6 @@ function renderPhotos(photos, speciesPhoto) {
     };
     grid.appendChild(image);
   });
-
-  if (speciesFallback) {
-    const figure = document.createElement('figure');
-    figure.className = 'species-photo-fallback';
-    const image = document.createElement('img');
-    image.src = speciesFallback.url;
-    image.alt = 'Species reference photo';
-    image.loading = 'lazy';
-    const caption = document.createElement('figcaption');
-    caption.textContent = 'Species photo';
-    // Photo credit behind a small "i" on the photo (only when the licence needs one).
-    const credit = makePhotoCreditInfo(speciesFallback);
-    image.onerror = function () {
-      image.onerror = null;
-      image.src = PICTURE_BLANK;
-      figure.hidden = true;
-      byId('plant-no-photos').hidden = false;
-    };
-    figure.appendChild(image);
-    figure.appendChild(caption);
-    if (credit) figure.appendChild(credit);
-    grid.appendChild(figure);
-  }
 }
 
 // Visit history: newest first; the select switches to oldest first.
@@ -91,12 +68,14 @@ function renderObservations(observations) {
   byId('observations-count').textContent =
     `${observations.length} observation${observations.length === 1 ? '' : 's'}`;
   byId('observations-empty').hidden = observations.length > 0;
+  // No observations: show only the message, not an empty table.
+  body.closest('.table-wrap').hidden = observations.length === 0;
   sortByDate(observations, observation => observation.observed_at, historySort).forEach(observation => {
     const row = document.createElement('tr');
     cell(row, displayDate(observation.observed_at));
     cell(row, observation.observer_name);
-    cell(row, observation.health_status);
-    cell(row, observation.life_stage);
+    cell(row, readableValue(observation.health_status));
+    cell(row, readableValue(observation.life_stage));
     cell(row, formatHeight(observation.height_cm));
     cell(row, formatDiameter(observation.diameter_cm));
     // Review status as a coloured badge, the same scheme as everywhere else.
@@ -141,25 +120,18 @@ function renderPlant(plant) {
   byId('plant-tag').textContent = displayTag(plant.tag_code, 'No tag code');
   byId('plant-title').textContent = plant.species?.common_name || plant.species?.scientific_name || 'Plant';
   byId('plant-species').textContent = plant.species?.scientific_name || 'Species not recorded';
-  byId('plant-source').textContent = plant.data_source === 'inaturalist'
-    ? `Source: iNaturalist observation · Observer: ${plant.source_observer || 'Unknown'} · Licence: ${plant.source_licence || 'Unknown'}`
-    : 'Source: Field record (registered in the app)';
   const status = plantStatus(plant.plant_status);
   const statusElement = byId('plant-status');
   statusElement.textContent = status.label;
   statusElement.className = 'detail-value plant-status ' + status.css;
-  const imported = plant.data_source === 'inaturalist';
-  byId('plant-registered-label').textContent = imported ? 'Imported source' : 'Registered by';
-  byId('plant-registered-by').textContent = imported
-    ? `Imported from iNaturalist · Observer: ${plant.source_observer || 'Unknown'}`
-    : plant.registered_by || 'Unknown';
+  byId('plant-registered-by').textContent = plant.registered_by || 'Not recorded';
   byId('plant-registered-at').textContent = displayDate(plant.registered_at);
   byId('plant-last-observation').textContent = displayDate(plant.last_observation_at);
   byId('plant-location').textContent = plant.location_description || 'Not recorded';
-  byId('plant-conservation').textContent = plant.species?.conservation_status || 'Not assessed';
+  byId('plant-conservation').textContent = statusLabel(plant.species?.conservation_status);
   byId('plant-coordinates').textContent = displayCoordinates(plant.latitude, plant.longitude);
   byId('plant-observation-count').textContent = String(plant.observation_count);
-  renderPhotos(plant.photos || [], plant.species_photo);
+  renderPhotos(plant.photos || []);
   renderObservations(plant.observations || []);
   renderMap(plant);
 }
@@ -168,21 +140,21 @@ async function loadPlant() {
   const id = new URLSearchParams(location.search).get('id') || '';
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
     byId('plant-loading').hidden = true;
-    byId('plant-error').textContent = 'A valid plant ID is required.';
+    byId('plant-error').textContent = 'This plant link is not valid. Open the plant from the Plants list.';
     byId('plant-error').hidden = false;
     return;
   }
   try {
     const result = await api('/officer/plants/' + encodeURIComponent(id));
     if (!result?.data || !Array.isArray(result.data.photos) || !Array.isArray(result.data.observations)) {
-      throw new Error('The plant details response was invalid.');
+      throw new Error('The data could not be read. Please reload the page.');
     }
     renderPlant(result.data);
   } catch (error) {
     byId('plant-error').textContent =
       'Plant details could not be loaded. ' + (error.message || 'Please try again.');
     byId('plant-error').hidden = false;
-    showUnexpectedError(error);
+    console.error('Plant details failed to load:', error);
   } finally {
     byId('plant-loading').hidden = true;
   }

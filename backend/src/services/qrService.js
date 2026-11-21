@@ -9,6 +9,18 @@ class QrConfigurationError extends Error {
     }
 }
 
+// A tag as people type or scan it -> "NIAH-PLT-00015", or null. Accepts any letter case,
+// missing or different separators ("niahplt00015", "NIAH PLT 00015", "niah_plt-00015") and
+// a scanned URL ending in the tag. The same rule as parseTagCode in the app.
+function normalizePlantTag(raw) {
+    if (typeof raw !== "string") return null;
+    let value = raw.trim();
+    if (value.includes("/")) value = value.split("/").pop() || "";
+    const compact = value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const match = /^NIAHPLT(\d{5})$/.exec(compact);
+    return match ? `NIAH-PLT-${match[1]}` : null;
+}
+
 function formatPlantTag(number) {
     if (!Number.isSafeInteger(number) || number < 1 || number > 99999) {
         throw new Error("Invalid plant tag number");
@@ -45,4 +57,4 @@ async function generatePlantQR(qrValue, { publicBaseUrl } = {}) {
     return { qrValue, qrCode, publicUrl };
 }
 
-module.exports = { formatPlantTag, generatePlantQR, buildPublicPlantUrl, TAG_PATTERN, QrConfigurationError };
+module.exports = { formatPlantTag, normalizePlantTag, generatePlantQR, buildPublicPlantUrl, TAG_PATTERN, QrConfigurationError };

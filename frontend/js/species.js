@@ -1,4 +1,6 @@
-// species.js - the Species catalogue page. Every plant species is shown as a card with a big photo.
+// species.js - the Species catalogue page. Every plant species is shown as a card with a big photo:
+// the primary photo of one of its plants (the newest approved plant with a photo), captioned
+// "From plant <tag>", or the placeholder. Species reference photos are not shown.
 // The species come from the real species table (/api/knowledge), the same one the mobile app reads.
 // Officers see every approved and archived species and the botanists' proposals; botanists see
 // the approved species and can propose a new one.
@@ -11,40 +13,42 @@ const viewerIsOfficer = viewer !== null && isBotanist(viewer) === false;
 let speciesList = [];   // the species shown in the grid, as the backend sent them
 let plantCountsBySpecies = new Map();
 let plantCountsLoaded = false;
+const overviewStatusFilter = new URLSearchParams(location.search).get('status');
 
 // Makes the big photo box of a card. The status pill sits on the photo.
-// The photo link is asked for after the card is drawn (the links last one minute).
+// The species list already carries a signed link for one plant photo (plant_photo), so no
+// request is made per card.
 function makePlantPhoto(species) {
   const photoArea = document.createElement('div');
   photoArea.className = 'plant-photo-area';
   const box = document.createElement('div');
   box.className = 'plant-photo';
 
+  const plantPhoto = species.plant_photo && species.plant_photo.url ? species.plant_photo : null;
   const img = document.createElement('img');
-  img.alt = species.scientific_name;
+  img.alt = plantPhoto
+    ? species.scientific_name + ', plant ' + displayTag(plantPhoto.tag, 'without a tag')
+    : '';
   img.loading = 'lazy';
   img.decoding = 'async';
-  // A broken picture link shows the blank leaf instead.
-  img.onerror = function () {
-    img.onerror = null;
-    img.src = PICTURE_BLANK;
-  };
-  img.src = PICTURE_BLANK;
-  // Only approved species have photo links (the botanists' list holds approved species only).
-  if (species.verification_status === 'approved' || viewerIsOfficer === false) {
-    speciesPhoto(species).then(function (photo) {
-      if (photo?.url) {
-        // No credit on catalogue cards: it is on the editor and the Photo credits page.
-        img.src = photo.url;
-      }
-    }).catch(function () {
-      // No photo link: the blank leaf stays.
-    });
-  }
+  img.src = plantPhoto ? plantPhoto.url : PICTURE_BLANK;
   box.appendChild(img);
-
   box.appendChild(makePill(statusLabel(species.conservation_status)));
   photoArea.appendChild(box);
+
+  if (plantPhoto) {
+    const caption = document.createElement('div');
+    caption.className = 'plant-photo-caption';
+    caption.textContent = 'From plant ' + displayTag(plantPhoto.tag, 'without a tag');
+    photoArea.appendChild(caption);
+    // A broken or expired link shows the placeholder instead, without the caption.
+    img.onerror = function () {
+      img.onerror = null;
+      img.src = PICTURE_BLANK;
+      img.alt = '';
+      caption.hidden = true;
+    };
+  }
   return photoArea;
 }
 
@@ -168,7 +172,10 @@ function drawSpeciesTable() {
       (species.local_name || '')).toLowerCase();
 
     const nameMatches = names.includes(searchText);
-    const statusMatches = chosenStatus === '' || statusLabel(species.conservation_status) === chosenStatus;
+    const overviewStatusMatches = overviewStatusFilter !== 'threatened' ||
+      ['CR', 'EN'].includes(species.conservation_status);
+    const statusMatches = overviewStatusMatches &&
+      (chosenStatus === '' || statusLabel(species.conservation_status) === chosenStatus);
 
     if (nameMatches && statusMatches) {
       grid.appendChild(makePlantCard(species));
@@ -238,7 +245,7 @@ async function loadPlantCounts() {
   try {
     const result = await api('/officer/plants/facets');
     if (!Array.isArray(result?.data?.species_counts)) {
-      throw new Error('The plant counts response was invalid.');
+      throw new Error('The data could not be read. Please reload the page.');
     }
     plantCountsBySpecies = new Map(
       result.data.species_counts.map(item => [item.species_id, item.count])
@@ -254,7 +261,7 @@ async function loadPlantCounts() {
 if (viewerIsOfficer === false) {
   const addButton = document.getElementById('add-species');
   if (addButton) {
-    addButton.textContent = 'Propose a species';
+    addButton.textContent = 'Request a species';
   }
 }
 

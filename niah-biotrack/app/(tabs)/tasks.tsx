@@ -324,10 +324,7 @@ export default function AssignedTasksScreen() {
           {stationNames.get(
             item.station_id
           ) ??
-            `Station ${item.station_id.slice(
-              0,
-              8
-            )}`}
+            'Unknown station'}
         </Text>
 
         {item.assignment_notes ? (
@@ -514,7 +511,7 @@ export default function AssignedTasksScreen() {
                   assignments will
                   appear here after
                   the app
-                  synchronizes.
+                  syncs.
                 </Text>
               </View>
             )

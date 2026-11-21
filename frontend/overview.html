@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Overview - Niah Biotrack</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="images/logo.png">
+<link rel="stylesheet" href="css/style.css">
+<style>
+.overview-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.overview-card { display: flex; flex-direction: column; gap: 5px; min-height: 132px; }
+.overview-card b { font-size: 30px; line-height: 1.2; }
+.overview-card a { margin-top: auto; color: var(--pri); font-weight: 600; }
+.overview-panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.overview-panel h2 { margin: 0 0 16px; font-size: 18px; }
+.overview-status-row { display: grid; grid-template-columns: minmax(130px, 1fr) 2fr auto; align-items: center; gap: 12px; margin: 10px 0; }
+.overview-status-name { color: var(--ink); }
+.overview-track { height: 10px; overflow: hidden; border-radius: 999px; background: var(--mint); }
+.overview-fill { height: 100%; border-radius: inherit; background: var(--sage); }
+.overview-fill.critical { background: var(--er); }
+.overview-fill.warning { background: var(--wa); }
+.overview-chart { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; align-items: end; min-height: 190px; }
+.overview-month { display: grid; grid-template-rows: 1fr auto auto; justify-items: center; align-items: end; gap: 6px; height: 100%; color: var(--mute); font-size: 12px; text-align: center; }
+.overview-month-track { display: flex; align-items: end; width: 100%; height: 125px; border-bottom: 1px solid var(--line); }
+.overview-month-fill { width: 100%; min-height: 2px; border-radius: 6px 6px 0 0; background: var(--pri); }
+.overview-month-count { color: var(--ink); font-weight: 600; }
+.overview-iot-number { margin: 0 0 14px; font-size: 26px; font-weight: 700; }
+.overview-iot-line { margin: 10px 0; }
+.overview-iot-line a { color: var(--pri); font-weight: 600; }
+.overview-error { margin: 12px 0; }
+@media (max-width: 900px) { .overview-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 650px) {
+  .overview-panels { grid-template-columns: minmax(0, 1fr); }
+  .overview-status-row { grid-template-columns: minmax(110px, 1fr) 1fr auto; gap: 8px; }
+}
+@media (max-width: 420px) { .overview-stats { grid-template-columns: minmax(0, 1fr); } }
+</style>
+</head>
+<body>
+<div class="app">
+<nav id="menu"></nav>
+<main class="wide">
+<section class="page on">
+  <h1>Overview</h1>
+  <p class="lead">Today's state of species, field work and protection, for the conservation officer.</p>
+  <div id="overview-error" class="card overview-error" role="alert" hidden></div>
+  <div class="stats overview-stats" aria-label="Summary counts">
+    <article class="card overview-card"><span>Approved species</span><b id="approved-species-count">—</b></article>
+    <article class="card overview-card"><span>Threatened (CR + EN)</span><b id="threatened-species-count">—</b><a href="species.html?status=threatened">View these species</a></article>
+    <article class="card overview-card"><span>Waiting for review</span><b id="waiting-review-count">—</b><a href="queue.html">Go to Review</a></article>
+    <article class="card overview-card"><span>Plant records (active)</span><b id="active-plant-count">—</b></article>
+  </div>
+  <div class="overview-panels">
+    <section class="card overview-panel">
+      <h2>Species by conservation status</h2>
+      <p class="muted" id="no-status-note" hidden></p>
+      <div id="species-status-chart" aria-label="Approved species counts by conservation status"></div>
+    </section>
+    <section class="card overview-panel">
+      <h2>Field observations per month</h2>
+      <div id="observations-chart" class="overview-chart" aria-label="Field observations during the last six months"></div>
+    </section>
+    <section class="card overview-panel">
+      <h2>IoT protection</h2>
+      <p class="overview-iot-number"><span id="stations-online">—</span> online / <span id="stations-total">—</span> stations</p>
+      <p class="overview-iot-line"><a href="iot-workspace.html"><span id="open-alert-count">—</span> open alerts · View IoT alerts</a></p>
+      <p class="overview-iot-line" id="latest-alert">Latest alert: Loading…</p>
+    </section>
+  </div>
+</section>
+</main>
+</div>
+<div id="toast" role="status"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R" crossorigin="anonymous"></script>
+<script src="js/shared.js"></script>
+<script src="js/overview.js"></script>
+</body>
+</html>

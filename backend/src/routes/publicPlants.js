@@ -1,8 +1,8 @@
 const express = require('express');
 const path = require('node:path');
-const sharp = require('sharp');
 const { TAG_PATTERN } = require('../services/qrService');
-const { removeLegacyObservationSource } = require('../utils/speciesDescription');
+const { publicPlantPhotoExists, publicPhotoUrl, readPublicPlantPhoto, PUBLIC_THUMBNAIL_MAX_SIDE } = require('../services/publicPlantPhotos');
+const { cleanSpeciesText, SPECIES_TEXT_FIELDS } = require('../utils/speciesDescription');
 
 const STYLES = `
 :root{color-scheme:light;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#20392d;background:#f3f4ec}
@@ -12,15 +12,15 @@ header{display:flex;justify-content:space-between;gap:20px;align-items:center;pa
 main{padding-top:48px;padding-bottom:56px}.tag{font-size:14px;font-weight:650;color:#48604e;overflow-wrap:anywhere}
 h1{font-family:Georgia,"Times New Roman",serif;font-weight:400;font-style:italic;font-size:clamp(36px,7vw,62px);line-height:1.08;margin:18px 0 14px;overflow-wrap:anywhere}
 .common{font-size:23px;margin:0 0 10px}.local{color:#516353;margin:0}.status{display:inline-block;margin:28px 0 12px;padding:9px 14px;background:#dfebcf;font-size:14px;font-weight:650}
-section{margin-top:34px;max-width:68ch}h2{font-size:18px;line-height:1.4;margin:0 0 10px}p{line-height:1.75;margin:0;white-space:pre-line;overflow-wrap:anywhere}
-.reference-photo{margin:24px 0 0;max-width:540px}.reference-photo img{display:block;width:100%;height:auto;border-radius:10px}.reference-photo figcaption{margin-top:8px;font-size:13px;color:#516353;overflow-wrap:anywhere}
+section{margin-top:34px;max-width:68ch}section section{margin-top:22px}h2{font-size:18px;line-height:1.4;margin:0 0 10px}h3{font-size:15px;line-height:1.4;margin:0 0 8px;color:#355241}.part>.status{margin-top:4px}p{line-height:1.75;margin:0;white-space:pre-line;overflow-wrap:anywhere}
+.plant-photo{margin:24px 0 0;max-width:540px}.plant-photo img{display:block;width:100%;height:auto;border-radius:10px;background:#dfebcf}
 .demo{margin:20px 0;padding:16px 18px;background:#f5e8c9;color:#574421;font-size:15px;line-height:1.6}footer{color:#516353;font-size:13px;padding-bottom:38px}.notice{margin-top:20px;font-size:14px;color:#516353}
 @media(max-width:480px){header,main,footer{padding-left:22px;padding-right:22px}header{align-items:flex-start;flex-direction:column;gap:8px}main{padding-top:24px}.common{font-size:21px}}
 `;
 const PUBLIC_FIELDS = ['scientific_name', 'common_name', 'local_name', 'description',
     'morphology', 'habitat', 'conservation_status', 'cultural_significance'];
 const STATUS_NAMES = { LC: 'Least Concern', NT: 'Near Threatened', VU: 'Vulnerable',
-    EN: 'Endangered', CR: 'Critically Endangered', NE: 'Not Evaluated' };
+    EN: 'Endangered', CR: 'Critically Endangered', DD: 'Data Deficient', NE: 'Not Evaluated' };
 
 function escapeHtml(value) {
     return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
@@ -37,79 +37,39 @@ function documentHtml(title, content) {
 <main>${content}</main><footer>Public plant information. Exact locations are not shown on this page.</footer></body></html>`;
 }
 
-function publicPlantHtml(tag, row, photo) {
+// The plant's own main photo, when it has a public copy: served by GET /p/:tag/photo
+// (stripped, at most 1200 px). Never a storage path or signed link, and never a species
+// reference photo.
+function publicPlantHtml(tag, row, hasPhoto = false) {
     // Explicit allowlist: never serialize the RPC result, staff identity or coordinates into HTML.
     const plant = Object.fromEntries(PUBLIC_FIELDS.map(key => [key,
         typeof row[key] === 'string'
-            ? (key === 'description' ? removeLegacyObservationSource(row[key]) : row[key]).slice(0, 10000)
+            ? (SPECIES_TEXT_FIELDS.includes(key) ? cleanSpeciesText(row[key]) : row[key]).slice(0, 10000)
             : '']));
     const isDemo = Object.values(plant).some(value => /\bDEMO\b/i.test(value));
     const status = plant.conservation_status.trim();
-    const statusLabel = STATUS_NAMES[status] || status || 'Not recorded';
-    const sections = [['About this species', plant.description], ['Appearance', plant.morphology],
+    const statusLabel = STATUS_NAMES[status] || status || 'Not assessed';
+    // "About this species": true of every plant of this species.
+    const speciesSections = [['Description', plant.description], ['Appearance', plant.morphology],
         ['Habitat', plant.habitat], ['Cultural significance', plant.cultural_significance]];
-    const sourceLine = row.data_source === 'inaturalist'
-        ? `<p class="notice">Source: iNaturalist observation by ${escapeHtml(
-            typeof row.source_observer === 'string' ? row.source_observer.slice(0, 200) : 'Unknown'
-        )} (${escapeHtml(
-            typeof row.source_licence === 'string' ? row.source_licence.slice(0, 100) : 'Unknown'
-        )})</p>`
-        : '';
     return documentHtml(plant.scientific_name || 'Plant information',
         `<div class="tag">${escapeHtml(tag)}</div>` +
         (isDemo ? '<aside class="demo"><strong>Demonstration record</strong><br>Not real research data. Approved status is for demonstration only and does not represent officer review.</aside>' : '') +
         `<h1>${escapeHtml(plant.scientific_name || 'Plant information')}</h1>` +
         (plant.common_name ? `<p class="common">${escapeHtml(plant.common_name)}</p>` : '') +
         (plant.local_name ? `<p class="local">Local name: ${escapeHtml(plant.local_name)}</p>` : '') +
-        sourceLine +
-        (photo ? `<figure class="reference-photo"><img src="data:image/jpeg;base64,${photo.image}" alt="${escapeHtml(plant.scientific_name)} species reference photo"><figcaption>${escapeHtml(photo.caption)}</figcaption></figure>` : '') +
+        // This plant: the one in front of the visitor, shown only when it has a photo (its tag
+        // is already at the top of the page).
+        (hasPhoto ? '<section class="part"><h2>This plant</h2>' +
+            `<figure class="plant-photo"><img src="/p/${escapeHtml(tag)}/photo" alt="${escapeHtml(plant.scientific_name || 'Plant')}, plant ${escapeHtml(tag)}"></figure>` +
+            '</section>' : '') +
+        // About this species.
+        '<section class="part"><h2>About this species</h2>' +
         `<div class="status">Conservation status: ${escapeHtml(statusLabel)}</div>` +
-        sections.filter(([, value]) => value.trim()).map(([label, value]) =>
-            `<section><h2>${label}</h2><p>${escapeHtml(value)}</p></section>`).join('') +
-        (!plant.description.trim() ? '<p class="notice">A species description has not yet been provided.</p>' : ''));
-}
-
-async function loadReferencePhoto(database, scientificName) {
-    if (!scientificName) return null;
-    try {
-        const signal = AbortSignal.timeout(4000);
-        // Both catalogue metadata and downloads use the anonymous client's existing RLS.
-        // The scientific name is unique, and comes from the approved public QR lookup.
-        const { data: species, error: speciesError } = await database.from('species')
-            .select('id').eq('scientific_name', scientificName)
-            .eq('verification_status', 'approved').abortSignal(signal).maybeSingle();
-        if (speciesError || !species) return null;
-
-        const { data: photos, error: photosError } = await database.from('species_media')
-            .select('file_path, source, photographer, attribution, licence_code')
-            .eq('species_id', species.id).eq('media_type', 'image/jpeg')
-            .order('is_primary', { ascending: false }).order('id').limit(3).abortSignal(signal);
-        if (photosError || !photos) return null;
-
-        for (const photo of photos) {
-            const { data: file, error } = await database.storage.from('species-media')
-                .download(photo.file_path, {}, { signal });
-            if (error || !file || file.size > 5 * 1024 * 1024) continue;
-
-            try {
-                // Re-encode before publishing to remove embedded metadata such as GPS.
-                const input = sharp(Buffer.from(await file.arrayBuffer()), { limitInputPixels: 16_000_000 });
-                if ((await input.metadata()).format !== 'jpeg') continue;
-                const jpeg = await input.rotate().resize({ width: 720, height: 720, fit: 'inside',
-                    withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
-                const credit = [photo.attribution || photo.photographer,
-                    photo.source === 'inaturalist' ? 'iNaturalist' : '', photo.licence_code?.toUpperCase()]
-                    .filter(Boolean).map(value => value.slice(0, 250));
-                return { image: jpeg.toString('base64'),
-                    caption: ['Species reference photo', ...credit].join(' · ') };
-            } catch {
-                // A missing or invalid primary photo can fall back to another catalogue photo.
-            }
-        }
-    } catch {
-        // Photo failures must not hide the plant's visitor information.
-    }
-    return null;
+        speciesSections.filter(([, value]) => value.trim()).map(([label, value]) =>
+            `<section><h3>${label}</h3><p>${escapeHtml(value)}</p></section>`).join('') +
+        (!plant.description.trim() ? '<p class="notice">A species description has not yet been provided.</p>' : '') +
+        '</section>');
 }
 
 const { publicQrData } = require('../middleware/publicQrProtection');
@@ -143,7 +103,11 @@ function createPublicQrHandler(database) {
             if (result.status === 'not-found') {
                 return res.status(404).json({ message: 'Approved plant not found' });
             }
-            return res.json({ data: publicQrData(result.plant) });
+            const data = publicQrData(result.plant);
+            // The plant's own photo, as the visitor endpoint's address (never a storage path).
+            const tagCode = result.plant.qr_code_value;
+            data.photo_url = await publicPlantPhotoExists(database, tagCode) ? publicPhotoUrl(tagCode) : null;
+            return res.json({ data });
         } catch (error) {
             console.error('Public QR lookup error:', error);
             return res.status(500).json({ message: 'Could not load plant information' });
@@ -164,34 +128,69 @@ function createPublicPlantsRouter({ client } = {}) {
     router.get('/public-assets/plant.css', (_req, res) => res.type('css').send(STYLES));
     router.get('/public-assets/logo.png', (_req, res) =>
         res.sendFile(path.join(__dirname, '../../../frontend/images/logo.png')));
-    router.get('/p/:tag', async (req, res) => {
-        const tag = req.params.tag;
-        const errorPage = (status, title, message) => res.status(status).type('html')
-            .send(documentHtml(title, `<h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p>`));
-        if (!TAG_PATTERN.test(tag)) return errorPage(400, 'Invalid plant tag', 'Use a valid Niah plant QR tag.');
+    // The visitor rate limit, shared by the plant page and its photo (60 a minute per address).
+    // Returns null when the request may go ahead, otherwise the seconds to wait (or 0 when
+    // too many visitors are being tracked).
+    function visitorLimit(req) {
         const now = Date.now();
         for (const [key, value] of requests) if (value.until <= now) requests.delete(key);
         let bucket = requests.get(req.ip);
         if (!bucket) {
-            if (requests.size >= 10000) return errorPage(429, 'Please try again later', 'Too many requests.');
+            if (requests.size >= 10000) return 0;
             bucket = { count: 0, until: now + 60000 }; requests.set(req.ip, bucket);
         }
         bucket.count++;
-        if (bucket.count > 60) {
-            res.set('Retry-After', String(Math.max(1, Math.ceil((bucket.until - now) / 1000))));
+        return bucket.count > 60 ? Math.max(1, Math.ceil((bucket.until - now) / 1000)) : null;
+    }
+    const database = () => client || require('../config/supabase').publicClient;
+
+    router.get('/p/:tag', async (req, res) => {
+        const tag = req.params.tag;
+        const errorPage = (status, title, message) => res.status(status).type('html')
+            .send(documentHtml(title, `<h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p>`));
+        if (!TAG_PATTERN.test(tag)) return errorPage(400, 'Plant tag not recognised', "This QR code isn't a Niah plant tag.");
+        const wait = visitorLimit(req);
+        if (wait !== null) {
+            if (wait > 0) res.set('Retry-After', String(wait));
             return errorPage(429, 'Please try again later', 'Too many requests.');
         }
         try {
-            const database = client || require('../config/supabase').publicClient;
-            const result = await lookupPublicPlant(database, tag);
+            const result = await lookupPublicPlant(database(), tag);
             if (result.status === 'pending') return errorPage(404, 'Being verified', PENDING_MESSAGE);
             if (result.status === 'not-found') {
-                return errorPage(404, 'Plant information unavailable', 'This tag has no approved public record yet.');
+                return errorPage(404, 'Plant information unavailable', "Information about this plant isn't available yet.");
             }
-            const photo = await loadReferencePhoto(database, result.plant.scientific_name);
-            return res.type('html').send(publicPlantHtml(tag, result.plant, photo));
+            const hasPhoto = await publicPlantPhotoExists(database(), tag);
+            return res.type('html').send(publicPlantHtml(tag, result.plant, hasPhoto));
         } catch {
             return errorPage(503, 'Temporarily unavailable', 'Plant information could not be loaded. Please try again later.');
+        }
+    });
+
+    // The plant's own main photo for visitors: only while the plant is on the public QR page
+    // (approved, active, approved species and visit). A fresh JPEG (at most 1200 px) without
+    // any metadata. Anything else is 404, the same answer for every reason.
+    router.get('/p/:tag/photo', async (req, res) => {
+        const tag = req.params.tag;
+        const notFound = () => res.status(404).type('text/plain').send('Not found');
+        if (!TAG_PATTERN.test(tag)) return notFound();
+        const wait = visitorLimit(req);
+        if (wait !== null) {
+            if (wait > 0) res.set('Retry-After', String(wait));
+            return res.status(429).type('text/plain').send('Too many requests');
+        }
+        try {
+            const result = await lookupPublicPlant(database(), tag);
+            if (result.status !== 'found') return notFound();
+            // ?size=thumb: a small copy (at most 300 px) for app lists. Anything else: full size.
+            const thumb = req.query.size === 'thumb';
+            const photo = await readPublicPlantPhoto(database(), tag,
+                thumb ? { maxSide: PUBLIC_THUMBNAIL_MAX_SIDE } : undefined);
+            if (!photo) return notFound();
+            res.set('Cache-Control', 'public, max-age=86400');
+            return res.type('image/jpeg').send(photo);
+        } catch {
+            return res.status(503).type('text/plain').send('Temporarily unavailable');
         }
     });
     return router;

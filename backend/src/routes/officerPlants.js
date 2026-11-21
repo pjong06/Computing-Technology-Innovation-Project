@@ -2,6 +2,10 @@
 
 const express = require("express");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const {
+    PUBLIC_PHOTO_BUCKET,
+    refreshPublicPlantPhoto,
+} = require("../services/publicPlantPhotos");
 
 const router = express.Router();
 router.use(requireAuth, requireRole("officer"));
@@ -19,10 +23,10 @@ const PHOTO_URL_TTL_SECONDS = 600;
 
 const PLANT_COLUMNS =
     "id, qr_code_value, species_id, location_description, plant_status, " +
-    "registered_by, registered_at, data_source, source_observer, source_licence";
+    "registered_by, registered_at";
 const SPECIES_COLUMNS = "id, scientific_name, common_name, conservation_status";
 const SPECIES_PHOTO_COLUMNS =
-    "id, species_id, file_path, is_primary, source, licence_code, attribution, photographer";
+    "id, species_id, file_path, is_primary, source";
 const OBSERVATION_COLUMNS =
     "id, plant_id, observer_id, observed_at, height_cm, diameter_cm, " +
     "health_status, life_stage, review_status";
@@ -185,10 +189,6 @@ function publicSpeciesPhoto(photo, urls) {
     if (!photo) return null;
     return {
         url: urls.get(photo.file_path),
-        source: photo.source || null,
-        licence_code: photo.licence_code || null,
-        attribution: photo.attribution || null,
-        photographer: photo.photographer || null,
     };
 }
 
@@ -206,6 +206,57 @@ function emptyList(res, paging) {
 
 // Filter options are kept separate from paged plant data so the species catalogue can
 // show counts and the plant catalogue can offer every registered-by value.
+// Brings every public photo copy in line with the plants (officer only, with the officer's
+// own permissions): writes the stripped copy for each plant on the public QR page and
+// removes copies of plants that are no longer public. Run once after the
+// public_plant_photos migration, and whenever copies may be out of date (e.g. after
+// archiving a species). Returns how many were published, removed and skipped.
+router.post("/public-photos/refresh", async (req, res) => {
+    try {
+        const counts = { published: 0, removed: 0, skipped: 0 };
+        const publishedTags = new Set();
+        let start = 0;
+        let rows;
+        do {
+            rows = throwOnError(await req.supabase
+                .from("plants")
+                .select("id, qr_code_value")
+                .eq("plant_status", "approved")
+                .is("deleted_at", null)
+                .order("id", { ascending: true })
+                .range(start, start + RELATED_PAGE_SIZE - 1));
+            for (const plant of rows) {
+                const result = await refreshPublicPlantPhoto(req.supabase, plant.id);
+                counts[result] += 1;
+                if (result === "published") publishedTags.add(plant.qr_code_value);
+            }
+            start += rows.length;
+        } while (rows.length === RELATED_PAGE_SIZE);
+
+        // Copies left from plants that were rejected, deleted or archived since.
+        const bucket = req.supabase.storage.from(PUBLIC_PHOTO_BUCKET);
+        const stale = [];
+        for (let offset = 0; ; offset += 1000) {
+            const { data: files, error } = await bucket.list("", { limit: 1000, offset });
+            if (error) throw error;
+            for (const file of files || []) {
+                const tag = String(file.name || "").replace(/\.jpg$/, "");
+                if (file.name && !publishedTags.has(tag)) stale.push(file.name);
+            }
+            if (!files || files.length < 1000) break;
+        }
+        for (let i = 0; i < stale.length; i += 100) {
+            const { error } = await bucket.remove(stale.slice(i, i + 100));
+            if (error) throw error;
+        }
+        counts.removed += stale.length;
+        return res.json({ data: counts });
+    } catch (error) {
+        console.error("Public plant photo refresh error:", error?.message || error);
+        return res.status(500).json({ message: "Could not refresh the public plant photos" });
+    }
+});
+
 router.get("/facets", async (req, res) => {
     try {
         const counts = new Map();
@@ -376,9 +427,6 @@ router.get("/", async (req, res) => {
                     species: speciesById.get(plant.species_id) || null,
                     location_description: plant.location_description || null,
                     plant_status: plant.plant_status || null,
-                    data_source: plant.data_source || "field",
-                    source_observer: plant.source_observer || null,
-                    source_licence: plant.source_licence || null,
                     registered_by: profileNames.get(plant.registered_by) || null,
                     last_observation_at: summary.last,
                     photo_thumbnail: primaryPhotoByPlant.get(plant.id) || null,
@@ -468,9 +516,6 @@ router.get("/:id", async (req, res) => {
                 species: speciesById.get(plant.species_id) || null,
                 location_description: plant.location_description || null,
                 plant_status: plant.plant_status || null,
-                data_source: plant.data_source || "field",
-                source_observer: plant.source_observer || null,
-                source_licence: plant.source_licence || null,
                 registered_by: profileNames.get(plant.registered_by) || null,
                 registered_at: plant.registered_at || null,
                 last_observation_at: summary.last,

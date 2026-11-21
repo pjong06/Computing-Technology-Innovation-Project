@@ -2,7 +2,6 @@ import React, { useEffect, useMemo } from 'react';
 import {
   ActivityIndicator,
   Image,
-  Linking,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -14,8 +13,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
-import PhotoCreditInfo from '../../src/components/PhotoCreditInfo';
-import { preferredSpeciesPhoto } from '../../src/utils/speciesPhoto';
+import { plantPhotoCaption } from '../../src/utils/plantPhotoCaption';
 
 const STATUS_LABELS: Record<string, string> = {
   CR: 'Critically Endangered',
@@ -62,10 +60,11 @@ export default function SpeciesReferenceDetailScreen() {
   const updatedAt = useSpeciesStore((state) =>
     id ? state.detailUpdatedAt[id] : undefined
   );
-  const imageUri = useSpeciesStore((state) =>
-    id ? state.imageUrisBySpeciesId[id] : undefined
+  // The species is shown with a photo of one of its plants (species reference photos are not
+  // shown, and plant photos carry no credit).
+  const plantPhoto = useSpeciesStore((state) =>
+    id ? state.plantPhotosBySpeciesId[id] : undefined
   );
-  const photoCredit = preferredSpeciesPhoto(detail?.species_media);
   const loadSpeciesDetail = useSpeciesStore(
     (state) => state.loadSpeciesDetail
   );
@@ -134,7 +133,7 @@ export default function SpeciesReferenceDetailScreen() {
             <Text style={styles.back}>‹</Text>
           </TouchableOpacity>
           <Text style={styles.headerTitle} numberOfLines={1}>
-            {title ?? 'Species Reference'}
+            {title ?? 'Species reference'}
           </Text>
           <View style={styles.headerSide} />
         </View>
@@ -163,7 +162,7 @@ export default function SpeciesReferenceDetailScreen() {
         <TouchableOpacity onPress={() => router.back()} hitSlop={10}>
           <Text style={styles.back}>‹</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Species Reference</Text>
+        <Text style={styles.headerTitle}>Species reference</Text>
         <TouchableOpacity
           style={styles.headerSide}
           onPress={() => void loadSpeciesDetail(id, true)}
@@ -187,18 +186,15 @@ export default function SpeciesReferenceDetailScreen() {
           </View>
         )}
 
-        {imageUri ? (
-          <>
-            {/* The credit sits behind a small "i" on the photo (only when the licence needs one). */}
-            <View style={styles.heroBox}>
-              <Image source={{ uri: imageUri }} style={[styles.heroImage, styles.heroInBox]} resizeMode="cover" />
-              <PhotoCreditInfo photo={photoCredit} />
-            </View>
-          </>
+        {plantPhoto ? (
+          <View style={styles.heroBox}>
+            <Image source={{ uri: plantPhoto.uri }} style={[styles.heroImage, styles.heroInBox]} resizeMode="cover" />
+            <Text style={styles.heroCaption}>{plantPhotoCaption(plantPhoto.tag)}</Text>
+          </View>
         ) : (
           <View style={[styles.heroImage, styles.imagePlaceholder]}>
             <Text style={styles.placeholderIcon}>🌿</Text>
-            <Text style={styles.placeholderText}>No cached approved photo</Text>
+            <Text style={styles.placeholderText}>No plant photo yet</Text>
           </View>
         )}
 
@@ -235,32 +231,6 @@ export default function SpeciesReferenceDetailScreen() {
             ))}
           </View>
         )}
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Sources</Text>
-          {detail.sources && detail.sources.length > 0 ? (
-            detail.sources.map((source, index) => (
-              <View key={`${source.name}-${index}`} style={styles.sourceBlock}>
-                <Text style={styles.sourceName}>{source.name}</Text>
-                {source.citation ? (
-                  <Text style={styles.sourceMeta}>{source.citation}</Text>
-                ) : null}
-                {source.license ? (
-                  <Text style={styles.sourceMeta}>License: {source.license}</Text>
-                ) : null}
-                {source.url ? (
-                  <TouchableOpacity onPress={() => void Linking.openURL(source.url!)}>
-                    <Text style={styles.sourceLink}>Open source</Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-            ))
-          ) : (
-            <Text style={styles.missingSource}>
-              Source attribution has not been recorded in the current database.
-            </Text>
-          )}
-        </View>
 
         <View style={styles.cacheCard}>
           <Text style={styles.cacheTitle}>Offline reference</Text>
@@ -315,6 +285,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   heroBox: { marginBottom: 14 },
+  heroCaption: { fontSize: 12, color: '#68776D', marginTop: 6 },
   heroInBox: { marginBottom: 0 },
   imagePlaceholder: { alignItems: 'center', justifyContent: 'center' },
   placeholderIcon: { fontSize: 42, marginBottom: 8 },
@@ -375,11 +346,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#263B2D',
   },
-  sourceBlock: { marginBottom: 12 },
-  sourceName: { fontSize: 14, fontWeight: '700', color: '#263B2D' },
-  sourceMeta: { fontSize: 12.5, color: '#68776D', marginTop: 3, lineHeight: 17 },
-  sourceLink: { fontSize: 12.5, fontWeight: '700', color: '#27633C', marginTop: 6 },
-  missingSource: { fontSize: 13, color: '#8A5A23', lineHeight: 19 },
   cacheCard: {
     backgroundColor: '#EAF2EC',
     borderRadius: 18,

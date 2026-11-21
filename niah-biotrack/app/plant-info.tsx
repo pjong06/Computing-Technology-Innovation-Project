@@ -3,7 +3,6 @@ import {
   View,
   Text,
   ScrollView,
-  Image,
   TouchableOpacity,
   StyleSheet,
   SafeAreaView,
@@ -15,8 +14,11 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
 import { lookupPublicTag, describePublicTagLookup, type PublicTagLookupResult } from '../src/services/tagLookup';
 import { conservationStatusColors, plainConservationStatus } from '../src/utils/conservationStatus';
-import PhotoCreditInfo from '../src/components/PhotoCreditInfo';
-import { preferredSpeciesPhoto } from '../src/utils/speciesPhoto';
+import { plantPhotoCaption } from '../src/utils/plantPhotoCaption';
+import { publicPhotoUri } from '../src/utils/publicPhoto';
+import { BASE_URL } from '../src/api/client';
+import PlantThumbnail from '../src/components/PlantThumbnail';
+import { thumbnailSources } from '../src/utils/thumbnailSources';
 
 // What the page shows, from either source. Never any location or coordinates.
 interface PlantFacts {
@@ -40,7 +42,6 @@ export default function PlantInfoScreen() {
 
   const species = useSpeciesStore((state) => state.species);
   const detailsById = useSpeciesStore((state) => state.detailsById);
-  const imageUrisBySpeciesId = useSpeciesStore((state) => state.imageUrisBySpeciesId);
   const loadSpeciesDetail = useSpeciesStore((state) => state.loadSpeciesDetail);
 
   const [scan, setScan] = useState<PublicTagLookupResult | null>(null);
@@ -75,8 +76,15 @@ export default function PlantInfoScreen() {
 
   const detail = speciesId ? detailsById[speciesId] : undefined;
   const listItem = speciesId ? species.find((s) => s.id === speciesId) : undefined;
-  const photo = speciesId ? imageUrisBySpeciesId[speciesId] : undefined;
-  const photoCredit = preferredSpeciesPhoto(detail?.species_media ?? listItem?.species_media);
+  // A scanned plant shows its own main photo (from the public lookup); a species page shows
+  // the species' public plant photo. Both are served stripped by the backend. Never a species
+  // reference photo or another plant's photo for a scan, and never a credit.
+  const photo: { tag: string | null; url: string | null } | null = tag
+    ? scanned
+      ? { tag: scanned.tagCode, url: scanned.photoUrl }
+      : null
+    : (detail?.public_photo ?? listItem?.public_photo ?? null);
+  const photoUri = publicPhotoUri(BASE_URL, photo?.url);
 
   // The scanned plant's own public facts come first; the species fills any gaps.
   const facts: PlantFacts = {
@@ -114,15 +122,20 @@ export default function PlantInfoScreen() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
-          {photo ? (
-            <>
-              {/* The credit sits behind a small "i" on the photo (only when the licence needs one). */}
-              <View style={styles.photoBox}>
-                <Image source={{ uri: photo }} style={[styles.photo, styles.photoInBox]} resizeMode="cover" accessibilityIgnoresInvertColors />
-                <PhotoCreditInfo photo={photoCredit} />
-              </View>
-              <Text style={styles.speciesPhotoLabel}>Species photo</Text>
-            </>
+          {photoUri ? (
+            <View style={styles.photoBox}>
+              <PlantThumbnail
+                // Full size first, then the small copy the list showed (kept on the phone).
+                sources={thumbnailSources({ publicPath: photo?.url, baseUrl: BASE_URL, size: 'full' })}
+                style={[styles.photo, styles.photoInBox]}
+                caption={tag ? null : <Text style={styles.photoCaption}>{plantPhotoCaption(photo?.tag)}</Text>}
+                placeholder={
+                  <View style={[styles.photo, styles.photoInBox, styles.photoPlaceholder]}>
+                    <Text style={styles.placeholderIcon}>🌿</Text>
+                  </View>
+                }
+              />
+            </View>
           ) : (
             <View style={[styles.photo, styles.photoPlaceholder]}>
               <Text style={styles.placeholderIcon}>🌿</Text>
@@ -133,35 +146,39 @@ export default function PlantInfoScreen() {
           {facts.scientificName && facts.commonName ? (
             <Text style={styles.scientific}>{facts.scientificName}</Text>
           ) : null}
-          {facts.localName ? <Text style={styles.localName}>Local name: {facts.localName}</Text> : null}
+          {/* This plant: only for a scanned tag (the one plant in front of the visitor). */}
+          {scanned ? (
+            <>
+              <Text style={styles.heading}>This plant</Text>
+              <Text style={styles.body}>Tag: {scanned.tagCode}</Text>
+            </>
+          ) : null}
 
+          {/* About this species: true of every plant of this species. */}
+          <Text style={styles.heading}>About this species</Text>
+          {facts.localName ? <Text style={styles.localName}>Local name: {facts.localName}</Text> : null}
           <View style={[styles.badge, { backgroundColor: statusColors.bg }]}>
             <Text style={[styles.badgeText, { color: statusColors.text }]}>{status.label}</Text>
           </View>
           <Text style={styles.body}>{status.meaning}</Text>
-          {scanned?.dataSource === 'inaturalist' ? (
-            <Text style={styles.body}>
-              Source: iNaturalist observation by {scanned.sourceObserver || 'Unknown'} ({scanned.sourceLicence || 'Unknown'})
-            </Text>
-          ) : null}
 
           {facts.description ? (
             <>
-              <Text style={styles.heading}>About</Text>
+              <Text style={styles.subheading}>Description</Text>
               <Text style={styles.body}>{facts.description}</Text>
             </>
           ) : null}
 
           {facts.habitat ? (
             <>
-              <Text style={styles.heading}>Where it grows</Text>
+              <Text style={styles.subheading}>Where it grows</Text>
               <Text style={styles.body}>{facts.habitat}</Text>
             </>
           ) : null}
 
           {facts.culturalSignificance ? (
             <>
-              <Text style={styles.heading}>Cultural significance</Text>
+              <Text style={styles.subheading}>Cultural significance</Text>
               <Text style={styles.body}>{facts.culturalSignificance}</Text>
             </>
           ) : null}
@@ -182,7 +199,7 @@ const styles = StyleSheet.create({
   photo: { width: '100%', aspectRatio: 4 / 3, borderRadius: 20, marginBottom: 16, backgroundColor: '#E7EFEA' },
   photoBox: { marginBottom: 16 },
   photoInBox: { marginBottom: 0 },
-  speciesPhotoLabel: { fontSize: 11, color: '#68776D', marginTop: -10, marginBottom: 2 },
+  photoCaption: { fontSize: 11, color: '#68776D', marginTop: 6 },
   photoPlaceholder: { justifyContent: 'center', alignItems: 'center' },
   placeholderIcon: { fontSize: 48 },
   title: { fontSize: 24, fontWeight: '800', color: '#1E2B22', textAlign: 'left' },
@@ -191,6 +208,7 @@ const styles = StyleSheet.create({
   badge: { alignSelf: 'flex-start', paddingVertical: 5, paddingHorizontal: 12, borderRadius: 14, marginTop: 14 },
   badgeText: { fontSize: 12.5, fontWeight: '700' },
   heading: { fontSize: 15, fontWeight: '800', color: '#213B2A', marginTop: 22, marginBottom: 6 },
+  subheading: { fontSize: 13, fontWeight: '700', color: '#526659', marginTop: 12, marginBottom: 4 },
   body: { fontSize: 14, color: '#3A483E', lineHeight: 21, marginTop: 6 },
   footer: { fontSize: 12, color: '#7E8F83', textAlign: 'center', marginTop: 32 },
 });

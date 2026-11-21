@@ -75,7 +75,7 @@ export async function apiFetch<T>(path: string, options: ApiOptions = {}): Promi
       });
     } catch {
       // Network failure or our 15-second timeout.
-      throw new ApiError(`Could not reach the server at ${BASE_URL}`, 0);
+      throw new ApiError('Couldn\'t reach the server. Check your connection and try again.', 0);
     }
 
     // Read the body once as text; some error responses aren't JSON.
@@ -89,7 +89,7 @@ export async function apiFetch<T>(path: string, options: ApiOptions = {}): Promi
 
     if (!response.ok) {
       const { message, code } = (json as { message?: string; code?: string } | null) ?? {};
-      const error = new ApiError(message ?? `Server returned ${response.status}`, response.status, code);
+      const error = new ApiError(message ?? 'The server had a problem. Please try again.', response.status, code);
       error.retryAfterMs = readRetryAfter(response.headers.get('Retry-After'));
       throw error;
     }
@@ -127,7 +127,7 @@ export async function apiUpload<T>(path: string, fields: Record<string, string>,
         signal: controller.signal,
       });
     } catch {
-      throw new ApiError(`Could not reach the server at ${BASE_URL}`, 0);
+      throw new ApiError('Couldn\'t reach the server. Check your connection and try again.', 0);
     }
 
     const text = await response.text();
@@ -139,9 +139,56 @@ export async function apiUpload<T>(path: string, fields: Record<string, string>,
     }
     if (!response.ok) {
       const { message, code } = (json as { message?: string; code?: string } | null) ?? {};
-      throw new ApiError(message ?? `Server returned ${response.status}`, response.status, code);
+      throw new ApiError(message ?? 'The server had a problem. Please try again.', response.status, code);
     }
     return json as T;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Returns the response body as bytes (a PDF or PNG), with the login token: POSTs the JSON
+// body, or GETs when there is no body. Same errors as apiFetch: ApiError, status 0 = never
+// reached the server.
+export async function apiDownload(path: string, body?: unknown): Promise<Uint8Array> {
+  if (!BASE_URL) {
+    throw new ApiError('EXPO_PUBLIC_API_BASE_URL is not set', 0);
+  }
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new ApiError('You are not signed in', 401);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+  try {
+    let response;
+    try {
+      response = await expoFetch(`${BASE_URL}${path}`, body === undefined
+        ? {
+            method: 'GET',
+            headers: { Accept: 'image/png, application/pdf, application/json', Authorization: `Bearer ${token}` },
+            signal: controller.signal,
+          }
+        : {
+            method: 'POST',
+            headers: { Accept: 'application/pdf, image/png, application/json', 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          });
+    } catch {
+      throw new ApiError('Couldn\'t reach the server. Check your connection and try again.', 0);
+    }
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      let message: string | undefined;
+      try {
+        message = (JSON.parse(text) as { message?: string }).message;
+      } catch {
+        // not JSON
+      }
+      throw new ApiError(message ?? 'The server had a problem. Please try again.', response.status);
+    }
+    return new Uint8Array(await response.arrayBuffer());
   } finally {
     clearTimeout(timer);
   }

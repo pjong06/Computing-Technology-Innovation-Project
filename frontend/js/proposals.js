@@ -40,14 +40,9 @@ function makeProposalCard(proposal) {
   if (proposal.local_name) addProposalInfo(card, 'Local name', proposal.local_name);
   addProposalInfo(card, 'Family', proposal.proposed_family);
   addProposalInfo(card, 'Description', proposal.description);
-  addProposalInfo(card, 'Proposed habitat / location note', proposal.habitat);
-  addProposalInfo(card, 'Proposed by', proposal.proposer_name || 'Botanist');
-  addProposalInfo(card, 'Proposed on', displayDate(proposal.created_at));
-
-  const photoNote = document.createElement('p');
-  photoNote.className = 'muted';
-  photoNote.textContent = 'No reference photo provided.';
-  card.appendChild(photoNote);
+  addProposalInfo(card, 'Habitat / location note', proposal.habitat);
+  addProposalInfo(card, 'Requested by', proposal.proposer_name || 'Botanist');
+  addProposalInfo(card, 'Requested on', displayDate(proposal.created_at));
 
   const actions = document.createElement('div');
   actions.className = 'acts';
@@ -63,7 +58,7 @@ function makeProposalCard(proposal) {
   const reject = document.createElement('button');
   reject.className = 'btn red';
   reject.type = 'button';
-  reject.textContent = 'Reject';
+  reject.textContent = "Don't add";
   reject.disabled = proposalBusy;
   reject.addEventListener('click', () => openRejectDialog(proposal));
   actions.append(approve, reject);
@@ -79,7 +74,7 @@ function drawProposals() {
   const list = byId('proposals-list');
   list.replaceChildren(...sortByDate(proposals, proposal => proposal.created_at, proposalSort).map(makeProposalCard));
   byId('proposals-count').textContent =
-    `${proposals.length} pending species proposal${proposals.length === 1 ? '' : 's'}.`;
+    `${proposals.length} species request${proposals.length === 1 ? '' : 's'} waiting for review.`;
   byId('proposals-empty').hidden = proposals.length > 0;
   updateSpeciesProposalMenuCount(proposals.length);
 }
@@ -116,9 +111,9 @@ async function reviewProposal(proposal, decision, comment) {
     });
     showToast(decision === 'approved'
       ? proposal.scientific_name + ' approved and added to the species catalogue.'
-      : 'Species proposal rejected.');
+      : 'Species request not added.');
   } catch (error) {
-    showToast('Could not review the species proposal. ' + error.message);
+    showToast('Could not review the species request. ' + error.message);
   } finally {
     proposalBusy = false;
     await loadProposals();
@@ -136,11 +131,11 @@ async function loadProposals() {
   } catch (error) {
     proposals = [];
     byId('proposals-list').replaceChildren();
-    byId('proposals-count').textContent = 'Pending species proposals are unavailable.';
+    byId('proposals-count').textContent = 'Species requests could not be loaded.';
     byId('proposals-empty').hidden = true;
     errorBox.textContent = error.message === 'Could not load species proposals'
-      ? 'Could not load species proposals. Please try again.'
-      : 'Could not load species proposals. ' + (error.message || 'Please try again.');
+      ? 'Could not load species requests. Please try again.'
+      : 'Could not load species requests. ' + (error.message || 'Please try again.');
     errorBox.hidden = false;
   } finally {
     loading.hidden = true;
@@ -155,7 +150,7 @@ if (pageAllowed === false) {
     event.preventDefault();
     const reason = byId('reject-reason').value.trim();
     if (!reason) {
-      byId('reject-reason').setCustomValidity('Enter a reason for rejecting this proposal.');
+      byId('reject-reason').setCustomValidity('Enter a reason for not adding this species.');
       byId('reject-reason').reportValidity();
       return;
     }

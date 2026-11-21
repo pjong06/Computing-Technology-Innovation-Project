@@ -9,7 +9,6 @@
 <link rel="stylesheet" href="css/style.css">
 <style>
 /* Species catalogue as a grid of plant cards: 4 in a row, big photos */
-main.wide { max-width: 1600px; }
 
 .plant-grid {
   display: grid;
@@ -50,6 +49,13 @@ main.wide { max-width: 1600px; }
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.plant-photo-caption {
+  padding: 6px 14px 0;
+  color: var(--mute);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .plant-photo .pill {
@@ -145,12 +151,12 @@ main.wide { max-width: 1600px; }
 <main class="wide">
 <section class="page on">
   <h1>Species <span>catalogue</span></h1>
-  <p class="lead">Every plant species in the park with its photos and conservation status: officers add and edit species here, botanists look them up and propose new ones.</p>
+  <p class="lead">Every plant species in the park with its photos and conservation status: officers add and edit species here, botanists look them up and request new ones.</p>
   <div class="bar">
    <input id="search-box" class="grow" type="text" placeholder="Search by scientific or common name"
      aria-label="Search species by name" oninput="drawSpeciesTable()">
    <select id="status-filter" aria-label="Filter by conservation status" onchange="drawSpeciesTable()">
-      <option value="">All conservation status</option>
+      <option value="">All conservation statuses</option>
       <option>Critically Endangered</option>
       <option>Endangered</option>
       <option>Vulnerable</option>
@@ -164,7 +170,6 @@ main.wide { max-width: 1600px; }
   <p class="muted" id="species-count">Loading species...</p>
   <div class="plant-grid" id="species-grid"></div>
   <p class="muted" id="no-species" hidden>No species match. Clear the search or add a new species.</p>
-  <p class="page-footer">Reference photos from iNaturalist are used under their photographers' licences: <a href="credits.html">Photo credits</a></p>
 </section>
 
 </main>

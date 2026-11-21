@@ -125,18 +125,21 @@ test('Plants screen: plants only, Filter sheet, pills, banner, Register at the e
     '>Plants<',
     'Search plant or species',
     'Sync now',
-    'Filter',
-    'Reset',
-    'Show {draftCount}',
-    'Remove filter',
+    '<FilterButton count={filterCount} onPress={openSheet} />',
+    '<FilterPills',
+    '<FilterSheet',
+    "applyLabel={`Show ${draftCount} ${draftCount === 1 ? 'plant' : 'plants'}`}",
     "'plants needs' : 'plants need'",
     'Show the plants that need your action',
     '+ Register plant',
-    'fetchOtherApprovedPlants',
+    'usePlantListStore',
   ]) {
     assert.ok(screen.includes(needed), needed);
   }
-  assert.match(screen, /<Modal[^>]*animationType="slide"/);
+  // The sheet, pills and button are the shared ones (also used by Home's Recent activity).
+  const sheet = read('../components/FilterSheet.tsx');
+  assert.match(sheet, /<Modal[^>]*animationType="slide"/);
+  for (const needed of ['Reset', 'Remove filter', 'Filter ·']) assert.ok(sheet.includes(needed), needed);
   assert.match(screen, /status: 'needs_action', show: 'mine'/);
   // No visit or species-proposal rows, no chip rows.
   assert.doesNotMatch(screen, /<ScrollView\s*horizontal/);
@@ -144,13 +147,17 @@ test('Plants screen: plants only, Filter sheet, pills, banner, Register at the e
   assert.doesNotMatch(screen, /'\+ Propose species'|>\+ Propose species</);
 });
 
-test('species proposals moved to Home with Retry/Remove; visits show their status in Plant detail', () => {
+test('Home: one "Recent activity" list (new plants, observations, species requests); visits show their status in Plant detail', () => {
   const home = read('../../app/(tabs)/home.tsx');
-  assert.match(home, /<MyProposals \/>/);
+  assert.match(home, /<RecentActivity/);
+  assert.doesNotMatch(home, /MyProposals|My species proposals|Recent Field Records/);
   assert.match(home, /router\.push\('\/propose-species'\)/);
-  const proposals = read('../components/MyProposals.tsx');
-  for (const needed of ['My species proposals', 'Retry upload', 'Remove', 'Browse species']) {
-    assert.ok(proposals.includes(needed), needed);
+  assert.match(home, />Request a new species</);
+  assert.equal(fs.existsSync(path.join(here, '../components/MyProposals.tsx')), false);
+  const activity = read('../components/RecentActivity.tsx');
+  for (const needed of ['Recent activity', 'Edit and resend', 'Dismiss', 'Retry upload', 'See all in Plants',
+    "need your action", '<FilterSheet', '<FilterPills', 'variant="inline"', 'RECENT_ACTIVITY_LIMIT']) {
+    assert.ok(activity.includes(needed), needed);
   }
   const detail = read('../../app/plant-detail.tsx');
   assert.match(detail, /visitStatus\(observation, matched\.syncError\)/);
@@ -216,4 +223,13 @@ test('Plants screen: rows come from mergePlants and the list is keyed by them', 
   assert.ok(screen.includes("const merged = mergePlants("));
   assert.ok(screen.includes("keyExtractor={(item) => item.key}"));
   assert.ok(!screen.includes("key: `server:"));
+});
+
+test('notes stay empty when the botanist leaves them empty: no filler text', () => {
+  const register = read('../../app/new-record.tsx');
+  assert.match(register, /notes: morphology\.trim\(\),/);
+  assert.doesNotMatch(register, /Initial registration record/);
+  const pull = read('../services/serverPull.ts');
+  assert.match(pull, /notes: textValue\(payload\.notes\) \?\? existingVisit\?\.notes \?\? '',/);
+  assert.doesNotMatch(pull, /Observation downloaded from server/);
 });

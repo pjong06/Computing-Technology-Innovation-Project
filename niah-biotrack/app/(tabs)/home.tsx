@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  FlatList,
   SafeAreaView,
   Platform,
   StatusBar,
@@ -16,7 +15,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import { useAuthRole } from '../../src/context/AuthRoleContext';
-import { useRecordStore, SyncStatus, IdentificationStatus, type PlantRecord } from '../../src/store/useRecordStore';
+import { useRecordStore, SyncStatus, IdentificationStatus } from '../../src/store/useRecordStore';
 import { buildSyncSummary } from '../../src/services/syncSummary';
 import {
   resumeAllPausedRecordRetries,
@@ -26,10 +25,12 @@ import { pullServerRecords, serverPullError } from '../../src/services/serverPul
 import { useProposalStore } from '../../src/store/useProposalStore';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
-import { plantReviewBadge } from '../../src/utils/reviewStatus';
-import { recordSubmitProblem } from '../../src/utils/submissionState';
 import { routesUploadedText } from '../../src/utils/routeSync';
-import MyProposals from '../../src/components/MyProposals';
+import { plantPhotoCaption } from '../../src/utils/plantPhotoCaption';
+import { BASE_URL } from '../../src/api/client';
+import PlantThumbnail from '../../src/components/PlantThumbnail';
+import { thumbnailSources } from '../../src/utils/thumbnailSources';
+import RecentActivity from '../../src/components/RecentActivity';
 
 const FEATURED_COUNT = 4;
 
@@ -45,22 +46,13 @@ export default function HomeScreen() {
   );
 
   const species = useSpeciesStore((state) => state.species);
-  const imageUrisBySpeciesId = useSpeciesStore((state) => state.imageUrisBySpeciesId);
   const loadSpecies = useSpeciesStore((state) => state.loadSpecies);
-  const loadSpeciesDetail = useSpeciesStore((state) => state.loadSpeciesDetail);
   const featured = species.slice(0, FEATURED_COUNT);
-  const featuredKey = featured.map((s) => s.id).join(',');
 
   useEffect(() => {
     if (isVisitor) void loadSpecies();
   }, [isVisitor, loadSpecies]);
 
-  useEffect(() => {
-    if (!isVisitor) return;
-    for (const item of featured) {
-      if (!imageUrisBySpeciesId[item.id]) void loadSpeciesDetail(item.id);
-    }
-  }, [isVisitor, featuredKey]);
 
   const records = useRecordStore((state) => state.records);
   const syncAll = useRecordStore((state) => state.syncAll);
@@ -113,7 +105,7 @@ export default function HomeScreen() {
         parts.push(`${photoProblems} ${photoProblems === 1 ? 'photo' : 'photos'} over 5 MB (see the plant page)`);
       }
       if (proposalsResult.uploaded > 0) {
-        parts.push(`${proposalsResult.uploaded} species ${proposalsResult.uploaded === 1 ? 'proposal' : 'proposals'} sent`);
+        parts.push(`${proposalsResult.uploaded} species ${proposalsResult.uploaded === 1 ? 'request' : 'requests'} sent`);
       }
       if (routesResult.uploaded > 0) parts.push(routesUploadedText(routesResult.uploaded));
       if (routesResult.failed > 0) {
@@ -123,7 +115,7 @@ export default function HomeScreen() {
       const problem = proposalsResult.reasons[0] ?? downloadError;
       Toast.show({
         type: failed > 0 || downloadError ? 'error' : 'success',
-        text1: failed > 0 ? 'Some records did not upload' : downloadError ? 'Upload complete; download pending' : 'Sync complete',
+        text1: failed > 0 ? 'Some records did not upload' : downloadError ? 'Uploaded, but couldn\'t download updates' : 'Sync complete',
         text2: problem ? `${parts.join(' · ')}. ${problem}` : parts.join(' · '),
         position: 'bottom',
       });
@@ -154,24 +146,6 @@ export default function HomeScreen() {
       Toast.show({ type: 'error', text1: 'Could not retry this record. Please try again.' });
     } finally {
       setRetryingIds((ids) => ids.filter((x) => x !== id));
-    }
-  };
-
-  // Before upload: the upload status. After upload: the officer's decision, with the same
-  // logic as Records (so a record never shows "Uploaded" here and "Pending" there).
-  // An approved plant with a newer visit waiting reads "Approved" plus a small waiting line.
-  const getStatusBadge = (record: PlantRecord): { bg: string; text: string; label: string; waitingNote?: string | null } => {
-    switch (record.syncStatus) {
-      case SyncStatus.UPLOADED: {
-        const { badge, waitingNote } = plantReviewBadge(record, 'Uploaded · Waiting for review');
-        return { ...badge, label: `• ${badge.label}`, waitingNote };
-      }
-      case SyncStatus.NOT_UPLOADED:
-        return { bg: '#FDF4D8', text: '#8C5E03', label: '• Not uploaded' };
-      case SyncStatus.FAILED:
-        return { bg: '#FDE2E2', text: '#9B1C1C', label: '• Upload failed' };
-      default:
-        return { bg: '#FDF4D8', text: '#8C5E03', label: '• Pending' };
     }
   };
 
@@ -224,213 +198,123 @@ export default function HomeScreen() {
         </View>
 
         {!isVisitor ? (
-          <>
-            {(totalToSync > 0 || unsentProposalCount > 0 || unsentRouteCount > 0) && (
-              <View style={styles.syncCard}>
-                <Text style={styles.syncTitle}>
-                  {[
-                    totalToSync > 0 ? `${totalToSync} ${totalToSync === 1 ? 'record' : 'records'}` : null,
-                    unsentProposalCount > 0
-                      ? `${unsentProposalCount} species ${unsentProposalCount === 1 ? 'proposal' : 'proposals'}`
-                      : null,
-                    unsentRouteCount > 0
-                      ? `${unsentRouteCount} ${unsentRouteCount === 1 ? 'route' : 'routes'}`
-                      : null,
-                  ]
-                    .filter(Boolean)
-                    .join(' and ')}{' '}
-                  pending sync
-                </Text>
-                <Text style={styles.syncSub}>
-                  {pendingCount} queued{failedCount > 0 ? ` · ${failedCount} failed` : ''} · local storage safe
-                </Text>
-                <TouchableOpacity
-                  style={[styles.syncBtn, syncingAll && styles.syncBtnDisabled]}
-                  onPress={handleSyncNow}
-                  disabled={syncingAll}
-                >
-                  {syncingAll ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                  ) : (
-                    <Text style={styles.syncBtnText}>Sync now</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {identificationDraftCount > 0 ? (
-              <TouchableOpacity
-                style={styles.draftCard}
-                activeOpacity={0.8}
-                onPress={() => router.push('/(tabs)/records' as any)}
-              >
-                <Text style={styles.syncTitle}>
-                  {identificationDraftCount}{' '}
-                  {identificationDraftCount === 1 ? 'record needs' : 'records need'} identification
-                </Text>
-                <Text style={styles.syncSub}>
-                  Field information is saved locally. Continue editing when you can confirm the species.
-                </Text>
-              </TouchableOpacity>
-            ) : null}
-
-            <View style={styles.actionSection}>
-              <View style={styles.actionRow}>
-                <TouchableOpacity
-                  style={styles.actionCard}
-                  activeOpacity={0.85}
-                  onPress={() => router.push('/(tabs)/scan')}
-                  accessibilityRole="button"
-                  accessibilityLabel="Scan QR code"
-                >
-                  <View style={styles.actionIconWrap}>
-                    <Ionicons name="qr-code-outline" size={28} color="#284632" />
-                  </View>
-                  <Text style={styles.actionCardLabel}>Scan QR code</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.actionCard}
-                  activeOpacity={0.85}
-                  onPress={() => router.push('/add-observation')}
-                  accessibilityRole="button"
-                  accessibilityLabel="Record observation"
-                >
-                  <View style={styles.actionIconWrap}>
-                    <Ionicons name="add-circle-outline" size={28} color="#284632" />
-                  </View>
-                  <Text style={styles.actionCardLabel}>Record observation</Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.actionRow}>
-                <TouchableOpacity
-                  style={styles.actionCard}
-                  activeOpacity={0.85}
-                  onPress={() => router.push('/new-record')}
-                  accessibilityRole="button"
-                  accessibilityLabel="Register plant"
-                >
-                  <View style={styles.actionIconWrap}>
-                    <Ionicons name="leaf-outline" size={28} color="#284632" />
-                  </View>
-                  <Text style={styles.actionCardLabel}>Register plant</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.actionCard}
-                  activeOpacity={0.85}
-                  onPress={() => router.push('/propose-species')}
-                  accessibilityRole="button"
-                  accessibilityLabel="Propose species"
-                >
-                  <View style={styles.actionIconWrap}>
-                    <Ionicons name="create-outline" size={28} color="#284632" />
-                  </View>
-                  <Text style={styles.actionCardLabel}>Propose species</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            <TouchableOpacity
-              style={styles.routePill}
-              activeOpacity={0.85}
-              onPress={() => router.push('/record-route')}
-            >
-              <View style={styles.routeLeft}>
-                <Ionicons name="navigate-outline" size={20} color="#284632" style={{ marginRight: 8 }} />
-                <Text style={styles.routeLabel}>Record Transect Route</Text>
-              </View>
-              <Text style={styles.routeTag}>GPS Canvas</Text>
-            </TouchableOpacity>
-
-            <View style={styles.sectionRow}>
-              <Text style={styles.sectionHeading}>Recent Field Records</Text>
-              <TouchableOpacity onPress={() => router.push('/(tabs)/records')}>
-                <Text style={styles.seeAll}>See all</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Recent records, then the botanist's species proposals, in one scrolling list. */}
-            <FlatList
-                data={records.slice(0, 5)}
-                keyExtractor={(item) => item.id}
-                showsVerticalScrollIndicator={false}
-                ListEmptyComponent={
-                  <View style={styles.emptyContainer}>
-                    <Text style={styles.emptyTitle}>No records logged yet</Text>
-                    <Text style={styles.emptySub}>
-                      Field observations recorded on patrols will appear here automatically.
+          // One scrolling list: the sync and action cards, then "Recent activity" (the
+          // botanist's own new plants, observations and species requests).
+          <RecentActivity
+            onRetryRecord={(id) => void handleRetry(id)}
+            retryingRecordIds={retryingIds}
+            syncing={syncingAll}
+            header={
+              <>
+                {(totalToSync > 0 || unsentProposalCount > 0 || unsentRouteCount > 0) && (
+                  <View style={styles.syncCard}>
+                    <Text style={styles.syncTitle}>
+                      {[
+                        totalToSync > 0 ? `${totalToSync} ${totalToSync === 1 ? 'record' : 'records'}` : null,
+                        unsentProposalCount > 0
+                          ? `${unsentProposalCount} species ${unsentProposalCount === 1 ? 'request' : 'requests'}`
+                          : null,
+                        unsentRouteCount > 0
+                          ? `${unsentRouteCount} ${unsentRouteCount === 1 ? 'route' : 'routes'}`
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' and ')}{' '}
+                      waiting to upload
                     </Text>
-                  </View>
-                }
-                ListFooterComponent={<MyProposals />}
-                renderItem={({ item }) => {
-                  const badge = getStatusBadge(item);
-                  const notSentReason =
-                    item.syncStatus === SyncStatus.UPLOADED ? recordSubmitProblem(item) : null;
-                  return (
-                    <View style={styles.recordItem}>
-                      <TouchableOpacity
-                        style={styles.recordCard}
-                        activeOpacity={0.7}
-                        onPress={() =>
-                          router.push({
-                            pathname: '/plant-detail',
-                            params: { id: item.id },
-                          })
-                        }
-                      >
-                        <View style={styles.plantIconCircle}>
-                          <Ionicons name="leaf-outline" size={20} color="#2D6A4F" />
-                        </View>
-                        {/* The text takes the rest of the row and the status badge sits under the
-                            name, so a long badge never squeezes the name into broken words. */}
-                        <View style={styles.recordTextColumn}>
-                          <Text style={styles.speciesText} numberOfLines={2} ellipsizeMode="tail">
-                            {item.scientificName || 'Identification pending'}
-                          </Text>
-                          <Text style={styles.locationText} numberOfLines={2} ellipsizeMode="tail">
-                            {item.locationName} · {item.createdAt}
-                          </Text>
-                          {item.identificationStatus === IdentificationStatus.PENDING ? (
-                            <View style={[styles.badgePill, { backgroundColor: '#FDF4D8' }]}>
-                              <Text style={[styles.badgeText, { color: '#8C5E03' }]}>• Identify later</Text>
-                            </View>
-                          ) : (
-                            <View style={[styles.badgePill, { backgroundColor: badge.bg }]}>
-                              <Text style={[styles.badgeText, { color: badge.text }]}>{badge.label}</Text>
-                            </View>
-                          )}
-                          {badge.waitingNote ? (
-                            <Text style={styles.waitingNote}>{badge.waitingNote}</Text>
-                          ) : null}
-                        </View>
-                      </TouchableOpacity>
-
-                      {notSentReason ? (
-                        <View style={styles.errorSubRow}>
-                          <Text style={styles.errorSubText}>Not sent for review: {notSentReason}</Text>
-                        </View>
-                      ) : null}
-
-                      {item.syncStatus === SyncStatus.FAILED && (
-                        <View style={styles.errorSubRow}>
-                          <Text style={styles.errorSubText}>{item.syncError || 'Upload failed'}</Text>
-                          {retryingIds.includes(item.id) ? (
-                            <ActivityIndicator size="small" color="#9B1C1C" />
-                          ) : (
-                            <TouchableOpacity onPress={() => handleRetry(item.id)} disabled={syncingAll}>
-                              <Text style={styles.retryBtn}>Retry</Text>
-                            </TouchableOpacity>
-                          )}
-                        </View>
+                    <Text style={styles.syncSub}>
+                      {pendingCount} queued{failedCount > 0 ? ` · ${failedCount} failed` : ''} · saved on this phone
+                    </Text>
+                    <TouchableOpacity
+                      style={[styles.syncBtn, syncingAll && styles.syncBtnDisabled]}
+                      onPress={handleSyncNow}
+                      disabled={syncingAll}
+                    >
+                      {syncingAll ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <Text style={styles.syncBtnText}>Sync now</Text>
                       )}
-                    </View>
-                  );
-                }}
-              />
-          </>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {identificationDraftCount > 0 ? (
+                  <TouchableOpacity
+                    style={styles.draftCard}
+                    activeOpacity={0.8}
+                    onPress={() => router.push('/(tabs)/records' as any)}
+                  >
+                    <Text style={styles.syncTitle}>
+                      {identificationDraftCount}{' '}
+                      {identificationDraftCount === 1 ? 'record needs' : 'records need'} identification
+                    </Text>
+                    <Text style={styles.syncSub}>
+                      Field information is saved locally. Continue editing when you can confirm the species.
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+
+                <View style={styles.actionSection}>
+                  <View style={styles.actionRow}>
+                    <TouchableOpacity
+                      style={styles.actionCard}
+                      activeOpacity={0.85}
+                      onPress={() => router.push('/(tabs)/scan')}
+                      accessibilityRole="button"
+                      accessibilityLabel="Scan QR code"
+                    >
+                      <View style={styles.actionIconWrap}>
+                        <Ionicons name="qr-code-outline" size={28} color="#284632" />
+                      </View>
+                      <Text style={styles.actionCardLabel}>Scan QR code</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.actionCard}
+                      activeOpacity={0.85}
+                      onPress={() => router.push('/add-observation')}
+                      accessibilityRole="button"
+                      accessibilityLabel="Record observation"
+                    >
+                      <View style={styles.actionIconWrap}>
+                        <Ionicons name="add-circle-outline" size={28} color="#284632" />
+                      </View>
+                      <Text style={styles.actionCardLabel}>Record observation</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.actionRow}>
+                    <TouchableOpacity
+                      style={styles.actionCard}
+                      activeOpacity={0.85}
+                      onPress={() => router.push('/new-record')}
+                      accessibilityRole="button"
+                      accessibilityLabel="Register plant"
+                    >
+                      <View style={styles.actionIconWrap}>
+                        <Ionicons name="leaf-outline" size={28} color="#284632" />
+                      </View>
+                      <Text style={styles.actionCardLabel}>Register plant</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.actionCard}
+                      activeOpacity={0.85}
+                      onPress={() => router.push('/propose-species')}
+                      accessibilityRole="button"
+                      accessibilityLabel="Request a new species"
+                    >
+                      <View style={styles.actionIconWrap}>
+                        <Ionicons name="create-outline" size={28} color="#284632" />
+                      </View>
+                      <Text style={styles.actionCardLabel}>Request a new species</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </>
+            }
+          />
         ) : (
           <View style={styles.visitorSection}>
             <TouchableOpacity
@@ -461,7 +345,8 @@ export default function HomeScreen() {
                   {featured.map((item) => {
                     const status = plainConservationStatus(item.conservation_status);
                     const colors = conservationStatusColors(status.code);
-                    const photo = imageUrisBySpeciesId[item.id];
+                    // The species' public plant photo (served stripped by the backend), or the leaf.
+                    const photo = item.public_photo ?? null;
                     return (
                       <TouchableOpacity
                         key={item.id}
@@ -469,13 +354,20 @@ export default function HomeScreen() {
                         activeOpacity={0.8}
                         onPress={() => router.push({ pathname: '/plant-info', params: { speciesId: item.id } } as any)}
                       >
-                        {photo ? (
-                          <Image source={{ uri: photo }} style={styles.featuredPhoto} resizeMode="cover" />
-                        ) : (
-                          <View style={[styles.featuredPhoto, styles.featuredPlaceholder]}>
-                            <Ionicons name="leaf-outline" size={26} color="#46654F" />
-                          </View>
-                        )}
+                        <PlantThumbnail
+                          sources={thumbnailSources({ publicPath: photo?.url, baseUrl: BASE_URL })}
+                          style={styles.featuredPhoto}
+                          caption={
+                            photo ? (
+                              <Text style={styles.featuredCaption} numberOfLines={1}>{plantPhotoCaption(photo.tag)}</Text>
+                            ) : null
+                          }
+                          placeholder={
+                            <View style={[styles.featuredPhoto, styles.featuredPlaceholder]}>
+                              <Ionicons name="leaf-outline" size={26} color="#46654F" />
+                            </View>
+                          }
+                        />
                         <Text style={styles.featuredName} numberOfLines={1}>
                           {item.common_name || item.scientific_name}
                         </Text>
@@ -550,7 +442,7 @@ const styles = StyleSheet.create({
   },
   actionSection: {
     gap: 10,
-    marginBottom: 12,
+    marginBottom: 16,
   },
   actionRow: {
     flexDirection: 'row',
@@ -573,21 +465,6 @@ const styles = StyleSheet.create({
     color: '#284632',
     textAlign: 'center',
   },
-  routePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: '#284632',
-    borderRadius: 25,
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    marginBottom: 16,
-  },
-  routeLeft: { flexDirection: 'row', alignItems: 'center' },
-  routeLabel: { fontSize: 14, fontWeight: '700', color: '#284632' },
-  routeTag: { fontSize: 11.5, color: '#5C7163', fontWeight: '700' },
   sectionRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -596,52 +473,6 @@ const styles = StyleSheet.create({
   },
   sectionHeading: { fontSize: 15, fontWeight: '700', color: '#1E2B22' },
   seeAll: { fontSize: 12.5, fontWeight: '600', color: '#526659' },
-  recordItem: { marginBottom: 8 },
-  recordCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    padding: 14,
-    borderRadius: 18,
-    borderWidth: 1.2,
-    borderColor: '#E6ECE8',
-  },
-  plantIconCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#E7EFEA',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  recordTextColumn: { flex: 1, minWidth: 0, marginLeft: 12 },
-  speciesText: { fontSize: 14, fontWeight: '700', color: '#1E2B22' },
-  locationText: { fontSize: 12, color: '#68776D', marginTop: 2 },
-  badgePill: {
-    alignSelf: 'flex-start',
-    maxWidth: '100%',
-    marginTop: 6,
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 14,
-  },
-  badgeText: { fontSize: 11, fontWeight: '700' },
-  waitingNote: { fontSize: 11.5, fontWeight: '600', color: '#1F4E8C', marginTop: 4 },
-  errorSubRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#FDF2F2',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 10,
-    marginTop: 4,
-  },
-  errorSubText: { flex: 1, fontSize: 11, color: '#9B1C1C' },
-  retryBtn: { fontSize: 11, fontWeight: '700', color: '#9B1C1C', textDecorationLine: 'underline' },
-  emptyContainer: { alignItems: 'center', paddingVertical: 30 },
-  emptyTitle: { fontSize: 15, fontWeight: '700', color: '#1E2B22', marginBottom: 4 },
-  emptySub: { fontSize: 12.5, color: '#68776D', textAlign: 'center', lineHeight: 17 },
   featuredGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   featuredCard: {
     width: '48%',
@@ -655,6 +486,7 @@ const styles = StyleSheet.create({
   featuredPhoto: { width: '100%', aspectRatio: 4 / 3, borderRadius: 12, backgroundColor: '#E7EFEA' },
   featuredPlaceholder: { justifyContent: 'center', alignItems: 'center' },
   featuredName: { fontSize: 13.5, fontWeight: '700', color: '#1E2B22', marginTop: 8 },
+  featuredCaption: { fontSize: 11, color: '#68776D', marginTop: 4 },
   featuredBadge: { alignSelf: 'flex-start', paddingVertical: 2, paddingHorizontal: 8, borderRadius: 10, marginTop: 4 },
   featuredBadgeText: { fontSize: 10.5, fontWeight: '700' },
   respectBox: { backgroundColor: '#E8F5E9', borderRadius: 14, padding: 14, marginTop: 4 },

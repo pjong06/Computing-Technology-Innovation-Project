@@ -2,12 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Image,
-  Modal,
   Platform,
-  Pressable,
   SafeAreaView,
-  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -37,6 +33,7 @@ import {
   visitStatus,
 } from '../../src/utils/reviewStatus';
 import { firstVisitOf, isVisitSubmitted, newPlantReview } from '../../src/utils/submissionState';
+import { isPhysicalTag } from '../../src/utils/myTags';
 import {
   DEFAULT_FILTERS,
   SHOW_FILTERS,
@@ -50,7 +47,6 @@ import {
   mostUrgent,
   needsActionCount,
   rowStatus,
-  syncStatusText,
   type NeedsActionReason,
   type PlantFilters,
   type PlantRow,
@@ -58,10 +54,15 @@ import {
 } from '../../src/utils/recordsList';
 import { routesUploadedText } from '../../src/utils/routeSync';
 import { resolveStoredPhotoUri } from '../../src/utils/photoStorage';
-import { getLastSuccessfulSync, resumeAllPausedRecordRetries } from '../../src/services/offlineDatabase';
+import { resumeAllPausedRecordRetries } from '../../src/services/offlineDatabase';
 import { pullServerRecords, serverPullError } from '../../src/services/serverPull';
-import { fetchOtherApprovedPlants, type OtherApprovedPlant } from '../../src/services/approvedPlants';
+import { type OtherApprovedPlant } from '../../src/services/approvedPlants';
+import { resetExpiryRefresh, usePlantListStore } from '../../src/store/usePlantListStore';
 import { lookupTag, describeTagLookup } from '../../src/services/tagLookup';
+import { FilterButton, FilterPills, FilterSheet } from '../../src/components/FilterSheet';
+import PlantThumbnail from '../../src/components/PlantThumbnail';
+import { thumbnailSources, type SignedThumbnail, type ThumbnailSource } from '../../src/utils/thumbnailSources';
+import { BASE_URL } from '../../src/api/client';
 
 // Plants (botanist tab, route "records"): one row per plant. Each row shows the most urgent
 // status of the plant and the botanist's own visits to it; the visits themselves are listed
@@ -74,15 +75,13 @@ type PlantItem = PlantRow & {
   record: PlantRecord | null; // null: another botanist's plant that is not on this phone
   tag: string | null;
   speciesId: string | null;
-  photoUri: string | null;
+  // Where its picture comes from, in order (phone photo, signed thumbnail, public copy).
+  photo: ThumbnailSource[];
   place: string;
   badge: Badge;
   action: NeedsActionReason | null;
   reason: string | null;
 };
-
-// Kept between visits to the tab, so the list does not flicker while it reloads.
-let otherPlantsCache: OtherApprovedPlant[] = [];
 
 function timestampFor(value?: string | null): number {
   const time = value ? Date.parse(value) : Number.NaN;
@@ -96,7 +95,10 @@ function dayText(value?: string | null): string | null {
     : new Date(time).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-function localItem(key: string, stored: PlantRecord, speciesPhoto: string | null): PlantItem {
+// The thumbnail is the plant's own photo (on the phone, else the signed server thumbnail
+// from the list), its public copy for someone else's plant, or the leaf placeholder
+// (species reference photos are not shown).
+function localItem(key: string, stored: PlantRecord, signed: SignedThumbnail | null): PlantItem {
   // Older or partly downloaded records may lack these lists; treat them as empty.
   const visits = (Array.isArray(stored.observations) ? stored.observations : []).filter(Boolean);
   const record: PlantRecord = { ...stored, observations: visits };
@@ -123,7 +125,7 @@ function localItem(key: string, stored: PlantRecord, speciesPhoto: string | null
   const revisits = visits.filter((visit) => visit !== firstVisit);
   for (const visit of revisits) {
     const status = visitStatus(visit, record.syncError);
-    candidates.push({ ...status, reason: status.reason ? `Visit ${visit.date}: ${status.reason}` : null });
+    candidates.push({ ...status, reason: status.reason ? `Observation on ${visit.date}: ${status.reason}` : null });
   }
   const pick = mostUrgent(candidates)?.item ?? candidates[0];
 
@@ -131,7 +133,7 @@ function localItem(key: string, stored: PlantRecord, speciesPhoto: string | null
     .map((visit) => visit.observedAt || visit.date)
     .sort((a, b) => timestampFor(b) - timestampFor(a))[0];
   const when = visits.length > 0 && dayText(lastVisit)
-    ? `Last visit ${dayText(lastVisit)}`
+    ? `Last observation ${dayText(lastVisit)}`
     : dayText(record.createdAtIso)
       ? `Registered ${dayText(record.createdAtIso)}`
       : record.createdAt;
@@ -149,7 +151,14 @@ function localItem(key: string, stored: PlantRecord, speciesPhoto: string | null
     reason: pick.reason,
     tag: record.tagCode ?? null,
     speciesId: record.speciesId,
-    photoUri: ownPhoto ? resolveStoredPhotoUri(ownPhoto) : speciesPhoto,
+    // Its own photo on this phone, else its signed server thumbnail; for a plant someone else
+    // registered, its public photo.
+    photo: thumbnailSources({
+      localUri: ownPhoto ? resolveStoredPhotoUri(ownPhoto) : null,
+      signed: record.otherBotanist ? null : signed,
+      publicPath: record.otherBotanist ? record.publicPhotoUrl : null,
+      baseUrl: BASE_URL,
+    }),
     place: [record.locationName, when].filter(Boolean).join(' · '),
     searchText: [name, record.commonName, record.plantName, record.tagCode].filter(Boolean).join(' '),
   };
@@ -158,8 +167,7 @@ function localItem(key: string, stored: PlantRecord, speciesPhoto: string | null
 function otherItem(
   key: string,
   plant: OtherApprovedPlant,
-  species: { scientific_name: string; common_name: string | null } | undefined,
-  speciesPhoto: string | null
+  species: { scientific_name: string; common_name: string | null } | undefined
 ): PlantItem {
   const name = species?.scientific_name || 'Species not recorded';
   const registered = dayText(plant.registeredAt);
@@ -175,7 +183,8 @@ function otherItem(
     reason: null,
     tag: plant.tagCode,
     speciesId: plant.speciesId,
-    photoUri: speciesPhoto,
+    // Its public stripped photo (small copy, served by the backend), or the placeholder.
+    photo: thumbnailSources({ publicPath: plant.photoUrl, baseUrl: BASE_URL }),
     place: registered ? `Registered ${registered}` : '',
     searchText: [name, species?.common_name, plant.tagCode].filter(Boolean).join(' '),
   };
@@ -197,7 +206,6 @@ export default function PlantsListScreen() {
     (state) => state.proposals.filter((proposal) => proposal.syncStatus !== SyncStatus.UPLOADED).length
   );
   const species = useSpeciesStore((state) => state.species);
-  const imageUrisBySpeciesId = useSpeciesStore((state) => state.imageUrisBySpeciesId);
   const loadSpecies = useSpeciesStore((state) => state.loadSpecies);
 
   const [filters, setFilters] = useState<PlantFilters>(DEFAULT_FILTERS);
@@ -205,28 +213,17 @@ export default function PlantsListScreen() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [syncingAll, setSyncingAll] = useState(false);
-  const [lastSync, setLastSync] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-  const [otherPlants, setOtherPlants] = useState<OtherApprovedPlant[]>(otherPlantsCache);
-  const [othersState, setOthersState] = useState<'loading' | 'ok' | 'offline'>('loading');
+  // Other botanists' plants and own plants' thumbnails: one request per page, shared with
+  // Home and plant detail, and kept between visits so the list does not flicker.
+  const otherPlants = usePlantListStore((state) => state.others);
+  const ownThumbnails = usePlantListStore((state) => state.ownThumbnails);
+  const listState = usePlantListStore((state) => state.state);
+  const othersState = listState === 'idle' ? 'loading' : listState;
   const [openingKey, setOpeningKey] = useState<string | null>(null);
 
-  const loadOtherPlants = useCallback(async () => {
-    const own = new Set(
-      useRecordStore
-        .getState()
-        .records.map((record) => record.serverId)
-        .filter((id): id is string => Boolean(id))
-    );
-    setOthersState('loading');
-    try {
-      const plants = await fetchOtherApprovedPlants(own);
-      otherPlantsCache = plants;
-      setOtherPlants(plants);
-      setOthersState('ok');
-    } catch {
-      setOthersState('offline');
-    }
+  const loadOtherPlants = useCallback(async (force = false) => {
+    if (force) resetExpiryRefresh();
+    await usePlantListStore.getState().load({ force });
   }, []);
 
   useFocusEffect(
@@ -234,20 +231,15 @@ export default function PlantsListScreen() {
       if (blocked) return undefined;
       void refreshReviewStatuses();
       void refreshProposalStatuses();
-      void getLastSuccessfulSync().then(setLastSync).catch(() => undefined);
       if (useSpeciesStore.getState().species.length === 0) void loadSpecies();
       void loadOtherPlants();
-      setNow(Date.now());
-      // Keeps "Synced 2 min ago" current while the tab is open.
-      const timer = setInterval(() => setNow(Date.now()), 60000);
-      return () => clearInterval(timer);
+      return undefined;
     }, [blocked, refreshReviewStatuses, refreshProposalStatuses, loadSpecies, loadOtherPlants])
   );
 
   const speciesById = useMemo(() => new Map(species.map((item) => [item.id, item])), [species]);
 
   const items = useMemo<PlantItem[]>(() => {
-    const photoFor = (speciesId: string | null) => (speciesId ? imageUrisBySpeciesId[speciesId] ?? null : null);
     // One row per plant: the phone's copy wins over the same plant from the server, and
     // every row gets a unique "plant:<id>" key (src/utils/recordsList.ts mergePlants).
     const merged = mergePlants(
@@ -263,15 +255,14 @@ export default function PlantsListScreen() {
     );
     return merged.map((entry) =>
       entry.source === 'local'
-        ? localItem(entry.key, entry.plant, photoFor(entry.plant.speciesId))
+        ? localItem(entry.key, entry.plant, entry.plant.serverId ? ownThumbnails[entry.plant.serverId] ?? null : null)
         : otherItem(
             entry.key,
             entry.plant,
-            entry.plant.speciesId ? speciesById.get(entry.plant.speciesId) : undefined,
-            photoFor(entry.plant.speciesId)
+            entry.plant.speciesId ? speciesById.get(entry.plant.speciesId) : undefined
           )
     );
-  }, [records, otherPlants, speciesById, imageUrisBySpeciesId]);
+  }, [records, otherPlants, ownThumbnails, speciesById]);
 
   const visible = useMemo(() => filterAndSortPlants(items, filters, searchQuery), [items, filters, searchQuery]);
   const draftCount = useMemo(() => filterAndSortPlants(items, draft, searchQuery).length, [items, draft, searchQuery]);
@@ -308,7 +299,7 @@ export default function PlantsListScreen() {
         parts.push(`${photoProblems} ${photoProblems === 1 ? 'photo' : 'photos'} over 5 MB (see the plant page)`);
       }
       if (proposalsResult.uploaded > 0) {
-        parts.push(`${proposalsResult.uploaded} species ${proposalsResult.uploaded === 1 ? 'proposal' : 'proposals'} sent`);
+        parts.push(`${proposalsResult.uploaded} species ${proposalsResult.uploaded === 1 ? 'request' : 'requests'} sent`);
       }
       if (routesResult.uploaded > 0) parts.push(routesUploadedText(routesResult.uploaded));
       if (routesResult.failed > 0) {
@@ -318,7 +309,7 @@ export default function PlantsListScreen() {
       const problem = proposalsResult.reasons[0] ?? downloadError;
       Toast.show({
         type: failed > 0 || downloadError ? 'error' : 'success',
-        text1: failed > 0 ? 'Some records did not upload' : downloadError ? 'Upload complete; download pending' : 'Sync complete',
+        text1: failed > 0 ? 'Some records did not upload' : downloadError ? 'Uploaded, but couldn\'t download updates' : 'Sync complete',
         text2: problem ? `${parts.join(' · ')}. ${problem}` : parts.join(' · '),
         position: 'bottom',
       });
@@ -331,9 +322,8 @@ export default function PlantsListScreen() {
       });
     } finally {
       setSyncingAll(false);
-      void getLastSuccessfulSync().then(setLastSync).catch(() => undefined);
-      setNow(Date.now());
-      void loadOtherPlants();
+      // After a sync: fresh list and thumbnails (new photos may have been uploaded).
+      void loadOtherPlants(true);
     }
   };
 
@@ -367,27 +357,6 @@ export default function PlantsListScreen() {
   const filterCount = activeFilterCount(filters);
   const showingActionList = filters.status === 'needs_action' && filters.show === 'mine';
 
-  const renderOption = <K extends keyof PlantFilters>(
-    group: K,
-    options: { value: PlantFilters[K]; label: string }[],
-    labelFor: (option: { value: PlantFilters[K]; label: string }) => string = (option) => option.label
-  ) =>
-    options.map((option) => {
-      const selected = draft[group] === option.value;
-      return (
-        <TouchableOpacity
-          key={String(option.value)}
-          style={styles.optionRow}
-          onPress={() => setDraft({ ...draft, [group]: option.value })}
-          accessibilityRole="radio"
-          accessibilityState={{ selected }}
-        >
-          <Ionicons name={selected ? 'radio-button-on' : 'radio-button-off'} size={20} color={selected ? '#213B2A' : '#8C9A91'} />
-          <Text style={[styles.optionText, selected && styles.optionTextSelected]}>{labelFor(option)}</Text>
-        </TouchableOpacity>
-      );
-    });
-
   const header = (
     <View>
       <View style={styles.searchRow}>
@@ -402,38 +371,16 @@ export default function PlantsListScreen() {
           clearButtonMode="while-editing"
           accessibilityLabel="Search plant or species"
         />
-        <TouchableOpacity
-          style={[styles.filterBtn, filterCount > 0 && styles.filterBtnActive]}
-          onPress={openSheet}
-          accessibilityRole="button"
-          accessibilityLabel={filterCount > 0 ? `Filter, ${filterCount} active` : 'Filter'}
-        >
-          <Ionicons name="options-outline" size={18} color={filterCount > 0 ? '#FFFFFF' : '#213B2A'} />
-          <Text style={[styles.filterText, filterCount > 0 && styles.filterTextActive]}>Filter</Text>
-          {filterCount > 0 ? (
-            <View style={styles.filterCount}>
-              <Text style={styles.filterCountText}>{filterCount}</Text>
-            </View>
-          ) : null}
-        </TouchableOpacity>
+        <FilterButton count={filterCount} onPress={openSheet} />
       </View>
 
-      {pills.length > 0 ? (
-        <View style={styles.pillRow}>
-          {pills.map((pill) => (
-            <TouchableOpacity
-              key={pill.group}
-              style={styles.pill}
-              onPress={() => setFilters({ ...filters, [pill.group]: DEFAULT_FILTERS[pill.group] })}
-              accessibilityRole="button"
-              accessibilityLabel={`Remove filter: ${pill.label}`}
-            >
-              <Text style={styles.pillText} numberOfLines={1}>{pill.label}</Text>
-              <Ionicons name="close" size={14} color="#213B2A" />
-            </TouchableOpacity>
-          ))}
-        </View>
-      ) : null}
+      <FilterPills
+        pills={pills}
+        onRemove={(group) => {
+          const key = group as keyof PlantFilters;
+          setFilters({ ...filters, [key]: DEFAULT_FILTERS[key] });
+        }}
+      />
 
       <Text style={styles.summaryText}>
         {listSummary(visible.length, filters.sort)}
@@ -474,13 +421,9 @@ export default function PlantsListScreen() {
       <View style={styles.container}>
         <View style={styles.titleRow}>
           <Text style={styles.headerTitle}>Plants</Text>
+          {/* Sync status ("Synced 2 min ago" / "Not synced yet") is on Home and Profile; here
+              only "Sync now", when something is waiting to upload. */}
           <View style={styles.syncRow}>
-            <Text
-              style={[styles.syncText, notUploaded > 0 && styles.syncTextPending]}
-              numberOfLines={1}
-            >
-              {syncStatusText(lastSync, notUploaded, now)}
-            </Text>
             {notUploaded > 0 ? (
               syncingAll ? (
                 <ActivityIndicator size="small" color="#213B2A" />
@@ -536,18 +479,20 @@ export default function PlantsListScreen() {
                 }
               }}
               accessibilityRole="button"
-              accessibilityLabel={`${item.name}${item.tag ? `, tag ${item.tag}` : ''}, ${item.badge.label}`}
+              accessibilityLabel={`${item.name}${isPhysicalTag(item.tag) ? `, tag ${item.tag}` : ''}, ${item.badge.label}`}
             >
-              {item.photoUri ? (
-                <Image source={{ uri: item.photoUri }} style={styles.thumb} resizeMode="cover" />
-              ) : (
-                <View style={[styles.thumb, styles.thumbPlaceholder]}>
-                  <Ionicons name="leaf-outline" size={22} color="#46654F" />
-                </View>
-              )}
+              <PlantThumbnail
+                sources={item.photo}
+                style={styles.thumb}
+                placeholder={
+                  <View style={[styles.thumb, styles.thumbPlaceholder]}>
+                    <Ionicons name="leaf-outline" size={22} color="#46654F" />
+                  </View>
+                }
+              />
               <View style={styles.plantText}>
                 <Text style={styles.plantName} numberOfLines={2}>{item.name}</Text>
-                {item.tag ? <Text style={styles.plantMeta} numberOfLines={1}>{item.tag}</Text> : null}
+                {isPhysicalTag(item.tag) ? <Text style={styles.plantMeta} numberOfLines={1}>{item.tag}</Text> : null}
                 {item.place ? <Text style={styles.plantMeta} numberOfLines={1}>{item.place}</Text> : null}
                 <View style={styles.badgeRow}>
                   <View style={[styles.statusBadge, { backgroundColor: item.badge.bg }]}>
@@ -568,45 +513,31 @@ export default function PlantsListScreen() {
         />
       </View>
 
-      {/* Filter: a bottom sheet with Show, Status and Sort by. */}
-      <Modal visible={sheetOpen} transparent animationType="slide" onRequestClose={() => setSheetOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setSheetOpen(false)} accessibilityLabel="Close the filter" />
-        <View style={styles.sheet}>
-          <View style={styles.sheetHandle} />
-          <Text style={styles.sheetTitle}>Filter</Text>
-          <ScrollView style={styles.sheetScroll}>
-            <Text style={styles.groupTitle}>Show</Text>
-            {renderOption('show', SHOW_FILTERS)}
-            <Text style={styles.groupTitle}>Status</Text>
-            {renderOption('status', STATUS_FILTERS, (option) =>
-              option.value === 'needs_action' ? `${option.label} (${actionCount})` : option.label
-            )}
-            <Text style={styles.groupTitle}>Sort by</Text>
-            {renderOption('sort', SORT_ORDERS)}
-          </ScrollView>
-          <View style={styles.sheetActions}>
-            <TouchableOpacity
-              style={styles.resetBtn}
-              onPress={() => setDraft(DEFAULT_FILTERS)}
-              accessibilityRole="button"
-            >
-              <Text style={styles.resetText}>Reset</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.applyBtn}
-              onPress={() => {
-                setFilters(draft);
-                setSheetOpen(false);
-              }}
-              accessibilityRole="button"
-            >
-              <Text style={styles.applyText} numberOfLines={1}>
-                Show {draftCount} {draftCount === 1 ? 'plant' : 'plants'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      {/* Filter: a bottom sheet with Show, Status and Sort by (shared with Home). */}
+      <FilterSheet
+        visible={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        groups={[
+          { key: 'show', title: 'Show', options: SHOW_FILTERS, selected: draft.show },
+          {
+            key: 'status',
+            title: 'Status',
+            options: STATUS_FILTERS.map((option) => ({
+              ...option,
+              label: option.value === 'needs_action' ? `${option.label} (${actionCount})` : option.label,
+            })),
+            selected: draft.status,
+          },
+          { key: 'sort', title: 'Sort by', options: SORT_ORDERS, selected: draft.sort },
+        ]}
+        onSelect={(group, value) => setDraft({ ...draft, [group]: value } as PlantFilters)}
+        onReset={() => setDraft(DEFAULT_FILTERS)}
+        applyLabel={`Show ${draftCount} ${draftCount === 1 ? 'plant' : 'plants'}`}
+        onApply={() => {
+          setFilters(draft);
+          setSheetOpen(false);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -627,8 +558,6 @@ const styles = StyleSheet.create({
   },
   headerTitle: { fontSize: 24, fontWeight: '800', color: '#1E2B22' },
   syncRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1, minWidth: 0 },
-  syncText: { fontSize: 12, color: '#68776D', flexShrink: 1 },
-  syncTextPending: { color: '#8C5E03', fontWeight: '700' },
   syncBtn: { backgroundColor: '#213B2A', borderRadius: 14, paddingVertical: 6, paddingHorizontal: 12 },
   syncBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
   searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
@@ -644,42 +573,6 @@ const styles = StyleSheet.create({
     borderWidth: 1.2,
     borderColor: '#E6ECE8',
   },
-  filterBtn: {
-    height: 46,
-    borderRadius: 23,
-    paddingHorizontal: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 1.2,
-    borderColor: '#213B2A',
-    backgroundColor: '#FFFFFF',
-  },
-  filterBtnActive: { backgroundColor: '#213B2A' },
-  filterText: { fontSize: 13, fontWeight: '700', color: '#213B2A' },
-  filterTextActive: { color: '#FFFFFF' },
-  filterCount: {
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 4,
-  },
-  filterCountText: { fontSize: 11, fontWeight: '800', color: '#213B2A' },
-  pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 },
-  pill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    maxWidth: '100%',
-    backgroundColor: '#DDEAE1',
-    borderRadius: 14,
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-  },
-  pillText: { fontSize: 12, fontWeight: '700', color: '#213B2A', flexShrink: 1 },
   summaryText: { fontSize: 12.5, color: '#68776D', marginBottom: 10 },
   actionBanner: {
     flexDirection: 'row',
@@ -737,42 +630,4 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF',
   },
   secondaryPillText: { color: '#213B2A', fontWeight: '700', fontSize: 14 },
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
-  sheet: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
-    maxHeight: '80%',
-  },
-  sheetHandle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: '#D5DDD8', marginBottom: 10 },
-  sheetTitle: { fontSize: 18, fontWeight: '800', color: '#1E2B22', marginBottom: 4 },
-  sheetScroll: { flexGrow: 0 },
-  groupTitle: { fontSize: 12, fontWeight: '800', color: '#68776D', letterSpacing: 0.5, marginTop: 14, marginBottom: 2 },
-  optionRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9 },
-  optionText: { fontSize: 14, color: '#3A4A40', flexShrink: 1 },
-  optionTextSelected: { fontWeight: '700', color: '#1E2B22' },
-  sheetActions: { flexDirection: 'row', gap: 10, marginTop: 16 },
-  resetBtn: {
-    flex: 1,
-    height: 46,
-    borderRadius: 23,
-    borderWidth: 1.2,
-    borderColor: '#213B2A',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  resetText: { color: '#213B2A', fontWeight: '700', fontSize: 14 },
-  applyBtn: {
-    flex: 2,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: '#213B2A',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-  },
-  applyText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
 });

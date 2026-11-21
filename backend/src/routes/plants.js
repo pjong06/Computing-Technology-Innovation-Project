@@ -1,8 +1,12 @@
 const express = require("express");
 const { randomUUID } = require("node:crypto");
 const upload = require("../services/storageService");
-const { generatePlantQR, buildPublicPlantUrl, TAG_PATTERN, QrConfigurationError } = require("../services/qrService");
+const { generatePlantQR, buildPublicPlantUrl, normalizePlantTag, TAG_PATTERN, QrConfigurationError } = require("../services/qrService");
+const { generateQrLabelPng } = require("../services/qrLabelService");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { stripPhotoMetadata, InvalidPhotoError } = require("../services/photoSanitizer");
+const { publicPhotoUrlsFor, removePublicPlantPhotoByTag } = require("../services/publicPlantPhotos");
+const { ownPlantThumbnails } = require("../services/plantThumbnails");
 
 const router = express.Router();
 
@@ -78,9 +82,11 @@ router.get("/", requireRole("botanist", "officer", "researcher"), async (req, re
     const { data, error, count } = await req.supabase
         .from("plants")
         .select(
-            "id, species_id, qr_code_value, plant_status, registered_at",
+            "id, species_id, qr_code_value, plant_status, registered_at, registered_by",
             { count: "exact" }
         )
+        // Deleted plants are not listed.
+        .is("deleted_at", null)
         .order("registered_at", { ascending: false })
         .range(firstRow, firstRow + pageSize - 1);
 
@@ -89,11 +95,30 @@ router.get("/", requireRole("botanist", "officer", "researcher"), async (req, re
         return res.status(500).json({ message: "Could not load plants" });
     }
 
+    // Thumbnails for every row, batched for the whole page (no request per plant):
+    //   - other botanists' and imported plants on the public QR page: their public photo
+    //     (photo_url, "/p/<tag>/photo");
+    //   - the botanist's own plants: a short-lived signed link to the plant's main photo, or
+    //     its first observation's photo (thumbnail_url, thumbnail_key, thumbnail_expires_at).
+    // registered_by is only used here and is not sent.
+    const mine = data.filter(plant => plant.registered_by === req.user.id);
+    const [photoUrls, ownThumbnails] = await Promise.all([
+        publicPhotoUrlsFor(req.supabase, data.filter(plant => plant.registered_by !== req.user.id)),
+        ownPlantThumbnails(req.supabase, mine),
+    ]);
+
     return res.json({
-        data: data.map(plant => ({
-            ...plant,
-            plant_id: plant.id
-        })),
+        data: data.map(({ registered_by: _registeredBy, ...plant }) => {
+            const own = ownThumbnails.get(plant.id);
+            return {
+                ...plant,
+                plant_id: plant.id,
+                photo_url: photoUrls.get(plant.id) || null,
+                thumbnail_url: own ? own.url : null,
+                thumbnail_key: own ? own.key : null,
+                thumbnail_expires_at: own ? own.expires_at : null
+            };
+        }),
         pagination: {
             page,
             page_size: pageSize,
@@ -105,9 +130,10 @@ router.get("/", requireRole("botanist", "officer", "researcher"), async (req, re
 // ── C10: LOOK UP PLANT BY TAG CODE ──────────────────────────────
 // Placed before /:id so Express does not treat "tag" as an :id parameter
 router.get("/tag/:tagCode", requireRole("botanist", "officer", "researcher"), async (req, res) => {
-    const rawTag = req.params.tagCode?.trim().toUpperCase();
+    // Any letter case and missing or different separators are accepted ("niahplt00015").
+    const rawTag = normalizePlantTag(req.params.tagCode);
 
-    if (!/^NIAH-PLT-\d{5}$/.test(rawTag)) {
+    if (!rawTag) {
         return res.status(400).json({ message: "Tag code must follow NIAH-PLT-00001 format" });
     }
 
@@ -156,6 +182,11 @@ router.get("/tag/:tagCode", requireRole("botanist", "officer", "researcher"), as
         }
 
         const readablePlant = visiblePlant(data, requestingProfile);
+        // Someone else's (or an imported) plant: its public photo, if it is on the public
+        // QR page and has one. The requester's own plants use their own photos.
+        const photoUrl = data.registered_by !== req.user.id
+            ? (await publicPhotoUrlsFor(req.supabase, [data])).get(data.id) || null
+            : null;
         return res.json({
             data: {
                 ...readablePlant,
@@ -164,6 +195,7 @@ router.get("/tag/:tagCode", requireRole("botanist", "officer", "researcher"), as
                 scientific_name: data.species?.scientific_name ?? "Unknown species",
                 common_name: data.species?.common_name ?? "",
                 location_name: data.location_description ?? "Niah National Park",
+                photo_url: photoUrl,
             }
         });
     } catch (err) {
@@ -485,6 +517,17 @@ router.delete("/:id", requireRole("botanist", "officer"), async (req, res) => {
     if (!(await checkPlantWriteAccess(req, res, plantId))) return;
 
     try {
+        // Its tag, so an officer's delete also removes the public copy of its photo.
+        let publicTag = null;
+        if (req.profile.role === "officer") {
+            const { data: tagRow } = await req.supabase
+                .from("plants")
+                .select("qr_code_value")
+                .eq("id", plantId)
+                .maybeSingle();
+            publicTag = tagRow?.qr_code_value || null;
+        }
+
         await req.supabase.from("observations").delete().eq("plant_id", plantId);
 
         const { data, error } = await req.supabase
@@ -501,6 +544,11 @@ router.delete("/:id", requireRole("botanist", "officer"), async (req, res) => {
 
         if (!data) {
             return res.status(404).json({ message: "Plant record not found" });
+        }
+
+        if (publicTag) {
+            await removePublicPlantPhotoByTag(req.supabase, publicTag).catch(error =>
+                console.error("Public plant photo removal failed:", error?.message));
         }
 
         return res.json({
@@ -680,8 +728,19 @@ router.post(
             });
         }
 
+        // Stored as a fresh JPEG without metadata (no EXIF/GPS, XMP or ICC profile).
+        let photoBytes;
+        try {
+            photoBytes = await stripPhotoMetadata(req.file.buffer, { expectedMime: req.file.mimetype });
+        } catch (error) {
+            if (error instanceof InvalidPhotoError) {
+                return res.status(400).json({ message: error.message });
+            }
+            throw error;
+        }
+
         const filePath =
-            `${req.user.id}/${plantId}/${randomUUID()}.${extension}`;
+            `${req.user.id}/${plantId}/${randomUUID()}.jpg`;
 
         try {
             const { error: uploadError } =
@@ -689,9 +748,9 @@ router.post(
                     .from("plant-media")
                     .upload(
                         filePath,
-                        req.file.buffer,
+                        photoBytes,
                         {
-                            contentType: req.file.mimetype,
+                            contentType: "image/jpeg",
                             upsert: false
                         }
                     );
@@ -868,17 +927,18 @@ router.get("/:id/qr", requireRole("botanist"), async (req, res) => {
     }
 });
 
-// Return a QR image for a plant owned by the signed-in botanist.
+// The QR label (QR code with the tag written underneath, 1000 px wide) as a PNG, for a
+// plant owned by the signed-in botanist. The same label as GET /api/tag-reservations/:tag/image.
 router.get("/:id/qr/image", requireRole("botanist"), async (req, res) => {
     const qrValue = await findOwnedPlantQrTag(req, res);
     if (!qrValue) return;
 
     try {
-        const qr = await generatePlantQR(qrValue);
-        const base64Data = qr.qrCode.replace(/^data:image\/png;base64,/, "");
-        const imageBuffer = Buffer.from(base64Data, "base64");
+        const imageBuffer = await generateQrLabelPng(qrValue);
 
         res.setHeader("Content-Type", "image/png");
+        res.setHeader("Cache-Control", "no-store");
+        res.setHeader("Content-Disposition", `attachment; filename="${qrValue}.png"`);
         return res.send(imageBuffer);
     } catch (error) {
         if (error instanceof QrConfigurationError) return res.status(503).json({ message: "Public QR URL is not configured" });

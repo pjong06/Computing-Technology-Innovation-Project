@@ -1,6 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
+const fs = require('node:fs');
+const path = require('node:path');
 const QRCode = require('qrcode');
 process.env.SUPABASE_URL = 'https://example.supabase.co';
 process.env.SUPABASE_PUBLISHABLE_KEY = 'test-key';
@@ -113,63 +115,32 @@ test('visitor page renders only allowed fields and escapes stored content', asyn
   assert.doesNotMatch(html, /reference-photo/);
 });
 
-test('visitor renders an approved species reference photo with escaped credit and stripped metadata', async t => {
-  const sharp = require('sharp');
-  const original = await sharp({ create: { width: 800, height: 400, channels: 3, background: 'green' } })
-    .withExif({ IFD0: { Copyright: 'PRIVATE_METADATA' } }).jpeg().toBuffer();
-  const filters = [];
-  const downloads = [];
+test('visitor page never shows a species reference photo; it only checks the public photo copies', async t => {
+  // Species reference photos are not shown. A plant's own photo appears only as a public
+  // copy (public-plant-photos), never read from the private plant-media bucket or tables.
+  const touched = [];
   const client = {
     rpc: async () => ({ data: [{ scientific_name: 'Shorea albida' }] }),
-    from(table) {
-      return {
-        select() { return this; },
-        eq(...args) { filters.push([table, ...args]); return this; },
-        order() { return this; },
-        limit() { return this; },
-        abortSignal() { return this; },
-        async maybeSingle() { return { data: { id: 'catalogue-species' } }; },
-        then(resolve) { resolve({ data: [
-          { file_path: 'missing' },
-          { file_path: 'invalid' },
-          { file_path: 'private-storage-path', source: 'inaturalist', photographer: '<Name>',
-            licence_code: 'cc-by', source_url: 'https://example.test/location' },
-        ] }); },
-      };
-    },
-    storage: {
-      from(bucket) {
-        assert.equal(bucket, 'species-media');
-        return { async download(filePath) {
-          downloads.push(filePath);
-          if (filePath === 'missing') return { error: new Error('not found') };
-          return { data: new Blob([filePath === 'invalid' ? '<svg/>' : original]) };
-        } };
-      },
-    },
+    from(table) { touched.push(table); throw new Error('no table reads expected'); },
+    storage: { from(bucket) {
+      touched.push(bucket);
+      return { list: async () => ({ data: [], error: null }) };
+    } },
   };
   const url = await start(t, createPublicPlantsRouter({ client }));
   const response = await fetch(url + '/p/' + TAG);
   const html = await response.text();
   assert.equal(response.status, 200);
-  assert.match(response.headers.get('content-security-policy'), /img-src 'self' data:/);
-  assert.match(html, /Conservation status: Not recorded/);
-  assert.match(html, /Species reference photo · &lt;Name&gt; · iNaturalist · CC-BY/);
-  assert.doesNotMatch(html, /private-storage-path|example\.test\/location/);
-  const image = Buffer.from(html.match(/data:image\/jpeg;base64,([A-Za-z0-9+/=]+)/)[1], 'base64');
-  const metadata = await sharp(image).metadata();
-  assert.equal(metadata.exif, undefined);
-  assert.equal(metadata.width, 720);
-  assert.deepEqual(downloads, ['missing', 'invalid', 'private-storage-path']);
-  assert.deepEqual(filters, [
-    ['species', 'scientific_name', 'Shorea albida'],
-    ['species', 'verification_status', 'approved'],
-    ['species_media', 'species_id', 'catalogue-species'],
-    ['species_media', 'media_type', 'image/jpeg'],
-  ]);
+  assert.match(html, /Shorea albida/);
+  assert.match(html, /Conservation status: Not assessed/);
+  // No copy for this plant: no photo at all.
+  assert.doesNotMatch(html, /<figure|<img(?![^>]*class="brand")|data:image|reference photo|iNaturalist ·/i);
+  assert.deepEqual(touched, ['public-plant-photos']);
+  const source = fs.readFileSync(path.join(__dirname, '../src/routes/publicPlants.js'), 'utf8');
+  assert.doesNotMatch(source, /species_media|species-media|plant_media|loadReferencePhoto/);
 });
 
-test('iNaturalist source is escaped plain text on the visitor page and exposed by the QR API', async t => {
+test('the visitor page and the QR API show no source, observer or licence', async t => {
   const row = {
     scientific_name: 'Shorea albida',
     data_source: 'inaturalist',
@@ -185,15 +156,16 @@ test('iNaturalist source is escaped plain text on the visitor page and exposed b
   const page = await fetch(url + '/p/' + TAG);
   const html = await page.text();
   assert.equal(page.status, 200);
-  assert.match(html, /Source: iNaturalist observation by &lt;Observer&gt; \(CC-BY-NC\)/);
-  assert.doesNotMatch(html, /<a\b|source_url|inaturalist\.org/);
+  assert.match(html, /<h2>About this species<\/h2>/);
+  // No photo of this plant: no "This plant" section, and the tag is shown once, at the top.
+  assert.doesNotMatch(html, /<h2>This plant<\/h2>|Tag: /);
+  assert.doesNotMatch(html, /Source|Observer|CC-BY-NC|naturalist|<a\b|source_url/i);
 
   const api = await fetch(url + '/api/public/plants/by-qr?code=' + TAG);
   const body = await api.json();
-  assert.equal(body.data.data_source, 'inaturalist');
-  assert.equal(body.data.source_observer, '<Observer>');
-  assert.equal(body.data.source_licence, 'CC-BY-NC');
-  assert.equal(body.data.source_url, undefined);
+  for (const key of ['data_source', 'source_observer', 'source_licence', 'source_url']) {
+    assert.equal(key in body.data, false, key);
+  }
 });
 
 test('invalid visitor tags never query the database', async t => {
@@ -206,7 +178,7 @@ test('unavailable or unapproved public records return 404', async t => {
   const url = await start(t, publicRouter({ data: [], error: null }, []));
   const response = await fetch(url + '/p/' + TAG);
   assert.equal(response.status, 404);
-  assert.match(await response.text(), /no approved public record/);
+  assert.match(await response.text(), /Information about this plant isn&#39;t available yet/);
 });
 
 for (const result of [{ error: { message: 'SECRET_DATABASE_ERROR' } }, new Error('SECRET_DATABASE_ERROR')]) {

@@ -168,7 +168,11 @@ test('pending observations come with plant, species and botanist details', async
       plant: {
         id: PLANT, tag_code: 'NIAH-PLT-00001', location_description: 'Left of boardwalk',
         plant_status: 'pending', scientific_name: 'Nepenthes ampullaria', common_name: 'Pitcher plant',
+        // GPS, accuracy and morphology for the detail card (none recorded here).
+        latitude: null, longitude: null, gps_accuracy_m: null, morphology: null,
       },
+      previous_observation: null,
+      is_first_record: true, // the plant's only record, so its registration
       thumbnail_url: null, // no photos on this observation
     }]);
   });
@@ -309,13 +313,13 @@ test('rejecting needs a reason', async () => {
   }
 });
 
-test('a rule raised by the database is shown as it is, not as a generic error', async () => {
+test('a rule raised by the database is shown in plain words, not as a generic error', async () => {
   const result = await decide({
     ...pendingObservation,
     'observation_reviews:insert': { data: null, error: { code: 'P0001', message: 'Observation must be Pending; approval requires an approved species' } },
   }, { decision: 'rejected', comments: 'Blurry' });
   assert.equal(result.status, 409);
-  assert.equal(result.body.message, 'Observation must be Pending; approval requires an approved species');
+  assert.equal(result.body.message, "This field record can't be approved until its species is approved.");
 });
 
 test('a permission refusal from the database says so in plain words', async () => {
@@ -385,5 +389,118 @@ test('if thumbnails cannot be signed, the review list still loads without them',
     const result = await call(`${base}/pending`);
     assert.equal(result.status, 200);
     assert.equal(result.body.data[0].thumbnail_url, null);
+  });
+});
+
+// ---- The review page's detail card ----
+
+test('pending records carry the GPS point, accuracy, morphology and the previous approved visit', async () => {
+  const visit = { ...observation, observed_at: '2026-11-19T07:30:00Z', height_cm: 160 };
+  db = fakeDb({
+    observations: [
+      visit,
+      // Approved visits of the same plant, newest first (as the query orders them).
+      { plant_id: PLANT, observed_at: '2026-11-25T01:00:00Z', height_cm: 170 }, // after this visit: ignored
+      { plant_id: PLANT, observed_at: '2026-11-12T02:00:00Z', height_cm: 150 },
+      { plant_id: PLANT, observed_at: '2026-10-01T02:00:00Z', height_cm: 120 },
+    ],
+    ...details,
+    plant_map_points: [{ id: PLANT, latitude: 3.8147558, longitude: 113.7793922 }],
+    plants: [{ ...details.plants[0], gps_accuracy_m: 4.6, morphology: 'Climbing, lower pitchers green' }],
+  });
+  await withApp(async base => {
+    const result = await call(`${base}/pending`);
+    assert.equal(result.status, 200);
+    const row = result.body.data.find(item => item.id === OBS);
+    assert.equal(row.plant.latitude, 3.8147558);
+    assert.equal(row.plant.longitude, 113.7793922);
+    assert.equal(row.plant.gps_accuracy_m, 4.6);
+    assert.equal(row.plant.morphology, 'Climbing, lower pitchers green');
+    assert.deepEqual(row.previous_observation, { observed_at: '2026-11-12T02:00:00Z', height_cm: 150 });
+  });
+  // Previous visits: approved and not hidden only.
+  assert.ok(db.calls.some(c => c[0] === 'observations' && c[1] === 'eq' && c[2] === 'review_status' && c[3] === 'approved'));
+});
+
+test('if the extra details cannot be read, the queue still loads without them', async () => {
+  db = fakeDb({ observations: [observation], ...details, plant_map_points: { error: { message: 'PRIVATE' } } });
+  await withApp(async base => {
+    const result = await call(`${base}/pending`);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.data[0].plant.latitude, null);
+    assert.doesNotMatch(JSON.stringify(result.body), /PRIVATE/);
+  });
+});
+
+// ---- A plant that isn't approved yet with two pending records ----
+
+const REGISTRATION = '66666666-6666-4666-8666-666666666666';
+const LATER = '77777777-7777-4777-8777-777777777777';
+const registration = { ...observation, id: REGISTRATION, observed_at: '2026-11-21T05:56:00Z' };
+const later = { ...observation, id: LATER, observed_at: '2026-11-21T06:14:00Z' };
+
+test('only the plant\'s first record is the new plant; a later pending record is an observation', async () => {
+  // NIAH-PLT-00001 is still pending, with its registration (05:56) and a later record (06:14).
+  db = fakeDb({ observations: [later, registration], ...details });
+  await withApp(async base => {
+    const result = await call(`${base}/pending`);
+    assert.equal(result.status, 200);
+    const byId = new Map(result.body.data.map(row => [row.id, row]));
+    assert.equal(byId.get(REGISTRATION).plant.plant_status, 'pending');
+    assert.equal(byId.get(REGISTRATION).is_first_record, true);
+    assert.equal(byId.get(LATER).plant.plant_status, 'pending');
+    assert.equal(byId.get(LATER).is_first_record, false);
+  });
+  // The first record is the earliest active one, whatever its review status.
+  assert.ok(db.calls.some(c => c[0] === 'observations' && c[1] === 'order' && c[2] === 'observed_at' && c[3].ascending === true));
+  assert.ok(db.calls.some(c => c[0] === 'observations' && c[1] === 'select' && c[2] === 'id, plant_id, observed_at, review_status'));
+});
+
+test('approving a later record is refused until the new plant record is approved', async () => {
+  db = fakeDb({
+    'observations:single': { data: { ...later, deleted_at: null }, error: null },
+    observations: [registration, later],
+    'plants:single': { data: { id: PLANT, species_id: SPECIES }, error: null },
+    'species:single': { data: { verification_status: 'approved' }, error: null },
+  });
+  await withApp(async base => {
+    const result = await call(`${base}/${LATER}/decision`, 'POST', { decision: 'approved' });
+    assert.equal(result.status, 409);
+    assert.equal(result.body.message, 'Approve the new plant record first');
+    assert.equal(result.body.code, 'first_record_not_approved');
+    assert.equal(result.body.first_record_id, REGISTRATION);
+  });
+  assert.ok(!db.calls.some(c => c[0] === 'observation_reviews' && c[1] === 'insert'), 'nothing is saved');
+});
+
+test('a later record can be sent back at any time, and approved once the registration is approved', async () => {
+  const tables = (registrationStatus) => fakeDb({
+    'observations:single': { data: { ...later, deleted_at: null }, error: null },
+    observations: [{ ...registration, review_status: registrationStatus }, later],
+    'plants:single': { data: { id: PLANT, species_id: SPECIES }, error: null },
+    'species:single': { data: { verification_status: 'approved' }, error: null },
+  });
+  db = tables('pending');
+  await withApp(async base => {
+    const result = await call(`${base}/${LATER}/decision`, 'POST', { decision: 'rejected', comments: 'Wrong plant tagged' });
+    assert.equal(result.status, 201);
+  });
+  db = tables('approved');
+  await withApp(async base => {
+    const result = await call(`${base}/${LATER}/decision`, 'POST', { decision: 'approved' });
+    assert.equal(result.status, 201);
+  });
+  assert.ok(db.calls.some(c => c[0] === 'observation_reviews' && c[1] === 'insert'));
+});
+
+test('the registration itself is approved as before (no first-record refusal)', async () => {
+  db = fakeDb({
+    'observations:single': { data: { ...registration, deleted_at: null }, error: null },
+    observations: [registration, later],
+    'plants:single': { data: { id: PLANT, species_id: SPECIES }, error: null },
+    'species:single': { data: { verification_status: 'approved' }, error: null },
+  });
+  await withApp(async base => {
+    assert.equal((await call(`${base}/${REGISTRATION}/decision`, 'POST', { decision: 'approved' })).status, 201);
   });
 });

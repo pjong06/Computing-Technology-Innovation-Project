@@ -97,7 +97,7 @@ test('the first submit problem of a record is shown', () => {
 test('oversized photo message is plain and says what to do', () => {
   assert.equal(
     oversizedPhotoMessage(1),
-    'A photo is over 5 MB, so this visit was not sent for review. Remove it on the plant page, then sync again.'
+    'A photo is over 5 MB, so this observation was not sent for review. Remove it on the plant page, then sync again.'
   );
   assert.match(oversizedPhotoMessage(3), /^3 photos are over 5 MB/);
 });
@@ -140,8 +140,8 @@ test('a new plant row uses its first visit status, plus revisits waiting once ap
     newPlantReview({ reviewStatus: 'draft', observations: [] }),
     { firstVisit: null, outcome: 'not_submitted', waitingRevisits: 0 }
   );
-  assert.equal(waitingVisitsText(1), '1 visit waiting for review');
-  assert.equal(waitingVisitsText(3), '3 visits waiting for review');
+  assert.equal(waitingVisitsText(1), '1 observation waiting for review');
+  assert.equal(waitingVisitsText(3), '3 observations waiting for review');
 });
 
 test("another botanist's plant scanned onto this phone has no first visit: own visits there are revisits", () => {

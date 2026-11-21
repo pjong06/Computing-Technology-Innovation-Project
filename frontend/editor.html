@@ -5,8 +5,35 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Species editor - Niah Biotrack</title>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous">
 <link rel="icon" href="images/logo.png">
 <link rel="stylesheet" href="css/style.css">
+<style>
+.back-link { display: inline-block; margin-bottom: 14px; color: var(--pri); font-weight: 600; text-decoration: none; }
+.editor-section { margin-bottom: 16px; }
+.draft-note { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 0 12px; padding: 10px 12px; border-radius: 10px; background: var(--mint); color: var(--ink); font-weight: 600; }
+.editor-section h2 { margin: 0 0 4px; font-size: 16px; }
+.editor-section .section-note { margin: 0 0 14px; }
+.editor-section[hidden] { display: none; }
+.required { color: var(--ert); }
+.field-note { color: var(--mute); font-size: 12px; }
+.plant-photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+.plant-photo-grid figure { margin: 0; min-width: 0; }
+.plant-photo-grid a { display: block; color: inherit; text-decoration: none; }
+.plant-photo-grid img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 10px; background: var(--mint); }
+.plant-photo-grid figcaption { margin-top: 4px; color: var(--mute); font-size: 12px; overflow-wrap: anywhere; }
+.plant-photo-grid .plant-photo-more { display: flex; align-items: center; justify-content: center; aspect-ratio: 4 / 3; border-radius: 10px; background: var(--mint); color: var(--ink); font-weight: 600; text-decoration: none; }
+#distribution-map { height: 240px; margin: 4px 0 10px; border-radius: 10px; background: var(--mint); }
+#distribution-map[hidden] { display: none; }
+#distribution-link { display: inline-block; text-decoration: none; }
+#distribution-link[hidden] { display: none; }
+.label-text { display: block; }
+.editor-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.editor-actions .spacer { flex: 1; }
+@media (max-width: 640px) {
+  .form { grid-template-columns: 1fr; }
+}
+</style>
 </head>
 <body>
 <div class="app">
@@ -15,14 +42,40 @@
 
 <main>
 <section class="page on">
+  <a class="back-link" href="species.html">‹ Species catalogue</a>
   <h1 id="editor-title">Add <span>species record</span></h1>
-  <p class="lead" id="officer-note">Add or edit a species record, for conservation officers: changes appear in the catalogue and in the mobile app's species list straight away.</p>
-  <p class="lead" id="approval-note" hidden>Your proposal is not published straight away. The conservation officer approves or rejects it on the Species catalogue page, and you see the decision in the mobile app.</p>
-  <div class="card">
+  <p class="lead" id="officer-note">Add or edit a species record, for conservation officers. Changes you save appear in the catalogue and the mobile app straight away.</p>
+  <p class="lead" id="approval-note" hidden>Your species request is not published straight away. The conservation officer reviews it on the Species requests page, and you see the decision in the mobile app.</p>
+
+  <div class="card editor-section" id="identity-section">
+    <h2>Identity</h2>
+    <p class="muted section-note">Fields marked <span class="required">*</span> are required.</p>
     <div class="form">
-      <label>Scientific name<input id="f-sci"></label>
+      <label><span class="label-text">Scientific name <span class="required" aria-hidden="true">*</span></span><input id="f-sci" required aria-required="true" placeholder="e.g. Nepenthes ampullaria"></label>
+      <label id="rank-label">Identified to
+        <select id="f-rank">
+          <option value="species">Species</option>
+          <option value="genus">Genus</option>
+          <option value="family">Family</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
       <label>Common name<input id="f-com"></label>
-      <label>Family (taxonomy)<input id="f-fam" list="family-options" placeholder="e.g. Nepenthaceae"></label>
+      <label>Local name<input id="f-local"></label>
+    </div>
+  </div>
+
+  <div class="card editor-section" id="classification-section">
+    <h2>Classification and protection</h2>
+    <div class="form">
+      <label>Family
+        <select id="f-fam">
+          <option value="">Not set</option>
+        </select>
+      </label>
+      <label id="family-other-label" hidden>New family name
+        <input id="f-fam-other" list="family-options" placeholder="e.g. Nepenthaceae">
+      </label>
       <datalist id="family-options"></datalist>
       <label id="status-label">Conservation status
         <select id="f-status">
@@ -34,25 +87,50 @@
           <option value="LC">Least Concern</option>
           <option value="DD">Data Deficient</option>
         </select>
+        <span class="field-note" id="status-note">Vulnerable, Endangered or Critically Endangered hides plant locations on public QR pages.</span>
       </label>
-      <label>Local name<input id="f-local"></label>
-      <label>Habitat<input id="f-habitat" placeholder="e.g. Peat swamp forest edges"></label>
+    </div>
+  </div>
+
+  <div class="card editor-section" id="about-section">
+    <h2>About this species</h2>
+    <div class="draft-note" id="draft-note" role="status" hidden>
+      <span>Draft description: please review</span>
+      <button class="btn ghost small" id="mark-reviewed-button" type="button" onclick="markReviewed().catch(showUnexpectedError)">Mark as reviewed</button>
+    </div>
+    <div class="form">
+      <label class="full">Habitat<input id="f-habitat" placeholder="e.g. Peat swamp forest edges"></label>
       <label class="full">Description<textarea id="f-desc"></textarea></label>
-      <label class="full" id="photo-label">Botanical photograph
-        <div class="pv" id="photo-preview"></div>
-        <input type="file" accept="image/*" onchange="previewPhoto(this)">
-      </label>
     </div>
-    <div class="acts">
-      <button class="btn" id="save-button" onclick="saveSpecies().catch(showUnexpectedError)">Save species</button>
-      <button class="btn ghost" onclick="location.href='species.html'">Cancel</button>
-    </div>
+  </div>
+
+  <div class="card editor-section" id="plant-photos-section" hidden>
+    <h2>Photos from its plants</h2>
+    <p class="muted section-note">The main photo of its newest approved plants. Photos are added to plants in the app, not here.</p>
+    <div class="plant-photo-grid" id="plant-photo-grid"></div>
+    <p class="muted" id="plant-photo-message">Loading photos...</p>
+  </div>
+
+  <div class="card editor-section" id="distribution-section" hidden>
+    <h2>Distribution</h2>
+    <p class="muted section-note">Exact plant locations (officers only).</p>
+    <div id="distribution-map" hidden></div>
+    <p class="muted" id="distribution-count">Loading plants...</p>
+    <a class="btn ghost" id="distribution-link" href="plants.html" hidden>View all plants</a>
+  </div>
+
+  <div class="editor-actions">
+    <button class="btn" id="save-button" onclick="saveSpecies().catch(showUnexpectedError)">Save species</button>
+    <button class="btn ghost" onclick="location.href='species.html'">Cancel</button>
+    <span class="spacer"></span>
+    <button class="btn red" id="archive-button" hidden onclick="archiveFromEditor().catch(showUnexpectedError)">Archive species</button>
   </div>
 </section>
 </main>
 </div>
 
 <div id="toast" role="status"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R" crossorigin="anonymous"></script>
 <script src="js/shared.js"></script>
 <script src="js/editor.js"></script>

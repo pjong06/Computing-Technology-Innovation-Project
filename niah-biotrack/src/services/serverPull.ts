@@ -16,9 +16,11 @@ import { useIotTaskStore } from '../store/useIotTaskStore';
 import {
   getLocalEntities,
   getSyncCursor,
+  removeServerDeletedPlant,
   removeUploadedLocalEntity,
   setSyncCursor,
 } from './offlineDatabase';
+import { serverDeletedPlants } from '../utils/serverDeletes';
 import {
   loadOrMigrateRecords,
   persistRecordSnapshot,
@@ -219,31 +221,24 @@ async function runPull(): Promise<ServerPullResult> {
   let keptLocal = 0;
   const changedRecordIds = new Set<string>();
 
+  // Plants deleted on the server leave the phone first: with their observations and anything
+  // still waiting to upload for them, which can never upload now. Before, a deleted plant
+  // with unsent or failed changes was kept, and stayed in the list for good.
+  for (const { record, observationIds } of serverDeletedPlants(changes, [...byClientId.values()])) {
+    await removeServerDeletedPlant(record.id, observationIds);
+    byClientId.delete(record.id);
+    if (record.serverId) byServerId.delete(record.serverId);
+    plants += 1;
+  }
+
   const plantChanges = changes.filter((change) => change.entity_type === 'plants');
   for (const change of plantChanges) {
+    // Deletions were handled above (a deleted plant not on the phone needs nothing).
+    if (isDeleted(change)) continue;
     const id = clientId(change);
     const existing = byClientId.get(id) ?? byServerId.get(change.entity_id);
     if (existing && plantStatus.get(existing.id) !== 'uploaded') {
       keptLocal += 1;
-      continue;
-    }
-
-    if (isDeleted(change)) {
-      if (!existing) continue;
-      const hasUnsyncedVisit = existing.observations.some(
-        (visit) => observationStatus.get(visit.id) !== 'uploaded'
-      );
-      if (hasUnsyncedVisit) {
-        keptLocal += 1;
-        continue;
-      }
-      for (const visit of existing.observations) {
-        await removeUploadedLocalEntity('observation', visit.id);
-      }
-      await removeUploadedLocalEntity('plant', existing.id);
-      byClientId.delete(existing.id);
-      if (existing.serverId) byServerId.delete(existing.serverId);
-      plants += 1;
       continue;
     }
 
@@ -344,7 +339,8 @@ async function runPull(): Promise<ServerPullResult> {
       measurement: existingVisit?.measurement ?? measurement(heightCm, diameterCm),
       heightCm,
       diameterCm,
-      notes: textValue(payload.notes) ?? existingVisit?.notes ?? 'Observation downloaded from server.',
+      // The observation's own notes, or nothing (no filler note).
+      notes: textValue(payload.notes) ?? existingVisit?.notes ?? '',
       syncStatus: SyncStatus.UPLOADED,
       latitude: position.latitude ?? existingVisit?.latitude,
       longitude: position.longitude ?? existingVisit?.longitude,

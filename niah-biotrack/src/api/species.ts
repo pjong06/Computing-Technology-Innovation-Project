@@ -1,3 +1,4 @@
+import { supabase } from '../lib/supabase';
 import { orderSpeciesMedia } from '../utils/speciesPhoto';
 
 export interface SpeciesTaxonomySummary {
@@ -34,6 +35,25 @@ export interface SpeciesSource {
   license: string | null;
 }
 
+// The primary photo of one of the species' plants (the newest approved plant with a photo),
+// shown in place of species reference photos. Only staff requests get one (plant photos are
+// staff-only); the link is signed and short-lived, so the app downloads it straight away.
+export interface PlantPhoto {
+  id: string;
+  plant_id: string;
+  tag: string | null;
+  url: string;
+  expires_in?: number;
+}
+
+// A plant photo visitors may see: the newest public plant of the species with a public
+// photo. url is a path on the API server ("/p/NIAH-PLT-00012/photo"), turned into an
+// address with publicPhotoUri(). Everyone gets it, signed in or not.
+export interface PublicPlantPhoto {
+  tag: string;
+  url: string;
+}
+
 export interface Species {
   id: string;
   scientific_name: string;
@@ -44,6 +64,8 @@ export interface Species {
   description: string | null;
   taxonomy: SpeciesTaxonomySummary | null;
   species_media: SpeciesMedia[];
+  plant_photo?: PlantPhoto | null;
+  public_photo?: PublicPlantPhoto | null;
 }
 
 export interface SpeciesDetail extends Species {
@@ -82,8 +104,21 @@ function requireBaseUrl(): string {
   return NORMALIZED_BASE_URL;
 }
 
+// The login token when someone is signed in, so staff get plant photos; the species routes
+// stay public and answer without one.
+async function optionalAuthHeaders(): Promise<Record<string, string>> {
+  try {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+}
+
 async function fetchJson<T>(path: string): Promise<T> {
   const baseUrl = requireBaseUrl();
+  const headers = await optionalAuthHeaders();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -91,13 +126,13 @@ async function fetchJson<T>(path: string): Promise<T> {
     let response: Response;
 
     try {
-      response = await fetch(`${baseUrl}${path}`, { signal: controller.signal });
+      response = await fetch(`${baseUrl}${path}`, { headers, signal: controller.signal });
     } catch {
-      throw new Error(`Could not reach the server at ${baseUrl}`);
+      throw new Error("Couldn't reach the server. Check your connection and try again.");
     }
 
     if (!response.ok) {
-      throw new Error(`Server returned ${response.status}`);
+      throw new Error('The server had a problem. Please try again.');
     }
 
     return (await response.json()) as T;

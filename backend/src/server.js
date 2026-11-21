@@ -32,6 +32,7 @@ const { requireAuth, requireRole } = require('./middleware/auth');
 const { startMqttIngestion } = require('./services/mqttIngestionService');
 const officerMapRoutes = require('./routes/officerMap');
 const officerPlantsRoutes = require('./routes/officerPlants');
+const officerOverviewRoutes = require('./routes/officerOverview');
 
 // MIDDLEWARE
 
@@ -92,6 +93,7 @@ app.use('/api/officer/map', officerMapRoutes);
 // Trace routes uploaded from the phone (botanists only; separate from /api/sync).
 app.use('/api/routes', require('./routes/fieldRoutes'));
 app.use('/api/officer/plants', officerPlantsRoutes);
+app.use('/api/officer/overview', officerOverviewRoutes);
 
 // Public plant routes
 app.use(publicPlantRoutes);

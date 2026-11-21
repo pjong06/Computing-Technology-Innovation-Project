@@ -1,4 +1,4 @@
-const { removeLegacyObservationSource } = require('../utils/speciesDescription');
+const { cleanSpeciesText, SPECIES_TEXT_FIELDS } = require('../utils/speciesDescription');
 
 function createQrLimiter({ limit = 60, windowMs = 60000, maxClients = 10000, now = Date.now } = {}) {
     if (![limit, windowMs, maxClients].every(n => Number.isSafeInteger(n) && n > 0)) throw new Error('Invalid QR rate policy');
@@ -29,15 +29,13 @@ function createQrLimiter({ limit = 60, windowMs = 60000, maxClients = 10000, now
 
 function publicQrData(row) {
     const fields = ['plant_id', 'qr_code_value', 'scientific_name', 'common_name', 'local_name',
-        'description', 'morphology', 'habitat', 'conservation_status', 'cultural_significance',
-        'data_source', 'source_observer', 'source_licence'];
+        'description', 'morphology', 'habitat', 'conservation_status', 'cultural_significance'];
     const data = Object.fromEntries(fields.map(key => [
         key,
-        key === 'description'
-            ? removeLegacyObservationSource(row[key] ?? null)
+        SPECIES_TEXT_FIELDS.includes(key)
+            ? cleanSpeciesText(row[key] ?? null)
             : row[key] ?? null
     ]));
-    if (data.data_source === null) data.data_source = 'field';
     for (const key of ['location_description', 'latitude', 'longitude']) {
         data[key] = row.conservation_status === 'LC' ? row[key] ?? null : null;
     }

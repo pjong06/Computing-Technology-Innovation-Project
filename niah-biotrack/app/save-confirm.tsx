@@ -7,6 +7,7 @@ import {
   useRecordStore,
 } from '../src/store/useRecordStore';
 import PlantNotFound from '../src/components/PlantNotFound';
+import { isPhysicalTag } from '../src/utils/myTags';
 
 export default function SaveConfirmScreen() {
   const router = useRouter();
@@ -69,27 +70,36 @@ export default function SaveConfirmScreen() {
             <Text style={styles.plantLoc}>📍 {matched.locationName}</Text>
             <Text style={styles.plantGps}>{matched.gpsCoordination}</Text>
             <Text style={styles.metaRow}>
-              🕒 {matched.createdAt} · {matched.photoUris?.length || 0} photos
+              🕒 {matched.createdAt} · {matched.photoUris?.length || 0} {(matched.photoUris?.length || 0) === 1 ? 'photo' : 'photos'}
             </Text>
-            <Text style={styles.recordIdTag}>Tag: {matched.tagCode ?? 'No tag attached'}</Text>
+            <Text style={styles.recordIdTag}>Tag: {isPhysicalTag(matched.tagCode) ? matched.tagCode : 'No physical tag yet'}</Text>
           </View>
 
           <Text style={styles.helperNotice}>
-            {matched.tagCode
+            {isPhysicalTag(matched.tagCode)
               ? 'Tag attached – scanning it opens this record.'
-              : 'Tie a pre-printed tag to the plant and scan it, or attach one later from its plant page.'}
+              : 'Tie one of your printed tags (My QR tags in Profile) to the plant and scan it, or choose "No physical tag yet" and attach one later from its plant page.'}
           </Text>
         </View>
 
-        {!matched.tagCode && (
-          <TouchableOpacity
-            style={styles.primaryBtn}
-            onPress={() =>
-              router.push({ pathname: '/attach-tag', params: { recordId: matched.id } } as any)
-            }
-          >
-            <Text style={styles.primaryBtnText}>Attach tag</Text>
-          </TouchableOpacity>
+        {!isPhysicalTag(matched.tagCode) && (
+          <>
+            <TouchableOpacity
+              style={styles.primaryBtn}
+              onPress={() =>
+                router.push({ pathname: '/attach-tag', params: { recordId: matched.id } } as any)
+              }
+            >
+              <Text style={styles.primaryBtnText}>Scan tag</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.laterBtn}
+              onPress={() => router.replace('/(tabs)/home' as any)}
+              accessibilityRole="button"
+            >
+              <Text style={styles.laterBtnText}>No physical tag yet (attach it later)</Text>
+            </TouchableOpacity>
+          </>
         )}
 
         <View style={styles.buttonRow}>
@@ -161,6 +171,8 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   primaryBtnText: { color: '#FFF', fontWeight: '700', fontSize: 14.5 },
+  laterBtn: { alignSelf: 'center', paddingVertical: 12, paddingHorizontal: 12, marginBottom: 4 },
+  laterBtnText: { color: '#213B2A', fontWeight: '700', fontSize: 13.5, textDecorationLine: 'underline' },
   secondaryBtn: {
     height: 50,
     borderRadius: 25,

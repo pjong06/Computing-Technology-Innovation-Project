@@ -50,7 +50,7 @@ export default function LoginScreen() {
       .catch((error: unknown) => {
         Toast.show({
           type: 'info',
-          text1: 'Signed in; download is pending',
+          text1: 'Signed in, but couldn\'t download your plants yet',
           text2: serverPullError(error),
           position: 'bottom',
         });
@@ -151,7 +151,7 @@ export default function LoginScreen() {
       <FormScrollView contentContainerStyle={styles.container}>
         <LeafLogo width={120} height={75} marginBottom={14} />
 
-        <Text style={styles.brandTitle}>Niah Ground-Truth</Text>
+        <Text style={styles.brandTitle}>Niah BioTrack</Text>
         <Text style={styles.brandSubtitle}>Biodiversity documentation system</Text>
 
         <View style={styles.form}>

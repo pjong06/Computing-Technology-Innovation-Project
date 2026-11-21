@@ -11,10 +11,14 @@ import {
   fetchSpeciesDetail,
   type Species,
   type SpeciesDetail,
+  type PlantPhoto,
 } from '../api/species';
 
 import {
-  cachePrimarySpeciesImage,
+  cachePlantPhoto,
+  removeCachedPlantPhoto,
+  removeLegacySpeciesImages,
+  type CachedPlantPhoto,
 } from '../services/speciesImageCache';
 
 
@@ -83,10 +87,15 @@ interface SpeciesState {
       string | null
     >;
 
-  imageUrisBySpeciesId:
+  /*
+   * The photo shown for each species: the primary photo of one of its plants
+   * (with the plant's tag for the caption "From plant <tag>"), saved on the phone.
+   * Only staff get these; species reference photos are not shown any more.
+   */
+  plantPhotosBySpeciesId:
     Record<
       string,
-      string
+      CachedPlantPhoto
     >;
 
 
@@ -128,6 +137,9 @@ const errorMessage = (
     : fallback;
 
 
+// Plant photos being downloaded, so two refreshes don't fetch the same one twice.
+const plantPhotoDownloads = new Set<string>();
+
 export const useSpeciesStore =
   create<SpeciesState>()(
     persist(
@@ -154,7 +166,7 @@ export const useSpeciesStore =
 
         detailErrorById: {},
 
-        imageUrisBySpeciesId: {},
+        plantPhotosBySpeciesId: {},
 
 
         speciesUpdateNotice:
@@ -305,6 +317,16 @@ export const useSpeciesStore =
                   );
               }
 
+              /*
+               * Keep each species' plant photo in step with the list: download a new
+               * one, and drop it when the species no longer has one (or this user
+               * may not see plant photos, e.g. after signing out).
+               */
+              removeLegacySpeciesImages();
+              void syncPlantPhotos(
+                list.map((item) => [item.id, item.plant_photo ?? null])
+              );
+
             } catch (error) {
 
               /*
@@ -416,27 +438,9 @@ export const useSpeciesStore =
                 );
 
 
-              let imageUri =
-                get()
-                  .imageUrisBySpeciesId[
-                  id
-                ];
-
-
-              try {
-                imageUri =
-                  (
-                    await cachePrimarySpeciesImage(
-                      detail
-                    )
-                  ) ??
-                  imageUri;
-              } catch {
-                /*
-                 * Text reference remains usable if a
-                 * species image cannot be cached.
-                 */
-              }
+              void syncPlantPhotos([
+                [id, detail.plant_photo ?? null],
+              ]);
 
 
               set(
@@ -480,17 +484,6 @@ export const useSpeciesStore =
                         null,
                     },
 
-                  imageUrisBySpeciesId:
-                    imageUri
-                      ? {
-                          ...state
-                            .imageUrisBySpeciesId,
-
-                          [id]:
-                            imageUri,
-                        }
-                      : state
-                          .imageUrisBySpeciesId,
                 })
               );
 
@@ -580,9 +573,61 @@ export const useSpeciesStore =
             detailUpdatedAt:
               state.detailUpdatedAt,
 
-            imageUrisBySpeciesId:
-              state.imageUrisBySpeciesId,
+            plantPhotosBySpeciesId:
+              state.plantPhotosBySpeciesId,
           }),
       }
     )
   );
+
+/*
+ * Brings the saved plant photos in line with what the server sent: [speciesId, photo|null].
+ * A new photo is downloaded (one at a time); a species without one loses its saved photo.
+ * A download that fails keeps the previous photo, so the catalogue still works offline.
+ */
+async function syncPlantPhotos(
+  entries: [string, PlantPhoto | null][]
+): Promise<void> {
+  for (const [speciesId, photo] of entries) {
+    const current = useSpeciesStore.getState().plantPhotosBySpeciesId[speciesId];
+
+    if (!photo || !photo.url) {
+      if (current) {
+        removeCachedPlantPhoto(speciesId, current.photoId);
+        useSpeciesStore.setState((state) => {
+          const next = { ...state.plantPhotosBySpeciesId };
+          delete next[speciesId];
+          return { plantPhotosBySpeciesId: next };
+        });
+      }
+      continue;
+    }
+
+    if (current && current.photoId === String(photo.id)) {
+      if (current.tag !== (photo.tag ?? null)) {
+        useSpeciesStore.setState((state) => ({
+          plantPhotosBySpeciesId: {
+            ...state.plantPhotosBySpeciesId,
+            [speciesId]: { ...current, tag: photo.tag ?? null },
+          },
+        }));
+      }
+      continue;
+    }
+
+    const key = `${speciesId}:${photo.id}`;
+    if (plantPhotoDownloads.has(key)) continue;
+    plantPhotoDownloads.add(key);
+    try {
+      const saved = await cachePlantPhoto(speciesId, photo);
+      if (current) removeCachedPlantPhoto(speciesId, current.photoId);
+      useSpeciesStore.setState((state) => ({
+        plantPhotosBySpeciesId: { ...state.plantPhotosBySpeciesId, [speciesId]: saved },
+      }));
+    } catch {
+      // The text reference stays usable without the photo.
+    } finally {
+      plantPhotoDownloads.delete(key);
+    }
+  }
+}

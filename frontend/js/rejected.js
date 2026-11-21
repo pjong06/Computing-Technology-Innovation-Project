@@ -10,6 +10,21 @@ let rejected = [];
 let selectedId = null;
 let sortOrder = SORT_NEWEST; // newest rejection first; the select switches it
 
+// "New plant" for the plant's first record (its registration), otherwise "Observation" (the
+// same rule and words as the review list). Without is_first_record, a pending plant counts as new.
+function recordKind(observation) {
+  if (observation.is_first_record === true) return 'New plant';
+  if (observation.is_first_record === false) return 'Observation';
+  return observation.plant?.plant_status === 'pending' ? 'New plant' : 'Observation';
+}
+
+function recordKindBadge(observation) {
+  const badge = document.createElement('span');
+  badge.className = 'review-kind ' + (recordKind(observation) === 'New plant' ? 'new-plant' : 'observation');
+  badge.textContent = recordKind(observation);
+  return badge;
+}
+
 // Makes one small card for the list on the left.
 function makeListCard(observation) {
   // The thumbnail comes with the list (signed in one batch), so no click is needed.
@@ -17,6 +32,7 @@ function makeListCard(observation) {
     selectedId = observation.id;
     drawRejected();
   });
+  card.insertBefore(recordKindBadge(observation), card.firstChild);
   // The reason is visible in the list, without opening the record.
   const reason = document.createElement('span');
   reason.className = 'list-note';
@@ -34,9 +50,10 @@ function makeDetailCard(observation) {
   card.appendChild(photoSection);
   void loadRejectedPhotos(observation.id, photoSection);
 
-  addInfo(card, 'Reason for rejection', observation.rejection_comment || 'No reason recorded');
+  addInfo(card, 'Record type', recordKind(observation));
+  addInfo(card, 'Reason', observation.rejection_comment || 'No reason recorded');
   if (observation.rejected_at) {
-    addInfo(card, 'Rejected on', visitTime(observation.rejected_at));
+    addInfo(card, 'Sent back on', visitTime(observation.rejected_at));
   }
   addPlantAndRecorder(card, observation);
   addInfo(card, 'Notes', observation.notes || 'No notes');
@@ -73,18 +90,18 @@ function drawRejected() {
   if (rejected.length === 0) {
     document.getElementById('rejected-area').hidden = true;
     document.getElementById('rejected-empty').hidden = false;
-    document.getElementById('rejected-count').textContent = '0 rejected field records.';
+    document.getElementById('rejected-count').textContent = 'No field records need changes.';
     return;
   }
   document.getElementById('rejected-area').hidden = false;
   document.getElementById('rejected-empty').hidden = true;
 
-  let word = 'field records';
+  let words = 'field records that need changes';
   if (rejected.length === 1) {
-    word = 'field record';
+    words = 'field record that needs changes';
   }
   document.getElementById('rejected-count').textContent =
-    rejected.length + ' rejected ' + word + ', waiting for the botanist to fix and resubmit.';
+    rejected.length + ' ' + words + ', waiting for the botanist to fix and resubmit.';
 
   addListSortSelect('rejected-count', 'rejected-sort', function (order) {
     sortOrder = order;
@@ -111,7 +128,7 @@ function drawRejected() {
 
 // Loads the rejected observations from the backend.
 async function loadRejected() {
-  document.getElementById('rejected-count').textContent = 'Loading rejected field records...';
+  document.getElementById('rejected-count').textContent = 'Loading field records that need changes...';
   try {
     const result = await api('/officer/reviews/rejected');
     rejected = result.data || [];
@@ -119,7 +136,7 @@ async function loadRejected() {
     rejected = [];
     document.getElementById('rejected-area').hidden = true;
     document.getElementById('rejected-empty').hidden = true;
-    document.getElementById('rejected-count').textContent = 'Could not load rejected field records: ' + error.message;
+    document.getElementById('rejected-count').textContent = error.message || 'Could not load field records that need changes.';
     return;
   }
   drawRejected();

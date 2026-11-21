@@ -161,8 +161,8 @@ test('species.js and editor.js use /api/knowledge, not the old website copy', ()
   assert.match(proposals, /proposal\.habitat/);
   assert.match(read('frontend/proposals.html'), /id="reject-reason"/);
   assert.doesNotMatch(proposals, /prompt\(/);
-  assert.match(proposals, /Proposed habitat \/ location note/);
-  assert.match(proposals, /No reference photo provided/);
+  assert.match(proposals, /Habitat \/ location note/);
+  assert.doesNotMatch(proposals, /No reference photo provided/);
   // Botanists only propose.
   assert.match(read('frontend/js/editor.js'), /'\/knowledge\/species\/proposals'/);
 });
@@ -175,7 +175,7 @@ test('species proposals page is officer-only, guarded, and its controls match th
   );
   assert.doesNotMatch(botanistPages, /proposals\.html/);
   // A Review tab with its own count badge (id kept; proposals.js updates it after loading).
-  assert.match(shared, /\{ file: 'proposals\.html', label: 'Species proposals', countId: 'species-proposals-count' \}/);
+  assert.match(shared, /\{ file: 'proposals\.html', label: 'Species requests', countId: 'species-proposals-count' \}/);
   assert.match(shared, /function makeCountBadge\(id\) \{\s*const badge = document\.createElement\('span'\);\s*badge\.id = id;/);
   assert.match(read('frontend/js/proposals.js'), /updateSpeciesProposalMenuCount\(proposals\.length\)/);
   assert.match(shared, /refreshSpeciesProposalMenuCount\(\)/);
@@ -197,74 +197,79 @@ test('species proposals page is officer-only, guarded, and its controls match th
   assert.match(html, /<script src="js\/proposals\.js"><\/script>/);
 });
 
-test('approval queue labels pending first plant records and revisits', () => {
+test('approval queue labels pending first plant records NEW PLANT and visits OBSERVATION', () => {
   const queue = read('frontend/js/queue.js');
-  assert.match(queue, /observation\.plant\?\.plant_status === 'pending' \? 'New plant' : 'Revisit'/);
+  assert.match(queue, /observation\.plant\?\.plant_status === 'pending' \? 'New plant' : 'Observation'/);
+  assert.match(queue, /label\.textContent = visitKind\(observation\)\.toUpperCase\(\);/);
   assert.match(queue, /visitKindBadge\(observation\)/);
   const reviews = read('backend/src/routes/officerReviews.js');
   assert.match(reviews, /species_id, plant_status/);
   assert.match(reviews, /plant_status: plant\.plant_status/);
 });
 
-test('photo credits are unobtrusive: an "i" on detail photos, none in lists, a credits page', () => {
+test('no page or app screen shows a photo credit, source or licence; there is no Photo credits page', () => {
   const shared = read('frontend/js/shared.js');
-  // The rule: iNaturalist photos that are not CC0; SFC's own photos never.
-  assert.match(shared, /function needsPhotoCredit\(photo\) \{\s*return !!photo && photo\.source === 'inaturalist' && photo\.licence_code !== 'cc0';/);
-  assert.doesNotMatch(shared, /function makeSpeciesPhotoCredit\(/);
-  assert.match(shared, /function makePhotoCreditInfo\(photo\) \{\s*if \(!needsPhotoCredit\(photo\)\) return null;/);
-  // Plain text only: no links in the credit.
-  const infoStart = shared.indexOf('function makePhotoCreditInfo(');
-  const info = shared.slice(infoStart, shared.indexOf('\n}', infoStart));
-  assert.match(info, /tip\.textContent = text;/);
-  assert.doesNotMatch(info, /createElement\(['"]a['"]\)|\.href\s*=|source_url/);
-  assert.match(shared, /'cc-by': 'CC BY'/);
-  assert.match(shared, /'cc-by-sa': 'CC BY-SA'/);
-  assert.match(shared, /cc0: 'CC0'/);
-
-  // Detail views: the "i" on the photo. Cards and lists: no credit text.
-  assert.match(read('frontend/js/editor.js'), /const credit = makePhotoCreditInfo\(photo\);/);
-  assert.match(read('frontend/js/plant.js'), /const credit = makePhotoCreditInfo\(speciesFallback\);/);
-  for (const file of ['species.js', 'plants.js', 'map.js', 'queue.js', 'rejected.js', 'proposals.js']) {
-    assert.doesNotMatch(read(`frontend/js/${file}`), /makeSpeciesPhotoCredit|makePhotoCreditInfo|photoCreditText/, file);
-  }
+  assert.doesNotMatch(shared, /needsPhotoCredit|makePhotoCreditInfo|photoCreditText|photoCreditName|SPECIES_PHOTO_LICENSES|credits\.html/);
+  assert.equal(fs.existsSync(path.join(repoRoot, 'frontend/credits.html')), false);
+  assert.equal(fs.existsSync(path.join(repoRoot, 'frontend/js/credits.js')), false);
+  assert.doesNotMatch(read('frontend/species.html'), /credits|page-footer/);
   const css = read('frontend/css/style.css');
-  assert.match(css, /\.photo-credit-info:hover \.photo-credit-tip,\s*\.photo-credit-info:focus-within \.photo-credit-tip,\s*\.photo-credit-info\.open \.photo-credit-tip \{\s*display: block;/);
-  assert.doesNotMatch(css + read('frontend/species.html'), /\.species-photo-credit/);
+  assert.doesNotMatch(css, /photo-credit|credits-table|page-footer/);
 
-  // The Photo credits page: linked from the Species page footer, open to officers and botanists.
-  assert.match(read('frontend/species.html'), /<p class="page-footer">[^<]*<a href="credits\.html">Photo credits<\/a><\/p>/);
-  const botanistPages = shared.slice(shared.indexOf('const BOTANIST_PAGES'), shared.indexOf('];', shared.indexOf('const BOTANIST_PAGES')));
-  assert.match(botanistPages, /'credits\.html'/);
-  assert.match(shared, /alsoActiveOn: \['editor\.html', 'credits\.html'\]/);
-  const credits = read('frontend/js/credits.js');
-  assert.match(credits, /if \(!needsPhotoCredit\(photo\)\) continue;/);
-  assert.match(credits, /photographer: photoCreditName\(photo\)/);
-  assert.match(credits, /SPECIES_PHOTO_LICENSES\[photo\.licence_code\]/);
-  assert.match(credits, /if \(pageAllowed !== false\)/);
-  assert.doesNotMatch(credits, /\.href\s*=|source_url/);
-  const creditsHtml = read('frontend/credits.html');
-  assert.match(creditsHtml, /<script src="js\/shared\.js"><\/script>\s*<script src="js\/credits\.js"><\/script>/);
-  for (const id of Array.from(credits.matchAll(/getElementById\('([^']+)'\)/g), m => m[1])) {
-    assert.match(creditsHtml, new RegExp(`id="${id}"`), `credits.html has #${id}`);
+  // No "Source: …", "Observer: …", "Licence: …" or "Imported from …" line, badge or filter.
+  const sourceText = /Source:|Observer:|Licen[cs]e:|Imported from|Imported source|source-badge|source-filter|plant-source/;
+  for (const file of ['plant.js', 'plants.js', 'map.js', 'queue.js', 'rejected.js', 'proposals.js', 'species.js', 'editor.js']) {
+    assert.doesNotMatch(read(`frontend/js/${file}`), sourceText, file);
   }
+  for (const file of ['plant.html', 'plants.html', 'map.html', 'queue.html', 'species.html', 'reports.html']) {
+    assert.doesNotMatch(read(`frontend/${file}`), sourceText, file);
+  }
+  assert.doesNotMatch(read('backend/src/routes/publicPlants.js'), /Source:|source_observer|source_licence/);
+  assert.doesNotMatch(read('backend/src/services/reportService.js'), /key: "source"|source_observer/);
 
-  // The app: the same rule and text in src/utils/photoCredit.ts (photoCredit.test.js checks
-  // web and app agree); an "i" on detail photos; no credit in lists; a Photo credits screen.
-  const appCredit = read('niah-biotrack/src/utils/photoCredit.ts');
-  assert.match(appCredit, /export function needsPhotoCredit\([^)]*\): boolean \{\s*return !!photo && photo\.source === 'inaturalist' && photo\.licence_code !== 'cc0';/);
-  assert.match(appCredit, /return `Photo: \$\{photoCreditName\(photo\)\}, \$\{photoLicenceLabel\(photo\.licence_code\)\} via iNaturalist`;/);
-  const info2 = read('niah-biotrack/src/components/PhotoCreditInfo.tsx');
-  assert.match(info2, /if \(!needsPhotoCredit\(photo\)\) return null;/);
-  assert.doesNotMatch(info2, /Linking|source_url|creativecommons\.org/);
-  for (const screen of ['app/plant-detail.tsx', 'app/plant-info.tsx', 'app/species-reference/[id].tsx']) {
-    assert.match(read(`niah-biotrack/${screen}`), /<PhotoCreditInfo photo=\{/, screen);
+  // The app: no credit component or helper, no source lines.
+  for (const file of ['niah-biotrack/src/components/PhotoCreditInfo.tsx', 'niah-biotrack/src/utils/photoCredit.ts',
+    'niah-biotrack/src/components/SpeciesPhotoCredit.tsx', 'niah-biotrack/app/photo-credits.tsx']) {
+    assert.equal(fs.existsSync(path.join(repoRoot, file)), false, file);
   }
-  for (const screen of ['app/(tabs)/home.tsx', 'app/(tabs)/plants.tsx']) {
-    assert.doesNotMatch(read(`niah-biotrack/${screen}`), /SpeciesPhotoCredit|PhotoCreditInfo|photoCreditText/, screen);
+  for (const screen of ['app/plant-detail.tsx', 'app/plant-info.tsx', 'app/species-reference/[id].tsx',
+    'app/(tabs)/home.tsx', 'app/(tabs)/plants.tsx', 'app/(tabs)/records.tsx', 'app/(tabs)/profile.tsx', 'app/_layout.tsx']) {
+    const text = read(`niah-biotrack/${screen}`);
+    assert.doesNotMatch(text, /PhotoCreditInfo|photoCreditText|photo-credits|Photo credits/, screen);
+    assert.doesNotMatch(text, sourceText, screen);
   }
-  assert.equal(fs.existsSync(path.join(repoRoot, 'niah-biotrack/src/components/SpeciesPhotoCredit.tsx')), false);
-  assert.match(read('niah-biotrack/app/photo-credits.tsx'), /photoCreditRows\(species\)/);
-  assert.match(read('niah-biotrack/app/(tabs)/profile.tsx'), /router\.push\('\/photo-credits' as never\)/);
+  assert.doesNotMatch(read('niah-biotrack/src/services/tagLookup.ts'), /sourceObserver|sourceLicence|dataSource/);
+});
+
+// Every file that makes up a page or screen people see: the web portal (HTML, scripts,
+// styles), the visitor QR page, and the app's screens and their code.
+function userFacingFiles() {
+  const files = [];
+  const walk = (dir, keep) => {
+    for (const entry of fs.readdirSync(path.join(repoRoot, dir), { withFileTypes: true })) {
+      const rel = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (!['node_modules', 'vendor', 'images', 'android', 'ios', 'assets'].includes(entry.name)) walk(rel, keep);
+      } else if (keep(entry.name)) {
+        files.push(rel);
+      }
+    }
+  };
+  walk('frontend', name => /\.(html|js|css)$/.test(name));
+  walk('niah-biotrack/app', name => /\.(tsx?|js)$/.test(name));
+  walk('niah-biotrack/src', name => /\.(tsx?|js)$/.test(name) && !/\.test\./.test(name));
+  // The visitor page's CSS (/public-assets/plant.css) is the STYLES string in publicPlants.js.
+  files.push('backend/src/routes/publicPlants.js', 'backend/src/services/reportService.js',
+    'backend/src/services/qrPdfService.js', 'backend/src/services/qrLabelService.js');
+  return files;
+}
+
+test('no user-facing web or app file contains "iNaturalist"', () => {
+  const files = userFacingFiles();
+  assert.ok(files.length > 50, `found ${files.length} files`);
+  assert.ok(files.includes('frontend/plants.html') && files.includes('niah-biotrack/app/plant-info.tsx'));
+  const offenders = files.filter(file => read(file).includes('iNaturalist'));
+  assert.deepEqual(offenders, []);
 });
 
 test('web and mobile species screens do not use legacy reference-photo fields', () => {
@@ -309,7 +314,7 @@ test('the distribution map is officer-only in the menu, the page list and on the
   const guard = map.indexOf('if (pageAllowed === false)');
   assert.ok(guard !== -1, 'map.js must check pageAllowed');
   assert.ok(guard < map.indexOf('loadPlants().catch'), 'map.js must check pageAllowed before loading plants');
-  assert.match(map, /Imported from iNaturalist · Observer:/);
+  assert.doesNotMatch(map, /Imported from|Observer:|Licence:/);
   assert.match(read('frontend/map.html'), /<script src="js\/shared\.js"><\/script>\s*<script src="js\/map\.js"><\/script>/);
 });
 
@@ -335,15 +340,14 @@ test('the plant catalogue is officer-only, linked from the menu and its page con
   assert.ok(detail.indexOf('if (pageAllowed === false)') < detail.indexOf('loadPlant().catch'));
   assert.match(catalogue, /api\('\/officer\/plants\?/);
   assert.match(detail, /api\('\/officer\/plants\//);
-  assert.match(catalogue, /Imported from iNaturalist · Observer:/);
-  assert.match(catalogue, /plant\.species_photo/);
-  // No photo credit in the plant list (it is on plant detail and the Photo credits page).
-  assert.doesNotMatch(catalogue, /makeSpeciesPhotoCredit|makePhotoCreditInfo|photoCreditText/);
-  assert.match(catalogue, /speciesPhotoLabel\.textContent = 'Species photo'/);
-  assert.match(detail, /Imported from iNaturalist · Observer:/);
-  assert.match(detail, /plant\.species_photo/);
-  assert.match(detail, /makePhotoCreditInfo\(speciesFallback\)/);
-  assert.match(detail, /Species reference photo/);
+  assert.doesNotMatch(catalogue, /Imported from|Observer:|source-filter/);
+  // A plant without its own photo shows the placeholder: no species photo, no credit.
+  assert.match(catalogue, /image\.src = plant\.photo_thumbnail\?\.url \|\| PICTURE_BLANK;/);
+  assert.doesNotMatch(catalogue, /species_photo|Species photo|makeSpeciesPhotoCredit|makePhotoCreditInfo|photoCreditText/);
+  assert.doesNotMatch(detail, /Imported from|Observer:|plant-source/);
+  assert.match(detail, /renderPhotos\(plant\.photos \|\| \[\]\);/);
+  assert.match(detail, /byId\('plant-no-photos'\)\.hidden = photos\.length > 0;/);
+  assert.doesNotMatch(detail, /species_photo|speciesFallback|makePhotoCreditInfo|Species reference photo/);
 
   for (const [htmlPath, scriptPath] of [
     ['frontend/plants.html', 'frontend/js/plants.js'],
@@ -411,6 +415,21 @@ test('the map loads routes only from the officer-only endpoint, after the page g
   assert.doesNotMatch(map, /loadRoutes\(\)\.catch\(error => \{[^}]*showUnexpectedError/);
 });
 
+test('the map does not offer trace routes (the app no longer records them); the code stays', () => {
+  const map = read('frontend/js/map.js');
+  const html = read('frontend/map.html');
+  assert.match(map, /const ROUTES_ON_MAP = false;/);
+  // No checkbox, no note, no layer and no request while it is off.
+  assert.match(html, /<label class="map-toggle" id="map-routes-toggle" hidden>/);
+  assert.match(html, /<p class="muted" id="map-route-note" hidden>/);
+  assert.match(read('frontend/css/style.css'), /\.map-toggle\[hidden\] \{\s*display: none;/);
+  assert.match(map, /if \(ROUTES_ON_MAP && document\.getElementById\('map-show-routes'\)\.checked\) \{\s*routeLayer\.addTo\(map\);/);
+  assert.match(map, /if \(ROUTES_ON_MAP\) \{\s*loadRoutes\(\)\.catch/);
+  assert.doesNotMatch(html, /trace routes|marker or line/);
+  // The endpoint is kept.
+  assert.match(read('backend/src/routes/officerMap.js'), /router\.get\("\/routes"/);
+});
+
 test('route popups escape every value (botanist, plant tag, scientific name)', () => {
   const vm = require('node:vm');
   const map = read('frontend/js/map.js');
@@ -465,11 +484,12 @@ test('route popups escape every value (botanist, plant tag, scientific name)', (
   assert.match(popupSource, /escapePopupText\('Not linked to a plant'\)/);
 });
 
-test('the "Show routes" checkbox exists, is on by default and is remembered in this browser', () => {
+test('the "Show routes" checkbox is kept (hidden for now), on by default and remembered in this browser', () => {
   const html = read('frontend/map.html');
   const map = read('frontend/js/map.js');
+  // Hidden while ROUTES_ON_MAP is false (the app no longer records routes); the code stays.
   assert.match(html, /<input type="checkbox" id="map-show-routes" checked onchange="toggleRoutes\(this\.checked\)">\s*Show routes/);
-  assert.match(html, /id="map-route-note">Routes from the last 90 days\.</);
+  assert.match(html, /id="map-route-note" hidden>Routes from the last 90 days\.</);
   assert.match(map, /function toggleRoutes\(show\)/);
   assert.match(map, /const SHOW_ROUTES_KEY = 'niah_map_show_routes';/);
   // Unknown or missing value: shown (on by default); storage errors never break the map.
@@ -596,8 +616,8 @@ test('pre-freeze clean-ups: no dead login code, "Live data" chip, matching index
   const login = read('frontend/js/login.js');
   assert.doesNotMatch(login, /OFFICER_CONTACT_EMAIL|showSuspended/);
   const index = read('frontend/index.html');
-  assert.match(index, /url=species\.html/);
-  assert.match(index, /<a href="species\.html">Species catalogue<\/a>/);
+  assert.match(index, /url=overview\.html/);
+  assert.match(index, /<a href="overview\.html">Officer overview<\/a>/);
   const mqtt = read('backend/src/services/mqttIngestionService.js');
   assert.match(mqtt, /if \(process\.env\.IOT_DEBUG === 'true'\) \{\s*console\.log\(\s*persisted/);
 });
@@ -632,7 +652,7 @@ function loadNavigation({ apiAnswers = {}, apiError = null, apiNeverAnswers = fa
     between('function isBotanist(', '\n}') + '\n}',
     between('function canOpen(', '\n}') + '\n}',
     between('// ---- Navigation: menu sections', '// ---- end of navigation ----'),
-    'this.navFor = navFor; this.homePageFor = homePageFor; this.HOME_COUNT_TIMEOUT_MS = HOME_COUNT_TIMEOUT_MS;',
+    'this.navFor = navFor; this.homePageFor = homePageFor;',
   ].join('\n');
   vm.runInNewContext(code, context);
   return { nav: context, calls };
@@ -642,18 +662,20 @@ const OFFICER = { role: 'Conservation Officer' };
 const BOTANIST_USER = { role: 'Botanist' };
 const plain = value => JSON.parse(JSON.stringify(value));
 
-test('officers see five menu sections, in order; the Review entry carries the review count', () => {
+test('officers see Overview first, followed by the existing menu sections', () => {
   const { nav } = loadNavigation();
-  const view = plain(nav.navFor(OFFICER, 'map.html', ''));
+  const view = plain(nav.navFor(OFFICER, 'overview.html', ''));
   assert.deepEqual(view.sections.map(s => [s.label, s.href]), [
+    ['Overview', 'overview.html'],
     ['Review', 'queue.html'],
     ['Species', 'species.html'],
     ['Plants', 'plants.html'],
+    // The standalone alerts page left the menu in 63385ac; the section opens the workspace.
     ['IoT alerts', 'iot-workspace.html'],
     ['Admin', 'reports.html'],
   ]);
-  assert.equal(view.sections[0].countId, 'review-menu-count');
-  assert.deepEqual(view.sections.filter(s => s.active).map(s => s.label), ['Plants']);
+  assert.equal(view.sections[1].countId, 'review-menu-count');
+  assert.deepEqual(view.sections.filter(s => s.active).map(s => s.label), ['Overview']);
 });
 
 test('botanists see Species and their workspace; the editor highlights Species', () => {
@@ -661,6 +683,7 @@ test('botanists see Species and their workspace; the editor highlights Species',
   for (const page of ['species.html', 'editor.html']) {
     const view = plain(nav.navFor(BOTANIST_USER, page, ''));
     assert.deepEqual(view.sections.map(s => s.label), ['Species','IoT alerts'], page);
+    assert.equal(view.sections.some(s => s.href === 'overview.html'), false);
     assert.equal(view.sections[1].href,'iot-workspace.html');
     assert.equal(view.sections[0].active, true, page);
     assert.deepEqual(view.tabs, [], page);
@@ -672,7 +695,7 @@ test('tab bars per section for officers, with the current page marked', () => {
   const tabs = (page, search = '') => plain(nav.navFor(OFFICER, page, search).tabs);
   const review = [
     { label: 'Field records', href: 'queue.html', countId: 'field-records-count' },
-    { label: 'Species proposals', href: 'proposals.html', countId: 'species-proposals-count' },
+    { label: 'Species requests', href: 'proposals.html', countId: 'species-proposals-count' },
     { label: 'Rejected history', href: 'rejected.html', countId: null },
   ];
   for (const [page, activeIndex] of [['queue.html', 0], ['proposals.html', 1], ['rejected.html', 2]]) {
@@ -688,7 +711,9 @@ test('tab bars per section for officers, with the current page marked', () => {
   for (const page of ['species.html', 'editor.html']) {
     assert.deepEqual(tabs(page), [], page);
   }
+  // IoT alerts has one page (the workspace) since 63385ac, so no tab bar either.
   assert.deepEqual(tabs('iot-workspace.html'), []);
+  assert.deepEqual(plain(nav.navFor(OFFICER, 'iot-workspace.html', '')).sections.filter(s => s.active).map(s => s.label), ['IoT alerts']);
   const editor = plain(nav.navFor(OFFICER, 'editor.html', ''));
   assert.deepEqual(editor.sections.filter(s => s.active).map(s => s.label), ['Species']);
 });
@@ -704,33 +729,15 @@ test('switching Plants List <-> Map keeps ?species= (and only there)', () => {
     ['queue.html', 'proposals.html', 'rejected.html']);
 });
 
-test('landing page: officers go to Review when anything waits, otherwise the map; botanists the catalogue', async () => {
-  const answers = (records, proposals) => ({
-    '/reports/summary': { data: { pending_observation_count: records } },
-    '/knowledge/species/proposals/pending?page=1&page_size=1': { pagination: { total: proposals } },
-  });
-  assert.equal(await loadNavigation({ apiAnswers: answers(3, 0) }).nav.homePageFor(OFFICER), 'queue.html');
-  assert.equal(await loadNavigation({ apiAnswers: answers(0, 2) }).nav.homePageFor(OFFICER), 'queue.html');
-  assert.equal(await loadNavigation({ apiAnswers: answers(0, 0) }).nav.homePageFor(OFFICER), 'map.html');
+test('landing page: officers open Overview and botanists the Species catalogue', async () => {
+  const officer = loadNavigation();
+  assert.equal(await officer.nav.homePageFor(OFFICER), 'overview.html');
+  assert.deepEqual(officer.calls, [], 'login does not wait on overview data');
 
-  const botanist = loadNavigation({ apiAnswers: answers(5, 5) });
+  const botanist = loadNavigation();
   assert.equal(await botanist.nav.homePageFor(BOTANIST_USER), 'species.html');
   assert.deepEqual(botanist.calls, [], 'no officer-only count is requested for a botanist');
   assert.equal(await botanist.nav.homePageFor(null), 'species.html');
-});
-
-test('landing page: if the counts fail or are slow, officers go to the species catalogue', async () => {
-  const failed = loadNavigation({ apiError: new Error('Could not reach the server.') });
-  assert.equal(await failed.nav.homePageFor(OFFICER), 'species.html');
-
-  const invalid = loadNavigation({ apiAnswers: { '/reports/summary': { data: {} } } });
-  assert.equal(await invalid.nav.homePageFor(OFFICER), 'species.html');
-
-  const slow = loadNavigation({ apiNeverAnswers: true });
-  assert.ok(slow.nav.HOME_COUNT_TIMEOUT_MS <= 3000, 'login is never held up for long');
-  const started = Date.now();
-  assert.equal(await slow.nav.homePageFor(OFFICER), 'species.html');
-  assert.ok(Date.now() - started < slow.nav.HOME_COUNT_TIMEOUT_MS + 1000);
 });
 
 test('review counts: field records from the officer-only summary, the Review entry shows the sum', () => {
@@ -742,9 +749,11 @@ test('review counts: field records from the officer-only summary, the Review ent
   assert.match(shared, /if \(user !== null && isBotanist\(user\) === false\) \{\s*if \(thisPageName\(\) !== 'proposals\.html'\)/);
   assert.match(shared, /if \(thisPageName\(\) !== 'queue\.html'\) \{\s*refreshFieldRecordsCount\(\)/);
   assert.match(read('frontend/js/queue.js'), /drawQueue\(\);\s*\/\/[^\n]*\n\s*refreshFieldRecordsCount\(\)/);
-  // Login waits for the landing page choice; the page guard still falls back to the catalogue.
+  // Login routes directly to the role's landing page.
   assert.match(read('frontend/js/login.js'), /await goToHome\(\);/);
   assert.match(shared, /async function goToHome\(\) \{\s*location\.href = await homePageFor\(getCurrentUser\(\)\);/);
+  assert.match(shared, /return 'overview\.html';/);
+  assert.match(read('backend/src/server.js'), /app\.use\('\/api\/officer\/overview', officerOverviewRoutes\);/);
 });
 
 test('tab bars are drawn by shared.js as a div (not a <nav>, which has the menu styles)', () => {
@@ -752,7 +761,7 @@ test('tab bars are drawn by shared.js as a div (not a <nav>, which has the menu 
   assert.match(shared, /function drawSectionTabs\(tabs\) \{/);
   assert.match(shared, /const bar = document\.createElement\('div'\);\s*bar\.id = 'section-tabs';\s*bar\.className = 'section-tabs';\s*bar\.setAttribute\('role', 'navigation'\);/);
   assert.match(shared, /main\.insertBefore\(bar, main\.firstChild\);/);
-  for (const page of ['queue.html', 'proposals.html', 'rejected.html', 'plants.html', 'plant.html', 'map.html', 'reports.html', 'users.html']) {
+  for (const page of ['overview.html', 'queue.html', 'proposals.html', 'rejected.html', 'plants.html', 'plant.html', 'map.html', 'reports.html', 'users.html']) {
     assert.doesNotMatch(read(`frontend/${page}`), /section-tabs|class="tabs"/, `${page} has no tab bar of its own`);
   }
   const css = read('frontend/css/style.css');
@@ -761,10 +770,11 @@ test('tab bars are drawn by shared.js as a div (not a <nav>, which has the menu 
 });
 
 test('review page headings, and a one-sentence description under every page heading', () => {
-  assert.match(read('frontend/queue.html'), /<h1>Field records <span>to review<\/span><\/h1>/);
-  assert.match(read('frontend/proposals.html'), /<h1>Species <span>proposals<\/span><\/h1>/);
+  // Review > Field records: the section name as the heading, then one plain line.
+  assert.match(read('frontend/queue.html'), /<h1>Review<\/h1>\s*<p class="lead">Check field records before they become official, for the conservation officer\.<\/p>/);
+  assert.match(read('frontend/proposals.html'), /<h1>Species <span>requests<\/span><\/h1>/);
   assert.match(read('frontend/rejected.html'), /<h1>Rejected <span>history<\/span><\/h1>/);
-  for (const page of ['species', 'editor', 'proposals', 'queue', 'rejected', 'plants', 'plant', 'map', 'reports', 'users']) {
+  for (const page of ['overview', 'species', 'editor', 'proposals', 'queue', 'rejected', 'plants', 'plant', 'map', 'reports', 'users']) {
     const html = read(`frontend/${page}.html`);
     const lead = html.match(/<p class="lead"[^>]*>([\s\S]*?)<\/p>/);
     assert.ok(lead && lead[1].replace(/<[^>]+>/g, '').trim().length > 20, `${page}.html has a description`);
@@ -785,7 +795,7 @@ test('one review status scheme: Waiting for review blue, Approved green, Needs c
   assert.deepEqual(show('APPROVED'), { label: 'Approved', css: 'approved' });
   assert.deepEqual(show('rejected'), { label: 'Needs changes', css: 'rejected' });
   assert.deepEqual(show('draft'), { label: 'Draft', css: 'draft' });
-  assert.deepEqual(show('in_review'), { label: 'in review', css: '' });
+  assert.deepEqual(show('in_review'), { label: 'In review', css: '' });
   assert.match(read('frontend/js/plants.js'), /function formattedStatus\(value\) \{\s*return reviewStatusDisplay\(value\);/);
   assert.match(read('frontend/js/plant.js'), /function plantStatus\(value\) \{\s*return reviewStatusDisplay\(value\);/);
 
@@ -797,7 +807,7 @@ test('one review status scheme: Waiting for review blue, Approved green, Needs c
   // Blue and grey exist in the light theme and both dark themes.
   assert.equal((css.match(/--info: /g) || []).length, 3);
   assert.equal((css.match(/--neutral: /g) || []).length, 3);
-  // No page keeps its own copy of the status colours.
+  // No page keeps its own copy of the status colours, and each IoT status is defined once.
   for (const page of ['plants.html', 'plant.html']) {
     assert.doesNotMatch(read(`frontend/${page}`), /\.plant-status\.(pending|approved|rejected)/, page);
   }

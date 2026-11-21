@@ -109,7 +109,7 @@ export default function ManualQRScreen() {
         >
           <Ionicons name="arrow-back-outline" size={22} color="#213B2A" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Manual Tag Entry</Text>
+        <Text style={styles.headerTitle}>Type a tag</Text>
         <View style={{ width: 40 }} />
       </View>
 

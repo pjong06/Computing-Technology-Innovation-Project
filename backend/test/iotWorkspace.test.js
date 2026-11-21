@@ -17,7 +17,7 @@ async function fixture(t,role='officer',options={}){
       if(table==='alert_camera_evidence')return {data:{id:OTHER,file_path:'station/photo.jpg',byte_count:(options.bytes||Buffer.from('abc')).length,sha256:createHash('sha256').update(options.bytes||'abc').digest('hex')}};
       return {data:[]};
     };
-    const q={};for(const name of ['select','eq','in','order','range','limit','gte','lte'])q[name]=(...args)=>{conditions.push([name,...args]);if(name==='select')columns=args[0];return q;};
+    const q={};for(const name of ['select','delete','eq','in','order','range','limit','gte','lte'])q[name]=(...args)=>{conditions.push([name,...args]);if(name==='select')columns=args[0];return q;};
     q.maybeSingle=async()=>result();q.then=(yes,no)=>Promise.resolve({...result(),data:table==='alerts'?(options.rows||[]):[],count:options.count===undefined?2:options.count}).then(yes,no);
     queries.push({table,conditions,get columns(){return columns;}});return q;
   },async rpc(name,args){calls.push({name,args});return options.error?{error:{code:options.error}}:{data:{id:ID}};},storage:{from(bucket){assert.equal(bucket,'camera-evidence');return {async createSignedUrl(path,ttl){calls.push({path,ttl});return {data:{signedUrl:'https://project.supabase.co/storage/v1/object/sign/camera-evidence/station/photo.jpg?token=test'}};}};}}};
@@ -121,4 +121,18 @@ test('alert pagination counts the filtered RLS-visible dataset and returns exact
 });
 test('alert pagination never treats unavailable counts as an empty successful list',async t=>{
  const f=await fixture(t,'officer',{count:null});assert.equal((await f.call('/alerts')).status,503);
+});
+
+
+test('only active Officers can delete one valid alert ID through the user-scoped client',async t=>{
+ for(const [role,options,status]of [[null,{},401],['botanist',{},403],['researcher',{},403],['officer',{suspended:true},403]]){
+  const f=await fixture(t,role,options);assert.equal((await f.call('/alerts/'+ID,'DELETE')).status,status);assert.equal(f.queries.length,0);
+ }
+ const f=await fixture(t);assert.equal((await f.call('/alerts/not-a-uuid','DELETE')).status,400);assert.equal(f.queries.length,0);
+ const result=await f.call('/alerts/'+ID,'DELETE');assert.equal(result.status,200);assert.equal(JSON.parse(result.body).data.id,ID);
+ assert.equal(f.queries.length,1);assert.equal(f.queries[0].table,'alerts');assert.deepEqual(f.queries[0].conditions,[['delete'],['eq','id',ID],['select','id']]);
+});
+test('deleting a missing or RLS-denied alert never returns a false success',async t=>{
+ const missing=await fixture(t,'officer',{hidden:true});assert.equal((await missing.call('/alerts/'+ID,'DELETE')).status,404);
+ const denied=await fixture(t,'officer',{error:'42501'});assert.equal((await denied.call('/alerts/'+ID,'DELETE')).status,403);
 });

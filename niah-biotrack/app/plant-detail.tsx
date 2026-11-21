@@ -10,7 +10,6 @@ import {
   FlatList,
   Image,
   Modal,
-  Share,
   Platform,
   ActivityIndicator,
   useWindowDimensions,
@@ -19,6 +18,7 @@ import {
 } from 'react-native';
 
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import Toast from 'react-native-toast-message';
 
 import {
   IdentificationStatus,
@@ -29,16 +29,20 @@ import {
   type ObservationVisit,
 } from '../src/store/useRecordStore';
 
-import { REVIEW_BADGE, visitStatus } from '../src/utils/reviewStatus';
+import { NOT_SUBMITTED_BADGE, REVIEW_BADGE, visitStatus } from '../src/utils/reviewStatus';
 import PlantNotFound from '../src/components/PlantNotFound';
 import { resolveStoredPhotoUri } from '../src/utils/photoStorage';
 import { formatCoordinates } from '../src/utils/formatCoordinates';
-import { fetchPlantQr, saveQrImage, type PlantQr } from '../src/api/plantQr';
-import { ApiError } from '../src/api/client';
-import { formatDiameterCm, formatHeightFromCm, parseMeasurement } from '../src/utils/units';
+import { fetchPlantQr, type PlantQr } from '../src/api/plantQr';
+import { downloadTagImage, saveFile, shareFile } from '../src/services/myTags';
+import { ApiError, BASE_URL } from '../src/api/client';
+import PlantThumbnail from '../src/components/PlantThumbnail';
+import { thumbnailSources } from '../src/utils/thumbnailSources';
+import { usePlantListStore } from '../src/store/usePlantListStore';
+import { isPhysicalTag } from '../src/utils/myTags';
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
-import PhotoCreditInfo from '../src/components/PhotoCreditInfo';
-import { preferredSpeciesPhoto } from '../src/utils/speciesPhoto';
+import { plainConservationStatus } from '../src/utils/conservationStatus';
+import { formatDiameterCm, formatHeightFromCm, parseMeasurement } from '../src/utils/units';
 import { routeSyncLabel, routesUploadedText } from '../src/utils/routeSync';
 
 const TAG_PROBLEM_TEXT: Record<'in_use' | 'locked', string> = {
@@ -52,6 +56,21 @@ const TAG_NOT_ON_SERVER_TEXT =
   "The new tag hasn't reached the server yet. Use Sync now on Home, then try again.";
 
 const NOT_RECORDED = 'Not recorded';
+
+// Plain words for the record's upload state (never the raw enum value).
+function syncStatusText(status: SyncStatus | string | undefined): string {
+  switch (String(status ?? '').toLowerCase()) {
+    case 'uploaded':
+      return 'Uploaded';
+    case 'failed':
+    case 'upload failed':
+      return 'Upload failed';
+    case 'syncing':
+      return 'Uploading';
+    default:
+      return 'Saved on this phone';
+  }
+}
 
 // The plant's latest measured height and diameter: from the newest visit that has one
 // (stored in cm), otherwise from what was typed when the plant was registered
@@ -105,6 +124,15 @@ function visitChips(observation: ObservationVisit): string[] {
   return chips;
 }
 
+// The newest observation's health or life stage, in plain words ("Seedling sapling").
+function latestCondition(visits: ObservationVisit[], field: 'health' | 'stage'): string | null {
+  const newest = [...visits]
+    .filter((visit) => Boolean(visit?.[field]))
+    .sort((a, b) => Date.parse(b.observedAt || b.date || '') - Date.parse(a.observedAt || a.date || ''))[0];
+  const value = String(newest?.[field] ?? '').replace(/_/g, ' ').trim();
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : null;
+}
+
 function DetailRow({
   label,
   value,
@@ -129,7 +157,6 @@ export default function PlantDetailScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
 
   const records = useRecordStore((state) => state.records);
-  const routes = useRecordStore((state) => state.routes);
   const submitForReview = useRecordStore((state) => state.submitForReview);
   const removePhoto = useRecordStore((state) => state.removePhoto);
   const deleteRecord = useRecordStore((state) => state.deleteRecord);
@@ -159,54 +186,32 @@ export default function PlantDetailScreen() {
   const [qr, setQr] = useState<PlantQr | null>(null);
   const [qrLoading, setQrLoading] = useState(false);
   const [qrError, setQrError] = useState('');
+  const [qrExporting, setQrExporting] = useState(false);
 
   const matched = records.find((record) => record.id === id);
+  // "About this species": the species saved on this phone (its details once loaded).
   const speciesId = matched?.speciesId ?? null;
-  const speciesImageUri = useSpeciesStore((state) =>
-    speciesId ? state.imageUrisBySpeciesId[speciesId] : undefined
+  const speciesDetail = useSpeciesStore((state) => (speciesId ? state.detailsById[speciesId] ?? null : null));
+  const speciesListItem = useSpeciesStore((state) =>
+    speciesId ? state.species.find((item) => item.id === speciesId) ?? null : null
   );
-  const speciesMedia = useSpeciesStore((state) =>
-    speciesId ? state.detailsById[speciesId]?.species_media : undefined
+  // The signed server thumbnail of an own plant (from the shared plant list), used when the
+  // phone has no photo of it: the same picture its list row shows.
+  const signedThumbnail = usePlantListStore((state) =>
+    matched && !matched.otherBotanist && matched.serverId ? state.ownThumbnails[matched.serverId] ?? null : null
   );
-  const loadSpeciesDetail = useSpeciesStore((state) => state.loadSpeciesDetail);
-
+  const needsServerPhoto = Boolean(
+    matched && !matched.otherBotanist && matched.serverId && (matched.photoUris ?? []).length === 0
+  );
   useEffect(() => {
-    if (speciesId && !matched?.photoUris?.length) {
-      void loadSpeciesDetail(speciesId);
-    }
-  }, [loadSpeciesDetail, matched?.photoUris?.length, speciesId]);
-
+    // Opened without going through a list (e.g. after a scan): load the list once (reused if fresh).
+    if (needsServerPhoto) void usePlantListStore.getState().load();
+  }, [needsServerPhoto]);
   if (!matched) {
     return <PlantNotFound code={id} />;
   }
 
-  const linkedRoute = routes.find(
-    (route) =>
-      route.linkedPlantId === matched.id ||
-      (matched.serverId && route.linkedPlantId === matched.serverId)
-  );
-
-  const displayRouteLength =
-    matched.routeLength ??
-    (linkedRoute
-      ? linkedRoute.distanceMeters >= 1000
-        ? `${(linkedRoute.distanceMeters / 1000).toFixed(2)} km`
-        : `${Math.round(linkedRoute.distanceMeters)} m`
-      : undefined);
-
-  const displayWalkingTime =
-    matched.walkingTime ??
-    (linkedRoute
-      ? `${Math.max(1, Math.round(linkedRoute.durationSeconds / 60))} min`
-      : undefined);
-
   const photos = (matched.photoUris ?? []).map(resolveStoredPhotoUri);
-  const speciesFallbackKey = `species:${speciesId || ''}`;
-  const speciesFallbackUri =
-    photos.length === 0 && speciesImageUri && !brokenPhotos[speciesFallbackKey]
-      ? speciesImageUri
-      : null;
-  const speciesPhotoCredit = preferredSpeciesPhoto(speciesMedia);
 
   const PHOTO_LABELS: Record<string, string> = {
     whole_plant: 'Whole plant',
@@ -231,7 +236,7 @@ export default function PlantDetailScreen() {
         uri,
         meta: observation.photoMeta?.[uri],
         obsId: observation.id,
-        label: `Visit ${observation.date}`,
+        label: `Observation ${observation.date}`,
       }))
     ),
   ];
@@ -295,27 +300,24 @@ export default function PlantDetailScreen() {
     }
   };
 
-  const shareQr = async () => {
-    if (!qr) return;
-
-    try {
-      if (Platform.OS === 'ios') {
-        const fileUri = await saveQrImage(qr);
-        await Share.share({
-          url: fileUri,
-          message: qr.qrValue,
-        });
-      } else {
-        await Share.share({
-          title: qr.qrValue,
-          message: `${qr.qrValue}\n${qr.publicUrl}`,
-        });
-      }
-    } catch {
-      Alert.alert(
-        'Could not share',
-        'The QR code could not be shared. Please try again.'
-      );
+  // Save image / Share: the plant's QR label as a PNG (QR with the tag underneath), from
+  // GET /api/plants/:id/qr/image (own plants only), the same label as in My QR tags.
+  const exportQr = async (action: 'save' | 'share') => {
+    if (!qr || !matched?.serverId) return;
+    setQrExporting(true);
+    const image = await downloadTagImage(qr.qrValue, `/api/plants/${encodeURIComponent(matched.serverId)}/qr/image`);
+    setQrExporting(false);
+    if (!image.ok) {
+      Alert.alert('No image', image.reason);
+      return;
+    }
+    const result = action === 'save'
+      ? await saveFile(image.file, 'image/png')
+      : await shareFile(image.file, `${qr.qrValue}\n${qr.publicUrl}`);
+    if (!result.ok) {
+      Alert.alert(action === 'save' ? 'Not saved' : 'Not shared', result.reason);
+    } else if (action === 'save') {
+      Toast.show({ type: 'success', text1: 'QR image ready', text2: result.message, position: 'bottom' });
     }
   };
 
@@ -344,11 +346,7 @@ export default function PlantDetailScreen() {
       : matched.gpsCoordination;
 
   const review =
-    (matched.reviewStatus && REVIEW_BADGE[matched.reviewStatus]) || {
-      bg: '#E4F2E7',
-      text: '#215A36',
-      label: 'Draft',
-    };
+    (matched.reviewStatus && REVIEW_BADGE[matched.reviewStatus]) || NOT_SUBMITTED_BADGE;
 
   const needsIdentification =
     matched.identificationStatus === IdentificationStatus.PENDING ||
@@ -384,14 +382,14 @@ export default function PlantDetailScreen() {
 
             if (result.sync.ok && result.sync.submittedForReview) {
               Alert.alert(
-                'Submitted to officer review',
+                'Sent for review',
                 'A Conservation Officer can now review this record.'
               );
               return;
             }
 
             const reason = result.sync.ok
-              ? 'A visit was added while uploading and still needs to be sent.'
+              ? 'An observation was added while uploading and still needs to be sent.'
               : result.sync.reason;
 
             Alert.alert(
@@ -407,7 +405,7 @@ export default function PlantDetailScreen() {
   const handleDelete = () => {
     Alert.alert(
       'Delete plant record?',
-      'This record will be removed from this phone immediately. If it was already synchronized, the deletion will also be sent to the server automatically.',
+      'This record will be removed from this phone immediately. If it was already synced, the deletion will also be sent to the server automatically.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -480,35 +478,31 @@ export default function PlantDetailScreen() {
                 )
               }
             />
-          ) : speciesFallbackUri ? (
-            <Image
-              source={{ uri: speciesFallbackUri }}
+          ) : (
+            // No photo on this phone: the same sources, in the same order, as the list row
+            // (its signed server thumbnail for an own plant; the public copy, full size then
+            // the small one, for someone else's), otherwise the placeholder.
+            <PlantThumbnail
+              sources={thumbnailSources({
+                signed: signedThumbnail,
+                publicPath: matched.otherBotanist ? matched.publicPhotoUrl : null,
+                baseUrl: BASE_URL,
+                size: 'full',
+              })}
               style={[styles.heroPhoto, { width }]}
-              resizeMode="cover"
-              onError={() =>
-                setBrokenPhotos((previous) => ({
-                  ...previous,
-                  [speciesFallbackKey]: true,
-                }))
+              placeholder={
+                <View
+                  style={[
+                    styles.heroPhoto,
+                    styles.heroEmpty,
+                    { width },
+                  ]}
+                >
+                  <Text style={styles.heroEmptyText}>No photos recorded</Text>
+                </View>
               }
             />
-          ) : (
-            <View
-              style={[
-                styles.heroPhoto,
-                styles.heroEmpty,
-                { width },
-              ]}
-            >
-              <Text style={styles.heroEmptyText}>No photos recorded</Text>
-            </View>
           )}
-
-          {speciesFallbackUri ? (
-            <View style={styles.speciesPhotoBadge}>
-              <Text style={styles.speciesPhotoBadgeText}>Species photo</Text>
-            </View>
-          ) : null}
 
           <TouchableOpacity
             onPress={() => router.back()}
@@ -524,9 +518,6 @@ export default function PlantDetailScreen() {
               </Text>
             </View>
           )}
-
-          {/* Species reference photo: its credit behind a small "i" (only when the licence needs one). */}
-          {speciesFallbackUri ? <PhotoCreditInfo photo={speciesPhotoCredit} /> : null}
         </View>
 
         <View style={styles.sheet}>
@@ -546,7 +537,7 @@ export default function PlantDetailScreen() {
                 {review.label}
               </Text>
             </View>
-            <Text style={styles.syncText}>{matched.syncStatus}</Text>
+            <Text style={styles.syncText}>{syncStatusText(matched.syncStatus)}</Text>
           </View>
 
           {/* Identification Pending Notice */}
@@ -580,9 +571,9 @@ export default function PlantDetailScreen() {
           {/* Officer Rejection Comment */}
           {matched.reviewStatus === ReviewStatus.REJECTED && (
             <View style={styles.commentBox}>
-              <Text style={styles.commentTitle}>Officer's comment</Text>
+              <Text style={styles.commentTitle}>Officer's reason</Text>
               <Text style={styles.commentBody}>
-                {matched.reviewComment?.trim() || 'No comment was given.'}
+                {matched.reviewComment?.trim() || 'No reason was given.'}
               </Text>
             </View>
           )}
@@ -609,23 +600,13 @@ export default function PlantDetailScreen() {
             </Text>
           ) : null}
 
-          {/* Species Details: Split Height and Diameter */}
-          <Text style={styles.heading}>SPECIES DETAILS</Text>
+          {/* This plant: its tag, place, measurements, condition and observations. */}
+          <Text style={styles.heading}>THIS PLANT</Text>
 
           <View style={styles.detailCard}>
-            <DetailRow label="Common name" value={matched.commonName} />
-            <DetailRow label="Family" value={matched.family} />
-            <DetailRow
-              label="Height (m)"
-              value={latestHeight(matched)}
-            />
-            <DetailRow
-              label="Diameter (cm)"
-              value={latestDiameter(matched)}
-            />
             <DetailRow
               label="Plant tag"
-              value={matched.tagCode ?? 'No tag attached'}
+              value={isPhysicalTag(matched.tagCode) ? matched.tagCode : 'No tag attached'}
             />
 
             {matched.tagProblem ? (
@@ -653,77 +634,58 @@ export default function PlantDetailScreen() {
                 ) : null}
               </View>
             ) : null}
-          </View>
-
-          <Text style={styles.heading}>MORPHOLOGICAL CHARACTERISTICS</Text>
-          <Text
-            style={[
-              styles.body,
-              !matched.morphology?.trim() && styles.detailEmpty,
-            ]}
-          >
-            {matched.morphology?.trim() || NOT_RECORDED}
-          </Text>
-
-          <Text style={styles.heading}>NOTES</Text>
-          <Text
-            style={[
-              styles.body,
-              !matched.description?.trim() && styles.detailEmpty,
-            ]}
-          >
-            {matched.description?.trim() || NOT_RECORDED}
-          </Text>
-
-          {/* Location Landmark & GPS Coordinates */}
-          <Text style={styles.heading}>LOCATION</Text>
-          <View style={styles.detailCard}>
-            <DetailRow
-              label="Location landmark"
-              value={matched.locationName}
-            />
+            <DetailRow label="Location note" value={matched.locationName} />
             <DetailRow label="Coordinates" value={coordinates} />
-            {(displayRouteLength || displayWalkingTime) && (
-              <>
-                <DetailRow
-                  label="Transect distance"
-                  value={displayRouteLength}
-                />
-                <DetailRow
-                  label="Walking time"
-                  value={displayWalkingTime}
-                />
-              </>
-            )}
-            {linkedRoute ? (
-              <>
-                <DetailRow
-                  label="Route upload"
-                  value={routeSyncLabel(linkedRoute.syncStatus)}
-                />
-                {linkedRoute.syncStatus === 'failed' ? (
-                  <View style={styles.routeProblemRow}>
-                    <Text style={styles.routeProblemText}>
-                      {linkedRoute.syncError || 'The route could not be uploaded.'}
-                    </Text>
-                    <TouchableOpacity
-                      onPress={() => void retryRouteUpload()}
-                      disabled={retryingRoute}
-                      hitSlop={8}
-                      accessibilityRole="button"
-                      accessibilityLabel="Retry route upload"
-                    >
-                      {retryingRoute ? (
-                        <ActivityIndicator size="small" color="#9B1C1C" />
-                      ) : (
-                        <Text style={styles.routeRetry}>Retry</Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
-              </>
-            ) : null}
+            <DetailRow
+              label="Height (m)"
+              value={latestHeight(matched)}
+            />
+            <DetailRow
+              label="Diameter (cm)"
+              value={latestDiameter(matched)}
+            />
+            <DetailRow label="Health" value={latestCondition(matched.observations ?? [], 'health')} />
+            <DetailRow label="Life stage" value={latestCondition(matched.observations ?? [], 'stage')} />
           </View>
+
+          {matched.morphology?.trim() ? (
+            <>
+              <Text style={styles.heading}>MORPHOLOGICAL CHARACTERISTICS</Text>
+              <Text style={styles.body}>{matched.morphology.trim()}</Text>
+            </>
+          ) : null}
+
+          {matched.description?.trim() ? (
+            <>
+              <Text style={styles.heading}>NOTES</Text>
+              <Text style={styles.body}>{matched.description.trim()}</Text>
+            </>
+          ) : null}
+
+          {/* About this species: what is known about the species in general. */}
+          {!needsIdentification && (
+            <>
+              <Text style={styles.heading}>ABOUT THIS SPECIES</Text>
+              <View style={styles.detailCard}>
+                <DetailRow
+                  label="Scientific name"
+                  value={speciesDetail?.scientific_name ?? speciesListItem?.scientific_name ?? matched.scientificName}
+                />
+                <DetailRow
+                  label="Common name"
+                  value={speciesDetail?.common_name ?? speciesListItem?.common_name ?? matched.commonName}
+                />
+                <DetailRow label="Local name" value={speciesDetail?.local_name ?? speciesListItem?.local_name} />
+                <DetailRow label="Family" value={speciesDetail?.taxonomy?.family ?? speciesListItem?.taxonomy?.family ?? matched.family} />
+                <DetailRow
+                  label="Conservation status"
+                  value={plainConservationStatus(speciesDetail?.conservation_status ?? speciesListItem?.conservation_status).label}
+                />
+                <DetailRow label="Habitat" value={speciesDetail?.habitat} />
+                <DetailRow label="Description" value={speciesDetail?.description ?? speciesListItem?.description} />
+              </View>
+            </>
+          )}
 
           {/* Photos Upload Status */}
           {photoStates.length > 0 && (
@@ -777,19 +739,21 @@ export default function PlantDetailScreen() {
               style={styles.actionBtn}
               onPress={() =>
                 router.push({
-                  pathname: '/offline-map',
-                  params: { id: matched.id },
+                  pathname: '/navigate-plant',
+                  params: { plantId: matched.id },
                 } as any)
               }
             >
               <Text style={styles.actionBtnText}>🧭 Find plant</Text>
             </TouchableOpacity>
 
-            {matched.tagCode ? (
+            {/* A real tag: its QR. No tag yet (or only the "plant:<id>" placeholder) on
+                this botanist's own plant: Attach tag. */}
+            {isPhysicalTag(matched.tagCode) ? (
               <TouchableOpacity style={styles.actionBtn} onPress={() => void openQr()}>
                 <Text style={styles.actionBtnText}>🔳 Show QR</Text>
               </TouchableOpacity>
-            ) : (
+            ) : matched.otherBotanist ? null : (
               <TouchableOpacity
                 style={styles.actionBtn}
                 onPress={() =>
@@ -807,11 +771,11 @@ export default function PlantDetailScreen() {
             )}
           </View>
 
-          {/* Observation Visits History */}
+          {/* Observations */}
           <View style={styles.obsHeaderRow}>
-            <Text style={styles.heading}>OBSERVATION HISTORY</Text>
+            <Text style={styles.heading}>OBSERVATIONS</Text>
             <Text style={styles.obsCount}>
-              {(matched.observations ?? []).length} visits
+              {(matched.observations ?? []).length} {(matched.observations ?? []).length === 1 ? 'observation' : 'observations'}
             </Text>
           </View>
 
@@ -866,6 +830,10 @@ export default function PlantDetailScreen() {
               </View>
             </View>
           ))}
+
+          {(matched.observations ?? []).length === 0 ? (
+            <Text style={styles.noObservations}>No observations recorded yet.</Text>
+          ) : null}
 
           <TouchableOpacity
             style={styles.addObsBtn}
@@ -949,9 +917,24 @@ export default function PlantDetailScreen() {
                 <Text style={styles.qrHint}>
                   Scanning it opens the plant's public visitor page.
                 </Text>
-                <TouchableOpacity style={styles.qrPrimary} onPress={() => void shareQr()}>
-                  <Text style={styles.qrPrimaryText}>Share</Text>
-                </TouchableOpacity>
+                <View style={styles.qrActions}>
+                  <TouchableOpacity
+                    style={[styles.qrPrimary, styles.qrAction, qrExporting && { opacity: 0.6 }]}
+                    onPress={() => void exportQr('save')}
+                    disabled={qrExporting}
+                    accessibilityRole="button"
+                  >
+                    {qrExporting ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.qrPrimaryText}>Save image</Text>}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.qrPrimary, styles.qrAction, qrExporting && { opacity: 0.6 }]}
+                    onPress={() => void exportQr('share')}
+                    disabled={qrExporting}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.qrPrimaryText}>Share</Text>
+                  </TouchableOpacity>
+                </View>
               </>
             ) : (
               <Text style={styles.qrError}>
@@ -1066,20 +1049,6 @@ const styles = StyleSheet.create({
   },
   photoCountText: {
     color: '#FFF',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  speciesPhotoBadge: {
-    position: 'absolute',
-    bottom: 16,
-    left: 16,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 14,
-  },
-  speciesPhotoBadgeText: {
-    color: '#FFFFFF',
     fontSize: 11,
     fontWeight: '700',
   },
@@ -1289,6 +1258,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     marginBottom: 12,
   },
+  noObservations: { fontSize: 13, color: '#68776D', marginBottom: 12 },
   obsCount: {
     fontSize: 12,
     color: '#68776D',
@@ -1462,6 +1432,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 18,
+  },
+  qrActions: {
+    flexDirection: 'row',
+    alignSelf: 'stretch',
+    gap: 10,
+  },
+  qrAction: {
+    flex: 1,
+    alignSelf: 'auto',
   },
   qrPrimaryText: {
     color: '#FFFFFF',

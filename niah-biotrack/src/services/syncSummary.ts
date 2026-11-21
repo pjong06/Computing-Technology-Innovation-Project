@@ -73,13 +73,13 @@ export function buildSyncSummary(
 
   let overallStatus = 'No records';
   let overallMessage =
-    'Create a plant record to start the local sync queue.';
+    'Nothing to upload yet.';
   let overallTone: SyncStatusTone = 'neutral';
 
   if (isSyncing) {
     overallStatus = 'Syncing...';
     overallMessage =
-      'The application is processing local records and observations.';
+      'Uploading your plants and observations…';
     overallTone = 'pending';
   } else if (failedItemCount > 0) {
     overallStatus = 'Attention needed';
@@ -88,9 +88,9 @@ export function buildSyncSummary(
     } an upload failure.`;
     overallTone = 'failed';
   } else if (pendingItemCount > 0) {
-    overallStatus = `${pendingItemCount} pending`;
+    overallStatus = `${pendingItemCount} waiting to upload`;
     overallMessage =
-      'Pending data is saved on this device and waiting for server upload.';
+      'Data waiting to upload is saved on this device.';
     overallTone = 'pending';
   } else if (localDraftCount > 0) {
     overallStatus = `${localDraftCount} local ${localDraftCount === 1 ? 'draft' : 'drafts'}`;
@@ -100,7 +100,7 @@ export function buildSyncSummary(
   } else if (records.length > 0) {
     overallStatus = 'Up to date';
     overallMessage =
-      'All local records and observation visits have an uploaded status.';
+      'Everything is uploaded.';
     overallTone = 'synced';
   }
 
@@ -109,10 +109,10 @@ export function buildSyncSummary(
   if (observations.length > 0) {
     if (failedObservationCount > 0) {
       observationSummary =
-        `${pendingObservationCount} pending · ` +
+        `${pendingObservationCount} waiting to upload · ` +
         `${failedObservationCount} failed`;
     } else if (pendingObservationCount > 0) {
-      observationSummary = `${pendingObservationCount} pending`;
+      observationSummary = `${pendingObservationCount} waiting to upload`;
     } else {
       observationSummary = `${uploadedObservationCount} uploaded`;
     }

@@ -6,6 +6,11 @@ let map = null;
 let markerLayer = null;
 let sensorMarkerLayer = null;
 let routeLayer = null;
+
+// Trace routes are no longer recorded by the app, so the map doesn't offer them: no "Show
+// routes" checkbox, no route layer and no request. The endpoint (GET /api/officer/map/routes),
+// the table and the code below are kept; set this to true to show routes again.
+const ROUTES_ON_MAP = false;
 let plants = [];
 let sensorStations = [];
 let fieldRoutes = [];
@@ -61,7 +66,7 @@ function createMap() {
 sensorMarkerLayer = L.layerGroup().addTo(map);
   // Trace routes: their own layer, shown or hidden with the "Show routes" checkbox.
   routeLayer = L.layerGroup();
-  if (document.getElementById('map-show-routes').checked) {
+  if (ROUTES_ON_MAP && document.getElementById('map-show-routes').checked) {
     routeLayer.addTo(map);
   }
 }
@@ -84,17 +89,18 @@ function displayVisitDate(value) {
 function makePopup(plant) {
   const species = plant.species;
   const scientificName = species && species.scientific_name ? species.scientific_name : 'Unknown species';
-  const commonName = species && species.common_name ? species.common_name : 'Unknown species';
-  const sourceLine = plant.data_source === 'inaturalist'
-    ? `Imported from iNaturalist · Observer: ${plant.source_observer || 'Unknown'} · Licence: ${plant.source_licence || 'Unknown'}`
-    : 'Source: Field record (registered in the app)';
+  const commonName = species && species.common_name ? species.common_name : 'Not recorded';
   return '<strong><em>' + escapePopupText(scientificName) + '</em></strong>' +
     '<div>Common name: ' + escapePopupText(commonName) + '</div>' +
     '<div>Tag: ' + escapePopupText(displayTag(plant.tag, 'No tag')) + '</div>' +
-    '<div>Status: ' + escapePopupText(plant.status || 'Not recorded') + '</div>' +
-    '<div>Landmark: ' + escapePopupText(plant.landmark || 'Not recorded') + '</div>' +
-    '<div>' + escapePopupText(sourceLine) + '</div>' +
-    '<div>Last visit: ' + escapePopupText(displayVisitDate(plant.last_visit)) + '</div>';
+    '<div>Status: ' + escapePopupText(reviewStatusDisplay(plant.status).label) + '</div>' +
+    '<div>Location note: ' + escapePopupText(plant.landmark || 'Not recorded') + '</div>' +
+    '<div>Last observation: ' + escapePopupText(displayVisitDate(plant.last_visit)) + '</div>';
+}
+
+// "online" -> "Online", "offline" -> "Offline"; anything else with a capital first letter.
+function stationStatusText(status) {
+  return readableValue(status) || 'Unknown';
 }
 
 function drawSensorMarkers() {
@@ -106,9 +112,9 @@ function drawSensorMarkers() {
     const point = [station.latitude, station.longitude];
 
     const popup =
-      '<strong>IoT Sensor Station</strong>' +
+      '<strong>IoT sensor station</strong>' +
       '<div>Station: ' + escapePopupText(station.station_code) + '</div>' +
-      '<div>Status: ' + escapePopupText(station.status || 'Unknown') + '</div>' +
+      '<div>Status: ' + escapePopupText(stationStatusText(station.status)) + '</div>' +
       '<div>Location: ' + escapePopupText(station.location_note || 'Not recorded') + '</div>';
 
     L.circleMarker(point, {
@@ -127,7 +133,7 @@ async function loadSensorStations() {
   const result = await api('/officer/map/stations');
 
   if (!result || !Array.isArray(result.data)) {
-    throw new Error('The sensor station response was invalid.');
+    throw new Error('The data could not be read. Please reload the page.');
   }
 
 sensorStations = result.data;
@@ -290,7 +296,7 @@ function toggleRoutes(show) {
 async function loadRoutes() {
   const result = await api('/officer/map/routes');
   if (!result || !Array.isArray(result.data)) {
-    throw new Error('The routes response was invalid.');
+    throw new Error('The data could not be read. Please reload the page.');
   }
   fieldRoutes = result.data;
   drawRoutes();
@@ -302,7 +308,7 @@ async function loadRoutes() {
 async function loadPlants() {
   const result = await api('/officer/map/plants');
   if (!result || !Array.isArray(result.data)) {
-    throw new Error('The plant locations response was invalid.');
+    throw new Error('The data could not be read. Please reload the page.');
   }
   plants = result.data;
   fillSpeciesFilter();
@@ -316,7 +322,11 @@ if (pageAllowed === false) {
   document.getElementById('map-message').textContent =
     'The map could not load. Check your internet connection and refresh the page.';
 } else {
-  document.getElementById('map-show-routes').checked = readShowRoutes();
+  if (ROUTES_ON_MAP) {
+    document.getElementById('map-routes-toggle').hidden = false;
+    document.getElementById('map-route-note').hidden = false;
+    document.getElementById('map-show-routes').checked = readShowRoutes();
+  }
   createMap();
 
   document.getElementById('map-message').textContent =
@@ -335,8 +345,10 @@ if (pageAllowed === false) {
   });
 
   // In parallel with the plants: if routes fail, the plants still show.
-  loadRoutes().catch(error => {
-    console.error('Routes could not be loaded:', error);
-    document.getElementById('map-route-note').textContent = 'Routes could not be loaded.';
-  });
+  if (ROUTES_ON_MAP) {
+    loadRoutes().catch(error => {
+      console.error('Routes could not be loaded:', error);
+      document.getElementById('map-route-note').textContent = 'Routes could not be loaded.';
+    });
+  }
 }

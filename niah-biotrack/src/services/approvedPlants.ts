@@ -1,15 +1,19 @@
 import { apiFetch } from '../api/client';
+import type { SignedThumbnail } from '../utils/thumbnailSources';
 
-// Other botanists' approved plants, for "All plants" on the Plants tab.
+// The plant list for the Plants tab and Home, from GET /api/plants
+// (backend/src/routes/plants.js): one request per page of 50, never one per plant.
 //
-// GET /api/plants (backend/src/routes/plants.js) is open to botanists and reads through the
-// signed-in user's Supabase client, so it returns what the plants table's row-level security
-// lets them read: their own plants and approved plants (the same rule as canReadPlant and the
-// sync rule that lets botanists visit approved plants). It sends id, species, tag, review
-// status and registration date only: never coordinates, never who registered it.
+// The route reads through the signed-in user's Supabase client, so it returns what the
+// plants table's row-level security lets them read: their own plants and approved plants.
+// It sends id, species, tag, review status and registration date only: never coordinates,
+// never who registered it. Each row also carries its picture:
+//   - other botanists' (and imported) public plants: photo_url, "/p/<tag>/photo";
+//   - the botanist's own plants: thumbnail_url, a short-lived signed link to the plant's main
+//     photo (or its first observation's), with thumbnail_key and thumbnail_expires_at.
 //
-// The phone keeps only the botanist's own plants, so these are loaded when the tab opens and
-// kept in memory. Offline, "All plants" shows the plants on the phone only.
+// The phone keeps only the botanist's own plants, so the others are loaded when the tab
+// opens and kept in memory. Offline, "All plants" shows the plants on the phone only.
 
 interface PlantListResponse {
   data: {
@@ -19,6 +23,10 @@ interface PlantListResponse {
     qr_code_value?: string | null;
     plant_status?: string | null;
     registered_at?: string | null;
+    photo_url?: string | null;
+    thumbnail_url?: string | null;
+    thumbnail_key?: string | null;
+    thumbnail_expires_at?: string | null;
   }[];
   pagination?: { page: number; page_size: number; total: number | null };
 }
@@ -28,15 +36,24 @@ export interface OtherApprovedPlant {
   speciesId: string | null;
   tagCode: string | null;
   registeredAt: string | null;
+  photoUrl: string | null;
+}
+
+export interface PlantList {
+  // Other botanists' approved plants.
+  others: OtherApprovedPlant[];
+  // Signed thumbnails of the botanist's own plants, by server id.
+  ownThumbnails: Record<string, SignedThumbnail>;
 }
 
 // The server sends 50 a page; stop after this many pages so a slow network can't hang the tab.
 const MAX_PAGES = 20;
 
-// Every approved plant the server lets this botanist read, except the ones in ownServerIds.
-// Anything not approved is left out here too, even if the server ever sent it.
-export async function fetchOtherApprovedPlants(ownServerIds: Set<string>): Promise<OtherApprovedPlant[]> {
-  const plants: OtherApprovedPlant[] = [];
+// Every plant the server lets this botanist read: the others' approved plants (anything not
+// approved is left out here too), and thumbnails for their own.
+export async function fetchPlantList(ownServerIds: Set<string>): Promise<PlantList> {
+  const others: OtherApprovedPlant[] = [];
+  const ownThumbnails: Record<string, SignedThumbnail> = {};
   let seen = 0;
   for (let page = 1; page <= MAX_PAGES; page++) {
     const response = await apiFetch<PlantListResponse>(`/api/plants?page=${page}`);
@@ -44,17 +61,30 @@ export async function fetchOtherApprovedPlants(ownServerIds: Set<string>): Promi
     seen += rows.length;
     for (const row of rows) {
       const serverId = row.plant_id || row.id;
-      if (!serverId || ownServerIds.has(serverId)) continue;
+      if (!serverId) continue;
+      // Only own plants get a signed thumbnail.
+      const own = ownServerIds.has(serverId) || typeof row.thumbnail_url === 'string';
+      if (own) {
+        if (typeof row.thumbnail_url === 'string' && typeof row.thumbnail_key === 'string') {
+          ownThumbnails[serverId] = {
+            url: row.thumbnail_url,
+            key: row.thumbnail_key,
+            expiresAt: typeof row.thumbnail_expires_at === 'string' ? row.thumbnail_expires_at : null,
+          };
+        }
+        continue;
+      }
       if (row.plant_status?.toLowerCase() !== 'approved') continue;
-      plants.push({
+      others.push({
         serverId,
         speciesId: row.species_id ?? null,
         tagCode: row.qr_code_value ?? null,
         registeredAt: row.registered_at ?? null,
+        photoUrl: typeof row.photo_url === 'string' ? row.photo_url : null,
       });
     }
     const total = response?.pagination?.total;
     if (rows.length === 0 || (typeof total === 'number' && seen >= total)) break;
   }
-  return plants;
+  return { others, ownThumbnails };
 }

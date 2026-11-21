@@ -29,6 +29,7 @@ import {
 import { savePhotoPermanently } from '../src/utils/photoStorage';
 import { useAuthRole } from '../src/context/AuthRoleContext';
 import { describeTagLookup, lookupTag } from '../src/services/tagLookup';
+import { isPhysicalTag } from '../src/utils/myTags';
 
 import FormScrollView from '../src/components/FormScrollView';
 import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
@@ -78,7 +79,7 @@ export default function AddObservationScreen() {
     if (!isVisitor) return;
 
     Alert.alert(
-      'Botanist Access Required',
+      'Botanist access required',
       'Visitor accounts are read-only. Logging observations requires staff credentials.',
       [
         {
@@ -182,8 +183,8 @@ export default function AddObservationScreen() {
       console.warn('Could not capture observation location:', error);
       setLocationMessage(
         error instanceof Error && error.message === 'GPS_TIMEOUT'
-          ? 'GPS took too long to respond. Tap Retry to acquire a GPS fix.'
-          : 'Could not get a GPS fix. Tap Retry to acquire a GPS fix.'
+          ? 'GPS took too long to respond. Tap Retry GPS to acquire a GPS fix.'
+          : 'Could not get a GPS fix. Tap Retry GPS to acquire a GPS fix.'
       );
       setLocationStatus('unavailable');
       return null;
@@ -215,8 +216,8 @@ export default function AddObservationScreen() {
     if (photos.length >= 4) {
       Toast.show({
         type: 'info',
-        text1: 'Maximum Limit Reached',
-        text2: 'You can upload a maximum of 4 photos per observation visit.',
+        text1: 'Maximum limit reached',
+        text2: 'You can upload a maximum of 4 photos per observation.',
       });
       return;
     }
@@ -228,8 +229,10 @@ export default function AddObservationScreen() {
 
     if (result.status === 'permission-denied') {
       Alert.alert(
-        'Permission Denied',
-        'Camera permission is required to capture field evidence.'
+        'Permission denied',
+        source === 'camera'
+          ? 'Camera permission is required to capture field evidence.'
+          : 'Photo library permission is required to choose field evidence.'
       );
       return;
     }
@@ -283,7 +286,7 @@ export default function AddObservationScreen() {
       if (!plantTag.trim() && !params.plantId) {
         Toast.show({
           type: 'error',
-          text1: 'Tag Required',
+          text1: 'Tag required',
           text2: 'Scan or input a plant tag identifier.',
         });
         return;
@@ -328,7 +331,7 @@ export default function AddObservationScreen() {
       Toast.show({
         type: 'error',
         text1: 'Plant not found',
-        text2: 'Open this plant from My Records and try again.',
+        text2: 'Open this plant from Plants and try again.',
       });
       return;
     }
@@ -337,7 +340,7 @@ export default function AddObservationScreen() {
     if (!visitLocation) {
       Toast.show({
         type: 'error',
-        text1: 'GPS Location Required',
+        text1: 'GPS location required',
         text2: 'Please acquire a GPS fix before saving this observation.',
       });
       return;
@@ -347,7 +350,7 @@ export default function AddObservationScreen() {
     if (photos.length === 0) {
       Toast.show({
         type: 'error',
-        text1: 'Evidence Photo Required',
+        text1: 'Evidence photo required',
         text2: 'Please capture at least 1 photo before saving this observation.',
       });
       return;
@@ -356,8 +359,8 @@ export default function AddObservationScreen() {
     if (photos.length > 4) {
       Toast.show({
         type: 'error',
-        text1: 'Photo Limit Exceeded',
-        text2: 'Maximum 4 photos allowed per visit.',
+        text1: 'Photo limit exceeded',
+        text2: 'Maximum 4 photos allowed per observation.',
       });
       return;
     }
@@ -409,7 +412,7 @@ export default function AddObservationScreen() {
           if (!result.ok) {
             Toast.show({
               type: 'info',
-              text1: 'Saved; submission is pending',
+              text1: 'Saved, not sent yet',
               text2: result.reason,
             });
           }
@@ -433,7 +436,7 @@ export default function AddObservationScreen() {
     } catch (error) {
       Toast.show({
         type: 'error',
-        text1: 'Save Failed',
+        text1: 'Save failed',
         text2:
           error instanceof Error
             ? error.message
@@ -466,7 +469,7 @@ export default function AddObservationScreen() {
         </TouchableOpacity>
 
         <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle}>Add Observation</Text>
+          <Text style={styles.headerTitle}>Add observation</Text>
           <Text style={styles.headerSub}>Step {currentStep} of 3</Text>
         </View>
 
@@ -491,7 +494,7 @@ export default function AddObservationScreen() {
                 step === currentStep && styles.stepTrackLabelActive,
               ]}
             >
-              {step === 1 ? 'Plant' : step === 2 ? 'Metrics' : 'Evidence'}
+              {step === 1 ? 'Plant' : step === 2 ? 'Measurements' : 'Evidence'}
             </Text>
           </View>
         ))}
@@ -509,7 +512,7 @@ export default function AddObservationScreen() {
             </View>
             <Text style={styles.plantInfo}>
               <Text style={styles.plantInfoLabel}>Tag: </Text>
-              {passedPlant.tagCode ?? 'No tag attached'}
+              {isPhysicalTag(passedPlant.tagCode) ? passedPlant.tagCode : 'No tag attached'}
             </Text>
             <Text style={styles.plantInfo}>
               <Text style={styles.plantInfoLabel}>Location landmark: </Text>
@@ -670,7 +673,7 @@ export default function AddObservationScreen() {
 
             {/* Life Stage */}
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>Life Stage</Text>
+              <Text style={styles.cardTitle}>Life stage</Text>
               <View style={styles.chipGrid}>
                 {LIFE_STAGES.map((stage) => {
                   const selected = lifeStage === stage;
@@ -696,7 +699,7 @@ export default function AddObservationScreen() {
 
             {/* Health Status */}
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>Health Status</Text>
+              <Text style={styles.cardTitle}>Health status</Text>
               <View style={styles.chipGrid}>
                 {HEALTH_STATUSES.map((item) => {
                   const selected = healthStatus === item.label;
@@ -733,7 +736,7 @@ export default function AddObservationScreen() {
             <View style={styles.card}>
               <View style={styles.cardHeader}>
                 <Text style={styles.cardIcon}>📍</Text>
-                <Text style={styles.cardTitle}>Visit GPS Location *</Text>
+                <Text style={styles.cardTitle}>Observation GPS Location *</Text>
               </View>
               {locationStatus === 'capturing' ? (
                 <View style={styles.locationLoadingRow}>
@@ -809,7 +812,7 @@ export default function AddObservationScreen() {
                       <Text style={styles.cameraIcon}>📸</Text>
                       <Text style={styles.addPhotoText}>Take Photo</Text>
                       <Text style={styles.addPhotoSlotHint}>
-                        {4 - photos.length} slot(s) left
+                        {4 - photos.length} {4 - photos.length === 1 ? 'slot' : 'slots'} left
                       </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
@@ -820,7 +823,7 @@ export default function AddObservationScreen() {
                       <Text style={styles.cameraIcon}>🖼️</Text>
                       <Text style={styles.addPhotoText}>Choose from Gallery</Text>
                       <Text style={styles.addPhotoSlotHint}>
-                        {4 - photos.length} slot(s) left
+                        {4 - photos.length} {4 - photos.length === 1 ? 'slot' : 'slots'} left
                       </Text>
                     </TouchableOpacity>
                   </>

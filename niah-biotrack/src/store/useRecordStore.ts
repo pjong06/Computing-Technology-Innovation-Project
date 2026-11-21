@@ -274,6 +274,13 @@ export interface PlantRecord {
    */
   otherBotanist?: boolean;
 
+  /*
+   * For a plant this botanist didn't register (another botanist's or an imported one) that
+   * is on the public QR page: the address of its public stripped photo ("/p/<tag>/photo",
+   * from the tag lookup). Shown when the phone has no photo of the plant itself.
+   */
+  publicPhotoUrl?: string | null;
+
   tagCode:
     | string
     | null;
@@ -840,7 +847,7 @@ function buildRegistrationVisit(
 
     notes:
       record.description?.trim() ||
-      'Registration visit (added on submit).',
+      'Registration observation (added on submit).',
 
     syncStatus:
       SyncStatus.NOT_UPLOADED,
@@ -1526,7 +1533,7 @@ export const useRecordStore =
                   ok: false,
 
                   reason:
-                    'Record not found after synchronization',
+                    'Record not found after syncing',
                 };
               }
 
@@ -1619,7 +1626,7 @@ export const useRecordStore =
                   ok: false,
 
                   reason:
-                    refreshed.syncError ?? run.error ?? 'Some metadata operations are still waiting to upload.',
+                    refreshed.syncError ?? run.error ?? 'Some changes are still waiting to upload.',
                   retryable: run.remaining,
 
                   photosUploaded,
@@ -2284,7 +2291,7 @@ export const useRecordStore =
                   ok: false,
 
                   reason:
-                    'Record not found after final synchronization.',
+                    'Record not found after the final sync.',
 
                   photosUploaded,
 
@@ -3195,7 +3202,7 @@ export const useRecordStore =
                 ok: false,
 
                 reason:
-                  'This record is currently synchronizing. Try deleting it again after the upload finishes.',
+                  'This record is currently syncing. Try deleting it again after the upload finishes.',
               };
             }
 
@@ -3339,7 +3346,7 @@ export const useRecordStore =
                 reason:
                   `This tag is already attached to ${
                     existing.scientificName ||
-                    'an identification-pending record'
+                    'a plant whose species isn\'t confirmed yet'
                   }`,
               };
             }

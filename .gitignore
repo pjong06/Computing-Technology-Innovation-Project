@@ -3,5 +3,16 @@
 # Species photo licence check: working files (exports, review sheet, API cache)
 scripts/species-photos/*.csv
 scripts/species-photos/.cache/
+# Plant sighting photos: report and iNaturalist API cache
+scripts/inat-plant-photos/*.csv
+scripts/inat-plant-photos/.cache/
 # The review page's download (it lands in Downloads, but may be copied here)
 species-photo-review-by-species-REVIEWED.csv
+# Plant photo metadata cleanup report
+scripts/photo-metadata/*.csv
+# Plant tag report
+scripts/plant-tags/*.csv
+scripts/species-descriptions/*.csv
+# Species text cleaning and demo plant details reports
+scripts/clean-species-text/*.csv
+scripts/demo-plant-details/*.csv

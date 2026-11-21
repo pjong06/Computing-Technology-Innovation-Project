@@ -8,86 +8,54 @@ import {
 } from 'react-native';
 import { WebView, type WebViewProps } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
-import type { RoutePoint, RouteWaypoint } from '../store/useRecordStore';
+import type { RoutePoint } from '../store/useRecordStore';
 
 const NativeWebView = WebView as unknown as React.ComponentType<
   WebViewProps & { ref?: React.Ref<WebView> }
 >;
 
+export interface MapTargetPoint {
+  latitude: number;
+  longitude: number;
+  title: string;
+  subtitle?: string;
+}
+
 interface TransectMapViewProps {
-  breadcrumbs: RoutePoint[];
   currentPoint: RoutePoint | null;
-  waypoints: RouteWaypoint[];
-  startDescription?: string;
-  endDescription?: string;
-  isFinished?: boolean;
+  targetPoint: MapTargetPoint | null;
   height?: number;
 }
 
 export default function TransectMapView({
-  breadcrumbs,
   currentPoint,
-  waypoints,
-  startDescription = '',
-  endDescription = '',
-  isFinished = false,
-  height = 240,
+  targetPoint,
+  height = 270,
 }: TransectMapViewProps) {
   const webViewRef = useRef<WebView | null>(null);
   const [mapStyle, setMapStyle] = useState<'street' | 'satellite'>('street');
   const [mapReady, setMapReady] = useState(false);
 
-  const payload = useMemo(() => {
-    const pts =
-      breadcrumbs.length > 0
-        ? breadcrumbs
-        : currentPoint
-        ? [currentPoint]
-        : [];
-
-    const start = pts[0] ?? null;
-    const end = isFinished
-      ? pts[pts.length - 1] ?? currentPoint
-      : currentPoint ?? pts[pts.length - 1] ?? null;
-
-    return {
-      points: pts.map((p) => [p.latitude, p.longitude]),
-      start: start
+  const payload = useMemo(
+    () => ({
+      user: currentPoint
         ? {
-            lat: start.latitude,
-            lng: start.longitude,
-            description: startDescription.trim() || 'Transect starting point',
+            lat: currentPoint.latitude,
+            lng: currentPoint.longitude,
           }
         : null,
-      end: end
+      target: targetPoint
         ? {
-            lat: end.latitude,
-            lng: end.longitude,
-            description:
-              endDescription.trim() ||
-              (isFinished ? 'Transect end point' : 'Current live GPS position'),
+            lat: targetPoint.latitude,
+            lng: targetPoint.longitude,
+            title: targetPoint.title,
+            subtitle: targetPoint.subtitle || 'Saved plant location',
           }
         : null,
-      waypoints: waypoints.map((wp) => ({
-        number: wp.number,
-        label: wp.label,
-        description: wp.description?.trim() || '',
-        lat: wp.latitude,
-        lng: wp.longitude,
-        timeString: wp.timeString,
-      })),
-      isFinished,
       mapStyle,
-    };
-  }, [
-    breadcrumbs,
-    currentPoint,
-    waypoints,
-    startDescription,
-    endDescription,
-    isFinished,
-    mapStyle,
-  ]);
+    }),
+    [currentPoint, targetPoint, mapStyle]
+  );
 
   const html = useMemo(
     () => `
@@ -107,25 +75,27 @@ export default function TransectMapView({
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
     .leaflet-control-attribution { display: none; }
-    .pin {
+    .pin-target {
       display: flex;
       align-items: center;
       justify-content: center;
       border-radius: 50%;
+      background: #DC2626;
       color: #fff;
       font-weight: 800;
-      font-size: 11px;
+      font-size: 12px;
+      width: 30px;
+      height: 30px;
       border: 2.5px solid #fff;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+      box-shadow: 0 0 0 6px rgba(220,38,38,0.22), 0 2px 6px rgba(0,0,0,0.35);
     }
-    .pin-start { background: #16A34A; width: 26px; height: 26px; }
-    .pin-end { background: #DC2626; width: 26px; height: 26px; }
-    .pin-wp { background: #D97706; width: 24px; height: 24px; }
     .pin-live {
+      border-radius: 50%;
       background: #2563EB;
       width: 18px;
       height: 18px;
-      box-shadow: 0 0 0 6px rgba(37,99,235,0.28);
+      border: 2.5px solid #fff;
+      box-shadow: 0 0 0 7px rgba(37,99,235,0.28);
     }
     .popup-title { font-weight: 800; font-size: 13px; color: #1E2B22; margin-bottom: 3px; }
     .popup-desc { font-size: 12px; color: #374151; margin-bottom: 4px; }
@@ -146,7 +116,12 @@ export default function TransectMapView({
     });
 
     var activeLayer = streetLayer.addTo(map);
-    var trailLine = L.polyline([], { color: '#16A34A', weight: 4.5, opacity: 0.9 }).addTo(map);
+    var guideLine = L.polyline([], {
+      color: '#2563EB',
+      weight: 3.5,
+      dashArray: '8, 8',
+      opacity: 0.9
+    }).addTo(map);
     var markersLayer = L.layerGroup().addTo(map);
     var userInteracted = false;
 
@@ -166,7 +141,7 @@ export default function TransectMapView({
       if (points.length === 1) {
         map.setView(points[0], 18);
       } else {
-        map.fitBounds(L.latLngBounds(points), { padding: [36, 36], maxZoom: 19 });
+        map.fitBounds(L.latLngBounds(points), { padding: [44, 44], maxZoom: 19 });
       }
     }
 
@@ -175,7 +150,7 @@ export default function TransectMapView({
       fitAll(window._lastAllCoords || []);
     };
 
-    window.updateRouteData = function(data) {
+    window.updateNavData = function(data) {
       if (data.mapStyle === 'satellite' && activeLayer !== satelliteLayer) {
         map.removeLayer(activeLayer);
         activeLayer = satelliteLayer.addTo(map);
@@ -184,63 +159,47 @@ export default function TransectMapView({
         activeLayer = streetLayer.addTo(map);
       }
 
-      trailLine.setLatLngs(data.points || []);
       markersLayer.clearLayers();
+      var allCoords = [];
 
-      var allCoords = (data.points || []).slice();
+      if (data.user && data.target) {
+        guideLine.setLatLngs([
+          [data.user.lat, data.user.lng],
+          [data.target.lat, data.target.lng]
+        ]);
+      } else {
+        guideLine.setLatLngs([]);
+      }
 
-      if (data.start) {
-        allCoords.push([data.start.lat, data.start.lng]);
-        var startIcon = L.divIcon({
+      if (data.target) {
+        allCoords.push([data.target.lat, data.target.lng]);
+        var targetIcon = L.divIcon({
           className: '',
-          html: '<div class="pin pin-start">S</div>',
-          iconSize: [26, 26],
-          iconAnchor: [13, 13]
+          html: '<div class="pin-target">P</div>',
+          iconSize: [30, 30],
+          iconAnchor: [15, 15]
         });
-        L.marker([data.start.lat, data.start.lng], { icon: startIcon })
+        L.marker([data.target.lat, data.target.lng], { icon: targetIcon })
           .bindPopup(
-            '<div class="popup-title">Start Point</div>' +
-            '<div class="popup-desc">' + esc(data.start.description) + '</div>' +
-            '<div class="popup-coords">' + data.start.lat.toFixed(6) + ', ' + data.start.lng.toFixed(6) + '</div>'
+            '<div class="popup-title">' + esc(data.target.title) + '</div>' +
+            '<div class="popup-desc">' + esc(data.target.subtitle) + '</div>' +
+            '<div class="popup-coords">' + data.target.lat.toFixed(6) + ', ' + data.target.lng.toFixed(6) + '</div>'
           )
           .addTo(markersLayer);
       }
 
-      (data.waypoints || []).forEach(function(wp) {
-        allCoords.push([wp.lat, wp.lng]);
-        var wpIcon = L.divIcon({
+      if (data.user) {
+        allCoords.push([data.user.lat, data.user.lng]);
+        var userIcon = L.divIcon({
           className: '',
-          html: '<div class="pin pin-wp">' + wp.number + '</div>',
-          iconSize: [24, 24],
-          iconAnchor: [12, 12]
+          html: '<div class="pin-live"></div>',
+          iconSize: [18, 18],
+          iconAnchor: [9, 9]
         });
-        var descHtml = wp.description
-          ? '<div class="popup-desc">' + esc(wp.description) + '</div>'
-          : '';
-        L.marker([wp.lat, wp.lng], { icon: wpIcon })
+        L.marker([data.user.lat, data.user.lng], { icon: userIcon })
           .bindPopup(
-            '<div class="popup-title">#' + wp.number + ' · ' + esc(wp.label) + '</div>' +
-            descHtml +
-            '<div class="popup-coords">' + wp.lat.toFixed(6) + ', ' + wp.lng.toFixed(6) + ' · ' + esc(wp.timeString) + '</div>'
-          )
-          .addTo(markersLayer);
-      });
-
-      if (data.end) {
-        allCoords.push([data.end.lat, data.end.lng]);
-        var endIcon = L.divIcon({
-          className: '',
-          html: data.isFinished
-            ? '<div class="pin pin-end">E</div>'
-            : '<div class="pin pin-live"></div>',
-          iconSize: data.isFinished ? [26, 26] : [18, 18],
-          iconAnchor: data.isFinished ? [13, 13] : [9, 9]
-        });
-        L.marker([data.end.lat, data.end.lng], { icon: endIcon })
-          .bindPopup(
-            '<div class="popup-title">' + (data.isFinished ? 'End Point' : 'Current Position') + '</div>' +
-            '<div class="popup-desc">' + esc(data.end.description) + '</div>' +
-            '<div class="popup-coords">' + data.end.lat.toFixed(6) + ', ' + data.end.lng.toFixed(6) + '</div>'
+            '<div class="popup-title">Your Phone</div>' +
+            '<div class="popup-coords">' + data.user.lat.toFixed(6) + ', ' + data.user.lng.toFixed(6) + '</div>'
           )
           .addTo(markersLayer);
       }
@@ -258,7 +217,7 @@ export default function TransectMapView({
   );
 
   const syncMap = () => {
-    const js = `window.updateRouteData && window.updateRouteData(${JSON.stringify(payload)}); true;`;
+    const js = `window.updateNavData && window.updateNavData(${JSON.stringify(payload)}); true;`;
     webViewRef.current?.injectJavaScript(js);
   };
 
@@ -272,14 +231,14 @@ export default function TransectMapView({
     webViewRef.current?.injectJavaScript('window.recenterMap && window.recenterMap(); true;');
   };
 
-  const hasCoords = breadcrumbs.length > 0 || currentPoint !== null;
+  const hasCoords = currentPoint !== null || targetPoint !== null;
 
   return (
     <View style={[styles.container, { height }]}>
       {!hasCoords ? (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="small" color="#213B2A" />
-          <Text style={styles.loadingText}>Waiting for first GPS lock...</Text>
+          <Text style={styles.loadingText}>Locating phone GPS...</Text>
         </View>
       ) : (
         <>
@@ -297,7 +256,6 @@ export default function TransectMapView({
             }}
           />
 
-          {/* Map / Satellite Layer Toggle */}
           <View style={styles.layerToggle}>
             <TouchableOpacity
               style={[
@@ -333,7 +291,6 @@ export default function TransectMapView({
             </TouchableOpacity>
           </View>
 
-          {/* Recenter Button */}
           <TouchableOpacity
             style={styles.recenterBtn}
             onPress={handleRecenter}

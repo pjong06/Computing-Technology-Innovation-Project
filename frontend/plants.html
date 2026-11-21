@@ -3,12 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Plant catalogue - Niah Biotrack</title>
+<title>Plants - Niah Biotrack</title>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="icon" href="images/logo.png">
 <link rel="stylesheet" href="css/style.css">
 <style>
-main.wide { max-width: 1500px; }
 .plant-filters { align-items: center; }
 .plant-filters select { min-width: 150px; }
 .plant-list { display: grid; gap: 12px; }
@@ -24,11 +23,9 @@ main.wide { max-width: 1500px; }
 .plant-row:hover { border-color: var(--sage); }
 .plant-photo-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; }
 .plant-thumb { width: 112px; height: 82px; object-fit: cover; border-radius: 10px; background: var(--mint); }
-.species-photo-label { color: var(--mute); font-size: 10px; line-height: 1.2; }
 .plant-title { margin: 0 0 4px; font-size: 17px; }
 .plant-sub, .plant-meta { color: var(--mute); font-size: 13px; overflow-wrap: anywhere; }
 .plant-meta { margin-top: 3px; }
-.source-badge { display: inline-block; margin-top: 6px; padding: 3px 7px; border-radius: 999px; background: var(--mint); color: var(--ink); font-size: 11px; font-weight: 700; }
 .pager { display: flex; justify-content: space-between; align-items: center; margin-top: 18px; }
 .pager-label { color: var(--mute); font-size: 13px; }
 .plant-state { padding: 18px; }
@@ -50,8 +47,8 @@ main.wide { max-width: 1500px; }
 <nav id="menu"></nav>
 <main class="wide">
 <section class="page on">
-  <h1>Plant <span>catalogue</span></h1>
-  <p class="lead">Every registered plant with its tag, location, status and visit history, for conservation officers to search and check.</p>
+  <h1>Plants</h1>
+  <p class="lead">Every registered plant with its tag, location, status and observations, for conservation officers to search and check.</p>
   <form class="bar plant-filters" id="plant-filters">
     <input id="plant-search" class="grow" type="search" placeholder="Search tag, species or location"
       aria-label="Search by tag code, species name or location">
@@ -72,12 +69,7 @@ main.wide { max-width: 1500px; }
       <option value="NA">Not assessed</option>
     </select>
     <select id="registered-by-filter" aria-label="Filter by registered by">
-      <option value="">All registered by</option>
-    </select>
-    <select id="source-filter" aria-label="Filter by source">
-      <option value="">Source: All</option>
-      <option value="field">Field</option>
-      <option value="inaturalist">iNaturalist</option>
+      <option value="">All botanists</option>
     </select>
     <select id="plant-sort" aria-label="Sort order">
       <option value="newest">Newest first</option>

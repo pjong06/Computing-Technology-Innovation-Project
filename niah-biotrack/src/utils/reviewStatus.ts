@@ -12,7 +12,7 @@ import { rowStatus, type NeedsActionReason, type RecordStatusGroup } from './rec
 
 // Label and colours for each review status, shared by every screen.
 export const REVIEW_BADGE: Record<ReviewStatus, { label: string; bg: string; text: string }> = {
-  [ReviewStatus.DRAFT]: { label: 'Draft', bg: '#EEF1EF', text: '#4A5A50' },
+  [ReviewStatus.DRAFT]: { label: 'Not submitted yet', bg: '#EEF1EF', text: '#4A5A50' },
   [ReviewStatus.PENDING]: { label: 'Waiting for review', bg: '#E3ECF8', text: '#1F4E8C' },
   [ReviewStatus.APPROVED]: { label: 'Approved', bg: '#E4F2E7', text: '#215A36' },
   [ReviewStatus.REJECTED]: { label: 'Needs changes', bg: '#FDE2E2', text: '#9B1C1C' },
@@ -50,7 +50,7 @@ function outcomeBadge(outcome: ReviewOutcome, pendingLabel: string): { label: st
 
 // The badge for an uploaded plant registered on this phone: the status of its first visit
 // (registering a plant and its first visit are one submission), plus a small note when the
-// plant is approved but revisits are waiting ("1 visit waiting for review").
+// plant is approved but revisits are waiting ("1 observation waiting for review").
 // Used by Records and Home, so they always agree.
 export function plantReviewBadge<T extends DatedVisit>(
   record: { createdAtIso?: string; reviewStatus?: string | null; observations: T[] },

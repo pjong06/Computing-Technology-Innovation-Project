@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { randomUUID } from 'expo-crypto';
 import { ApiError } from '../api/client';
-import { createProposal, fetchMyProposals, type ProposalPayload, type ServerProposal } from '../api/speciesProposals';
+import { createProposal, fetchMyProposals, resubmitProposal, type ProposalPayload, type ServerProposal } from '../api/speciesProposals';
 import {
   applySyncOperationResult,
   claimOutboxOperations,
@@ -35,6 +35,9 @@ export interface SpeciesProposal {
   syncStatus: SyncStatus; // Not uploaded / Upload failed / Uploaded (same as records)
   review: ProposalReview;
   reviewComment?: string | null; // officer's reason when rejected
+  // Hidden from Home's Recent activity by the botanist ("Dismiss" on a request that was not
+  // added). Kept on this phone only; resending it shows it again.
+  dismissed?: boolean;
   // TODO(photos): proposals have no photos yet. Add them once species photo upload
   // is open to botanists (POST /species/:id/photos is officer-only today).
 }
@@ -84,7 +87,7 @@ async function readProposals(): Promise<SpeciesProposal[]> {
   const legacy = await AsyncStorage.getItem(LEGACY_KEY);
   if (legacy !== null) {
     const { state } = JSON.parse(legacy) as { state?: { proposals?: SpeciesProposal[] } };
-    if (!Array.isArray(state?.proposals)) throw new Error('Could not read saved species proposals.');
+    if (!Array.isArray(state?.proposals)) throw new Error('Could not read saved species requests.');
     const existing = new Set((await getLocalEntities('proposal')).map((row) => row.clientRecordId));
     for (const proposal of state.proposals) {
       if (existing.has(proposal.id)) continue;
@@ -110,14 +113,14 @@ async function readProposals(): Promise<SpeciesProposal[]> {
 async function uploadProposal(operation: OutboxOperation, proposal: SpeciesProposal): Promise<ProposalSyncResult> {
   if (await isSyncOffline()) return { ok: false, reason: 'Waiting for an internet connection.' };
   const [claimed] = await claimOutboxOperations([operation.operationId]);
-  if (!claimed) return { ok: false, reason: 'No upload is queued for this proposal.' };
+  if (!claimed) return { ok: false, reason: 'No upload is queued for this species request.' };
   let saved: ServerProposal;
   try {
     saved = await createProposal(claimed.payload as unknown as ProposalPayload);
   } catch (error) {
     const status = error instanceof ApiError ? error.status : 0;
     const retryable = status === 0 || status === 408 || status === 429 || status >= 500;
-    const reason = error instanceof ApiError ? error.message : 'Could not upload the proposal. Try again later.';
+    const reason = error instanceof ApiError ? error.message : 'Could not upload the species request. Try again later.';
     await applySyncOperationResult({
       operation_id: operation.operationId,
       status: retryable ? 'retry' : 'failed',
@@ -152,6 +155,13 @@ interface ProposalState {
     data: Pick<SpeciesProposal, 'scientificName' | 'commonName' | 'localName' | 'family' | 'description' | 'habitat'>
   ) => Promise<SpeciesProposal>;
   removeProposal: (id: string) => Promise<void>;
+  // A request the officer did not add: send it again with changes (online only).
+  resubmitProposal: (
+    id: string,
+    data: Pick<SpeciesProposal, 'scientificName' | 'commonName' | 'localName' | 'family' | 'description' | 'habitat'>
+  ) => Promise<ProposalSyncResult>;
+  // Hides a request that was not added from Recent activity (on this phone).
+  dismissProposal: (id: string) => Promise<void>;
   syncProposal: (id: string) => Promise<ProposalSyncResult>;
   syncAllProposals: () => Promise<ProposalSyncAllResult>;
   refreshProposalStatuses: () => Promise<void>;
@@ -195,21 +205,66 @@ export const useProposalStore = create<ProposalState>()((set) => {
         await reload();
       }),
 
+      // Sends a request that was not added again. The server sets it back to waiting for
+      // review; the phone keeps the new details and shows it again. Never throws.
+      resubmitProposal: (id, data) => serialize<ProposalSyncResult>(async () => {
+        const proposals = await reload();
+        const proposal = proposals.find((item) => item.id === id);
+        if (!proposal || !proposal.serverId) return { ok: false, reason: 'Species request not found.' };
+        if (proposal.review !== 'rejected') return { ok: false, reason: 'Only a request that was not added can be sent again.' };
+        if (await isSyncOffline()) return { ok: false, reason: 'Connect to the internet to send it again.' };
+        let saved: ServerProposal;
+        try {
+          saved = await resubmitProposal(proposal.serverId, {
+            scientific_name: data.scientificName,
+            common_name: data.commonName,
+            local_name: data.localName,
+            family: data.family,
+            description: data.description,
+            habitat: data.habitat,
+          });
+        } catch (error) {
+          return { ok: false, reason: errorMessage(error, 'Could not send the request again. Try again later.') };
+        }
+        await saveProposal({
+          ...proposal,
+          ...data,
+          scientificName: saved.scientific_name,
+          syncStatus: SyncStatus.UPLOADED,
+          review: reviewFromServer(saved.verification_status),
+          reviewComment: saved.review_comment,
+          dismissed: false,
+        }, false);
+        await reload();
+        return { ok: true };
+      }).catch((error: unknown) => ({
+        ok: false,
+        reason: errorMessage(error, 'Could not read or update the request on this phone.'),
+      })),
+
+      dismissProposal: (id) => serialize(async () => {
+        const proposals = await reload();
+        const proposal = proposals.find((item) => item.id === id);
+        if (!proposal || proposal.review !== 'rejected') return;
+        await saveProposal({ ...proposal, dismissed: true }, false);
+        await reload();
+      }),
+
       // Uploads one proposal. Never throws: the screen gets a message it can show.
       syncProposal: (id) => serialize<ProposalSyncResult>(async () => {
         const proposals = await reload();
         const proposal = proposals.find((p) => p.id === id);
-        if (!proposal) return { ok: false, reason: 'Proposal not found' };
+        if (!proposal) return { ok: false, reason: 'Species request not found.' };
         if (proposal.syncStatus === SyncStatus.UPLOADED) return { ok: true };
         if (proposal.syncStatus === SyncStatus.FAILED) await saveProposal(proposal, true);
         const [operation] = await getReadyOutboxOperations(1, 'proposals', id);
-        if (!operation) return { ok: false, reason: 'No upload is queued for this proposal.' };
+        if (!operation) return { ok: false, reason: 'No upload is queued for this species request.' };
         const result = await uploadProposal(operation, proposal);
         await reload();
         return result;
       }).catch((error: unknown) => ({
         ok: false,
-        reason: errorMessage(error, 'Could not read or update the proposal on this phone.'),
+        reason: errorMessage(error, 'Could not read or update the species request on this phone.'),
       })),
 
       // One at a time, like syncAll for records.
@@ -236,7 +291,7 @@ export const useProposalStore = create<ProposalState>()((set) => {
         uploaded: 0,
         failed: 1,
         retryable: false,
-        reasons: [errorMessage(error, 'Could not read or update saved proposals on this phone.')],
+        reasons: [errorMessage(error, 'Could not read or update saved species requests on this phone.')],
       })),
 
       // Reads the officer's decisions from the server. Quietly does nothing offline:
@@ -270,6 +325,8 @@ export const useProposalStore = create<ProposalState>()((set) => {
             syncStatus: SyncStatus.UPLOADED,
             review: reviewFromServer(server.verification_status),
             reviewComment: server.review_comment,
+            // A dismissed request stays hidden while it is still "not added".
+            dismissed: known?.dismissed === true && server.verification_status === 'rejected',
           }, false);
         }
         await reload();

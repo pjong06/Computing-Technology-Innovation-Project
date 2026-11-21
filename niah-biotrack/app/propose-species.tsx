@@ -11,7 +11,7 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import Toast from 'react-native-toast-message';
 import FormScrollView from '../src/components/FormScrollView';
 import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
@@ -40,17 +40,20 @@ function findSimilarSpecies(species: Species[], scientific: string, common: stri
     .slice(0, MAX_MATCHES);
 }
 
-// Botanists can only PROPOSE a species. It's saved on the phone, uploaded as "pending",
-// and only appears in the species list and New Record picker after an officer approves it.
+// Botanists can only REQUEST a new species. It's saved on the phone, uploaded as "pending",
+// and only appears in the species list and New Record picker after an officer adds it.
+// Opened with ?editId=<request id> for a request the officer did not add: the form is
+// prefilled, and sending it again sets it back to waiting for review.
 export default function ProposeSpeciesScreen() {
   const router = useRouter();
+  const { editId } = useLocalSearchParams<{ editId?: string }>();
   const { role } = useAuthRole();
   const canPropose = role === 'botanist';
 
   // Only botanists can propose; everyone else is sent back (the server would refuse anyway).
   useEffect(() => {
     if (!canPropose) {
-      Alert.alert('Botanist Access Required', 'Only botanists can propose a new species.', [
+      Alert.alert('Botanist Access Required', 'Only botanists can request a new species.', [
         { text: 'OK', onPress: () => router.back() },
       ]);
     }
@@ -60,6 +63,9 @@ export default function ProposeSpeciesScreen() {
   const proposals = useProposalStore((state) => state.proposals);
   const addProposal = useProposalStore((state) => state.addProposal);
   const syncProposal = useProposalStore((state) => state.syncProposal);
+  const resubmitProposal = useProposalStore((state) => state.resubmitProposal);
+  // The request being edited and sent again (only one the officer did not add).
+  const editing = editId ? proposals.find((p) => p.id === editId && p.review === 'rejected') ?? null : null;
 
   const [scientificName, setScientificName] = useState('');
   const [commonName, setCommonName] = useState('');
@@ -71,6 +77,18 @@ export default function ProposeSpeciesScreen() {
   // Similar approved species found on the last Save; the botanist confirms to continue.
   const [similar, setSimilar] = useState<Species[] | null>(null);
   const [saving, setSaving] = useState(false);
+
+  const [prefilled, setPrefilled] = useState(false);
+  useEffect(() => {
+    if (!editing || prefilled) return;
+    setScientificName(editing.scientificName);
+    setCommonName(editing.commonName ?? '');
+    setLocalName(editing.localName ?? '');
+    setFamily(editing.family ?? '');
+    setDescription(editing.description ?? '');
+    setHabitat(editing.habitat ?? '');
+    setPrefilled(true);
+  }, [editing, prefilled]);
 
   // Any edit means the similar-species check has to run again.
   const edit = (setter: (value: string) => void) => (value: string) => {
@@ -88,11 +106,11 @@ export default function ProposeSpeciesScreen() {
     // An exact name match can never be accepted by the server, so stop here.
     const exact = approvedSpecies.find((s) => normalise(s.scientific_name) === normalise(name));
     if (exact) {
-      setError(`${exact.scientific_name} is already in the approved species list. Choose it in New Record instead.`);
+      setError(`${exact.scientific_name} is already in the approved species list. Choose it in Register plant instead.`);
       return;
     }
-    if (proposals.some((p) => normalise(p.scientificName) === normalise(name) && p.review !== 'rejected')) {
-      setError('You have already proposed this species.');
+    if (proposals.some((p) => p.id !== editing?.id && normalise(p.scientificName) === normalise(name) && p.review !== 'rejected')) {
+      setError('You have already requested this species.');
       return;
     }
     if (!confirmedNotDuplicate) {
@@ -104,6 +122,26 @@ export default function ProposeSpeciesScreen() {
     }
 
     setSaving(true);
+    const details = {
+      scientificName: name,
+      commonName: commonName.trim() || undefined,
+      localName: localName.trim() || undefined,
+      family: family.trim() || undefined,
+      description: description.trim() || undefined,
+      habitat: habitat.trim() || undefined,
+    };
+    if (editing) {
+      // Sent again straight away (needs a connection); it goes back to waiting for review.
+      const resent = await resubmitProposal(editing.id, details);
+      setSaving(false);
+      if (!resent.ok) {
+        setError(resent.reason);
+        return;
+      }
+      Toast.show({ type: 'success', text1: 'Species request sent again', text2: 'Waiting for review by an officer.', position: 'bottom' });
+      router.back();
+      return;
+    }
     const proposal = await addProposal({
       scientificName: name,
       commonName: commonName.trim() || undefined,
@@ -114,7 +152,7 @@ export default function ProposeSpeciesScreen() {
     }).catch(() => null);
     if (!proposal) {
       setSaving(false);
-      setError('Could not save the proposal on this phone. Try again.');
+      setError('Could not save the request on this phone. Try again.');
       return;
     }
     // Try to send it now; if there's no signal it stays saved and goes up later.
@@ -123,11 +161,11 @@ export default function ProposeSpeciesScreen() {
 
     Toast.show(
       result.ok
-        ? { type: 'success', text1: 'Species proposed', text2: 'Pending approval by an officer.', position: 'bottom' }
+        ? { type: 'success', text1: 'Species request sent', text2: 'Waiting for review by an officer.', position: 'bottom' }
         : {
             type: 'error',
             text1: 'Saved, not uploaded yet',
-            text2: `${result.reason} Use Retry under My proposals.`,
+            text2: `${result.reason} Use Retry upload in Recent activity on Home.`,
             position: 'bottom',
           }
     );
@@ -142,14 +180,17 @@ export default function ProposeSpeciesScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.navSide}>
           <Text style={styles.backChevron}>‹</Text>
         </TouchableOpacity>
-        <Text style={styles.navTitle}>Propose new species</Text>
+        <Text style={styles.navTitle}>{editing ? 'Edit species request' : 'Request a new species'}</Text>
         <View style={styles.navSide} />
       </View>
 
       <FormScrollView contentContainerStyle={styles.content}>
+        {editing?.reviewComment ? (
+          <Text style={styles.errorText}>Officer's reason: {editing.reviewComment}</Text>
+        ) : null}
         <Text style={styles.intro}>
           Only for a species that isn't in the approved list. An officer will review it; until then it
-          won't appear in the species list or in New Record.
+          won't appear in the species list or in Register plant.
         </Text>
 
         <Text style={styles.fieldLabel}>Scientific name *</Text>
@@ -213,14 +254,14 @@ export default function ProposeSpeciesScreen() {
               </Text>
             ))}
             <TouchableOpacity style={styles.secondaryBtn} onPress={() => void save(true)} disabled={saving}>
-              <Text style={styles.secondaryBtnText}>It's different — propose anyway</Text>
+              <Text style={styles.secondaryBtnText}>It's different — send anyway</Text>
             </TouchableOpacity>
           </View>
         )}
 
         {!similar && (
           <TouchableOpacity style={[styles.saveBtn, saving && styles.disabled]} onPress={() => void save(false)} disabled={saving}>
-            {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.saveBtnText}>Submit proposal</Text>}
+            {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.saveBtnText}>{editing ? 'Send again' : 'Send request'}</Text>}
           </TouchableOpacity>
         )}
       </FormScrollView>
