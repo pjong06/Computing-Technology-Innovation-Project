@@ -13,7 +13,9 @@ router.use((_req, res, next) => {
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PAGE_SIZE_MAX = 50;
 const RELATED_PAGE_SIZE = 1000;
-const PHOTO_URL_TTL_SECONDS = 60;
+// Long enough for a list the officer scrolls through: thumbnails load lazily as they come
+// into view, and a 60-second link had often expired by then (the placeholder showed).
+const PHOTO_URL_TTL_SECONDS = 600;
 
 const PLANT_COLUMNS =
     "id, qr_code_value, species_id, location_description, plant_status, " +
@@ -255,6 +257,12 @@ router.get("/", async (req, res) => {
     const conservationStatus = oneQueryValue(req.query, "conservation_status");
     const registeredBy = oneQueryValue(req.query, "registered_by");
     const source = oneQueryValue(req.query, "source");
+    // Newest first unless ?sort=oldest.
+    const sort = oneQueryValue(req.query, "sort");
+    if (!["", "newest", "oldest"].includes(sort)) {
+        return res.status(400).json({ message: "sort must be newest or oldest" });
+    }
+    const oldestFirst = sort === "oldest";
     if (search === null || search.length > 100 || hasUnsafeFilterCharacter(search)) {
         return res.status(400).json({ message: "Invalid search" });
     }
@@ -322,8 +330,8 @@ router.get("/", async (req, res) => {
         }
 
         const { data: plantRows, error, count } = await query
-            .order("registered_at", { ascending: false })
-            .order("id", { ascending: false })
+            .order("registered_at", { ascending: oldestFirst })
+            .order("id", { ascending: oldestFirst })
             .range(paging.start, paging.start + paging.page_size - 1);
         if (error) throw error;
 

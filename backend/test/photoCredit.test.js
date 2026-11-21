@@ -87,3 +87,28 @@ test('the credit text never contains the attribution sentence', async () => {
   const text = app(cases[0].photo);
   assert.doesNotMatch(text, /\(c\)|rights reserved|uploaded by/i);
 });
+
+// Who gets a credit: iNaturalist photos that are not CC0. SFC's own photos never.
+test('web and app agree on which photos need a credit', async () => {
+  const shared = fs.readFileSync(path.join(repoRoot, 'frontend/js/shared.js'), 'utf8');
+  const start = shared.indexOf('// ---- photo credit');
+  const end = shared.indexOf('// ---- end photo credit ----');
+  const context = {};
+  vm.runInNewContext(`${shared.slice(start, end)}\nthis.needsPhotoCredit = needsPhotoCredit;`, context);
+  const web = context.needsPhotoCredit;
+  const app = (await import(pathToFileURL(path.join(repoRoot, 'niah-biotrack/src/utils/photoCredit.ts')).href)).needsPhotoCredit;
+
+  const expected = [
+    [{ source: 'inaturalist', licence_code: 'cc-by' }, true],
+    [{ source: 'inaturalist', licence_code: 'cc-by-sa' }, true],
+    [{ source: 'inaturalist', licence_code: null }, true], // licence unknown: credit to be safe
+    [{ source: 'inaturalist', licence_code: 'cc0' }, false],
+    [{ source: 'sfc', licence_code: 'cc-by' }, false],
+    [{ source: null, licence_code: null }, false],
+    [null, false],
+  ];
+  for (const [photo, needed] of expected) {
+    assert.equal(web(photo), needed, `web ${JSON.stringify(photo)}`);
+    assert.equal(app(photo), needed, `app ${JSON.stringify(photo)}`);
+  }
+});

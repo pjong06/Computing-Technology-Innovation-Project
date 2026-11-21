@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
-import SpeciesPhotoCredit from '../../src/components/SpeciesPhotoCredit';
+import PhotoCreditInfo from '../../src/components/PhotoCreditInfo';
 import { preferredSpeciesPhoto } from '../../src/utils/speciesPhoto';
 
 const STATUS_LABELS: Record<string, string> = {
@@ -189,8 +189,11 @@ export default function SpeciesReferenceDetailScreen() {
 
         {imageUri ? (
           <>
-            <Image source={{ uri: imageUri }} style={styles.heroImage} resizeMode="cover" />
-            <SpeciesPhotoCredit photo={photoCredit} />
+            {/* The credit sits behind a small "i" on the photo (only when the licence needs one). */}
+            <View style={styles.heroBox}>
+              <Image source={{ uri: imageUri }} style={[styles.heroImage, styles.heroInBox]} resizeMode="cover" />
+              <PhotoCreditInfo photo={photoCredit} />
+            </View>
           </>
         ) : (
           <View style={[styles.heroImage, styles.imagePlaceholder]}>
@@ -311,6 +314,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#E8EFEA',
     marginBottom: 14,
   },
+  heroBox: { marginBottom: 14 },
+  heroInBox: { marginBottom: 0 },
   imagePlaceholder: { alignItems: 'center', justifyContent: 'center' },
   placeholderIcon: { fontSize: 42, marginBottom: 8 },
   placeholderText: { fontSize: 12.5, color: '#68776D' },
