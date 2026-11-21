@@ -258,9 +258,10 @@ function userFacingFiles() {
   walk('frontend', name => /\.(html|js|css)$/.test(name));
   walk('niah-biotrack/app', name => /\.(tsx?|js)$/.test(name));
   walk('niah-biotrack/src', name => /\.(tsx?|js)$/.test(name) && !/\.test\./.test(name));
+  // The visitor page's CSS (/public-assets/plant.css) is the STYLES string in publicPlants.js.
   files.push('backend/src/routes/publicPlants.js', 'backend/src/services/reportService.js',
-    'backend/src/services/qrPdfService.js', 'backend/public/plant.css');
-  return files.filter(file => fs.existsSync(path.join(repoRoot, file)));
+    'backend/src/services/qrPdfService.js', 'backend/src/services/qrLabelService.js');
+  return files;
 }
 
 test('no user-facing web or app file contains "iNaturalist"', () => {

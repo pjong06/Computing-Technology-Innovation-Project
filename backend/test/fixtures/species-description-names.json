@@ -1,0 +1,16 @@
+{
+  "_about": "A small, committed sample of species names as they are stored in the database (one per kind of record), used by speciesDescriptionDrafts.test.js. The full list (scripts/species-photos/species-photo-list.csv) is git-ignored, so it is only checked when present.",
+  "species": [
+    "Begonia niahensis",
+    "Asplenium nidus",
+    "Eusideroxylon zwageri",
+    "Etlingera elatior",
+    "Rhaphidophora korthalsii",
+    "Hibiscus × archeri",
+    "Cyathodium cavernarum"
+  ],
+  "genus": ["Begonia", "Ficus", "Shorea", "Zingiber", "Lygodium"],
+  "family": ["Araceae", "Moraceae", "Loranthaceae"],
+  "below_family": ["Aeridinae", "Calamoideae", "Monstereae", "Schismatoglottideae"],
+  "broad": ["Plantae", "Tracheophyta", "Angiospermae", "Magnoliopsida", "Bryophyta", "Marchantiophyta", "Polypodiopsida", "Polypodiineae"]
+}

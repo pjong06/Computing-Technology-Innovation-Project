@@ -853,6 +853,51 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         }
     );
 
+    // ---- Draft descriptions (scripts/species-descriptions/fill.mjs) ----
+    // A species whose description, habitat or common name was drafted by the fill script has
+    // description_is_draft = true until an officer reviews it. Visitors and the app show the
+    // text as usual; only the officer's editor shows "Draft description: please review".
+    // Migration: supabase/migrations/20261121180000_species_description_draft.sql. Until it is
+    // applied, every species counts as reviewed.
+    const DRAFT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const missingDraftColumn = (error) => Boolean(error) && ["42703", "PGRST204"].includes(error.code) &&
+        /description_is_draft/.test(String(error.message || ""));
+
+    router.get("/species/:id/draft-status", authenticate, authorize("officer"), async (req, res) => {
+        if (!DRAFT_ID.test(req.params.id)) return res.status(400).json({ message: "Invalid species ID" });
+        const { data, error } = await req.supabase
+            .from("species")
+            .select("id, description_is_draft")
+            .eq("id", req.params.id)
+            .maybeSingle();
+        if (missingDraftColumn(error)) return res.json({ data: { description_is_draft: false } });
+        if (error) {
+            console.error("Species draft status error:", error);
+            return res.status(500).json({ message: "Could not load the draft status" });
+        }
+        if (!data) return res.status(404).json({ message: "Species not found" });
+        return res.json({ data: { description_is_draft: data.description_is_draft === true } });
+    });
+
+    router.post("/species/:id/mark-reviewed", authenticate, authorize("officer"), async (req, res) => {
+        if (!DRAFT_ID.test(req.params.id)) return res.status(400).json({ message: "Invalid species ID" });
+        const { data, error } = await req.supabase
+            .from("species")
+            .update({ description_is_draft: false })
+            .eq("id", req.params.id)
+            .select("id, description_is_draft")
+            .maybeSingle();
+        if (missingDraftColumn(error)) {
+            return res.status(400).json({ message: "Draft descriptions can't be marked until the species draft migration is applied." });
+        }
+        if (error) {
+            console.error("Mark species reviewed error:", error);
+            return res.status(500).json({ message: "Could not mark the description as reviewed" });
+        }
+        if (!data) return res.status(404).json({ message: "Species not found" });
+        return res.json({ data: { id: data.id, description_is_draft: false } });
+    });
+
     router.post("/species", authenticate, authorize("officer"), async (req, res) => {
         const body = req.body;
 
