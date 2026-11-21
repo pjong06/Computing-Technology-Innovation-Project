@@ -50,7 +50,7 @@ function outcomeBadge(outcome: ReviewOutcome, pendingLabel: string): { label: st
 
 // The badge for an uploaded plant registered on this phone: the status of its first visit
 // (registering a plant and its first visit are one submission), plus a small note when the
-// plant is approved but revisits are waiting ("1 visit waiting for review").
+// plant is approved but revisits are waiting ("1 observation waiting for review").
 // Used by Records and Home, so they always agree.
 export function plantReviewBadge<T extends DatedVisit>(
   record: { createdAtIso?: string; reviewStatus?: string | null; observations: T[] },

@@ -114,9 +114,10 @@ test('officer plant list applies filters, search, newest sorting and paging with
   assert.equal(result.body.data[0].tag_code, 'NIAH-PLT-00001');
   assert.equal(result.body.data[0].species.scientific_name, 'Nepenthes ampullaria');
   assert.equal(result.body.data[0].registered_by, 'Field Officer');
-  assert.equal(result.body.data[0].data_source, 'inaturalist');
-  assert.equal(result.body.data[0].source_observer, 'Aina Rahman');
-  assert.equal(result.body.data[0].source_licence, 'CC-BY');
+  // Where a plant came from, who observed it and its licence are not sent.
+  for (const key of ['data_source', 'source_observer', 'source_licence']) {
+    assert.equal(key in result.body.data[0], false, key);
+  }
   assert.equal(result.body.data[0].last_observation_at, '2026-11-02T10:00:00Z');
   assert.equal(result.body.data[0].observation_count, 2);
   assert.match(result.body.data[0].photo_thumbnail.url, /^https:\/\/signed\.example\//);
@@ -138,7 +139,7 @@ test('officer plant list applies filters, search, newest sorting and paging with
   assert.doesNotMatch(serialized, /file_path|uploaded_by/);
 });
 
-test('officer plant list returns a signed species photo fallback with plain credit fields', async () => {
+test('officer plant list returns a signed species photo fallback without credit fields', async () => {
   role = 'officer';
   const speciesPhotoPath = `${SPECIES_ID}/reference.jpg`;
   db = fakeDb({
@@ -188,12 +189,8 @@ test('officer plant list returns a signed species photo fallback with plain cred
   assert.equal(result.body.data[0].photo_thumbnail, null);
   assert.deepEqual(result.body.data[0].species_photo, {
     url: `https://signed.example/${encodeURIComponent(speciesPhotoPath)}`,
-    source: 'inaturalist',
-    licence_code: 'cc-by',
-    attribution: 'Reference photographer',
-    photographer: 'Reference photographer',
   });
-  assert.doesNotMatch(JSON.stringify(result.body), /file_path|uploaded_by|source_url/);
+  assert.doesNotMatch(JSON.stringify(result.body), /file_path|uploaded_by|source_url|licence|attribution|photographer|Reference photographer/);
   assert.ok(db.calls.some(call => call[0] === 'storage' &&
     call[1] === 'species-media' && call[2] === 'createSignedUrls'));
 });
@@ -283,9 +280,7 @@ test('officer plant detail includes signed photos and observation history withou
   assert.equal(result.status, 200);
   assert.equal(result.body.data.latitude, 3.2);
   assert.equal(result.body.data.registered_by, 'Registered By');
-  assert.equal(result.body.data.data_source, 'inaturalist');
-  assert.equal(result.body.data.source_observer, 'Aina Rahman');
-  assert.equal(result.body.data.source_licence, 'CC-BY-NC');
+  assert.doesNotMatch(JSON.stringify(result.body), /data_source|source_observer|source_licence|Aina Rahman|inaturalist/);
   assert.equal(result.body.data.species_photo, null);
   assert.equal(result.body.data.photos.length, 1);
   assert.match(result.body.data.photos[0].url, /^https:\/\/signed\.example\//);
@@ -429,10 +424,6 @@ test('officer plant detail returns species photo fallback only when no plant pho
   assert.equal(result.status, 200);
   assert.deepEqual(result.body.data.species_photo, {
     url: `https://signed.example/${encodeURIComponent(speciesPhotoPath)}`,
-    source: 'sfc',
-    licence_code: null,
-    attribution: null,
-    photographer: null,
   });
   assert.deepEqual(result.body.data.photos, []);
   assert.doesNotMatch(JSON.stringify(result.body), /file_path|uploaded_by/);

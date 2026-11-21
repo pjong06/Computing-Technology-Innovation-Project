@@ -46,3 +46,17 @@ export async function fetchMyProposals(): Promise<ServerProposal[]> {
     if (page >= response.pagination.total_pages) return proposals;
   }
 }
+
+// Sends a species request the officer did not add again, with the botanist's changes. The
+// server sets it back to waiting for review and clears the officer's reason
+// (PATCH /api/knowledge/species/proposals/:id/resubmit). Needs a connection.
+export async function resubmitProposal(
+  serverId: string,
+  payload: Omit<ProposalPayload, 'client_record_id'>
+): Promise<ServerProposal> {
+  const response = await apiFetch<{ data: ServerProposal }>(
+    `/api/knowledge/species/proposals/${encodeURIComponent(serverId)}/resubmit`,
+    { method: 'PATCH', body: payload }
+  );
+  return response.data;
+}

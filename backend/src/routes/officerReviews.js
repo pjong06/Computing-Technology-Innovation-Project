@@ -268,7 +268,18 @@ router.get("/rejected", async (req, res) => {
     }
 
     try {
-        const rows = await withReviewDetails(req.supabase, data || []);
+        const detailed = await withReviewDetails(req.supabase, data || []);
+        // "New plant" (the plant's first record) or "Observation", as on the review list.
+        let firstByPlant = null;
+        try {
+            firstByPlant = await firstRecordsOf(req.supabase, idsOf(detailed, "plant_id"));
+        } catch (firstError) {
+            console.error("Rejected list first record error:", firstError?.message || firstError);
+        }
+        const rows = detailed.map(row => {
+            const first = firstByPlant ? firstByPlant.get(row.plant_id) : null;
+            return { ...row, is_first_record: first ? first.id === row.id : null };
+        });
         const ids = rows.map(row => row.id);
         // The latest rejection comment for each observation.
         const { data: reviews, error: reviewError } = ids.length

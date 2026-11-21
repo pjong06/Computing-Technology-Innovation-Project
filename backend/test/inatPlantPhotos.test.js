@@ -2,8 +2,7 @@
 
 // Imported iNaturalist plants get their own sighting photo
 // (scripts/inat-plant-photos/attach-photos.mjs). Checks the matching and licence rules,
-// the migration, the credits endpoint for the web Photo credits page, and that plant photos
-// never show a credit anywhere else.
+// the migration, and that no page or app screen shows a photo credit.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -197,76 +196,20 @@ test('the migration adds the source fields to plant_media without touching RLS',
   assert.doesNotMatch(sql, /POLICY|DISABLE ROW LEVEL SECURITY|TO (anon|authenticated|public)\b/i);
 });
 
-// ---- the credits endpoint ----
+// ---- no credits shown anywhere ----
 
-function fakeCreditsDb({ photosError } = {}) {
-  const tables = {
-    plant_media: photosError ? { data: null, error: photosError } : {
-      data: [
-        { id: 1, plant_id: 'p1', source: 'inaturalist', licence_code: 'cc-by-nc', attribution: '(c) Ivy', photographer: 'Ivy', file_path: 'SECRET/path.jpg' },
-        { id: 2, plant_id: 'gone', source: 'inaturalist', licence_code: 'cc-by', attribution: '(c) X', photographer: 'X' },
-      ],
-      error: null,
-    },
-    plants: { data: [{ id: 'p1', qr_code_value: 'NIAH-PLT-00009', species_id: 's1' }], error: null },
-    species: { data: [{ id: 's1', scientific_name: 'Begonia niahensis', common_name: 'Niah begonia' }], error: null },
-  };
-  const selects = [];
-  return {
-    selects,
-    from(table) {
-      const result = tables[table];
-      const chain = {
-        select(columns) { selects.push([table, columns]); return chain; },
-        eq() { return chain; },
-        is() { return chain; },
-        in() { return chain; },
-        order() { return chain; },
-        range() { return chain; },
-        then(resolve, reject) { return Promise.resolve(result).then(resolve, reject); },
-      };
-      return chain;
-    },
-  };
-}
-
-test('GET /api/plants/photo-credits lists credits only, without paths or links', async () => {
-  db = fakeCreditsDb();
+test('there is no photo credits endpoint or page, and plant photos never carry a credit', async () => {
+  db = { from() { throw new Error('the database must not be read'); } };
   const result = await callRoute('/api/plants', plantRouter, { path: '/photo-credits' });
-  assert.equal(result.status, 200, JSON.stringify(result.body));
-  assert.deepEqual(result.body.data, [{
-    tag: 'NIAH-PLT-00009', scientific_name: 'Begonia niahensis', common_name: 'Niah begonia',
-    source: 'inaturalist', licence_code: 'cc-by-nc', attribution: '(c) Ivy', photographer: 'Ivy',
-  }]);
-  assert.doesNotMatch(JSON.stringify(result.body), /file_path|SECRET|source_url|https?:/);
-  assert.doesNotMatch(db.selects.find(([table]) => table === 'plant_media')[1], /file_path|source_url/);
-});
-
-test('before the migration the credits list is empty, other errors are not leaked', async () => {
-  db = fakeCreditsDb({ photosError: { code: '42703', message: 'column plant_media.source does not exist' } });
-  let result = await callRoute('/api/plants', plantRouter, { path: '/photo-credits' });
-  assert.deepEqual(result, { status: 200, body: { data: [] } });
-  db = fakeCreditsDb({ photosError: { code: 'XX000', message: 'PRIVATE' } });
-  result = await callRoute('/api/plants', plantRouter, { path: '/photo-credits' });
-  assert.equal(result.status, 500);
-  assert.doesNotMatch(JSON.stringify(result.body), /PRIVATE/);
-});
-
-// ---- no credit on plant photos anywhere else ----
-
-test('plant photos never carry or show a credit in the app, web or visitor page', () => {
+  assert.notEqual(result.status, 200);
+  assert.doesNotMatch(read('backend/src/routes/plants.js'), /photo-credits|licence_code|photographer/);
+  assert.equal(fs.existsSync(path.join(repoRoot, 'frontend/credits.html')), false);
+  assert.equal(fs.existsSync(path.join(repoRoot, 'frontend/js/credits.js')), false);
   // Officer web: plant photo rows are read without source fields.
   const officer = read('backend/src/routes/officerPlants.js');
   assert.match(officer, /const PHOTO_COLUMNS = "id, plant_id, file_path, photo_type, is_primary";/);
   const publicPhoto = /function publicPhoto\(photo, urls\) \{[\s\S]*?\n\}/.exec(officer)[0];
   assert.doesNotMatch(publicPhoto, /licence|attribution|photographer|source/);
-  // Web plant page and app plant detail: no credit on any photo.
-  assert.doesNotMatch(read('frontend/js/plant.js'), /makePhotoCreditInfo/);
-  assert.doesNotMatch(read('niah-biotrack/app/plant-detail.tsx'), /PhotoCreditInfo/);
   // Visitor page: never reads plant_media.
   assert.doesNotMatch(read('backend/src/routes/publicPlants.js'), /plant_media/);
-  // The credits page lists them, with no links.
-  const credits = read('frontend/js/credits.js');
-  assert.match(credits, /api\('\/plants\/photo-credits'\)/);
-  assert.doesNotMatch(credits, /\.href\s*=|source_url|createElement\('a'\)/);
 });

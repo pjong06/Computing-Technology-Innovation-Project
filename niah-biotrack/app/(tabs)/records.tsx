@@ -2,12 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Image,
-  Modal,
   Platform,
-  Pressable,
   SafeAreaView,
-  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -62,6 +58,10 @@ import { getLastSuccessfulSync, resumeAllPausedRecordRetries } from '../../src/s
 import { pullServerRecords, serverPullError } from '../../src/services/serverPull';
 import { fetchOtherApprovedPlants, type OtherApprovedPlant } from '../../src/services/approvedPlants';
 import { lookupTag, describeTagLookup } from '../../src/services/tagLookup';
+import { FilterButton, FilterPills, FilterSheet } from '../../src/components/FilterSheet';
+import RemotePhoto from '../../src/components/RemotePhoto';
+import { publicPhotoUri } from '../../src/utils/publicPhoto';
+import { BASE_URL } from '../../src/api/client';
 
 // Plants (botanist tab, route "records"): one row per plant. Each row shows the most urgent
 // status of the plant and the botanist's own visits to it; the visits themselves are listed
@@ -125,7 +125,7 @@ function localItem(key: string, stored: PlantRecord): PlantItem {
   const revisits = visits.filter((visit) => visit !== firstVisit);
   for (const visit of revisits) {
     const status = visitStatus(visit, record.syncError);
-    candidates.push({ ...status, reason: status.reason ? `Visit ${visit.date}: ${status.reason}` : null });
+    candidates.push({ ...status, reason: status.reason ? `Observation ${visit.date}: ${status.reason}` : null });
   }
   const pick = mostUrgent(candidates)?.item ?? candidates[0];
 
@@ -133,7 +133,7 @@ function localItem(key: string, stored: PlantRecord): PlantItem {
     .map((visit) => visit.observedAt || visit.date)
     .sort((a, b) => timestampFor(b) - timestampFor(a))[0];
   const when = visits.length > 0 && dayText(lastVisit)
-    ? `Last visit ${dayText(lastVisit)}`
+    ? `Last observation ${dayText(lastVisit)}`
     : dayText(record.createdAtIso)
       ? `Registered ${dayText(record.createdAtIso)}`
       : record.createdAt;
@@ -151,7 +151,12 @@ function localItem(key: string, stored: PlantRecord): PlantItem {
     reason: pick.reason,
     tag: record.tagCode ?? null,
     speciesId: record.speciesId,
-    photoUri: ownPhoto ? resolveStoredPhotoUri(ownPhoto) : null,
+    // Its own photo on this phone; for a plant someone else registered, its public photo.
+    photoUri: ownPhoto
+      ? resolveStoredPhotoUri(ownPhoto)
+      : record.otherBotanist
+        ? publicPhotoUri(BASE_URL, record.publicPhotoUrl)
+        : null,
     place: [record.locationName, when].filter(Boolean).join(' · '),
     searchText: [name, record.commonName, record.plantName, record.tagCode].filter(Boolean).join(' '),
   };
@@ -176,8 +181,8 @@ function otherItem(
     reason: null,
     tag: plant.tagCode,
     speciesId: plant.speciesId,
-    // Other botanists' plants' photos aren't on this phone: the placeholder.
-    photoUri: null,
+    // Its public stripped photo (served by the backend), or the placeholder.
+    photoUri: publicPhotoUri(BASE_URL, plant.photoUrl),
     place: registered ? `Registered ${registered}` : '',
     searchText: [name, species?.common_name, plant.tagCode].filter(Boolean).join(' '),
   };
@@ -307,7 +312,7 @@ export default function PlantsListScreen() {
         parts.push(`${photoProblems} ${photoProblems === 1 ? 'photo' : 'photos'} over 5 MB (see the plant page)`);
       }
       if (proposalsResult.uploaded > 0) {
-        parts.push(`${proposalsResult.uploaded} species ${proposalsResult.uploaded === 1 ? 'proposal' : 'proposals'} sent`);
+        parts.push(`${proposalsResult.uploaded} species ${proposalsResult.uploaded === 1 ? 'request' : 'requests'} sent`);
       }
       if (routesResult.uploaded > 0) parts.push(routesUploadedText(routesResult.uploaded));
       if (routesResult.failed > 0) {
@@ -366,27 +371,6 @@ export default function PlantsListScreen() {
   const filterCount = activeFilterCount(filters);
   const showingActionList = filters.status === 'needs_action' && filters.show === 'mine';
 
-  const renderOption = <K extends keyof PlantFilters>(
-    group: K,
-    options: { value: PlantFilters[K]; label: string }[],
-    labelFor: (option: { value: PlantFilters[K]; label: string }) => string = (option) => option.label
-  ) =>
-    options.map((option) => {
-      const selected = draft[group] === option.value;
-      return (
-        <TouchableOpacity
-          key={String(option.value)}
-          style={styles.optionRow}
-          onPress={() => setDraft({ ...draft, [group]: option.value })}
-          accessibilityRole="radio"
-          accessibilityState={{ selected }}
-        >
-          <Ionicons name={selected ? 'radio-button-on' : 'radio-button-off'} size={20} color={selected ? '#213B2A' : '#8C9A91'} />
-          <Text style={[styles.optionText, selected && styles.optionTextSelected]}>{labelFor(option)}</Text>
-        </TouchableOpacity>
-      );
-    });
-
   const header = (
     <View>
       <View style={styles.searchRow}>
@@ -401,38 +385,16 @@ export default function PlantsListScreen() {
           clearButtonMode="while-editing"
           accessibilityLabel="Search plant or species"
         />
-        <TouchableOpacity
-          style={[styles.filterBtn, filterCount > 0 && styles.filterBtnActive]}
-          onPress={openSheet}
-          accessibilityRole="button"
-          accessibilityLabel={filterCount > 0 ? `Filter, ${filterCount} active` : 'Filter'}
-        >
-          <Ionicons name="options-outline" size={18} color={filterCount > 0 ? '#FFFFFF' : '#213B2A'} />
-          <Text style={[styles.filterText, filterCount > 0 && styles.filterTextActive]}>Filter</Text>
-          {filterCount > 0 ? (
-            <View style={styles.filterCount}>
-              <Text style={styles.filterCountText}>{filterCount}</Text>
-            </View>
-          ) : null}
-        </TouchableOpacity>
+        <FilterButton count={filterCount} onPress={openSheet} />
       </View>
 
-      {pills.length > 0 ? (
-        <View style={styles.pillRow}>
-          {pills.map((pill) => (
-            <TouchableOpacity
-              key={pill.group}
-              style={styles.pill}
-              onPress={() => setFilters({ ...filters, [pill.group]: DEFAULT_FILTERS[pill.group] })}
-              accessibilityRole="button"
-              accessibilityLabel={`Remove filter: ${pill.label}`}
-            >
-              <Text style={styles.pillText} numberOfLines={1}>{pill.label}</Text>
-              <Ionicons name="close" size={14} color="#213B2A" />
-            </TouchableOpacity>
-          ))}
-        </View>
-      ) : null}
+      <FilterPills
+        pills={pills}
+        onRemove={(group) => {
+          const key = group as keyof PlantFilters;
+          setFilters({ ...filters, [key]: DEFAULT_FILTERS[key] });
+        }}
+      />
 
       <Text style={styles.summaryText}>
         {listSummary(visible.length, filters.sort)}
@@ -537,13 +499,15 @@ export default function PlantsListScreen() {
               accessibilityRole="button"
               accessibilityLabel={`${item.name}${item.tag ? `, tag ${item.tag}` : ''}, ${item.badge.label}`}
             >
-              {item.photoUri ? (
-                <Image source={{ uri: item.photoUri }} style={styles.thumb} resizeMode="cover" />
-              ) : (
-                <View style={[styles.thumb, styles.thumbPlaceholder]}>
-                  <Ionicons name="leaf-outline" size={22} color="#46654F" />
-                </View>
-              )}
+              <RemotePhoto
+                uri={item.photoUri}
+                style={styles.thumb}
+                placeholder={
+                  <View style={[styles.thumb, styles.thumbPlaceholder]}>
+                    <Ionicons name="leaf-outline" size={22} color="#46654F" />
+                  </View>
+                }
+              />
               <View style={styles.plantText}>
                 <Text style={styles.plantName} numberOfLines={2}>{item.name}</Text>
                 {item.tag ? <Text style={styles.plantMeta} numberOfLines={1}>{item.tag}</Text> : null}
@@ -567,45 +531,31 @@ export default function PlantsListScreen() {
         />
       </View>
 
-      {/* Filter: a bottom sheet with Show, Status and Sort by. */}
-      <Modal visible={sheetOpen} transparent animationType="slide" onRequestClose={() => setSheetOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setSheetOpen(false)} accessibilityLabel="Close the filter" />
-        <View style={styles.sheet}>
-          <View style={styles.sheetHandle} />
-          <Text style={styles.sheetTitle}>Filter</Text>
-          <ScrollView style={styles.sheetScroll}>
-            <Text style={styles.groupTitle}>Show</Text>
-            {renderOption('show', SHOW_FILTERS)}
-            <Text style={styles.groupTitle}>Status</Text>
-            {renderOption('status', STATUS_FILTERS, (option) =>
-              option.value === 'needs_action' ? `${option.label} (${actionCount})` : option.label
-            )}
-            <Text style={styles.groupTitle}>Sort by</Text>
-            {renderOption('sort', SORT_ORDERS)}
-          </ScrollView>
-          <View style={styles.sheetActions}>
-            <TouchableOpacity
-              style={styles.resetBtn}
-              onPress={() => setDraft(DEFAULT_FILTERS)}
-              accessibilityRole="button"
-            >
-              <Text style={styles.resetText}>Reset</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.applyBtn}
-              onPress={() => {
-                setFilters(draft);
-                setSheetOpen(false);
-              }}
-              accessibilityRole="button"
-            >
-              <Text style={styles.applyText} numberOfLines={1}>
-                Show {draftCount} {draftCount === 1 ? 'plant' : 'plants'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      {/* Filter: a bottom sheet with Show, Status and Sort by (shared with Home). */}
+      <FilterSheet
+        visible={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        groups={[
+          { key: 'show', title: 'Show', options: SHOW_FILTERS, selected: draft.show },
+          {
+            key: 'status',
+            title: 'Status',
+            options: STATUS_FILTERS.map((option) => ({
+              ...option,
+              label: option.value === 'needs_action' ? `${option.label} (${actionCount})` : option.label,
+            })),
+            selected: draft.status,
+          },
+          { key: 'sort', title: 'Sort by', options: SORT_ORDERS, selected: draft.sort },
+        ]}
+        onSelect={(group, value) => setDraft({ ...draft, [group]: value } as PlantFilters)}
+        onReset={() => setDraft(DEFAULT_FILTERS)}
+        applyLabel={`Show ${draftCount} ${draftCount === 1 ? 'plant' : 'plants'}`}
+        onApply={() => {
+          setFilters(draft);
+          setSheetOpen(false);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -643,42 +593,6 @@ const styles = StyleSheet.create({
     borderWidth: 1.2,
     borderColor: '#E6ECE8',
   },
-  filterBtn: {
-    height: 46,
-    borderRadius: 23,
-    paddingHorizontal: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 1.2,
-    borderColor: '#213B2A',
-    backgroundColor: '#FFFFFF',
-  },
-  filterBtnActive: { backgroundColor: '#213B2A' },
-  filterText: { fontSize: 13, fontWeight: '700', color: '#213B2A' },
-  filterTextActive: { color: '#FFFFFF' },
-  filterCount: {
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 4,
-  },
-  filterCountText: { fontSize: 11, fontWeight: '800', color: '#213B2A' },
-  pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 },
-  pill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    maxWidth: '100%',
-    backgroundColor: '#DDEAE1',
-    borderRadius: 14,
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-  },
-  pillText: { fontSize: 12, fontWeight: '700', color: '#213B2A', flexShrink: 1 },
   summaryText: { fontSize: 12.5, color: '#68776D', marginBottom: 10 },
   actionBanner: {
     flexDirection: 'row',
@@ -736,42 +650,4 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF',
   },
   secondaryPillText: { color: '#213B2A', fontWeight: '700', fontSize: 14 },
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
-  sheet: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
-    maxHeight: '80%',
-  },
-  sheetHandle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: '#D5DDD8', marginBottom: 10 },
-  sheetTitle: { fontSize: 18, fontWeight: '800', color: '#1E2B22', marginBottom: 4 },
-  sheetScroll: { flexGrow: 0 },
-  groupTitle: { fontSize: 12, fontWeight: '800', color: '#68776D', letterSpacing: 0.5, marginTop: 14, marginBottom: 2 },
-  optionRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9 },
-  optionText: { fontSize: 14, color: '#3A4A40', flexShrink: 1 },
-  optionTextSelected: { fontWeight: '700', color: '#1E2B22' },
-  sheetActions: { flexDirection: 'row', gap: 10, marginTop: 16 },
-  resetBtn: {
-    flex: 1,
-    height: 46,
-    borderRadius: 23,
-    borderWidth: 1.2,
-    borderColor: '#213B2A',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  resetText: { color: '#213B2A', fontWeight: '700', fontSize: 14 },
-  applyBtn: {
-    flex: 2,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: '#213B2A',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-  },
-  applyText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
 });

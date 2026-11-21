@@ -140,7 +140,7 @@ test('visitor page never shows a species reference photo; it only checks the pub
   assert.doesNotMatch(source, /species_media|species-media|plant_media|loadReferencePhoto/);
 });
 
-test('iNaturalist source is escaped plain text on the visitor page and exposed by the QR API', async t => {
+test('the visitor page and the QR API show no source, observer or licence', async t => {
   const row = {
     scientific_name: 'Shorea albida',
     data_source: 'inaturalist',
@@ -156,15 +156,14 @@ test('iNaturalist source is escaped plain text on the visitor page and exposed b
   const page = await fetch(url + '/p/' + TAG);
   const html = await page.text();
   assert.equal(page.status, 200);
-  assert.match(html, /Source: iNaturalist observation by &lt;Observer&gt; \(CC-BY-NC\)/);
-  assert.doesNotMatch(html, /<a\b|source_url|inaturalist\.org/);
+  assert.match(html, /<h2>This plant<\/h2>/);
+  assert.doesNotMatch(html, /Source|Observer|CC-BY-NC|naturalist|<a\b|source_url/i);
 
   const api = await fetch(url + '/api/public/plants/by-qr?code=' + TAG);
   const body = await api.json();
-  assert.equal(body.data.data_source, 'inaturalist');
-  assert.equal(body.data.source_observer, '<Observer>');
-  assert.equal(body.data.source_licence, 'CC-BY-NC');
-  assert.equal(body.data.source_url, undefined);
+  for (const key of ['data_source', 'source_observer', 'source_licence', 'source_url']) {
+    assert.equal(key in body.data, false, key);
+  }
 });
 
 test('invalid visitor tags never query the database', async t => {

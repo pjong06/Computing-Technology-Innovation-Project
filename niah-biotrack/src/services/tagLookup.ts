@@ -37,6 +37,8 @@ interface TagLookupResponse {
     registered_at?: string | null;
     row_version?: number | null;
     gps_accuracy_m?: number | null;
+    // Public photo address for a plant someone else registered ("/p/<tag>/photo"), or null.
+    photo_url?: string | null;
     scientific_name?: string | null;
     common_name?: string | null;
     species?: {
@@ -79,6 +81,7 @@ export async function lookupTag(rawTag: string): Promise<TagLookupResult> {
       id: data.client_record_id || serverId,
       serverId,
       otherBotanist: !data.registered_by,
+      publicPhotoUrl: !data.registered_by && typeof data.photo_url === 'string' ? data.photo_url : null,
       rowVersion: data.row_version ?? undefined,
       tagCode: data.tag_code || data.qr_code_value || tagCode,
       scientificName:
@@ -172,9 +175,6 @@ export type PublicTagLookupResult =
     habitat: string | null;
     conservationStatus: string | null;
     culturalSignificance: string | null;
-    dataSource: 'field' | 'inaturalist';
-    sourceObserver: string | null;
-    sourceLicence: string | null;
     // The plant's own main photo (a path on the API server), or null when it has none.
     photoUrl: string | null;
   }
@@ -193,9 +193,6 @@ interface PublicPlantResponse {
     habitat: string | null;
     conservation_status: string | null;
     cultural_significance: string | null;
-    data_source: 'field' | 'inaturalist';
-    source_observer: string | null;
-    source_licence: string | null;
     photo_url?: string | null;
   };
 }
@@ -221,9 +218,6 @@ export async function lookupPublicTag(rawTag: string): Promise<PublicTagLookupRe
       habitat: response.data?.habitat || null,
       conservationStatus: response.data?.conservation_status || null,
       culturalSignificance: response.data?.cultural_significance || null,
-      dataSource: response.data?.data_source === 'inaturalist' ? 'inaturalist' : 'field',
-      sourceObserver: response.data?.source_observer || null,
-      sourceLicence: response.data?.source_licence || null,
       photoUrl: typeof response.data?.photo_url === 'string' ? response.data.photo_url : null,
     };
   } catch (error) {

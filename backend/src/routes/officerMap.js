@@ -9,7 +9,7 @@ router.get("/plants", async (req, res) => {
     try {
         const { data: plantRows, error: plantsError } = await req.supabase
             .from("plant_map_points")
-            .select("id, latitude, longitude, qr_code_value, plant_status, location_description, species_id, data_source, source_observer, source_licence")
+            .select("id, latitude, longitude, qr_code_value, plant_status, location_description, species_id")
             .limit(2000);
         if (plantsError) throw plantsError;
 
@@ -52,9 +52,6 @@ router.get("/plants", async (req, res) => {
                 tag: plant.qr_code_value,
                 status: plant.plant_status,
                 landmark: plant.location_description,
-                data_source: plant.data_source || "field",
-                source_observer: plant.source_observer,
-                source_licence: plant.source_licence,
                 species: speciesById.get(plant.species_id) || null,
                 last_visit: lastVisitByPlantId.get(plant.id) || null,
             })),

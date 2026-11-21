@@ -524,6 +524,75 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         return res.json({ data, pagination: paginationMetadata(paging, count) });
     });
 
+    // PATCH /api/knowledge/species/proposals/:id/resubmit (botanist): send a species request
+    // the officer did not add again, with changes. Only the botanist's own request, and only
+    // while it is "not added" (rejected); it goes back to waiting for review and the
+    // officer's reason is cleared. The database function resubmit_species_proposal
+    // (supabase/migrations/20261121160000_resubmit_species_proposal.sql) checks all of this;
+    // botanists still can't update species rows directly.
+    router.patch("/species/proposals/:id/resubmit", authenticate, authorize("botanist"), async (req, res) => {
+        if (!PROPOSAL_UUID.test(req.params.id)) {
+            return res.status(400).json({ message: "Invalid species request ID" });
+        }
+        const body = req.body;
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+            return res.status(400).json({ message: "A species request object is required" });
+        }
+        const scientificName = typeof body.scientific_name === "string" ? body.scientific_name.trim() : "";
+        if (!scientificName || scientificName.length > 200) {
+            return res.status(400).json({
+                message: "scientific_name is required and must be at most 200 characters",
+            });
+        }
+        const fields = {};
+        for (const field of Object.keys(PROPOSAL_FIELDS)) {
+            const value = body[field];
+            if (value === undefined || value === null) {
+                fields[field] = null;
+                continue;
+            }
+            const limitField = field === "family" ? "common_name" : field;
+            if (!validOptionalText(limitField, value)) {
+                return res.status(400).json({
+                    message: `${field} must be non-empty text of at most ${textLimit(limitField)} characters or null`,
+                });
+            }
+            fields[field] = value.trim();
+        }
+
+        const { data, error } = await req.supabase.rpc("resubmit_species_proposal", {
+            p_id: req.params.id,
+            p_scientific_name: scientificName,
+            p_common_name: fields.common_name,
+            p_local_name: fields.local_name,
+            p_family: fields.family,
+            p_description: fields.description,
+            p_habitat: fields.habitat,
+        });
+
+        if (error?.code === "PGRST202") {
+            // The migration has not been applied yet.
+            return res.status(503).json({ message: "Sending a species request again isn't available yet. Try again later." });
+        }
+        if (error?.code === "23505") {
+            return res.status(409).json({ message: "A species with this scientific name already exists or is already requested" });
+        }
+        if (error?.code === "P0002" || error?.code === "42501") {
+            return res.status(409).json({ message: "Only your own species request that was not added can be sent again." });
+        }
+        if (error) {
+            console.error("Resubmit species request error:", error);
+            return res.status(500).json({ message: "Could not send the species request again" });
+        }
+        const row = Array.isArray(data) ? data[0] : data;
+        if (!row) {
+            return res.status(409).json({ message: "Only your own species request that was not added can be sent again." });
+        }
+        // Only the request fields, as the other proposal routes return.
+        const columns = PROPOSAL_COLUMNS.split(",").map(column => column.trim());
+        return res.json({ data: Object.fromEntries(columns.map(column => [column, row[column] ?? null])) });
+    });
+
     // GET /api/knowledge/species/proposals/pending (officer): proposals waiting for review,
     // with the name of the botanist who proposed each one.
     router.get("/species/proposals/pending", authenticate, authorize("officer"), async (req, res) => {
