@@ -4,11 +4,11 @@ void (async()=>{
   const esc=v=>String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
   const glyph=name=>`<svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${({station:'<rect x="8" y="9" width="8" height="12" rx="2"/><path d="M9 6a5 5 0 0 1 6 0M6 3a10 10 0 0 1 12 0M11 17h2"/>',alert:'<path d="m12 3 10 18H2L12 3Z"/><path d="M12 9v5m0 3v1"/>',check:'<path d="m5 12 4 4L19 6"/>',camera:'<rect x="2" y="6" width="20" height="15" rx="3"/><circle cx="12" cy="13" r="4"/>',leaf:'<path d="M20 4C9 2 3 8 6 15s15 5 14-11Z"/><path d="m5 21 10-12"/>',search:'<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/>',refresh:'<path d="M20 7v5h-5M4 17v-5h5M5 8a8 8 0 0 1 13-3l2 3M4 16l2 3a8 8 0 0 0 13-3"/>'})[name]||'<path d="M3 5h18M3 12h18M3 19h18"/>'}</svg>`;
   let sb,identity,photos;
-  const state={page:'overview',status:'open',station:null,alertStation:'all',resolution:'all',alertStations:[],range:'6h',metric:'temperature_c',from:'',to:'',severity:'all',query:'',selected:null,alertPage:1,alertPages:1,hasMore:false,alerts:[],stations:[],botanists:[],readings:[],evidence:[],evidenceId:null,location:null,ai:null,error:'',busy:false,loading:false,menu:false,resolving:false,readingsPage:1,readingsMore:false};
+  const state={page:'overview',status:'open',station:null,alertStation:'all',resolution:'all',alertStations:[],range:'6h',metric:'temperature_c',from:'',to:'',severity:'all',query:'',selected:null,alertPage:1,alertPages:1,hasMore:false,alerts:[],stations:[],botanists:[],readings:[],evidence:[],evidenceId:null,location:null,ai:null,error:'',busy:false,loading:false,menu:false,resolving:false,readingsMore:false};
   let renderedAlertId=null;
   let requestGeneration=0,detailGeneration=0,alertGeneration=0,polling=false,exporting=false;
   const labels={open:'Unassigned',acknowledged:'Assigned',resolved:'Resolved'};
-  const metrics={temperature_c:{label:'Temperature',unit:'°C'},humidity_percent:{label:'Humidity',unit:'%'},soil_moisture_pct:{label:'Soil moisture',unit:'%'}};
+  const metrics={temperature_c:{label:'Temperature',unit:'°C'},humidity_percent:{label:'Humidity',unit:'%'},soil_moisture_pct:{label:'Soil moisture',unit:'%'},rain_intensity_pct:{label:'Rain intensity',unit:'%'}};
   const metricEmoji={temperature_c:'🌡️',humidity_percent:'💧',soil_moisture_pct:'🌱',rain_intensity_pct:'🌧️'};
   const metricLabel=(key,label)=>`<span class="metric-label"><span class="metric-emoji" aria-hidden="true">${metricEmoji[key]}</span><span>${esc(label)}</span></span>`;
   function alertSymbol(message){const match=Object.keys(metricEmoji).find(key=>String(message).endsWith(' ('+key+')'));return match?`<span class="sensor-alert-emoji" aria-hidden="true">${metricEmoji[match]}</span>`:glyph('alert');}
@@ -69,7 +69,7 @@ void (async()=>{
       const points=shown.map(r=>`${40+560*(Date.parse(r.recorded_at)-t0)/Math.max(1,t1-t0)},${180-140*(Number(r[state.metric])-low)/(high-low)}`);
       plot=`<div class="chart-reading"><strong>${value(rows.at(-1)[state.metric])}<small>${meta.unit}</small></strong></div><svg class="trend-svg" viewBox="0 0 660 226" role="img" aria-label="${meta.label} historical readings">${[0,1,2,3].map(i=>`<line class="grid-line" x1="40" x2="610" y1="${40+i*46}" y2="${40+i*46}"/><text x="0" y="${43+i*46}">${(high-i*(high-low)/3).toFixed(1)}</text>`).join('')}<path class="chart-line" d="M${points.join(' L')}"/><text x="40" y="213">${esc(time(shown[0].recorded_at))}</text><text x="480" y="213">${esc(time(shown.at(-1).recorded_at))}</text></svg>`;
     }
-    return `<section class="panel chart-panel"><div class="panel-heading"><h2>Environmental trends</h2><div class="trend-controls"><select id="trend-station" aria-label="Station">${state.stations.map((s,i)=>`<option value="${esc(s.id)}" ${state.station===s.id?'selected':''}>Station ${i+1}</option>`).join('')}</select><div class="segments">${['1h','6h','24h','Custom'].map(r=>`<button data-action="range" data-value="${r}" class="${state.range===r?'active':''}">${r==='Custom'?'Custom range':r}</button>`).join('')}</div><button class="button trend-export" data-action="export" ${exporting||!state.station?'disabled':''}>${exporting?'Exporting…':'Export'}</button></div></div>${state.range==='Custom'?`<div class="custom-dates"><label>From<input id="from-date" type="datetime-local" value="${esc(state.from)}"></label><label>To<input id="to-date" type="datetime-local" value="${esc(state.to)}"></label><button class="button" data-action="apply-dates">Apply</button></div>`:''}<div class="metric-tabs">${Object.entries(metrics).map(([key,m])=>`<button data-action="metric" data-value="${key}" class="${state.metric===key?'active':''}">${metricLabel(key,m.label)}</button>`).join('')}</div>${plot}<div class="date-help">Malaysia time · ${state.readings.length} readings${state.readingsMore?' · more available':''}</div>${state.readingsMore?'<button class="button" data-action="more-readings">Load more readings</button>':''}<div class="history-launch"><button class="button" data-action="history" ${!state.station?'disabled':''}>Historical readings</button></div></section>`;
+    return `<section class="panel chart-panel"><div class="panel-heading"><h2>Environmental trends</h2><div class="trend-controls"><select id="trend-station" aria-label="Station">${state.stations.map((s,i)=>`<option value="${esc(s.id)}" ${state.station===s.id?'selected':''}>Station ${i+1}</option>`).join('')}</select><div class="segments">${['1h','6h','24h','Custom'].map(r=>`<button data-action="range" data-value="${r}" class="${state.range===r?'active':''}">${r==='Custom'?'Custom range':r}</button>`).join('')}</div><button class="button trend-export" data-action="export" ${exporting||!state.station?'disabled':''}>${exporting?'Exporting…':'Export'}</button></div></div>${state.range==='Custom'?`<div class="custom-dates"><label>From<input id="from-date" type="datetime-local" value="${esc(state.from)}"></label><label>To<input id="to-date" type="datetime-local" value="${esc(state.to)}"></label><button class="button" data-action="apply-dates">Apply</button></div>`:''}<div class="metric-tabs">${Object.entries(metrics).map(([key,m])=>`<button data-action="metric" data-value="${key}" class="${state.metric===key?'active':''}">${metricLabel(key,m.label)}</button>`).join('')}</div>${plot}<div class="date-help">Malaysia time · ${state.readings.length} readings${state.readingsMore?' · More in historical readings':''}</div><div class="history-launch"><button class="button" data-action="history" ${!state.station?'disabled':''}>Historical readings</button></div></section>`;
   }
   function network(){return `<section class="panel map-panel"><div class="panel-heading"><h2>Station locations</h2></div><div class="station-map-host" id="station-location-map"></div><ul class="station-locations">${state.stations.map((s,i)=>`<li><strong>Station ${i+1}</strong><small>${esc(s.station_code)}</small>${locationText(s)}</li>`).join('')}</ul></section>`;}
   function locationText(s,embedded=false){
@@ -99,13 +99,20 @@ void (async()=>{
       if((result.uncertain!==false||result.scene_status==='unclear')&&detection!=='Unable to determine')detection+=' · Image unclear';
     }
     const needsReview=!complete||result.uncertain!==false||result.scene_status==='unclear'||targets.includes('person')||result.human_review_required!==false||Boolean(alert.assigned_to);
-    const guidance=needsReview?'Human review required':alert.alert_status==='resolved'?'Analysis complete':'Awaiting alert resolution';
-    return `<section class="ai-result"><h4>Photo review</h4><p class="ai-analysis-status">${esc(status)}</p>${detection?`<p class="ai-detection">${esc(detection)}</p>`:''}<span class="workspace-note">${guidance}</span></section>`;
+    const guidance=needsReview?'Human review required':alert.alert_status==='resolved'?'':'Awaiting alert resolution';
+    const statusEmoji={pending:'⏳',processing:'🔄',completed:'✅',failed:'❌',skipped:'⏭️'}[result?.status]||'ℹ️';
+    const detectionEmoji=result?.uncertain!==false||result?.scene_status==='unclear'?'❓':targets.includes('person')?(targets.includes('animal')?'👤 🐾':'👤'):targets.includes('animal')?'🐾':'🔎';
+    const pill=(text,emoji,kind)=>`<span class="ai-pill ${kind}"><span aria-hidden="true">${emoji}</span><span class="ai-pill-text">${esc(text)}</span></span>`;
+    return `<section class="ai-result"><h4>Photo review</h4><div class="ai-review-bubbles">${pill(status,statusEmoji,'ai-analysis-status')}${detection?pill(detection,detectionEmoji,'ai-detection'):''}${guidance?pill(guidance,needsReview?'⚠️':'⏳','ai-guidance'):''}</div></section>`;
+  }
+  function taskResponse(a){
+    if(a.alert_status==='resolved'&&a.resolution_source==='ai')return '';
+    return `<div class="task-response"><h4>Task</h4>${a.assignment_notes?`<div class="assignment-record"><strong>Assignment note</strong><p>${esc(a.assignment_notes)}</p></div>`:''}${a.alert_status==='resolved'?`<div class="saved-note"><strong>Handling note</strong><p>${esc(a.resolution_notes||'—')}</p><small>${esc(time(a.resolved_at))}</small></div>`:officer()?`<label class="task-label">Assign to<select id="assignee"><option value="">Select a botanist</option>${state.botanists.map(b=>`<option value="${esc(b.id)}" ${a.assigned_to===b.id?'selected':''}>${esc(b.full_name||'Botanist')}</option>`).join('')}</select></label><label class="task-label">Assignment note <small>(optional)</small><textarea id="assignment-note" rows="2" maxlength="2000">${esc(a.assignment_notes||'')}</textarea></label><button class="button primary" data-action="assign" ${state.busy?'disabled':''}>${a.assigned_to?'Reassign task':'Assign task'}</button>`:a.assigned_to===identity.id&&a.alert_status==='acknowledged'?`<label class="task-label">Handling note<textarea id="resolution-note" rows="3" maxlength="2000" placeholder="Describe the action taken"></textarea></label><button class="button primary" data-action="resolve" ${state.busy?'disabled':''}>Resolve task</button>`:'<span class="read-only">Awaiting assignment</span>'}</div>`;
   }
   function details(){
     const a=current();
     if(!a)return `<aside class="panel review-panel"><div class="panel-heading"><h2>Alert details</h2></div><div class="empty-state"><h3>No alert selected</h3></div></aside>`;
-    return `<aside class="panel review-panel"><div class="panel-heading"><h2>Alert details</h2></div>${state.loading?'<div class="workspace-note">Loading details…</div>':''}${state.evidence.length?`<div class="evidence-host" id="evidence-host"></div><div class="photo-actions"><select id="evidence-choice" aria-label="Evidence photograph">${state.evidence.map((e,i)=>`<option value="${esc(e.id)}" ${e.id===state.evidenceId?'selected':''}>Photo ${i+1} · ${esc(time(e.captured_at))}</option>`).join('')}</select><button class="button" data-action="full-photo">View photo</button></div>`:state.loading?'':'<div class="workspace-note">No photo attached</div>'}<div class="review-body"><div class="review-title">${alertBadges(a)}</div><h3>${esc(workspaceAlertTitle(a.alert_message))}</h3>${a.alert_status==='resolved'?`<span class="resolved-by">Resolved by: ${a.resolution_source==='ai'?'AI':'Staff'}</span>`:''}<div class="assignment-record"><strong>Location</strong>${locationText(state.location,true)}</div>${photoReview(a)}<div class="task-response"><h4>Task</h4>${a.assignment_notes?`<div class="assignment-record"><strong>Assignment note</strong><p>${esc(a.assignment_notes)}</p></div>`:''}${a.alert_status==='resolved'?`<div class="saved-note"><strong>${a.resolution_source==='ai'?'AI resolution reason':'Handling note'}</strong><p>${esc(a.resolution_notes||'—')}</p><small>${esc(time(a.resolved_at))}</small></div>`:officer()?`<label class="task-label">Assign to<select id="assignee"><option value="">Select a botanist</option>${state.botanists.map(b=>`<option value="${esc(b.id)}" ${a.assigned_to===b.id?'selected':''}>${esc(b.full_name||'Botanist')}</option>`).join('')}</select></label><label class="task-label">Assignment note <small>(optional)</small><textarea id="assignment-note" rows="2" maxlength="2000">${esc(a.assignment_notes||'')}</textarea></label><button class="button primary" data-action="assign" ${state.busy?'disabled':''}>${a.assigned_to?'Reassign task':'Assign task'}</button>`:a.assigned_to===identity.id&&a.alert_status==='acknowledged'?`<label class="task-label">Handling note<textarea id="resolution-note" rows="3" maxlength="2000" placeholder="Describe the action taken"></textarea></label><button class="button primary" data-action="resolve" ${state.busy?'disabled':''}>Resolve task</button>`:'<span class="read-only">Awaiting assignment</span>'}</div></div></aside>`;
+    return `<aside class="panel review-panel"><div class="panel-heading"><h2>Alert details</h2></div>${state.loading?'<div class="workspace-note">Loading details…</div>':''}${state.evidence.length?`<div class="evidence-host" id="evidence-host"></div><div class="photo-actions"><select id="evidence-choice" aria-label="Evidence photograph">${state.evidence.map((e,i)=>`<option value="${esc(e.id)}" ${e.id===state.evidenceId?'selected':''}>Photo ${i+1} · ${esc(time(e.captured_at))}</option>`).join('')}</select><button class="button" data-action="full-photo">View photo</button></div>`:state.loading?'':'<div class="workspace-note">No photo attached</div>'}<div class="review-body"><div class="review-title">${alertBadges(a)}</div><h3>${esc(workspaceAlertTitle(a.alert_message))}</h3>${a.alert_status==='resolved'?`<span class="resolved-by">Resolved by: ${a.resolution_source==='ai'?'AI':'Staff'}</span>`:''}<div class="assignment-record"><strong>Location</strong>${locationText(state.location,true)}</div>${photoReview(a)}${taskResponse(a)}${officer()?`<div class="alert-danger-zone"><button class="button delete-alert" data-action="delete-alert" ${state.busy?'disabled':''}>Delete alert</button></div>`:''}</div></aside>`;
   }
   function render(){
     const drafts=renderedAlertId===state.selected?[...root.querySelectorAll('.task-label textarea,.task-label select')].filter(n=>n.value!==(n.tagName==='SELECT'?([...n.options].find(o=>o.defaultSelected)||n.options[0])?.value:n.defaultValue)).map(n=>[n.id,n.value]):[];
@@ -120,17 +127,12 @@ void (async()=>{
     const taskMap=root.querySelector('#task-location-map');if(taskMap&&state.location)WorkspaceMaps.attach(taskMap,[state.location],'task');
   }
   function showError(error){state.error=error.message||'Service unavailable';const box=root.querySelector('#workspace-error');if(box){box.hidden=false;box.textContent=state.error;}else render();}
-  async function loadReadings(more=false,{keepExtent=false}={}){
-    if(!state.station){state.readings=[];return;}
-    const generation=++requestGeneration,range=more?(state.readingBounds||bounds()):bounds();
-    const first=more?state.readingsPage+1:1,last=more?first:keepExtent?state.readingsPage:1;
-    const rows=more?state.readings.slice():[];let loadedPage=first,hasMore=false;
-    for(let page=first;page<=last;page++){
-      const r=await api('/readings?'+new URLSearchParams({station:state.station,...range,page}));
-      if(generation!==requestGeneration)return;
-      rows.push(...r.data);loadedPage=page;hasMore=r.has_more;if(!hasMore)break;
-    }
-    state.readingBounds=range;state.readings=rows;state.readingsPage=loadedPage;state.readingsMore=hasMore;
+  async function loadReadings(){
+    if(!state.station){state.readings=[];state.readingsMore=false;return;}
+    const generation=++requestGeneration,range=bounds();
+    const result=await api('/readings?'+new URLSearchParams({station:state.station,...range,page:1}));
+    if(generation!==requestGeneration)return;
+    state.readingBounds=range;state.readings=result.data;state.readingsMore=result.has_more;
   }
   async function loadAlerts(){
     const generation=++alertGeneration;
@@ -142,10 +144,10 @@ void (async()=>{
     if(state.selected&&!current()){detailGeneration++;state.selected=null;state.loading=false;state.evidence=[];state.evidenceId=null;state.location=null;photos.clear();}
   }
   async function counts(){const r=await api('/counts');const count=validCount(officer()?r.data.unresolved:r.data.assigned,'IoT alert');if(officer())state.unresolved=count;else state.taskCount=count;updateIotAlertMenuCount(count);const node=root.querySelector(officer()?'#unresolved-count':'#task-count');if(node)node.textContent=officer()?state.unresolved:state.taskCount;}
-  async function refresh({automatic=false}={}){
+  async function refresh(){
     state.error='';
     try{
-      if(officer()&&state.page==='overview'){const r=await api('/stations');state.stations=r.data;if(!state.stations.some(s=>s.id===state.station))state.station=state.stations[0]?.id||null;if(!automatic||state.readingsPage<=1)await loadReadings(false,{keepExtent:true});}
+      if(officer()&&state.page==='overview'){const r=await api('/stations');state.stations=r.data;if(!state.stations.some(s=>s.id===state.station))state.station=state.stations[0]?.id||null;await loadReadings();}
       else {state.alertStations=(await api('/alert-stations')).data;if(state.alertStation!=='all'&&!state.alertStations.some(s=>s.id===state.alertStation))state.alertStation='all';await loadAlerts();}await counts();if(state.page==='alerts'&&current())await loadDetails({preserve:true});else render();
     }catch(error){showError(error);}
   }
@@ -199,6 +201,17 @@ void (async()=>{
         const e=state.evidence.find(e=>e.id===state.evidenceId);if(!e||!current())return;
         const dialog=document.createElement('dialog');dialog.className='workspace-photo-dialog';const close=document.createElement('button');close.className='button dialog-close';close.textContent='Close';close.onclick=()=>dialog.close();const host=document.createElement('div');host.className='workspace-photo-full';dialog.append(close,host);document.body.append(dialog);dialog.addEventListener('close',()=>dialog.remove(),{once:true});dialog.showModal();photos.attach(host,current().id,e,'full');return;
       }
+      if(action==='delete-alert'){
+        const a=current();if(!officer()||!a||state.busy)return;
+        if(!window.confirm('Delete this alert and its linked photo and AI records? Sensor readings and stored photo files will be kept.'))return;
+        state.busy=true;b.disabled=true;
+        try{
+          await api(`/alerts/${pathId(a.id)}`,{method:'DELETE'});
+          photos.clear();detailGeneration++;state.selected=null;state.evidence=[];state.evidenceId=null;state.location=null;state.ai=null;
+          await refresh();
+        }finally{state.busy=false;b.disabled=false;}
+        return;
+      }
       if(action==='assign'||action==='resolve'){
         if(state.busy)return;const a=current();if(!a)return;
         const body=action==='assign'?{assigned_to:root.querySelector('#assignee').value,assignment_notes:root.querySelector('#assignment-note').value,expected_assigned_at:a.assigned_at}:{resolution_notes:root.querySelector('#resolution-note').value,expected_assigned_at:a.assigned_at};
@@ -229,7 +242,7 @@ void (async()=>{
     const now=new Date();state.from=dateInput(new Date(+now-86400000));state.to=dateInput(now);
     photos=WorkspacePhotos.create({api,download});render();await refresh();
     // Poll data, never signatures or decoded images. Preserve editable notes and photo DOM.
-    setInterval(async()=>{if(document.hidden||polling||state.busy||document.querySelector('.history-dialog[open]')||root.querySelector('textarea:focus,select:focus,input:focus')||[...root.querySelectorAll('textarea')].some(n=>n.value!==n.defaultValue))return;polling=true;try{if(officer()&&state.page==='overview'){await refresh({automatic:true});return;}await counts();if(state.page==='alerts'){
+    setInterval(async()=>{if(document.hidden||polling||state.busy||document.querySelector('.history-dialog[open]')||root.querySelector('textarea:focus,select:focus,input:focus')||[...root.querySelectorAll('textarea')].some(n=>n.value!==n.defaultValue))return;polling=true;try{if(officer()&&state.page==='overview'){await refresh();return;}await counts();if(state.page==='alerts'){
       const before=JSON.stringify([state.alerts,state.alertPages]);await loadAlerts();if(current())await loadDetails({preserve:true});else if(before!==JSON.stringify([state.alerts,state.alertPages]))render();
     }}catch(error){if([401,403].includes(error.status)){photos.clear();showError(error);}}finally{polling=false;}},30000);
   }catch(error){root.replaceChildren();const msg=document.createElement('p');msg.className='workspace-error';msg.textContent=error.message;root.append(msg);const login=document.createElement('a');login.href='login.html';login.textContent='Return to sign in';root.append(login);}

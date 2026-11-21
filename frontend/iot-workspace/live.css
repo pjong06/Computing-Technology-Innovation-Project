@@ -15,3 +15,11 @@
 
 .resolved-by{display:block;margin-top:10px;font-size:12px;color:var(--muted)}
 .ai-result p{margin:8px 0}
+
+.ai-review-bubbles{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.ai-pill{display:inline-flex;align-items:center;gap:7px;max-width:100%;padding:7px 11px;border:1px solid var(--line);border-radius:999px;background:var(--card);color:var(--ink);font-size:12px;font-weight:600;line-height:1.45}
+.ai-pill-text{overflow-wrap:anywhere}
+.ai-pill > [aria-hidden]{flex:none;font-size:15px;line-height:1}
+
+.alert-danger-zone{margin-top:22px;padding-top:16px;border-top:1px solid var(--line)}
+.live-body .button.delete-alert{border:1px solid #b95650;color:#b95650;background:transparent}
