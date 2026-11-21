@@ -17,7 +17,7 @@
 <main>
 <section class="page on">
   <h1>Distribution <span>map</span></h1>
-  <p class="lead">Where every plant with a GPS location, each sensor station and recent trace routes are, for conservation officers. Click a marker or line for details.</p>
+  <p class="lead">Where every plant with a GPS location and each sensor station are, for conservation officers. Click a marker for details.</p>
   <div class="bar">
     <select id="map-species" class="grow" aria-label="Filter by species" onchange="drawMarkers(true)">
       <option value="">All species</option>
@@ -32,7 +32,8 @@
       <option value="DD">Data Deficient</option>
     </select>
     <button class="btn ghost" onclick="resetMapFilters()">Show all on map</button>
-    <label class="map-toggle">
+    <!-- Trace routes are hidden: the app no longer records them (ROUTES_ON_MAP in js/map.js). -->
+    <label class="map-toggle" id="map-routes-toggle" hidden>
       <input type="checkbox" id="map-show-routes" checked onchange="toggleRoutes(this.checked)">
       Show routes
     </label>
@@ -40,7 +41,7 @@
   <div class="card">
     <div id="map-box"></div>
     <p class="muted" id="map-message"></p>
-    <p class="muted" id="map-route-note">Routes from the last 90 days.</p>
+    <p class="muted" id="map-route-note" hidden>Routes from the last 90 days.</p>
   </div>
 </section>
 </main>

@@ -832,6 +832,10 @@ tr.row:hover td {
   cursor: pointer;
 }
 
+.map-toggle[hidden] {
+  display: none;
+}
+
 .map-toggle input {
   width: 16px;
   height: 16px;

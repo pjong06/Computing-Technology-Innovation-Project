@@ -6,6 +6,11 @@ let map = null;
 let markerLayer = null;
 let sensorMarkerLayer = null;
 let routeLayer = null;
+
+// Trace routes are no longer recorded by the app, so the map doesn't offer them: no "Show
+// routes" checkbox, no route layer and no request. The endpoint (GET /api/officer/map/routes),
+// the table and the code below are kept; set this to true to show routes again.
+const ROUTES_ON_MAP = false;
 let plants = [];
 let sensorStations = [];
 let fieldRoutes = [];
@@ -61,7 +66,7 @@ function createMap() {
 sensorMarkerLayer = L.layerGroup().addTo(map);
   // Trace routes: their own layer, shown or hidden with the "Show routes" checkbox.
   routeLayer = L.layerGroup();
-  if (document.getElementById('map-show-routes').checked) {
+  if (ROUTES_ON_MAP && document.getElementById('map-show-routes').checked) {
     routeLayer.addTo(map);
   }
 }
@@ -316,7 +321,11 @@ if (pageAllowed === false) {
   document.getElementById('map-message').textContent =
     'The map could not load. Check your internet connection and refresh the page.';
 } else {
-  document.getElementById('map-show-routes').checked = readShowRoutes();
+  if (ROUTES_ON_MAP) {
+    document.getElementById('map-routes-toggle').hidden = false;
+    document.getElementById('map-route-note').hidden = false;
+    document.getElementById('map-show-routes').checked = readShowRoutes();
+  }
   createMap();
 
   document.getElementById('map-message').textContent =
@@ -335,8 +344,10 @@ if (pageAllowed === false) {
   });
 
   // In parallel with the plants: if routes fail, the plants still show.
-  loadRoutes().catch(error => {
-    console.error('Routes could not be loaded:', error);
-    document.getElementById('map-route-note').textContent = 'Routes could not be loaded.';
-  });
+  if (ROUTES_ON_MAP) {
+    loadRoutes().catch(error => {
+      console.error('Routes could not be loaded:', error);
+      document.getElementById('map-route-note').textContent = 'Routes could not be loaded.';
+    });
+  }
 }

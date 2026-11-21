@@ -21,10 +21,3 @@ test('no leftover TODO notes in the tag parser', () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   assert.doesNotMatch(fs.readFileSync(path.join(here, 'tagCode.ts'), 'utf8'), /TODO/);
 });
-
-test('discarding a route goes back to Home', () => {
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  const linkRoute = fs.readFileSync(path.join(here, '../../app/link-route.tsx'), 'utf8');
-  assert.match(linkRoute, /discardDraftRoute\(\);\s*router\.replace\('\/\(tabs\)\/home' as any\);/);
-  assert.doesNotMatch(linkRoute, /router\.replace\('\/\(tabs\)' as any\)/);
-});
