@@ -5,15 +5,23 @@
 //     plant, and listed in plants.demo_values;
 //   - height, diameter, health, life stage: one approved observation per plant
 //     (observations.is_demo = true), dated before today, only with the fields that none of the
-//     plant's observations has. Approved, so it never enters the Review queue.
+//     plant's observations has. Approved, so it never enters the Review queue. A plant that
+//     already has a demo observation from an earlier run gets the missing fields added to it
+//     (e.g. the clump width of a moss or liverwort, recorded as its diameter);
+//   - coordinates (plants.location, read by the officer map and plant details) for plants that
+//     have none: a demo point inside Niah National Park, in the zone the plant's location note
+//     names, at least 20 m from every other plant, with a GPS accuracy of 8-15 m. Recorded in
+//     plants.demo_values.coordinates. Real coordinates are never moved.
 // Values a botanist entered are never changed. No credit or source text is written.
 //
-// Dry run by default: writes a CSV report (plant, field, old, new) and changes nothing.
+// Dry run by default: writes a CSV report (plant, field, old, new) and changes nothing. The
+// report also lists every detail a plant would STILL be missing after the fill, and why.
 //   node scripts/demo-plant-details/fill.mjs [--report FILE] [--observer PROFILE_ID] [--apply]
 // --observer: the profile recorded as observer on demo observations of plants that have no
 // registering botanist (e.g. imported plants); without it those fields are left empty.
 // SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are read from the environment only (never .env).
-// Needs supabase/migrations/20261121200000_demo_plant_details.sql.
+// Needs supabase/migrations/20261121200000_demo_plant_details.sql and
+// 20261121220000_demo_plant_coordinates.sql.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -21,7 +29,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { toCsv } from '../species-photos/csv.mjs';
-import { OBSERVATION_FIELDS, PLANT_FIELDS, REPORT_COLUMNS, planFill, reportRows } from './lib.mjs';
+import { OBSERVATION_FIELDS, PLANT_FIELDS, REPORT_COLUMNS, missingRows, planFill, plantUpdate, reportRows } from './lib.mjs';
 import { connect, readAll, rest, safe } from './supabase.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -52,14 +60,25 @@ async function run(options) {
     await rest('plants?select=id,demo_values&limit=1');
     await rest('observations?select=id,is_demo&limit=1');
   } catch {
-    if (options.apply) throw new Error('Apply supabase/migrations/20261121200000_demo_plant_details.sql first.');
+    if (options.apply) {
+      throw new Error('Apply supabase/migrations/20261121200000_demo_plant_details.sql and 20261121220000_demo_plant_coordinates.sql first.');
+    }
   }
 
-  const plants = await readAll('plants',
-    `id,qr_code_value,registered_by,registered_at,species_id,${PLANT_FIELDS.join(',')}`,
+  const plantRows = await readAll('plants',
+    `id,qr_code_value,registered_by,registered_at,species_id,gps_accuracy_m,${PLANT_FIELDS.join(',')}`,
     { deleted_at: 'is.null' });
+  // plants.location is PostGIS, which the REST API returns as hex; plant_map_points has the same
+  // points as numbers (and only for plants that have a location).
+  const points = await readAll('plant_map_points', 'id,latitude,longitude', {});
+  const pointById = new Map(points.map((point) => [point.id, point]));
+  const plants = plantRows.map((plant) => ({
+    ...plant,
+    latitude: pointById.get(plant.id)?.latitude ?? null,
+    longitude: pointById.get(plant.id)?.longitude ?? null,
+  }));
   const observations = await readAll('observations',
-    `id,plant_id,observed_at,${OBSERVATION_FIELDS.join(',')}`, { deleted_at: 'is.null' });
+    `id,plant_id,observed_at,review_status,is_demo,${OBSERVATION_FIELDS.join(',')}`, { deleted_at: 'is.null' });
   const species = await readAll('species', 'id,scientific_name,taxonomy(family)', {});
   const observationsByPlant = new Map();
   for (const visit of observations) {
@@ -76,17 +95,25 @@ async function run(options) {
   } else {
     rows = [];
     for (const plan of plans) {
-      const fields = Object.keys(plan.plantValues);
       let action = 'filled';
       try {
-        if (fields.length > 0) {
-          // Only while every one of these fields is still empty.
-          const stillEmpty = fields.map((field) => `${field}=is.null`).join('&');
+        if (plantUpdate(plan, null)) {
           const current = (await rest(`plants?id=eq.${plan.plant.id}&select=demo_values`))[0];
-          const updated = await rest(`plants?id=eq.${plan.plant.id}&${stillEmpty}&select=id`, {
+          // Only while every one of these fields (and the location) is still empty.
+          const { filters, body } = plantUpdate(plan, current?.demo_values);
+          const updated = await rest(`plants?id=eq.${plan.plant.id}&${filters.join('&')}&select=id`, {
             method: 'PATCH',
-            body: { ...plan.plantValues, demo_values: { ...(current?.demo_values ?? {}), ...plan.plantValues } },
+            body,
             prefer: 'return=representation',
+          });
+          if (!updated.length) action = 'skipped: changed since the report';
+        }
+        if (plan.observationUpdate) {
+          // Only the demo observation, and only while each of these fields is still empty.
+          const { id, values } = plan.observationUpdate;
+          const stillEmpty = Object.keys(values).map((field) => `${field}=is.null`).join('&');
+          const updated = await rest(`observations?id=eq.${id}&is_demo=is.true&${stillEmpty}&select=id`, {
+            method: 'PATCH', body: values, prefer: 'return=representation',
           });
           if (!updated.length) action = 'skipped: changed since the report';
         }
@@ -104,10 +131,16 @@ async function run(options) {
     }
   }
 
+  // The check: what each plant would still be missing once the fill is done.
+  const gaps = missingRows(plans, observationsByPlant);
   mkdirSync(dirname(options.report), { recursive: true });
-  writeFileSync(options.report, toCsv(REPORT_COLUMNS, rows), 'utf8');
+  writeFileSync(options.report, toCsv(REPORT_COLUMNS, [...rows, ...gaps]), 'utf8');
   const touched = new Set(rows.map((row) => row.plant_id)).size;
   console.log(`${plants.length} active plants; ${rows.length} empty fields in ${touched} plants ${options.apply ? 'processed' : 'would be filled'}.`);
+  const incomplete = new Set(gaps.map((row) => row.plant_id)).size;
+  console.log(incomplete === 0
+    ? 'Check: every active plant has all its details after the fill.'
+    : `Check: ${incomplete} plants would still miss ${gaps.length} details (rows starting "still missing" in the report).`);
   if (!options.apply) console.log('Dry run: nothing was changed. Review the report, then run again with --apply.');
   console.log(`Report: ${options.report}`);
 }
