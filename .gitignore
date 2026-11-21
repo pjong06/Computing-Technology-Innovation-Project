@@ -8,3 +8,5 @@ scripts/inat-plant-photos/*.csv
 scripts/inat-plant-photos/.cache/
 # The review page's download (it lands in Downloads, but may be copied here)
 species-photo-review-by-species-REVIEWED.csv
+# Plant photo metadata cleanup report
+scripts/photo-metadata/*.csv

@@ -5,6 +5,7 @@ const { randomUUID } = require("node:crypto");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { removeLegacyObservationSource } = require("../utils/speciesDescription");
 const { createKnowledgeRateLimit } = require("../middleware/knowledgeRateLimit");
+const { publicPhotoUrl } = require("../services/publicPlantPhotos");
 
 function parsePagination(query, defaultSize = 50) {
     const { page = "1", page_size = String(defaultSize) } = query;
@@ -292,6 +293,36 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
 
     // Adds plant_photo (the newest approved plant's primary photo, or null) to each species,
     // for one page of species at once. A failure only leaves the placeholder.
+    // Adds public_photo ({ tag, url } or null) to each species, for visitor screens: the
+    // newest plant of the species that is on the public QR page and has a public photo copy
+    // (supabase/migrations/20261121150000_public_plant_photos.sql). url is the visitor
+    // endpoint GET /p/:tag/photo, never a storage path. Read with the public client, so it
+    // is the same for everyone. Before the migration (or on any error) it is null.
+    async function withPublicPhotos(species) {
+        const list = Array.isArray(species) ? species : [species];
+        const ids = list.filter(Boolean).map(item => item.id).filter(Boolean);
+        const tagBySpecies = new Map();
+        if (ids.length > 0) {
+            try {
+                const { data, error } = await supabase.rpc("public_species_photo_tags", { p_species_ids: ids });
+                if (error) throw error;
+                for (const row of Array.isArray(data) ? data : []) {
+                    const url = publicPhotoUrl(row.qr_code_value);
+                    if (url && !tagBySpecies.has(row.species_id)) {
+                        tagBySpecies.set(row.species_id, { tag: row.qr_code_value, url });
+                    }
+                }
+            } catch (error) {
+                if (error?.code !== "PGRST202") {
+                    console.error("Species public photo error:", error?.message || error);
+                }
+                tagBySpecies.clear();
+            }
+        }
+        const result = list.map(item => item && { ...item, public_photo: tagBySpecies.get(item.id) || null });
+        return Array.isArray(species) ? result : result[0];
+    }
+
     async function withPlantPhotos(client, species) {
         const list = Array.isArray(species) ? species : [species];
         const ids = list.filter(Boolean).map(item => item.id).filter(Boolean);
@@ -643,8 +674,9 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         }
 
         return res.json({
-            // Staff requests get the photo of one of each species' plants (plant_photo).
-            data: await withPlantPhotos(req.supabase, orderSpeciesMedia(data)),
+            // Staff requests get the photo of one of each species' plants (plant_photo);
+            // everyone gets the public photo for visitor screens (public_photo).
+            data: await withPublicPhotos(await withPlantPhotos(req.supabase, orderSpeciesMedia(data))),
             pagination: {
                 page: pageNumber,
                 page_size: size,
@@ -713,7 +745,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             return res.status(404).json({ message: "Species not found" });
         }
 
-        res.json({ data: await withPlantPhotos(req.supabase, orderSpeciesMedia(data)) });
+        res.json({ data: await withPublicPhotos(await withPlantPhotos(req.supabase, orderSpeciesMedia(data))) });
     });
 
     // Officers can inspect a species even after it has been archived.

@@ -2,6 +2,10 @@
 
 const express = require("express");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const {
+    PUBLIC_PHOTO_BUCKET,
+    refreshPublicPlantPhoto,
+} = require("../services/publicPlantPhotos");
 
 const router = express.Router();
 router.use(requireAuth, requireRole("officer"));
@@ -206,6 +210,57 @@ function emptyList(res, paging) {
 
 // Filter options are kept separate from paged plant data so the species catalogue can
 // show counts and the plant catalogue can offer every registered-by value.
+// Brings every public photo copy in line with the plants (officer only, with the officer's
+// own permissions): writes the stripped copy for each plant on the public QR page and
+// removes copies of plants that are no longer public. Run once after the
+// public_plant_photos migration, and whenever copies may be out of date (e.g. after
+// archiving a species). Returns how many were published, removed and skipped.
+router.post("/public-photos/refresh", async (req, res) => {
+    try {
+        const counts = { published: 0, removed: 0, skipped: 0 };
+        const publishedTags = new Set();
+        let start = 0;
+        let rows;
+        do {
+            rows = throwOnError(await req.supabase
+                .from("plants")
+                .select("id, qr_code_value")
+                .eq("plant_status", "approved")
+                .is("deleted_at", null)
+                .order("id", { ascending: true })
+                .range(start, start + RELATED_PAGE_SIZE - 1));
+            for (const plant of rows) {
+                const result = await refreshPublicPlantPhoto(req.supabase, plant.id);
+                counts[result] += 1;
+                if (result === "published") publishedTags.add(plant.qr_code_value);
+            }
+            start += rows.length;
+        } while (rows.length === RELATED_PAGE_SIZE);
+
+        // Copies left from plants that were rejected, deleted or archived since.
+        const bucket = req.supabase.storage.from(PUBLIC_PHOTO_BUCKET);
+        const stale = [];
+        for (let offset = 0; ; offset += 1000) {
+            const { data: files, error } = await bucket.list("", { limit: 1000, offset });
+            if (error) throw error;
+            for (const file of files || []) {
+                const tag = String(file.name || "").replace(/\.jpg$/, "");
+                if (file.name && !publishedTags.has(tag)) stale.push(file.name);
+            }
+            if (!files || files.length < 1000) break;
+        }
+        for (let i = 0; i < stale.length; i += 100) {
+            const { error } = await bucket.remove(stale.slice(i, i + 100));
+            if (error) throw error;
+        }
+        counts.removed += stale.length;
+        return res.json({ data: counts });
+    } catch (error) {
+        console.error("Public plant photo refresh error:", error?.message || error);
+        return res.status(500).json({ message: "Could not refresh the public plant photos" });
+    }
+});
+
 router.get("/facets", async (req, res) => {
     try {
         const counts = new Map();

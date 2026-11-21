@@ -6,6 +6,7 @@ const { randomUUID } = require('node:crypto');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
+const { photoWithMetadata } = require('./helpers/testImages');
 
 const BOTANIST = '11111111-1111-4111-8111-111111111111';
 const PLANT = '22222222-2222-4222-8222-222222222222';
@@ -166,7 +167,7 @@ async function uploadPhoto(base, photoType = 'leaf') {
   form.set(
     'photo',
     new Blob(
-      [Buffer.from([0xff, 0xd8, 0xff, 0xd9])],
+      [await photoWithMetadata()],
       { type: 'image/jpeg' }
     ),
     'leaf.jpg'

@@ -3,6 +3,8 @@ const { randomUUID } = require("node:crypto");
 const upload = require("../services/storageService");
 const { generatePlantQR, buildPublicPlantUrl, TAG_PATTERN, QrConfigurationError } = require("../services/qrService");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { stripPhotoMetadata, InvalidPhotoError } = require("../services/photoSanitizer");
+const { removePublicPlantPhotoByTag } = require("../services/publicPlantPhotos");
 
 const router = express.Router();
 
@@ -553,6 +555,17 @@ router.delete("/:id", requireRole("botanist", "officer"), async (req, res) => {
     if (!(await checkPlantWriteAccess(req, res, plantId))) return;
 
     try {
+        // Its tag, so an officer's delete also removes the public copy of its photo.
+        let publicTag = null;
+        if (req.profile.role === "officer") {
+            const { data: tagRow } = await req.supabase
+                .from("plants")
+                .select("qr_code_value")
+                .eq("id", plantId)
+                .maybeSingle();
+            publicTag = tagRow?.qr_code_value || null;
+        }
+
         await req.supabase.from("observations").delete().eq("plant_id", plantId);
 
         const { data, error } = await req.supabase
@@ -569,6 +582,11 @@ router.delete("/:id", requireRole("botanist", "officer"), async (req, res) => {
 
         if (!data) {
             return res.status(404).json({ message: "Plant record not found" });
+        }
+
+        if (publicTag) {
+            await removePublicPlantPhotoByTag(req.supabase, publicTag).catch(error =>
+                console.error("Public plant photo removal failed:", error?.message));
         }
 
         return res.json({
@@ -748,8 +766,19 @@ router.post(
             });
         }
 
+        // Stored as a fresh JPEG without metadata (no EXIF/GPS, XMP or ICC profile).
+        let photoBytes;
+        try {
+            photoBytes = await stripPhotoMetadata(req.file.buffer, { expectedMime: req.file.mimetype });
+        } catch (error) {
+            if (error instanceof InvalidPhotoError) {
+                return res.status(400).json({ message: error.message });
+            }
+            throw error;
+        }
+
         const filePath =
-            `${req.user.id}/${plantId}/${randomUUID()}.${extension}`;
+            `${req.user.id}/${plantId}/${randomUUID()}.jpg`;
 
         try {
             const { error: uploadError } =
@@ -757,9 +786,9 @@ router.post(
                     .from("plant-media")
                     .upload(
                         filePath,
-                        req.file.buffer,
+                        photoBytes,
                         {
-                            contentType: req.file.mimetype,
+                            contentType: "image/jpeg",
                             upsert: false
                         }
                     );
