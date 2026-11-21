@@ -7,6 +7,7 @@ import { signOutOnThisPhone } from '../lib/auth';
 import { useRecordStore } from '../store/useRecordStore';
 import { useProposalStore } from '../store/useProposalStore';
 import { useIotTaskStore } from '../store/useIotTaskStore';
+import { clearSavedPlantList } from '../store/usePlantListStore';
 import { deleteAllStoredPhotos } from '../utils/photoStorage';
 
 // 'pending': signed in, but the account isn't active (waiting for an officer to
@@ -128,6 +129,7 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
       await useProposalStore.getState().clearProposals();
       await useIotTaskStore.getState().clearTasks();
       await useRecordStore.getState().clearAllData(); // records, routes, draft route
+      await clearSavedPlantList(); // other plants' coordinates kept for offline "Find plant"
       await deleteAllStoredPhotos();
       await AsyncStorage.removeItem('niah_is_guest_visitor');
     } catch {

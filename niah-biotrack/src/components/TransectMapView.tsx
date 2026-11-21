@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -25,16 +25,29 @@ interface TransectMapViewProps {
   currentPoint: RoutePoint | null;
   targetPoint: MapTargetPoint | null;
   height?: number;
+  // The phone has no internet connection (NetInfo).
+  offline?: boolean;
+  // Drawn instead of the map while offline or while the map tiles fail to load.
+  offlineView?: React.ReactNode;
 }
+
+// While the tiles are failing, try loading the map again this often (signal can come back
+// without the phone reporting a network change, e.g. walking out from under the canopy).
+const TILE_RETRY_MS = 30_000;
 
 export default function TransectMapView({
   currentPoint,
   targetPoint,
   height = 270,
+  offline = false,
+  offlineView = null,
 }: TransectMapViewProps) {
   const webViewRef = useRef<WebView | null>(null);
   const [mapStyle, setMapStyle] = useState<'street' | 'satellite'>('street');
   const [mapReady, setMapReady] = useState(false);
+  // 'unknown' until the first tile loads or fails. The map page reports it (see the
+  // tileload / tileerror handlers in the HTML below).
+  const [tiles, setTiles] = useState<'unknown' | 'ok' | 'failed'>('unknown');
 
   const payload = useMemo(
     () => ({
@@ -105,6 +118,11 @@ export default function TransectMapView({
 <body>
   <div id="map"></div>
   <script>
+    // No Leaflet: its script could not be downloaded (no internet).
+    if (typeof L === 'undefined') {
+      if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage('tiles-failed');
+      throw new Error('Leaflet not loaded');
+    }
     var map = L.map('map', { zoomControl: false }).setView([3.802, 113.784], 17);
 
     var streetLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -113,6 +131,22 @@ export default function TransectMapView({
 
     var satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       maxZoom: 19
+    });
+
+    // Tell the app whether map tiles are arriving, so it can show its offline view instead
+    // of a blank map (and switch back as soon as one loads).
+    var tilesLoaded = 0;
+    function report(status) {
+      if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(status);
+    }
+    [streetLayer, satelliteLayer].forEach(function(layer) {
+      layer.on('tileload', function() {
+        tilesLoaded += 1;
+        if (tilesLoaded === 1) report('tiles-ok');
+      });
+      layer.on('tileerror', function() {
+        if (tilesLoaded === 0) report('tiles-failed');
+      });
     });
 
     var activeLayer = streetLayer.addTo(map);
@@ -227,6 +261,22 @@ export default function TransectMapView({
     }
   }, [mapReady, payload]);
 
+  const showOffline = offline || tiles === 'failed';
+
+  // Load the map page again when the phone comes back online without tiles, and every
+  // TILE_RETRY_MS while tiles keep failing. The offline view stays until a tile actually
+  // arrives ('tiles-ok').
+  const wasOffline = useRef(offline);
+  useEffect(() => {
+    if (wasOffline.current && !offline && tiles !== 'ok') webViewRef.current?.reload();
+    wasOffline.current = offline;
+  }, [offline, tiles]);
+  useEffect(() => {
+    if (tiles !== 'failed' || offline) return undefined;
+    const timer = setInterval(() => webViewRef.current?.reload(), TILE_RETRY_MS);
+    return () => clearInterval(timer);
+  }, [tiles, offline]);
+
   const handleRecenter = () => {
     webViewRef.current?.injectJavaScript('window.recenterMap && window.recenterMap(); true;');
   };
@@ -254,8 +304,19 @@ export default function TransectMapView({
               setMapReady(true);
               syncMap();
             }}
+            onMessage={(event) => {
+              const message = event.nativeEvent.data;
+              if (message === 'tiles-ok') setTiles('ok');
+              else if (message === 'tiles-failed') setTiles((current) => (current === 'ok' ? current : 'failed'));
+            }}
+            onError={() => setTiles('failed')}
           />
 
+          {/* Offline or no tiles: the phone-drawn view covers the (blank) map. The map stays
+              underneath so it can report when tiles load again. */}
+          {showOffline && offlineView ? <View style={StyleSheet.absoluteFill}>{offlineView}</View> : null}
+
+          {showOffline && offlineView ? null : (<>
           <View style={styles.layerToggle}>
             <TouchableOpacity
               style={[
@@ -298,6 +359,7 @@ export default function TransectMapView({
           >
             <Ionicons name="locate-outline" size={18} color="#213B2A" />
           </TouchableOpacity>
+          </>)}
         </>
       )}
     </View>

@@ -16,6 +16,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
+import NetInfo from '@react-native-community/netinfo';
 
 import { useStaffOnly } from '../src/context/AuthRoleContext';
 import {
@@ -33,14 +34,21 @@ import { navigableCoordinates } from '../src/utils/plantDetails';
 import TransectMapView, {
   type MapTargetPoint,
 } from '../src/components/TransectMapView';
+import OfflinePlantMap from '../src/components/OfflinePlantMap';
+import { usePlantListStore } from '../src/store/usePlantListStore';
+import { useSpeciesStore } from '../src/store/useSpeciesStore';
 
 const INITIAL_FIX_TIMEOUT_MS = 8_000;
 const MAX_TRACKING_ACCURACY_M = 30;
 const MAX_INITIAL_ACCURACY_M = 50;
 const ARRIVAL_THRESHOLD_M = 10;
 
+// What the screen needs of a plant: a record on the phone, or (offline too) a plant someone
+// else registered whose coordinates were saved when the plant list loaded.
+type NavigableInfo = Pick<PlantRecord, 'id' | 'serverId' | 'scientificName' | 'commonName' | 'tagCode' | 'locationName'>;
+
 interface NavigablePlant {
-  plant: PlantRecord;
+  plant: NavigableInfo;
   latitude: number;
   longitude: number;
   distanceMeters: number | null;
@@ -134,6 +142,20 @@ export default function NavigatePlantScreen() {
 
   const records = useRecordStore((state) => state.records);
   const routes = useRecordStore((state) => state.routes);
+  // Other botanists' listed plants, with coordinates saved on the phone (works offline).
+  const savedPositions = usePlantListStore((state) => state.savedPositions);
+  const speciesList = useSpeciesStore((state) => state.species);
+
+  // No internet: the map shows the phone-drawn offline view (TransectMapView also switches
+  // to it by itself when the map tiles fail to load).
+  const [offline, setOffline] = useState(false);
+  useEffect(() => {
+    void usePlantListStore.getState().loadSavedPositions();
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      setOffline(state.isConnected === false || state.isInternetReachable === false);
+    });
+    return unsubscribe;
+  }, []);
 
   const [selectedPlantId, setSelectedPlantId] = useState<string | null>(initialId);
   const [showPicker, setShowPicker] = useState(!initialId);
@@ -180,6 +202,34 @@ export default function NavigatePlantScreen() {
       });
     }
 
+    // Listed plants not on the phone as records (opened ones already are, with coordinates).
+    for (const saved of savedPositions) {
+      const onPhone = records.some(
+        (record) =>
+          record.serverId === saved.serverId ||
+          (saved.tagCode !== null && record.tagCode === saved.tagCode)
+      );
+      if (onPhone) continue;
+      const species = saved.speciesId
+        ? speciesList.find((item) => item.id === saved.speciesId)
+        : undefined;
+      list.push({
+        plant: {
+          id: saved.serverId,
+          serverId: saved.serverId,
+          scientificName: species?.scientific_name ?? '',
+          commonName: species?.common_name ?? '',
+          tagCode: saved.tagCode,
+          locationName: saved.locationNote ?? '',
+        },
+        latitude: saved.latitude,
+        longitude: saved.longitude,
+        distanceMeters: currentPoint
+          ? haversineMeters(currentPoint.latitude, currentPoint.longitude, saved.latitude, saved.longitude)
+          : null,
+      });
+    }
+
     if (currentPoint) {
       list.sort(
         (a, b) =>
@@ -189,7 +239,7 @@ export default function NavigatePlantScreen() {
     }
 
     return list;
-  }, [records, routes, currentPoint]);
+  }, [records, routes, currentPoint, savedPositions, speciesList]);
 
   const selectedTarget = useMemo<NavigablePlant | null>(() => {
     if (!selectedPlantId) return null;
@@ -565,6 +615,29 @@ export default function NavigatePlantScreen() {
                 currentPoint={currentPoint}
                 targetPoint={mapTarget}
                 height={280}
+                offline={offline}
+                offlineView={
+                  <OfflinePlantMap
+                    here={currentPoint}
+                    headingDegrees={headingDegrees}
+                    target={{
+                      key: selectedTarget.plant.id,
+                      latitude: selectedTarget.latitude,
+                      longitude: selectedTarget.longitude,
+                      title: selectedTarget.plant.scientificName || 'Target plant',
+                    }}
+                    others={navigablePlants.map((item) => ({
+                      key: item.plant.id,
+                      latitude: item.latitude,
+                      longitude: item.longitude,
+                      title: item.plant.scientificName || 'Plant',
+                    }))}
+                    onSelect={(key) => {
+                      setSelectedPlantId(key);
+                      setShowPicker(false);
+                    }}
+                  />
+                }
               />
               <Text style={styles.mapHint}>
                 Blue dot = your phone · Red P = target plant · Dashed line = path
