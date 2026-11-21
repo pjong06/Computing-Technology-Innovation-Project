@@ -1,5 +1,6 @@
 import { apiFetch } from '../api/client';
 import type { SignedThumbnail } from '../utils/thumbnailSources';
+import { detailsFromServer, type ServerPlantDetails } from '../utils/plantDetails';
 
 // The plant list for the Plants tab and Home, from GET /api/plants
 // (backend/src/routes/plants.js): one request per page of 50, never one per plant.
@@ -27,6 +28,8 @@ interface PlantListResponse {
     thumbnail_url?: string | null;
     thumbnail_key?: string | null;
     thumbnail_expires_at?: string | null;
+    // "This plant" details of an approved plant (backend/src/services/plantDetails.js).
+    details?: unknown;
   }[];
   pagination?: { page: number; page_size: number; total: number | null };
 }
@@ -37,6 +40,7 @@ export interface OtherApprovedPlant {
   tagCode: string | null;
   registeredAt: string | null;
   photoUrl: string | null;
+  details: ServerPlantDetails | null;
 }
 
 export interface PlantList {
@@ -44,6 +48,8 @@ export interface PlantList {
   others: OtherApprovedPlant[];
   // Signed thumbnails of the botanist's own plants, by server id.
   ownThumbnails: Record<string, SignedThumbnail>;
+  // Server details of every approved plant in the list (own ones too: their fallback).
+  detailsById: Record<string, ServerPlantDetails>;
 }
 
 // The server sends 50 a page; stop after this many pages so a slow network can't hang the tab.
@@ -54,6 +60,7 @@ const MAX_PAGES = 20;
 export async function fetchPlantList(ownServerIds: Set<string>): Promise<PlantList> {
   const others: OtherApprovedPlant[] = [];
   const ownThumbnails: Record<string, SignedThumbnail> = {};
+  const detailsById: Record<string, ServerPlantDetails> = {};
   let seen = 0;
   for (let page = 1; page <= MAX_PAGES; page++) {
     const response = await apiFetch<PlantListResponse>(`/api/plants?page=${page}`);
@@ -62,6 +69,8 @@ export async function fetchPlantList(ownServerIds: Set<string>): Promise<PlantLi
     for (const row of rows) {
       const serverId = row.plant_id || row.id;
       if (!serverId) continue;
+      const details = detailsFromServer(row.details);
+      if (details) detailsById[serverId] = details;
       // Only own plants get a signed thumbnail.
       const own = ownServerIds.has(serverId) || typeof row.thumbnail_url === 'string';
       if (own) {
@@ -81,10 +90,11 @@ export async function fetchPlantList(ownServerIds: Set<string>): Promise<PlantLi
         tagCode: row.qr_code_value ?? null,
         registeredAt: row.registered_at ?? null,
         photoUrl: typeof row.photo_url === 'string' ? row.photo_url : null,
+        details: detailsFromServer(row.details),
       });
     }
     const total = response?.pagination?.total;
     if (rows.length === 0 || (typeof total === 'number' && seen >= total)) break;
   }
-  return { others, ownThumbnails };
+  return { others, ownThumbnails, detailsById };
 }

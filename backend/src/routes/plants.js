@@ -7,6 +7,7 @@ const { requireAuth, requireRole } = require("../middleware/auth");
 const { stripPhotoMetadata, InvalidPhotoError } = require("../services/photoSanitizer");
 const { publicPhotoUrlsFor, removePublicPlantPhotoByTag } = require("../services/publicPlantPhotos");
 const { ownPlantThumbnails } = require("../services/plantThumbnails");
+const { approvedPlantDetails } = require("../services/plantDetails");
 
 const router = express.Router();
 
@@ -82,7 +83,8 @@ router.get("/", requireRole("botanist", "officer", "researcher"), async (req, re
     const { data, error, count } = await req.supabase
         .from("plants")
         .select(
-            "id, species_id, qr_code_value, plant_status, registered_at, registered_by",
+            "id, species_id, qr_code_value, plant_status, registered_at, registered_by, " +
+            "location_description, morphology, description, gps_accuracy_m",
             { count: "exact" }
         )
         // Deleted plants are not listed.
@@ -101,18 +103,29 @@ router.get("/", requireRole("botanist", "officer", "researcher"), async (req, re
     //   - the botanist's own plants: a short-lived signed link to the plant's main photo, or
     //     its first observation's photo (thumbnail_url, thumbnail_key, thumbnail_expires_at).
     // registered_by is only used here and is not sent.
-    const mine = data.filter(plant => plant.registered_by === req.user.id);
-    const [photoUrls, ownThumbnails] = await Promise.all([
-        publicPhotoUrlsFor(req.supabase, data.filter(plant => plant.registered_by !== req.user.id)),
+    // Other botanists' pending or rejected plants are never listed (RLS hides them too).
+    const rows = req.profile.role === "officer"
+        ? data
+        : data.filter(plant => plant.registered_by === req.user.id || plant.plant_status === "approved");
+    const mine = rows.filter(plant => plant.registered_by === req.user.id);
+    // "This plant" details of approved plants (own and others'), batched for the page:
+    // coordinates (botanists and officers), location note, morphology, notes and the latest
+    // approved observation (plantDetails.js).
+    const [photoUrls, ownThumbnails, details] = await Promise.all([
+        publicPhotoUrlsFor(req.supabase, rows.filter(plant => plant.registered_by !== req.user.id)),
         ownPlantThumbnails(req.supabase, mine),
+        approvedPlantDetails(req.supabase, rows, req.profile.role),
     ]);
 
     return res.json({
-        data: data.map(({ registered_by: _registeredBy, ...plant }) => {
+        // The plant's own text columns are sent inside "details" (approved plants only).
+        data: rows.map(({ registered_by: _registeredBy, location_description: _note, morphology: _morphology,
+            description: _notes, gps_accuracy_m: _accuracy, ...plant }) => {
             const own = ownThumbnails.get(plant.id);
             return {
                 ...plant,
                 plant_id: plant.id,
+                details: details.get(plant.id) || null,
                 photo_url: photoUrls.get(plant.id) || null,
                 thumbnail_url: own ? own.url : null,
                 thumbnail_key: own ? own.key : null,
@@ -187,10 +200,13 @@ router.get("/tag/:tagCode", requireRole("botanist", "officer", "researcher"), as
         const photoUrl = data.registered_by !== req.user.id
             ? (await publicPhotoUrlsFor(req.supabase, [data])).get(data.id) || null
             : null;
+        // "This plant" details of an approved plant, the same as in the plant list.
+        const details = (await approvedPlantDetails(req.supabase, [data], req.profile.role)).get(data.id) || null;
         return res.json({
             data: {
                 ...readablePlant,
                 plant_id: data.id,
+                details,
                 tag_code: data.qr_code_value,
                 scientific_name: data.species?.scientific_name ?? "Unknown species",
                 common_name: data.species?.common_name ?? "",

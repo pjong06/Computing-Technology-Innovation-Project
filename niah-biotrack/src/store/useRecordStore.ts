@@ -44,6 +44,7 @@ import {
   type SyncRunResult,
 } from '../services/syncEngine';
 import { requestSyncRetry } from '../services/syncRetry';
+import type { ServerPlantDetails } from '../utils/plantDetails';
 import { uploadablePhotoFile } from '../services/uploadablePhoto';
 import {
   applyServerReview,
@@ -280,6 +281,14 @@ export interface PlantRecord {
    * from the tag lookup). Shown when the phone has no photo of the plant itself.
    */
   publicPhotoUrl?: string | null;
+
+  /*
+   * The server's "This plant" details of an approved plant (location, location note,
+   * morphology, notes, latest approved observation), from the tag lookup. Shown for plants
+   * someone else registered; for the botanist's own plants only where the phone has nothing
+   * (src/utils/plantDetails.ts).
+   */
+  serverDetails?: ServerPlantDetails | null;
 
   tagCode:
     | string
@@ -1243,6 +1252,20 @@ export const useRecordStore =
               );
 
             if (existing) {
+              // Someone else's plant already on the phone: keep its server details current
+              // (they may have been empty when it was first opened).
+              if (existing.otherBotanist && record.serverDetails) {
+                const refreshed: PlantRecord = {
+                  ...existing,
+                  serverDetails: record.serverDetails,
+                  publicPhotoUrl: record.publicPhotoUrl ?? existing.publicPhotoUrl,
+                };
+                await persistRecordSnapshot(refreshed);
+                set((state) => ({
+                  records: state.records.map((item) => (item.id === existing.id ? refreshed : item)),
+                }));
+                return refreshed;
+              }
               return existing;
             }
 

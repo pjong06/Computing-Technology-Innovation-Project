@@ -36,9 +36,11 @@ function publicQrData(row) {
             ? cleanSpeciesText(row[key] ?? null)
             : row[key] ?? null
     ]));
-    for (const key of ['location_description', 'latitude', 'longitude']) {
-        data[key] = row.conservation_status === 'LC' ? row[key] ?? null : null;
-    }
+    // The location note only for LC species. Never coordinates or their accuracy, for any
+    // conservation status: visitors are not told where a plant is (the database function no
+    // longer returns them either: 20261121210000_public_qr_no_coordinates.sql). The fields are
+    // listed above, so nothing else from the row can reach the response.
+    data.location_description = row.conservation_status === 'LC' ? row.location_description ?? null : null;
     return data;
 }
 

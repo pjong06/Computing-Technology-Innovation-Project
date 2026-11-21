@@ -103,7 +103,9 @@ test('own plants get a signed thumbnail in the list itself; others\' public plan
     assert.equal(byId[other].thumbnail_url, null);
     assert.equal(byId[other].thumbnail_key, null);
   }
-  assert.doesNotMatch(JSON.stringify(result.body), /secret\.jpg|"file_path"|latitude|longitude|registered_by/);
+  assert.doesNotMatch(JSON.stringify(result.body), /secret\.jpg|"file_path"|registered_by/);
+  // Coordinates only inside "details" (approved plants, staff), never as top-level fields.
+  for (const row of result.body.data) assert.ok(!('latitude' in row) && !('longitude' in row) && !('location' in row), row.id);
 
   // Batched: one query per table and one signing call per bucket for the whole page; the
   // others' photos are never read.

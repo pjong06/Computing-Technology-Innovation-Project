@@ -129,10 +129,11 @@ function localItem(key: string, stored: PlantRecord, signed: SignedThumbnail | n
   }
   const pick = mostUrgent(candidates)?.item ?? candidates[0];
 
-  const lastVisit = visits
-    .map((visit) => visit.observedAt || visit.date)
+  // The latest observation on the phone, or the latest approved one on the server.
+  const lastVisit = [...visits.map((visit) => visit.observedAt || visit.date), record.serverDetails?.observedAt]
+    .filter((value): value is string => Boolean(value))
     .sort((a, b) => timestampFor(b) - timestampFor(a))[0];
-  const when = visits.length > 0 && dayText(lastVisit)
+  const when = lastVisit && dayText(lastVisit)
     ? `Last observation ${dayText(lastVisit)}`
     : dayText(record.createdAtIso)
       ? `Registered ${dayText(record.createdAtIso)}`
@@ -159,7 +160,10 @@ function localItem(key: string, stored: PlantRecord, signed: SignedThumbnail | n
       publicPath: record.otherBotanist ? record.publicPhotoUrl : null,
       baseUrl: BASE_URL,
     }),
-    place: [record.locationName, when].filter(Boolean).join(' · '),
+    // Someone else's plant: the server's location note first (src/utils/plantDetails.ts).
+    place: [record.otherBotanist ? record.serverDetails?.locationNote ?? record.locationName : record.locationName, when]
+      .filter(Boolean)
+      .join(' · '),
     searchText: [name, record.commonName, record.plantName, record.tagCode].filter(Boolean).join(' '),
   };
 }
@@ -171,6 +175,10 @@ function otherItem(
 ): PlantItem {
   const name = species?.scientific_name || 'Species not recorded';
   const registered = dayText(plant.registeredAt);
+  // The server's details of this approved plant: location note and latest observation.
+  const lastObserved = dayText(plant.details?.observedAt);
+  let when = registered ? `Registered ${registered}` : '';
+  if (lastObserved) when = `Last observation ${lastObserved}`;
   return {
     key,
     record: null,
@@ -185,7 +193,7 @@ function otherItem(
     speciesId: plant.speciesId,
     // Its public stripped photo (small copy, served by the backend), or the placeholder.
     photo: thumbnailSources({ publicPath: plant.photoUrl, baseUrl: BASE_URL }),
-    place: registered ? `Registered ${registered}` : '',
+    place: [plant.details?.locationNote, when].filter(Boolean).join(' · '),
     searchText: [name, species?.common_name, plant.tagCode].filter(Boolean).join(' '),
   };
 }
