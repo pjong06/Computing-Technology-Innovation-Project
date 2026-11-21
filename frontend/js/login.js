@@ -3,7 +3,7 @@
 // If someone is already logged in, skip the form and go to their home page.
 const alreadyIn = getCurrentUser();
 if (alreadyIn !== null) {
-  goToHome();
+  goToHome().catch(error => showAuthError(error.message || 'Unable to open the portal. Please try again.'));
 }
 
 // Shows a red message under the form. Pass '' to hide it.
@@ -11,17 +11,6 @@ function showAuthError(message) {
   const box = document.getElementById('auth-error');
   box.textContent = message;
   box.hidden = (message === '');
-}
-
-// Tells a suspended botanist to contact the officer, with a link that opens their email program.
-function showSuspended() {
-  const box = document.getElementById('auth-error');
-  box.textContent = 'This account is suspended. Please contact the officer at ';
-  const link = document.createElement('a');
-  link.href = 'mailto:' + OFFICER_CONTACT_EMAIL;
-  link.textContent = OFFICER_CONTACT_EMAIL;
-  box.appendChild(link);
-  box.hidden = false;
 }
 
 // Checks the username, email and password with Supabase. If they are right, logs in and opens the website.
@@ -45,7 +34,7 @@ async function doLogin() {
   // 2. The username saved on the account must match what was typed.
   const savedName = result.data.user.user_metadata.username;
   if (savedName && sameText(savedName, username) === false) {
-    await sb.auth.signOut();
+    await sb.auth.signOut({ scope: 'local' });
     showAuthError('Wrong username, email or password.');
     return;
   }
@@ -55,7 +44,7 @@ async function doLogin() {
   try {
     me = await api('/me');
   } catch (error) {
-    await sb.auth.signOut();
+    await sb.auth.signOut({ scope: 'local' });
     localStorage.removeItem(SESSION_KEY);
     if (/active staff profile required|active account required/i.test(error.message)) {
       showAuthError('This account is waiting for an officer to activate it, or has been suspended. Contact the officer.');
@@ -68,7 +57,7 @@ async function doLogin() {
   // Visitor accounts (from the mobile app) can sign in, but the portal is for staff only:
   // every page's data is staff-only on the server, so don't let them in here.
   if (['botanist', 'officer', 'researcher', 'admin'].indexOf(me.role) === -1) {
-    await sb.auth.signOut();
+    await sb.auth.signOut({ scope: 'local' });
     localStorage.removeItem(SESSION_KEY);
     showAuthError('This account is for the Niah mobile app. The web portal is for Sarawak Forestry staff.');
     return;
@@ -76,7 +65,9 @@ async function doLogin() {
 
   showAuthError('');
   startSession(me, savedName || username);
-  goToHome();
+  // Officers land on the review page when anything is waiting (or the map); botanists on
+  // the species catalogue. Never waits more than a moment for the counts.
+  await goToHome();
 }
 
 // Pressing Enter in the password box also logs in.

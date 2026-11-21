@@ -17,7 +17,7 @@
 <main>
 <section class="page on">
   <h1>Distribution <span>map</span></h1>
-  <p class="lead">Every plant with a GPS location is shown on the map. Click a marker for details.</p>
+  <p class="lead">Where every plant with a GPS location, each sensor station and recent trace routes are, for conservation officers. Click a marker or line for details.</p>
   <div class="bar">
     <select id="map-species" class="grow" aria-label="Filter by species" onchange="drawMarkers(true)">
       <option value="">All species</option>
@@ -32,10 +32,15 @@
       <option value="DD">Data Deficient</option>
     </select>
     <button class="btn ghost" onclick="resetMapFilters()">Show all on map</button>
+    <label class="map-toggle">
+      <input type="checkbox" id="map-show-routes" checked onchange="toggleRoutes(this.checked)">
+      Show routes
+    </label>
   </div>
   <div class="card">
     <div id="map-box"></div>
     <p class="muted" id="map-message"></p>
+    <p class="muted" id="map-route-note">Routes from the last 90 days.</p>
   </div>
 </section>
 </main>

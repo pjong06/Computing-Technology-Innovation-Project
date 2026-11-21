@@ -20,6 +20,7 @@ import FormScrollView from '../src/components/FormScrollView';
 import { supabase } from '../src/lib/supabase';
 import { useAuthRole } from '../src/context/AuthRoleContext';
 import { hasSavedSession } from '../src/lib/auth';
+import { pullServerRecords, serverPullError } from '../src/services/serverPull';
 
 export default function LoginScreen() {
   // RN 0.88: a TextInput ref holds a TextInputInstance, not the TextInput component.
@@ -34,12 +35,35 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
 
+  const downloadRecords = () => {
+    void pullServerRecords()
+      .then((result) => {
+        if (result.downloaded > 0) {
+          Toast.show({
+            type: 'success',
+            text1: 'App updated',
+            text2: `${result.downloaded} record ${result.downloaded === 1 ? 'change' : 'changes'} and ${result.assignedTasks} assigned ${result.assignedTasks === 1 ? 'task' : 'tasks'} downloaded.`,
+            position: 'bottom',
+          });
+        }
+      })
+      .catch((error: unknown) => {
+        Toast.show({
+          type: 'info',
+          text1: 'Signed in; download is pending',
+          text2: serverPullError(error),
+          position: 'bottom',
+        });
+      });
+  };
+
   useEffect(() => {
     hasSavedSession()
       .then(async (signedIn) => {
         if (signedIn) {
-          await checkUserRole();
+          const userRole = await checkUserRole();
           router.replace('/(tabs)/home');
+          if (userRole === 'botanist') downloadRecords();
         } else {
           setCheckingSession(false);
         }
@@ -52,7 +76,7 @@ export default function LoginScreen() {
 
     const cleanId = identifier.trim();
     if (!cleanId || !password) {
-      setErrorMessage('Enter your email or ID and your password.');
+      setErrorMessage('Enter your email and your password.');
       return;
     }
 
@@ -85,7 +109,7 @@ export default function LoginScreen() {
         if (error.name === 'AuthRetryableFetchError' || error.status === 0) {
           setErrorMessage("Cannot reach server. Check connection.");
         } else if (error.code === 'invalid_credentials' || error.status === 400) {
-          setErrorMessage('Incorrect email, ID or password.');
+          setErrorMessage('Incorrect email or password.');
         } else {
           setErrorMessage(error.message || 'Sign-in failed.');
         }
@@ -93,9 +117,10 @@ export default function LoginScreen() {
         return;
       }
 
-      await checkUserRole();
+      const userRole = await checkUserRole();
       setPassword('');
       router.replace('/(tabs)/home');
+      if (userRole === 'botanist') downloadRecords();
     } catch (err: any) {
       setErrorMessage(err.message || 'Login failed.');
     } finally {
@@ -130,13 +155,15 @@ export default function LoginScreen() {
         <Text style={styles.brandSubtitle}>Biodiversity documentation system</Text>
 
         <View style={styles.form}>
-          <Text style={styles.inputLabel}>Email or ID</Text>
+          <Text style={styles.inputLabel}>Email</Text>
           <TextInput
             style={styles.input}
-            placeholder="Your email or ID"
+            placeholder="Your email"
             placeholderTextColor="#8C9A91"
             value={identifier}
             onChangeText={setIdentifier}
+            keyboardType="email-address"
+            autoComplete="email"
             autoCapitalize="none"
             autoCorrect={false}
             returnKeyType="next"
@@ -209,7 +236,7 @@ export default function LoginScreen() {
           activeOpacity={0.85}
           onPress={handleEnterAsVisitor}
         >
-          <Text style={styles.visitorBtnText}>Explore without an account</Text>
+          <Text style={styles.visitorBtnText}>Continue as guest</Text>
         </TouchableOpacity>
         <Text style={styles.visitorSubtext}>
           Browse species and scan plant tags. Nothing is saved to an account.
@@ -217,7 +244,7 @@ export default function LoginScreen() {
 
         <View style={styles.footer}>
           <Text style={styles.helpText}>
-            Accounts are created by Sarawak Forestry Corporation.
+            Staff accounts are created by SFC officers. Visitors can sign up.
           </Text>
         </View>
       </FormScrollView>

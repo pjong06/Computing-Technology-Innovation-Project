@@ -108,6 +108,65 @@ test('visitor page renders only allowed fields and escapes stored content', asyn
   assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.equal(response.headers.get('x-powered-by'), null);
   assert.match(response.headers.get('content-security-policy'), /default-src 'none'/);
+  assert.match(html, /src="\/public-assets\/logo\.png" alt="Niah Biotrack"/);
+  assert.match(html, /rel="icon" type="image\/png" href="\/public-assets\/logo\.png"/);
+  assert.doesNotMatch(html, /reference-photo/);
+});
+
+test('visitor renders an approved species reference photo with escaped credit and stripped metadata', async t => {
+  const sharp = require('sharp');
+  const original = await sharp({ create: { width: 800, height: 400, channels: 3, background: 'green' } })
+    .withExif({ IFD0: { Copyright: 'PRIVATE_METADATA' } }).jpeg().toBuffer();
+  const filters = [];
+  const downloads = [];
+  const client = {
+    rpc: async () => ({ data: [{ scientific_name: 'Shorea albida' }] }),
+    from(table) {
+      return {
+        select() { return this; },
+        eq(...args) { filters.push([table, ...args]); return this; },
+        order() { return this; },
+        limit() { return this; },
+        abortSignal() { return this; },
+        async maybeSingle() { return { data: { id: 'catalogue-species' } }; },
+        then(resolve) { resolve({ data: [
+          { file_path: 'missing' },
+          { file_path: 'invalid' },
+          { file_path: 'private-storage-path', source: 'inaturalist', photographer: '<Name>',
+            licence_code: 'cc-by', source_url: 'https://example.test/location' },
+        ] }); },
+      };
+    },
+    storage: {
+      from(bucket) {
+        assert.equal(bucket, 'species-media');
+        return { async download(filePath) {
+          downloads.push(filePath);
+          if (filePath === 'missing') return { error: new Error('not found') };
+          return { data: new Blob([filePath === 'invalid' ? '<svg/>' : original]) };
+        } };
+      },
+    },
+  };
+  const url = await start(t, createPublicPlantsRouter({ client }));
+  const response = await fetch(url + '/p/' + TAG);
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-security-policy'), /img-src 'self' data:/);
+  assert.match(html, /Conservation status: Not recorded/);
+  assert.match(html, /Species reference photo · &lt;Name&gt; · iNaturalist · CC-BY/);
+  assert.doesNotMatch(html, /private-storage-path|example\.test\/location/);
+  const image = Buffer.from(html.match(/data:image\/jpeg;base64,([A-Za-z0-9+/=]+)/)[1], 'base64');
+  const metadata = await sharp(image).metadata();
+  assert.equal(metadata.exif, undefined);
+  assert.equal(metadata.width, 720);
+  assert.deepEqual(downloads, ['missing', 'invalid', 'private-storage-path']);
+  assert.deepEqual(filters, [
+    ['species', 'scientific_name', 'Shorea albida'],
+    ['species', 'verification_status', 'approved'],
+    ['species_media', 'species_id', 'catalogue-species'],
+    ['species_media', 'media_type', 'image/jpeg'],
+  ]);
 });
 
 test('iNaturalist source is escaped plain text on the visitor page and exposed by the QR API', async t => {
@@ -162,6 +221,10 @@ test('visitor assets do not alter security policy on existing portal routes', as
   const url = await start(t, publicRouter({ data: [], error: null }, []));
   const css = await fetch(url + '/public-assets/plant.css');
   assert.equal(css.status, 200); assert.match(css.headers.get('content-type'), /text\/css/);
+  const logo = await fetch(url + '/public-assets/logo.png');
+  assert.equal(logo.status, 200);
+  assert.equal(logo.headers.get('content-type'), 'image/png');
+  assert.equal(logo.headers.get('cache-control'), 'no-store');
   const existing = await fetch(url + '/unrelated');
   assert.equal(existing.headers.get('content-security-policy'), null);
 });

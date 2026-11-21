@@ -1,9 +1,13 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Image,
+  Modal,
   Platform,
+  Pressable,
   SafeAreaView,
+  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -12,210 +16,310 @@ import {
   View,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import { useStaffOnly } from '../../src/context/AuthRoleContext';
 import {
+  IdentificationStatus,
   ReviewStatus,
   SyncStatus,
   useRecordStore,
-  type ObservationVisit,
   type PlantRecord,
 } from '../../src/store/useRecordStore';
-import { useProposalStore, type SpeciesProposal } from '../../src/store/useProposalStore';
+import { useProposalStore } from '../../src/store/useProposalStore';
+import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import { buildSyncSummary } from '../../src/services/syncSummary';
-import { REVIEW_BADGE } from '../../src/utils/reviewStatus';
+import {
+  REVIEW_BADGE,
+  plantReviewBadge,
+  recordRowBadge,
+  statusReason,
+  visitStatus,
+} from '../../src/utils/reviewStatus';
+import { firstVisitOf, isVisitSubmitted, newPlantReview } from '../../src/utils/submissionState';
+import {
+  DEFAULT_FILTERS,
+  SHOW_FILTERS,
+  SORT_ORDERS,
+  STATUS_FILTERS,
+  activeFilterCount,
+  activeFilterPills,
+  filterAndSortPlants,
+  listSummary,
+  mergePlants,
+  mostUrgent,
+  needsActionCount,
+  rowStatus,
+  syncStatusText,
+  type NeedsActionReason,
+  type PlantFilters,
+  type PlantRow,
+  type RecordStatusGroup,
+} from '../../src/utils/recordsList';
+import { routesUploadedText } from '../../src/utils/routeSync';
+import { resolveStoredPhotoUri } from '../../src/utils/photoStorage';
+import { getLastSuccessfulSync, resumeAllPausedRecordRetries } from '../../src/services/offlineDatabase';
+import { pullServerRecords, serverPullError } from '../../src/services/serverPull';
+import { fetchOtherApprovedPlants, type OtherApprovedPlant } from '../../src/services/approvedPlants';
+import { lookupTag, describeTagLookup } from '../../src/services/tagLookup';
 
-type SubmissionType = 'All' | 'Plants' | 'Observations' | 'Species';
+// Plants (botanist tab, route "records"): one row per plant. Each row shows the most urgent
+// status of the plant and the botanist's own visits to it; the visits themselves are listed
+// in Plant detail. "All plants" adds other botanists' approved plants from the server
+// (src/services/approvedPlants.ts: never their coordinates). Species proposals are on Home.
 
-type SubmissionItem =
-  | { key: string; type: 'plant'; timestamp: number; record: PlantRecord }
-  | { key: string; type: 'visit'; timestamp: number; record: PlantRecord; visit: ObservationVisit }
-  | { key: string; type: 'species'; timestamp: number; proposal: SpeciesProposal };
+type Badge = { label: string; bg: string; text: string };
 
-function timestampFor(value?: string): number {
-  if (!value) return 0;
-  const timestamp = Date.parse(value);
-  return Number.isNaN(timestamp) ? 0 : timestamp;
+type PlantItem = PlantRow & {
+  record: PlantRecord | null; // null: another botanist's plant that is not on this phone
+  tag: string | null;
+  speciesId: string | null;
+  photoUri: string | null;
+  place: string;
+  badge: Badge;
+  action: NeedsActionReason | null;
+  reason: string | null;
+};
+
+// Kept between visits to the tab, so the list does not flicker while it reloads.
+let otherPlantsCache: OtherApprovedPlant[] = [];
+
+function timestampFor(value?: string | null): number {
+  const time = value ? Date.parse(value) : Number.NaN;
+  return Number.isNaN(time) ? 0 : time;
 }
 
-function formatDate(value?: string): string {
-  if (!value) return 'Date unavailable';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+function dayText(value?: string | null): string | null {
+  const time = timestampFor(value);
+  return time === 0
+    ? null
+    : new Date(time).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-function submissionBadge(
-  syncStatus: SyncStatus,
-  reviewStatus?: string
-): { label: string; bg: string; text: string } {
-  if (syncStatus !== SyncStatus.UPLOADED) {
-    return { label: 'Not synced', bg: '#FDF4D8', text: '#8C5E03' };
-  }
-  const review = String(reviewStatus ?? '');
-  if (review === 'rejected') {
-    return { ...REVIEW_BADGE[ReviewStatus.REJECTED], label: 'Needs changes' };
-  }
-  if (review === 'approved' || review === 'archived') {
-    return REVIEW_BADGE[ReviewStatus.APPROVED];
-  }
-  return { ...REVIEW_BADGE[ReviewStatus.PENDING], label: 'Pending' };
-}
-
-function submissionName(item: SubmissionItem): string {
-  if (item.type === 'species') return item.proposal.scientificName;
-  return item.record.scientificName || 'Identification pending';
-}
-
-function searchableValues(item: SubmissionItem): (string | undefined)[] {
-  if (item.type === 'species') {
-    return [
-      item.proposal.scientificName,
-      item.proposal.commonName,
-      item.proposal.localName,
-      item.proposal.family,
-      item.proposal.description,
-      item.proposal.habitat,
-    ];
-  }
-  return [
-    item.record.scientificName,
-    item.record.commonName,
-    item.record.family,
-    item.record.locationName,
-    item.record.tagCode ?? undefined,
-    item.type === 'visit' ? item.visit.notes : undefined,
+function localItem(key: string, stored: PlantRecord, speciesPhoto: string | null): PlantItem {
+  // Older or partly downloaded records may lack these lists; treat them as empty.
+  const visits = (Array.isArray(stored.observations) ? stored.observations : []).filter(Boolean);
+  const record: PlantRecord = { ...stored, observations: visits };
+  const firstVisit = firstVisitOf(record);
+  // The plant (with its first visit: registering and the first visit are one submission).
+  const plantStatus = rowStatus({
+    syncStatus: firstVisit?.syncStatus ?? record.syncStatus,
+    outcome: newPlantReview(record).outcome,
+    needsSpecies: record.identificationStatus === IdentificationStatus.PENDING,
+  });
+  const candidates: { group: RecordStatusGroup; action: NeedsActionReason | null; badge: Badge; reason: string | null }[] = [
+    {
+      ...plantStatus,
+      badge: recordRowBadge(plantStatus, plantReviewBadge(record, 'Waiting for review').badge),
+      reason: statusReason(
+        plantStatus.action,
+        firstVisit?.reviewComment ?? record.reviewComment,
+        firstVisit && !isVisitSubmitted(firstVisit) ? firstVisit.submitError : null,
+        record.syncError
+      ),
+    },
   ];
+  // Then each later visit by this botanist.
+  const revisits = visits.filter((visit) => visit !== firstVisit);
+  for (const visit of revisits) {
+    const status = visitStatus(visit, record.syncError);
+    candidates.push({ ...status, reason: status.reason ? `Visit ${visit.date}: ${status.reason}` : null });
+  }
+  const pick = mostUrgent(candidates)?.item ?? candidates[0];
+
+  const lastVisit = visits
+    .map((visit) => visit.observedAt || visit.date)
+    .sort((a, b) => timestampFor(b) - timestampFor(a))[0];
+  const when = visits.length > 0 && dayText(lastVisit)
+    ? `Last visit ${dayText(lastVisit)}`
+    : dayText(record.createdAtIso)
+      ? `Registered ${dayText(record.createdAtIso)}`
+      : record.createdAt;
+  const name = record.scientificName || 'Identification pending';
+  const ownPhoto = Array.isArray(record.photoUris) ? record.photoUris[0] : undefined;
+  return {
+    key,
+    record,
+    mine: !record.otherBotanist || visits.length > 0,
+    timestamp: timestampFor(record.createdAtIso || record.createdAt),
+    name,
+    group: pick.group,
+    action: pick.action,
+    badge: pick.badge,
+    reason: pick.reason,
+    tag: record.tagCode ?? null,
+    speciesId: record.speciesId,
+    photoUri: ownPhoto ? resolveStoredPhotoUri(ownPhoto) : speciesPhoto,
+    place: [record.locationName, when].filter(Boolean).join(' · '),
+    searchText: [name, record.commonName, record.plantName, record.tagCode].filter(Boolean).join(' '),
+  };
 }
 
-function rejectionReason(item: SubmissionItem): string | null {
-  const review = item.type === 'species'
-    ? item.proposal.review
-    : item.type === 'visit'
-      ? item.visit.reviewStatus
-      : item.record.reviewStatus;
-  if (String(review) !== 'rejected') return null;
-
-  const reason = item.type === 'species'
-    ? item.proposal.reviewComment
-    : item.type === 'visit'
-      ? item.visit.reviewComment
-      : item.record.reviewComment;
-  return reason?.trim() || 'No reason was given.';
+function otherItem(
+  key: string,
+  plant: OtherApprovedPlant,
+  species: { scientific_name: string; common_name: string | null } | undefined,
+  speciesPhoto: string | null
+): PlantItem {
+  const name = species?.scientific_name || 'Species not recorded';
+  const registered = dayText(plant.registeredAt);
+  return {
+    key,
+    record: null,
+    mine: false,
+    timestamp: timestampFor(plant.registeredAt),
+    name,
+    group: 'approved',
+    action: null,
+    badge: REVIEW_BADGE[ReviewStatus.APPROVED],
+    reason: null,
+    tag: plant.tagCode,
+    speciesId: plant.speciesId,
+    photoUri: speciesPhoto,
+    place: registered ? `Registered ${registered}` : '',
+    searchText: [name, species?.common_name, plant.tagCode].filter(Boolean).join(' '),
+  };
 }
 
-export default function RecordsScreen() {
+export default function PlantsListScreen() {
   const router = useRouter();
   const blocked = useStaffOnly();
   const records = useRecordStore((state) => state.records);
   const syncAll = useRecordStore((state) => state.syncAll);
+  const syncRoutes = useRecordStore((state) => state.syncRoutes);
+  const unsentRouteCount = useRecordStore(
+    (state) => state.routes.filter((route) => route.syncStatus !== 'uploaded').length
+  );
   const refreshReviewStatuses = useRecordStore((state) => state.refreshReviewStatuses);
-  const proposals = useProposalStore((state) => state.proposals);
   const syncAllProposals = useProposalStore((state) => state.syncAllProposals);
   const refreshProposalStatuses = useProposalStore((state) => state.refreshProposalStatuses);
+  const unsentProposalCount = useProposalStore(
+    (state) => state.proposals.filter((proposal) => proposal.syncStatus !== SyncStatus.UPLOADED).length
+  );
+  const species = useSpeciesStore((state) => state.species);
+  const imageUrisBySpeciesId = useSpeciesStore((state) => state.imageUrisBySpeciesId);
+  const loadSpecies = useSpeciesStore((state) => state.loadSpecies);
 
-  const [selectedType, setSelectedType] = useState<SubmissionType>('All');
+  const [filters, setFilters] = useState<PlantFilters>(DEFAULT_FILTERS);
+  const [draft, setDraft] = useState<PlantFilters>(DEFAULT_FILTERS);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [expandedProposalId, setExpandedProposalId] = useState<string | null>(null);
   const [syncingAll, setSyncingAll] = useState(false);
+  const [lastSync, setLastSync] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const [otherPlants, setOtherPlants] = useState<OtherApprovedPlant[]>(otherPlantsCache);
+  const [othersState, setOthersState] = useState<'loading' | 'ok' | 'offline'>('loading');
+  const [openingKey, setOpeningKey] = useState<string | null>(null);
+
+  const loadOtherPlants = useCallback(async () => {
+    const own = new Set(
+      useRecordStore
+        .getState()
+        .records.map((record) => record.serverId)
+        .filter((id): id is string => Boolean(id))
+    );
+    setOthersState('loading');
+    try {
+      const plants = await fetchOtherApprovedPlants(own);
+      otherPlantsCache = plants;
+      setOtherPlants(plants);
+      setOthersState('ok');
+    } catch {
+      setOthersState('offline');
+    }
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
-      if (!blocked) {
-        void refreshReviewStatuses();
-        void refreshProposalStatuses();
-      }
-    }, [blocked, refreshReviewStatuses, refreshProposalStatuses])
+      if (blocked) return undefined;
+      void refreshReviewStatuses();
+      void refreshProposalStatuses();
+      void getLastSuccessfulSync().then(setLastSync).catch(() => undefined);
+      if (useSpeciesStore.getState().species.length === 0) void loadSpecies();
+      void loadOtherPlants();
+      setNow(Date.now());
+      // Keeps "Synced 2 min ago" current while the tab is open.
+      const timer = setInterval(() => setNow(Date.now()), 60000);
+      return () => clearInterval(timer);
+    }, [blocked, refreshReviewStatuses, refreshProposalStatuses, loadSpecies, loadOtherPlants])
   );
 
-  const submissions = useMemo(() => {
-    const items: SubmissionItem[] = records.flatMap((record) => [
-      {
-        key: `plant:${record.id}`,
-        type: 'plant' as const,
-        timestamp: timestampFor(record.createdAtIso || record.createdAt),
-        record,
-      },
-      ...record.observations.map((visit) => ({
-        key: `visit:${record.id}:${visit.id}`,
-        type: 'visit' as const,
-        timestamp: timestampFor(visit.observedAt || visit.date),
-        record,
-        visit,
-      })),
-    ]);
+  const speciesById = useMemo(() => new Map(species.map((item) => [item.id, item])), [species]);
 
-    items.push(
-      ...proposals.map((proposal) => ({
-        key: `species:${proposal.id}`,
-        type: 'species' as const,
-        timestamp: timestampFor(proposal.createdAt),
-        proposal,
-      }))
+  const items = useMemo<PlantItem[]>(() => {
+    const photoFor = (speciesId: string | null) => (speciesId ? imageUrisBySpeciesId[speciesId] ?? null : null);
+    // One row per plant: the phone's copy wins over the same plant from the server, and
+    // every row gets a unique "plant:<id>" key (src/utils/recordsList.ts mergePlants).
+    const merged = mergePlants(
+      records
+        .filter((record): record is PlantRecord => Boolean(record && record.id))
+        .map((record) => ({
+          plant: record,
+          identity: { serverId: record.serverId, localId: record.id, tagCode: record.tagCode },
+        })),
+      otherPlants
+        .filter((plant): plant is OtherApprovedPlant => Boolean(plant && plant.serverId))
+        .map((plant) => ({ plant, identity: { serverId: plant.serverId, tagCode: plant.tagCode } }))
     );
+    return merged.map((entry) =>
+      entry.source === 'local'
+        ? localItem(entry.key, entry.plant, photoFor(entry.plant.speciesId))
+        : otherItem(
+            entry.key,
+            entry.plant,
+            entry.plant.speciesId ? speciesById.get(entry.plant.speciesId) : undefined,
+            photoFor(entry.plant.speciesId)
+          )
+    );
+  }, [records, otherPlants, speciesById, imageUrisBySpeciesId]);
 
-    return items.sort((a, b) => b.timestamp - a.timestamp);
-  }, [records, proposals]);
-
-  const filtered = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    return submissions.filter((item) => {
-      const matchesType =
-        selectedType === 'All' ||
-        (selectedType === 'Plants' && item.type === 'plant') ||
-        (selectedType === 'Observations' && item.type === 'visit') ||
-        (selectedType === 'Species' && item.type === 'species');
-      const matchesQuery =
-        query === '' ||
-        searchableValues(item).some((value) => value?.toLowerCase().includes(query));
-      return matchesType && matchesQuery;
-    });
-  }, [searchQuery, selectedType, submissions]);
+  const visible = useMemo(() => filterAndSortPlants(items, filters, searchQuery), [items, filters, searchQuery]);
+  const draftCount = useMemo(() => filterAndSortPlants(items, draft, searchQuery).length, [items, draft, searchQuery]);
+  const actionCount = needsActionCount(items);
 
   const summary = buildSyncSummary(records, syncingAll);
-  const pendingCount = summary.pendingItemCount;
-  const failedCount = summary.failedItemCount;
-  const recordsToSync = pendingCount + failedCount;
-  const unsentProposalCount = proposals.filter(
-    (proposal) => proposal.syncStatus !== SyncStatus.UPLOADED
-  ).length;
+  const notUploaded = summary.pendingItemCount + summary.failedItemCount + unsentProposalCount + unsentRouteCount;
 
   const handleSyncNow = async () => {
     setSyncingAll(true);
     try {
-      const {
-        uploaded,
-        failed: recordsFailed,
-        skipped,
-        photosUploaded,
-        photoProblems,
-      } = await syncAll();
+      await resumeAllPausedRecordRetries();
+      const { uploaded, failed: recordsFailed, skipped, photosUploaded, photoProblems } = await syncAll();
+      // Routes upload on their own path, after the plant/visit sync.
+      const routesResult = await syncRoutes();
       const proposalsResult = await syncAllProposals();
       await refreshProposalStatuses();
 
-      const failed = recordsFailed + proposalsResult.failed;
-      const parts = [`${uploaded} uploaded`];
-      if (failed > 0) parts.push(`${failed} failed`);
-      if (skipped > 0) parts.push(`${skipped} already uploading`);
-      if (photosUploaded > 0) {
-        parts.push(`${photosUploaded} ${photosUploaded === 1 ? 'photo' : 'photos'} uploaded`);
-      }
-      if (photoProblems > 0) {
-        parts.push(
-          `${photoProblems} ${photoProblems === 1 ? 'photo' : 'photos'} over 5 MB (see the plant page)`
-        );
-      }
-      if (proposalsResult.uploaded > 0) {
-        parts.push(
-          `${proposalsResult.uploaded} species ${
-            proposalsResult.uploaded === 1 ? 'proposal' : 'proposals'
-          } sent`
-        );
+      let downloaded = 0;
+      let downloadError: string | null = null;
+      try {
+        downloaded = (await pullServerRecords()).downloaded;
+      } catch (error) {
+        downloadError = serverPullError(error);
       }
 
+      const failed = recordsFailed + proposalsResult.failed + routesResult.failed;
+      const parts = [`${uploaded} uploaded`];
+      if (downloaded > 0) parts.push(`${downloaded} downloaded`);
+      if (failed > 0) parts.push(`${failed} failed`);
+      if (skipped > 0) parts.push(`${skipped} already uploading`);
+      if (photosUploaded > 0) parts.push(`${photosUploaded} ${photosUploaded === 1 ? 'photo' : 'photos'} uploaded`);
+      if (photoProblems > 0) {
+        parts.push(`${photoProblems} ${photoProblems === 1 ? 'photo' : 'photos'} over 5 MB (see the plant page)`);
+      }
+      if (proposalsResult.uploaded > 0) {
+        parts.push(`${proposalsResult.uploaded} species ${proposalsResult.uploaded === 1 ? 'proposal' : 'proposals'} sent`);
+      }
+      if (routesResult.uploaded > 0) parts.push(routesUploadedText(routesResult.uploaded));
+      if (routesResult.failed > 0) {
+        parts.push(`${routesResult.failed} ${routesResult.failed === 1 ? 'route' : 'routes'} not uploaded`);
+      }
+
+      const problem = proposalsResult.reasons[0] ?? downloadError;
       Toast.show({
-        type: failed > 0 ? 'error' : 'success',
-        text1: failed > 0 ? 'Some records did not upload' : 'Sync complete',
-        text2: failed > 0 ? `${parts.join(' · ')}. Tap Retry to try again.` : parts.join(' · '),
+        type: failed > 0 || downloadError ? 'error' : 'success',
+        text1: failed > 0 ? 'Some records did not upload' : downloadError ? 'Upload complete; download pending' : 'Sync complete',
+        text2: problem ? `${parts.join(' · ')}. ${problem}` : parts.join(' · '),
         position: 'bottom',
       });
     } catch (error) {
@@ -227,195 +331,282 @@ export default function RecordsScreen() {
       });
     } finally {
       setSyncingAll(false);
+      void getLastSuccessfulSync().then(setLastSync).catch(() => undefined);
+      setNow(Date.now());
+      void loadOtherPlants();
+    }
+  };
+
+  // Another botanist's plant: look its tag up (the same path as scanning it), then open it.
+  const openOtherPlant = async (item: PlantItem) => {
+    if (!item.tag) {
+      Toast.show({ type: 'info', text1: 'This plant has no tag yet', text2: 'Scan its tag in the field to open it.', position: 'bottom' });
+      return;
+    }
+    setOpeningKey(item.key);
+    try {
+      const result = await lookupTag(item.tag);
+      if (result.status === 'on-phone') {
+        router.push({ pathname: '/plant-detail', params: { id: result.record.id } } as any);
+      } else {
+        const { title, message } = describeTagLookup(result);
+        Toast.show({ type: 'error', text1: title, text2: message, position: 'bottom' });
+      }
+    } finally {
+      setOpeningKey(null);
     }
   };
 
   if (blocked) return null;
 
-  const filters: SubmissionType[] = ['All', 'Plants', 'Observations', 'Species'];
+  const openSheet = () => {
+    setDraft(filters);
+    setSheetOpen(true);
+  };
+  const pills = activeFilterPills(filters);
+  const filterCount = activeFilterCount(filters);
+  const showingActionList = filters.status === 'needs_action' && filters.show === 'mine';
 
-  return (
-    <SafeAreaView style={styles.safeArea}>
-      <View style={styles.container}>
-        <Text style={styles.headerTitle}>My submissions</Text>
+  const renderOption = <K extends keyof PlantFilters>(
+    group: K,
+    options: { value: PlantFilters[K]; label: string }[],
+    labelFor: (option: { value: PlantFilters[K]; label: string }) => string = (option) => option.label
+  ) =>
+    options.map((option) => {
+      const selected = draft[group] === option.value;
+      return (
+        <TouchableOpacity
+          key={String(option.value)}
+          style={styles.optionRow}
+          onPress={() => setDraft({ ...draft, [group]: option.value })}
+          accessibilityRole="radio"
+          accessibilityState={{ selected }}
+        >
+          <Ionicons name={selected ? 'radio-button-on' : 'radio-button-off'} size={20} color={selected ? '#213B2A' : '#8C9A91'} />
+          <Text style={[styles.optionText, selected && styles.optionTextSelected]}>{labelFor(option)}</Text>
+        </TouchableOpacity>
+      );
+    });
 
-        {(recordsToSync > 0 || unsentProposalCount > 0) && (
-          <View style={styles.syncCard}>
-            <Text style={styles.syncTitle}>
-              {[
-                recordsToSync > 0
-                  ? `${recordsToSync} ${
-                      recordsToSync === 1 ? 'submission' : 'submissions'
-                    }`
-                  : null,
-                unsentProposalCount > 0
-                  ? `${unsentProposalCount} species ${
-                      unsentProposalCount === 1 ? 'proposal' : 'proposals'
-                    }`
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(' and ')}{' '}
-              pending sync
-            </Text>
-            <Text style={styles.syncSub}>
-              {pendingCount} queued{failedCount > 0 ? ` · ${failedCount} failed` : ''} · local storage safe
-            </Text>
-            <TouchableOpacity
-              style={[styles.syncBtn, syncingAll && styles.syncBtnDisabled]}
-              onPress={() => void handleSyncNow()}
-              disabled={syncingAll}
-            >
-              {syncingAll ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <Text style={styles.syncBtnText}>Sync now</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        )}
-
+  const header = (
+    <View>
+      <View style={styles.searchRow}>
         <TextInput
           style={styles.searchBar}
-          placeholder="Search my submissions"
+          placeholder="Search plant or species"
           placeholderTextColor="#8C9A91"
           value={searchQuery}
           onChangeText={setSearchQuery}
           autoCorrect={false}
           returnKeyType="search"
           clearButtonMode="while-editing"
+          accessibilityLabel="Search plant or species"
         />
+        <TouchableOpacity
+          style={[styles.filterBtn, filterCount > 0 && styles.filterBtnActive]}
+          onPress={openSheet}
+          accessibilityRole="button"
+          accessibilityLabel={filterCount > 0 ? `Filter, ${filterCount} active` : 'Filter'}
+        >
+          <Ionicons name="options-outline" size={18} color={filterCount > 0 ? '#FFFFFF' : '#213B2A'} />
+          <Text style={[styles.filterText, filterCount > 0 && styles.filterTextActive]}>Filter</Text>
+          {filterCount > 0 ? (
+            <View style={styles.filterCount}>
+              <Text style={styles.filterCountText}>{filterCount}</Text>
+            </View>
+          ) : null}
+        </TouchableOpacity>
+      </View>
 
-        <View style={styles.filterRow}>
-          {filters.map((filter) => {
-            const isActive = selectedType === filter;
-            return (
-              <TouchableOpacity
-                key={filter}
-                onPress={() => setSelectedType(filter)}
-                style={[styles.filterChip, isActive && styles.activeFilterChip]}
-                accessibilityRole="button"
-                accessibilityState={{ selected: isActive }}
-              >
-                <Text style={[styles.filterLabel, isActive && styles.activeFilterLabel]}>
-                  {filter}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
+      {pills.length > 0 ? (
+        <View style={styles.pillRow}>
+          {pills.map((pill) => (
+            <TouchableOpacity
+              key={pill.group}
+              style={styles.pill}
+              onPress={() => setFilters({ ...filters, [pill.group]: DEFAULT_FILTERS[pill.group] })}
+              accessibilityRole="button"
+              accessibilityLabel={`Remove filter: ${pill.label}`}
+            >
+              <Text style={styles.pillText} numberOfLines={1}>{pill.label}</Text>
+              <Ionicons name="close" size={14} color="#213B2A" />
+            </TouchableOpacity>
+          ))}
+        </View>
+      ) : null}
+
+      <Text style={styles.summaryText}>
+        {listSummary(visible.length, filters.sort)}
+        {filters.show === 'all' && othersState === 'loading' ? ' · loading other botanists’ plants…' : ''}
+        {filters.show === 'all' && othersState === 'offline' ? ' · other botanists’ plants could not be loaded (check the connection)' : ''}
+      </Text>
+
+      {actionCount > 0 && !showingActionList ? (
+        <View style={styles.actionBanner}>
+          <Text style={styles.actionBannerText}>
+            {actionCount} of your {actionCount === 1 ? 'plants needs' : 'plants need'} action
+          </Text>
+          <TouchableOpacity
+            onPress={() => setFilters({ ...filters, status: 'needs_action', show: 'mine' })}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Show the plants that need your action"
+          >
+            <Text style={styles.actionBannerLink}>Show</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+    </View>
+  );
+
+  const registerButton = (
+    <TouchableOpacity
+      style={styles.registerBtn}
+      onPress={() => router.push('/new-record' as any)}
+      accessibilityRole="button"
+    >
+      <Text style={styles.registerText}>+ Register plant</Text>
+    </TouchableOpacity>
+  );
+
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <View style={styles.container}>
+        <View style={styles.titleRow}>
+          <Text style={styles.headerTitle}>Plants</Text>
+          <View style={styles.syncRow}>
+            <Text
+              style={[styles.syncText, notUploaded > 0 && styles.syncTextPending]}
+              numberOfLines={1}
+            >
+              {syncStatusText(lastSync, notUploaded, now)}
+            </Text>
+            {notUploaded > 0 ? (
+              syncingAll ? (
+                <ActivityIndicator size="small" color="#213B2A" />
+              ) : (
+                <TouchableOpacity
+                  style={styles.syncBtn}
+                  onPress={() => void handleSyncNow()}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.syncBtnText}>Sync now</Text>
+                </TouchableOpacity>
+              )
+            ) : null}
+          </View>
         </View>
 
         <FlatList
-          data={filtered}
+          data={visible}
           keyExtractor={(item) => item.key}
+          ListHeaderComponent={header}
+          ListFooterComponent={visible.length > 0 ? registerButton : undefined}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           automaticallyAdjustKeyboardInsets
-          contentContainerStyle={filtered.length === 0 ? styles.emptyList : styles.listContent}
+          contentContainerStyle={styles.listContent}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
-              <Text style={styles.emptyTitle}>
-                {submissions.length === 0 ? 'No submissions yet' : 'No submissions match'}
-              </Text>
+              <Text style={styles.emptyTitle}>{items.length === 0 ? 'No plants yet' : 'No plants match'}</Text>
               <Text style={styles.emptySub}>
-                {submissions.length === 0
-                  ? 'Plants, observations and species proposals saved on this phone will appear here.'
-                  : 'Try a different filter or search term.'}
+                {items.length === 0
+                  ? 'Plants you register, and plants you scan, will appear here.'
+                  : 'Try a different search, or reset the filters.'}
               </Text>
-              {submissions.length === 0 ? (
-                <>
-                  <TouchableOpacity
-                    style={styles.primaryPillBtn}
-                    onPress={() => router.push('/new-record' as any)}
-                  >
-                    <Text style={styles.primaryPillText}>+ Register a plant</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.secondaryPillBtn}
-                    onPress={() => router.push('/(tabs)/scan' as any)}
-                  >
-                    <Text style={styles.secondaryPillText}>Scan an existing tag</Text>
-                  </TouchableOpacity>
-                </>
+              {items.length > 0 && filterCount > 0 ? (
+                <TouchableOpacity style={styles.secondaryPillBtn} onPress={() => setFilters(DEFAULT_FILTERS)}>
+                  <Text style={styles.secondaryPillText}>Reset filters</Text>
+                </TouchableOpacity>
               ) : null}
+              {registerButton}
             </View>
           }
-          renderItem={({ item }) => {
-            const badge = item.type === 'species'
-              ? submissionBadge(item.proposal.syncStatus, item.proposal.review)
-              : item.type === 'visit'
-                ? submissionBadge(item.visit.syncStatus, item.visit.reviewStatus)
-                : submissionBadge(item.record.syncStatus, item.record.reviewStatus);
-            const reason = rejectionReason(item);
-            const tagCode = item.type === 'species' ? null : item.record.tagCode;
-            const date = item.type === 'plant'
-              ? formatDate(item.record.createdAtIso || item.record.createdAt)
-              : item.type === 'visit'
-                ? formatDate(item.visit.observedAt || item.visit.date)
-                : formatDate(item.proposal.createdAt);
-            const metadata = [
-              tagCode ? `Tag ${tagCode}` : null,
-              item.type !== 'species' ? item.record.locationName : null,
-              date,
-            ]
-              .filter(Boolean)
-              .join(' · ');
-            const isProposalExpanded =
-              item.type === 'species' && expandedProposalId === item.proposal.id;
-
-            return (
-              <TouchableOpacity
-                style={styles.recordCard}
-                activeOpacity={0.75}
-                onPress={() => {
-                  if (item.type === 'species') {
-                    setExpandedProposalId(isProposalExpanded ? null : item.proposal.id);
-                    return;
-                  }
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={styles.plantCard}
+              activeOpacity={0.75}
+              disabled={openingKey === item.key}
+              onPress={() => {
+                if (item.record) {
                   router.push({ pathname: '/plant-detail', params: { id: item.record.id } } as any);
-                }}
-                accessibilityRole="button"
-                accessibilityLabel={`${item.type} submission: ${submissionName(item)}`}
-              >
-                <View style={styles.rowTop}>
-                  <View style={styles.typeBadge}>
-                    <Text style={styles.typeBadgeText}>
-                      {item.type === 'plant' ? 'PLANT' : item.type === 'visit' ? 'VISIT' : 'SPECIES'}
+                } else {
+                  void openOtherPlant(item);
+                }
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`${item.name}${item.tag ? `, tag ${item.tag}` : ''}, ${item.badge.label}`}
+            >
+              {item.photoUri ? (
+                <Image source={{ uri: item.photoUri }} style={styles.thumb} resizeMode="cover" />
+              ) : (
+                <View style={[styles.thumb, styles.thumbPlaceholder]}>
+                  <Ionicons name="leaf-outline" size={22} color="#46654F" />
+                </View>
+              )}
+              <View style={styles.plantText}>
+                <Text style={styles.plantName} numberOfLines={2}>{item.name}</Text>
+                {item.tag ? <Text style={styles.plantMeta} numberOfLines={1}>{item.tag}</Text> : null}
+                {item.place ? <Text style={styles.plantMeta} numberOfLines={1}>{item.place}</Text> : null}
+                <View style={styles.badgeRow}>
+                  <View style={[styles.statusBadge, { backgroundColor: item.badge.bg }]}>
+                    <Text style={[styles.statusBadgeText, { color: item.badge.text }]} numberOfLines={1}>
+                      {item.badge.label}
                     </Text>
                   </View>
-                  <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
-                    <Text style={[styles.statusBadgeText, { color: badge.text }]}>{badge.label}</Text>
-                  </View>
+                  {openingKey === item.key ? <ActivityIndicator size="small" color="#213B2A" /> : null}
                 </View>
-                <Text style={styles.recordSpecies}>{submissionName(item)}</Text>
-                <Text style={styles.recordMeta}>{metadata}</Text>
-                {reason ? <Text style={styles.reasonText}>Officer's reason: {reason}</Text> : null}
-
-                {isProposalExpanded && item.type === 'species' ? (
-                  <View style={styles.proposalDetails}>
-                    {item.proposal.commonName ? (
-                      <Text style={styles.detailText}>Common name: {item.proposal.commonName}</Text>
-                    ) : null}
-                    {item.proposal.localName ? (
-                      <Text style={styles.detailText}>Local name: {item.proposal.localName}</Text>
-                    ) : null}
-                    {item.proposal.family ? (
-                      <Text style={styles.detailText}>Family: {item.proposal.family}</Text>
-                    ) : null}
-                    {item.proposal.description ? (
-                      <Text style={styles.detailText}>Description: {item.proposal.description}</Text>
-                    ) : null}
-                    {item.proposal.habitat ? (
-                      <Text style={styles.detailText}>Habitat: {item.proposal.habitat}</Text>
-                    ) : null}
-                  </View>
+                {item.reason ? (
+                  <Text style={item.action === 'needs_species' ? styles.hintText : styles.reasonText} numberOfLines={3}>
+                    {item.reason}
+                  </Text>
                 ) : null}
-              </TouchableOpacity>
-            );
-          }}
+              </View>
+            </TouchableOpacity>
+          )}
         />
       </View>
+
+      {/* Filter: a bottom sheet with Show, Status and Sort by. */}
+      <Modal visible={sheetOpen} transparent animationType="slide" onRequestClose={() => setSheetOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setSheetOpen(false)} accessibilityLabel="Close the filter" />
+        <View style={styles.sheet}>
+          <View style={styles.sheetHandle} />
+          <Text style={styles.sheetTitle}>Filter</Text>
+          <ScrollView style={styles.sheetScroll}>
+            <Text style={styles.groupTitle}>Show</Text>
+            {renderOption('show', SHOW_FILTERS)}
+            <Text style={styles.groupTitle}>Status</Text>
+            {renderOption('status', STATUS_FILTERS, (option) =>
+              option.value === 'needs_action' ? `${option.label} (${actionCount})` : option.label
+            )}
+            <Text style={styles.groupTitle}>Sort by</Text>
+            {renderOption('sort', SORT_ORDERS)}
+          </ScrollView>
+          <View style={styles.sheetActions}>
+            <TouchableOpacity
+              style={styles.resetBtn}
+              onPress={() => setDraft(DEFAULT_FILTERS)}
+              accessibilityRole="button"
+            >
+              <Text style={styles.resetText}>Reset</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.applyBtn}
+              onPress={() => {
+                setFilters(draft);
+                setSheetOpen(false);
+              }}
+              accessibilityRole="button"
+            >
+              <Text style={styles.applyText} numberOfLines={1}>
+                Show {draftCount} {draftCount === 1 ? 'plant' : 'plants'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -427,121 +618,118 @@ const styles = StyleSheet.create({
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   container: { flex: 1, paddingHorizontal: 20, paddingTop: 16 },
-  headerTitle: { fontSize: 24, fontWeight: '800', color: '#1E2B22', marginBottom: 14 },
-  syncCard: {
-    backgroundColor: '#E6EFE9',
-    borderRadius: 18,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    marginBottom: 14,
-  },
-  syncTitle: { fontSize: 13.5, fontWeight: '700', color: '#213B2A' },
-  syncSub: { fontSize: 11.5, color: '#5C7163', marginTop: 2 },
-  syncBtn: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#213B2A',
-    minWidth: 104,
-    height: 36,
-    borderRadius: 18,
-    paddingHorizontal: 18,
-    justifyContent: 'center',
+  titleRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 10,
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    gap: 8,
   },
-  syncBtnDisabled: { opacity: 0.6 },
-  syncBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+  headerTitle: { fontSize: 24, fontWeight: '800', color: '#1E2B22' },
+  syncRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1, minWidth: 0 },
+  syncText: { fontSize: 12, color: '#68776D', flexShrink: 1 },
+  syncTextPending: { color: '#8C5E03', fontWeight: '700' },
+  syncBtn: { backgroundColor: '#213B2A', borderRadius: 14, paddingVertical: 6, paddingHorizontal: 12 },
+  syncBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   searchBar: {
+    flex: 1,
+    minWidth: 0,
     backgroundColor: '#FFFFFF',
-    height: 48,
-    borderRadius: 24,
-    paddingHorizontal: 18,
+    height: 46,
+    borderRadius: 23,
+    paddingHorizontal: 16,
     fontSize: 13.5,
     color: '#1E2B22',
     borderWidth: 1.2,
     borderColor: '#E6ECE8',
-    marginBottom: 12,
   },
-  filterRow: {
+  filterBtn: {
+    height: 46,
+    borderRadius: 23,
+    paddingHorizontal: 14,
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 6,
-    marginBottom: 14,
-  },
-  filterChip: {
-    flex: 1,
     alignItems: 'center',
-    paddingVertical: 9,
-    borderRadius: 18,
-    backgroundColor: '#E9EEEA',
-  },
-  activeFilterChip: { backgroundColor: '#213B2A' },
-  filterLabel: { fontSize: 12.5, color: '#68776D', fontWeight: '600' },
-  activeFilterLabel: { color: '#FFFFFF', fontWeight: '700' },
-  listContent: { paddingBottom: 12 },
-  emptyList: { flexGrow: 1 },
-  recordCard: {
+    gap: 6,
+    borderWidth: 1.2,
+    borderColor: '#213B2A',
     backgroundColor: '#FFFFFF',
-    padding: 16,
-    borderRadius: 20,
+  },
+  filterBtnActive: { backgroundColor: '#213B2A' },
+  filterText: { fontSize: 13, fontWeight: '700', color: '#213B2A' },
+  filterTextActive: { color: '#FFFFFF' },
+  filterCount: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  filterCountText: { fontSize: 11, fontWeight: '800', color: '#213B2A' },
+  pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    maxWidth: '100%',
+    backgroundColor: '#DDEAE1',
+    borderRadius: 14,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+  },
+  pillText: { fontSize: 12, fontWeight: '700', color: '#213B2A', flexShrink: 1 },
+  summaryText: { fontSize: 12.5, color: '#68776D', marginBottom: 10 },
+  actionBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    backgroundColor: '#FDF4D8',
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
     marginBottom: 10,
+  },
+  actionBannerText: { flex: 1, minWidth: 0, fontSize: 13, fontWeight: '700', color: '#8C5E03' },
+  actionBannerLink: { fontSize: 13, fontWeight: '800', color: '#213B2A', textDecorationLine: 'underline' },
+  listContent: { paddingBottom: 16, flexGrow: 1 },
+  plantCard: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    padding: 12,
+    borderRadius: 18,
+    marginBottom: 8,
     borderWidth: 1.2,
     borderColor: '#E6ECE8',
   },
-  rowTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  typeBadge: {
-    backgroundColor: '#E9EEEA',
-    paddingVertical: 4,
-    paddingHorizontal: 9,
-    borderRadius: 10,
-  },
-  typeBadgeText: { fontSize: 9.5, letterSpacing: 0.5, fontWeight: '800', color: '#526158' },
-  statusBadge: { paddingVertical: 5, paddingHorizontal: 10, borderRadius: 16 },
+  thumb: { width: 56, height: 56, borderRadius: 12, backgroundColor: '#E7EFEA' },
+  thumbPlaceholder: { justifyContent: 'center', alignItems: 'center' },
+  plantText: { flex: 1, minWidth: 0, marginLeft: 12 },
+  plantName: { fontSize: 14.5, fontWeight: '700', fontStyle: 'italic', color: '#1E2B22' },
+  plantMeta: { fontSize: 12, color: '#68776D', marginTop: 2 },
+  badgeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
+  statusBadge: { flexShrink: 1, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 14 },
   statusBadgeText: { fontSize: 11, fontWeight: '700' },
-  recordSpecies: { fontSize: 15, fontWeight: '700', color: '#1E2B22' },
-  recordMeta: { fontSize: 12.5, color: '#68776D', marginTop: 4 },
   reasonText: { fontSize: 12, fontWeight: '600', color: '#9B1C1C', marginTop: 6 },
-  proposalDetails: {
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#E6ECE8',
-    gap: 4,
-  },
-  detailText: { fontSize: 12.5, color: '#526158', lineHeight: 18 },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 30,
-  },
-  emptyTitle: { fontSize: 18, fontWeight: '700', color: '#1E2B22', marginBottom: 6 },
-  emptySub: {
-    fontSize: 13,
-    color: '#68776D',
-    textAlign: 'center',
-    lineHeight: 18,
-    marginBottom: 24,
-  },
-  primaryPillBtn: {
+  hintText: { fontSize: 12, fontWeight: '600', color: '#8C5E03', marginTop: 6 },
+  registerBtn: {
+    height: 46,
+    borderRadius: 23,
     backgroundColor: '#213B2A',
-    height: 48,
-    borderRadius: 24,
-    width: '100%',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 10,
+    alignSelf: 'stretch',
+    marginTop: 8,
   },
-  primaryPillText: { color: '#FFF', fontWeight: '700', fontSize: 14 },
+  registerText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
+  emptyContainer: { flex: 1, justifyContent: 'center', paddingHorizontal: 4, paddingVertical: 30 },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: '#1E2B22', marginBottom: 6, textAlign: 'center' },
+  emptySub: { fontSize: 13, color: '#68776D', textAlign: 'center', lineHeight: 18, marginBottom: 18 },
   secondaryPillBtn: {
-    height: 48,
-    borderRadius: 24,
-    width: '100%',
+    height: 46,
+    borderRadius: 23,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1.2,
@@ -549,4 +737,42 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF',
   },
   secondaryPillText: { color: '#213B2A', fontWeight: '700', fontSize: 14 },
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
+  sheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+    maxHeight: '80%',
+  },
+  sheetHandle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: '#D5DDD8', marginBottom: 10 },
+  sheetTitle: { fontSize: 18, fontWeight: '800', color: '#1E2B22', marginBottom: 4 },
+  sheetScroll: { flexGrow: 0 },
+  groupTitle: { fontSize: 12, fontWeight: '800', color: '#68776D', letterSpacing: 0.5, marginTop: 14, marginBottom: 2 },
+  optionRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9 },
+  optionText: { fontSize: 14, color: '#3A4A40', flexShrink: 1 },
+  optionTextSelected: { fontWeight: '700', color: '#1E2B22' },
+  sheetActions: { flexDirection: 'row', gap: 10, marginTop: 16 },
+  resetBtn: {
+    flex: 1,
+    height: 46,
+    borderRadius: 23,
+    borderWidth: 1.2,
+    borderColor: '#213B2A',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  resetText: { color: '#213B2A', fontWeight: '700', fontSize: 14 },
+  applyBtn: {
+    flex: 2,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#213B2A',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+  },
+  applyText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
 });

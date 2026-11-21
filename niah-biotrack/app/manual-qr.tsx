@@ -16,7 +16,14 @@ import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import FormScrollView from '../src/components/FormScrollView';
 
-import { lookupTag, describeTagLookup, type TagLookupResult } from '../src/services/tagLookup';
+import {
+  lookupTag,
+  describeTagLookup,
+  lookupPublicTag,
+  describePublicTagLookup,
+  type TagLookupResult,
+} from '../src/services/tagLookup';
+import { useAuthRole } from '../src/context/AuthRoleContext';
 
 export default function ManualQRScreen() {
   const router = useRouter();
@@ -25,6 +32,10 @@ export default function ManualQRScreen() {
   // Tags looked up on this screen; starts empty (no example tags).
   const [recentTags, setRecentTags] = useState<string[]>([]);
   const [lookupResult, setLookupResult] = useState<TagLookupResult | null>(null);
+  // Visitors and guests use the public lookup (approved plants only, no login), like the
+  // visitor camera scan. When it finds no plant, this holds what to tell them instead.
+  const { canEdit } = useAuthRole();
+  const [visitorMessage, setVisitorMessage] = useState<{ tagCode: string; title: string; message: string } | null>(null);
 
   const handleSearchTag = async (overrideTag?: string) => {
     const code = (overrideTag || tagInput).trim();
@@ -39,9 +50,23 @@ export default function ManualQRScreen() {
 
     setIsLoading(true);
     setLookupResult(null);
+    setVisitorMessage(null);
 
     try {
-      // Phone first, then the server; never filled in with made-up plant details.
+      if (!canEdit) {
+        // Not staff: the public route needs no login. A found plant opens its info page,
+        // exactly like a visitor's camera scan; anything else is explained here.
+        const publicResult = await lookupPublicTag(code);
+        setRecentTags((prev) => [publicResult.tagCode, ...prev.filter((t) => t !== publicResult.tagCode)].slice(0, 6));
+        if (publicResult.status === 'found') {
+          router.push({ pathname: '/plant-info', params: { tag: publicResult.tagCode } } as any);
+        } else {
+          setVisitorMessage({ tagCode: publicResult.tagCode, ...describePublicTagLookup(publicResult) });
+        }
+        return;
+      }
+
+      // Staff: phone first, then the server; never filled in with made-up plant details.
       const result = await lookupTag(code);
       setLookupResult(result);
       setRecentTags((prev) => [result.tagCode, ...prev.filter((t) => t !== result.tagCode)].slice(0, 6));
@@ -204,6 +229,18 @@ export default function ManualQRScreen() {
               <Text style={styles.resultCommon}>{lookupResult.commonName}</Text>
             ) : null}
             <Text style={styles.resultCommon}>{describeTagLookup(lookupResult).message}</Text>
+          </View>
+        )}
+
+        {/* Visitors: why no plant page opened (not found, being verified, offline...). */}
+        {visitorMessage && (
+          <View style={styles.resultCard}>
+            <View style={styles.resultPill}>
+              <Ionicons name="pricetag-outline" size={15} color="#526A5A" />
+              <Text style={styles.resultPillText}>{visitorMessage.tagCode}</Text>
+            </View>
+            <Text style={styles.resultScientific}>{visitorMessage.title}</Text>
+            <Text style={styles.resultCommon}>{visitorMessage.message}</Text>
           </View>
         )}
       </FormScrollView>

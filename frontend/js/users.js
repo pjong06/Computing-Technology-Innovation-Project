@@ -131,14 +131,49 @@ function makeUserRow(user, index) {
   return row;
 }
 
+// Newest account first by default. Accounts are stored in the order they were added
+// (website_users.sort_order: each new account gets the next number), so newest first is
+// that order reversed. Rows keep their stored index: the role and delete actions use it.
+let userSort = SORT_NEWEST;
+
 // Draws the table of users.
 function drawUsers() {
   const list = getUsers();
+  const count = document.getElementById('users-count');
+  if (count) {
+    count.textContent = list.length === 0
+      ? 'No accounts yet. Add a botanist above.'
+      : list.length + ' account' + (list.length === 1 ? '' : 's') + '.';
+    addListSortSelect('users-count', 'users-sort', function (order) {
+      userSort = order;
+      drawUsers();
+    });
+  }
   const body = document.getElementById('user-body');
   body.innerHTML = '';
-  for (let i = 0; i < list.length; i++) {
+  const indexes = list.map((_, i) => i);
+  if (userSort === SORT_NEWEST) indexes.reverse();
+  for (const i of indexes) {
     body.appendChild(makeUserRow(list[i], i));
   }
+}
+
+// A plain message for an account Supabase refused to create (its own text stays in the console).
+function plainAccountError(error) {
+  const text = String((error && error.message) || '');
+  if (/already (been )?registered|already exists/i.test(text)) {
+    return 'An account with this email already exists.';
+  }
+  if (/password/i.test(text)) {
+    return 'The temporary password was not accepted. Use a longer password and try again.';
+  }
+  if (/invalid.*email|email.*invalid/i.test(text)) {
+    return 'That email address is not valid.';
+  }
+  if (/rate limit|too many/i.test(text)) {
+    return 'Too many accounts were created just now. Please wait a minute and try again.';
+  }
+  return 'The account could not be created. Please try again.';
 }
 
 // Adds the user typed in the boxes. This makes a real login account with the Botanist role.
@@ -176,7 +211,8 @@ async function addUser() {
   });
   const result = await createAccount(otherClient, username, email, password);
   if (result.error) {
-    showToast(result.error.message);
+    console.error('Account could not be created:', result.error);
+    showToast(plainAccountError(result.error));
     return;
   }
 
@@ -215,9 +251,13 @@ function toggleUser(index) {
     return;
   }
   list[index].active = !list[index].active;
+  const name = list[index].name || list[index].username || 'The account';
   if (writeStorage(USERS_KEY, list)) {
     // The sync trigger has changed the profile; show its new status.
     profileStatus[list[index].id] = list[index].active ? 'active' : 'suspended';
+    showToast(name + (list[index].active ? ' is now active.' : ' is now suspended.'));
+  } else {
+    showToast('The change could not be saved. Reload the page and try again.');
   }
   drawUsers();
 }

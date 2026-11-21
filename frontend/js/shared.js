@@ -46,6 +46,8 @@ async function sendToLoginExpired() {
   location.replace('login.html');
 }
 
+const SERVER_UNREACHABLE_MESSAGE = 'Could not reach the server. Check your connection and try again.';
+
 // Calls the backend with the officer's login token. If the backend says the token is no
 // longer valid (401), the login is renewed once and the request sent again; if that
 // fails too, the person is sent to the login page.
@@ -59,7 +61,13 @@ async function api(path, options) {
     if (token) {
       headers.Authorization = 'Bearer ' + token;
     }
-    return fetch('/api' + path, Object.assign({}, options, { headers: headers }));
+    try {
+      return await fetch('/api' + path, Object.assign({}, options, { headers: headers }));
+    } catch (error) {
+      // No answer at all (offline, server down): the browser's own text is "Failed to fetch".
+      console.error('Request to /api' + path + ' failed:', error);
+      throw new Error(SERVER_UNREACHABLE_MESSAGE);
+    }
   }
 
   let response = await send(await window.getOfficerAccessToken());
@@ -180,18 +188,87 @@ async function speciesPhoto(species) {
   return { ...chosen, ...result };
 }
 
-function makeSpeciesPhotoCredit(photo, compact) {
-  if (!photo || photo.source !== 'inaturalist') return null;
+// ---- photo credit (same logic as niah-biotrack/src/utils/photoCredit.ts) ----
+// The plain-text credit under an iNaturalist reference photo:
+//   "Photo: <name>, <licence> via iNaturalist"
+// backend/test/photoCredit.test.js runs this code and the app's copy on the same examples.
 
-  const licence = SPECIES_PHOTO_LICENSES[photo.licence_code] || 'Unknown licence';
-  const name = photo.photographer?.trim() || photo.attribution?.trim() || 'Unknown photographer';
-  const fullCredit = `Photo: ${name}, ${licence} via iNaturalist`;
-  const credit = document.createElement('div');
-  credit.className = 'species-photo-credit' + (compact ? ' compact' : '');
-  credit.title = fullCredit;
-  credit.setAttribute('aria-label', fullCredit);
-  credit.textContent = fullCredit;
-  return credit;
+// The photographer's name from iNaturalist's credit sentence, or '' when it has none.
+//   "(c) Samuel Frankel, some rights reserved (CC BY), uploaded by Samuel Frankel" -> "Samuel Frankel"
+//   "no rights reserved, uploaded by Meng-Ying Tsai" (CC0) -> "Meng-Ying Tsai"
+//   "Jane Doe" -> "Jane Doe";  "no rights reserved" -> ""
+function nameFromAttribution(text) {
+  const value = String(text ?? '').trim();
+  if (!value) return '';
+
+  const copyright = /^(?:\(c\)|©)\s*/i.exec(value);
+  if (copyright) return value.slice(copyright[0].length).split(',')[0].trim();
+
+  const uploadedAt = value.toLowerCase().indexOf('uploaded by ');
+  if (uploadedAt !== -1) return value.slice(uploadedAt + 'uploaded by '.length).split(',')[0].trim();
+
+  const first = value.split(',')[0].trim();
+  return first.toLowerCase().includes('rights reserved') ? '' : first;
+}
+
+// The name to show: the photographer field, otherwise the name inside the attribution.
+// A photographer field that holds a whole credit sentence is cleaned the same way.
+function photoCreditName(photo) {
+  const photographer = String(photo.photographer ?? '').trim();
+  const fromPhotographer = /^(?:\(c\)|©)/i.test(photographer)
+    ? nameFromAttribution(photographer)
+    : photographer;
+  return fromPhotographer || nameFromAttribution(photo.attribution) || 'Unknown photographer';
+}
+
+function photoCreditText(photo) {
+  const licence = (photo.licence_code && SPECIES_PHOTO_LICENSES[photo.licence_code]) || 'Unknown licence';
+  return `Photo: ${photoCreditName(photo)}, ${licence} via iNaturalist`;
+}
+// A credit is needed only for iNaturalist photos under CC BY / CC BY-SA (and any licence we
+// can't confirm). CC0 photos and SFC's own photos never show one.
+function needsPhotoCredit(photo) {
+  return !!photo && photo.source === 'inaturalist' && photo.licence_code !== 'cc0';
+}
+
+// ---- end photo credit ----
+
+// A small "i" button for the corner of a photo on a detail view. Hover (or tap) shows the
+// plain-text credit "Photo: <name>, <licence> via iNaturalist". No links. null when the photo
+// needs no credit. The photo's box must be position: relative.
+let photoCreditInfoCount = 0;
+function makePhotoCreditInfo(photo) {
+  if (!needsPhotoCredit(photo)) return null;
+  const text = photoCreditText(photo);
+
+  const wrap = document.createElement('span');
+  wrap.className = 'photo-credit-info';
+
+  const tip = document.createElement('span');
+  tip.className = 'photo-credit-tip';
+  tip.id = 'photo-credit-' + (++photoCreditInfoCount);
+  tip.setAttribute('role', 'tooltip');
+  tip.textContent = text;
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'photo-credit-button';
+  button.textContent = 'i';
+  button.title = text;
+  button.setAttribute('aria-label', 'Photo credit');
+  button.setAttribute('aria-describedby', tip.id);
+  button.setAttribute('aria-expanded', 'false');
+  button.onclick = function (event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const open = !wrap.classList.contains('open');
+    wrap.classList.toggle('open', open);
+    button.setAttribute('aria-expanded', String(open));
+  };
+
+  wrap.appendChild(button);
+  wrap.appendChild(tip);
+  return wrap;
 }
 
 // Opens the species editor for this species id, or for a new species when id is ''.
@@ -553,22 +630,76 @@ function isoDate(d) {
   return d.getFullYear() + '-' + twoDigits(d.getMonth() + 1) + '-' + twoDigits(d.getDate());
 }
 
-// Turns a Date into text with the date and the time, like "14 Sep 2026, 3:42 PM".
+// ---- One date format for every page ----
+// Date and time: "21 Nov 2026, 11:30" (24-hour). Date only: "21 Nov 2026".
 function whenText(d) {
-  let hour = d.getHours();
-  let ampm = 'AM';
-  if (hour >= 12) {
-    ampm = 'PM';
-  }
-  hour = hour % 12;
-  if (hour === 0) {
-    hour = 12;
-  }
   return d.getDate() + ' ' + MONTHS[d.getMonth()] + ' ' + d.getFullYear() + ', ' +
-    hour + ':' + twoDigits(d.getMinutes()) + ' ' + ampm;
+    twoDigits(d.getHours()) + ':' + twoDigits(d.getMinutes());
+}
+
+function dayText(d) {
+  return d.getDate() + ' ' + MONTHS[d.getMonth()] + ' ' + d.getFullYear();
+}
+
+// For a stored date (ISO text or a Date): "21 Nov 2026, 11:30", or fallback when missing.
+function formatWhen(value, fallback) {
+  if (!value) return fallback === undefined ? 'Not recorded' : fallback;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : whenText(date);
+}
+
+// For a stored date: "21 Nov 2026", or fallback when missing.
+function formatDay(value, fallback) {
+  if (!value) return fallback === undefined ? 'Not recorded' : fallback;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : dayText(date);
+}
+
+// ---- Newest first / Oldest first, for every list ----
+const SORT_NEWEST = 'newest';
+const SORT_OLDEST = 'oldest';
+
+// A small select: "Newest first" (default) / "Oldest first". onChange gets 'newest' or 'oldest'.
+function makeSortSelect(id, onChange) {
+  const select = document.createElement('select');
+  select.id = id;
+  select.className = 'sort-select';
+  select.setAttribute('aria-label', 'Sort order');
+  select.add(new Option('Newest first', SORT_NEWEST));
+  select.add(new Option('Oldest first', SORT_OLDEST));
+  select.value = SORT_NEWEST;
+  select.addEventListener('change', () => onChange(select.value));
+  return select;
+}
+
+// A copy of the list sorted by the date dateOf(item) returns; items without a date go last.
+function sortByDate(list, dateOf, order) {
+  const time = item => {
+    const value = Date.parse(dateOf(item) || '');
+    return Number.isNaN(value) ? null : value;
+  };
+  return [...list].sort((a, b) => {
+    const ta = time(a);
+    const tb = time(b);
+    if (ta === null && tb === null) return 0;
+    if (ta === null) return 1;
+    if (tb === null) return -1;
+    return order === SORT_OLDEST ? ta - tb : tb - ta;
+  });
 }
 
 // ---- Shared by the approval queue and the rejected list ----
+
+// Puts a Newest first / Oldest first select right after the list's count line (once).
+function addListSortSelect(afterId, selectId, onChange) {
+  if (document.getElementById(selectId) !== null) return;
+  const after = document.getElementById(afterId);
+  if (after === null) return;
+  const bar = document.createElement('div');
+  bar.className = 'list-sort-bar';
+  bar.appendChild(makeSortSelect(selectId, onChange));
+  after.insertAdjacentElement('afterend', bar);
+}
 
 // Returns the observation with this id from the list, or null if there is none.
 function findObservation(list, id) {
@@ -639,6 +770,43 @@ function makeObservationListCard(observation, selected, picture, onSelect) {
   return card;
 }
 
+// ---- Review status words and colours (one scheme for the portal and the mobile app) ----
+// Waiting for review (blue) · Approved (green) · Needs changes (red) · Draft (grey).
+// css is the class for .plant-status / .status-badge in style.css.
+const REVIEW_STATUS_DISPLAY = {
+  pending: { label: 'Waiting for review', css: 'pending' },
+  approved: { label: 'Approved', css: 'approved' },
+  rejected: { label: 'Needs changes', css: 'rejected' },
+  draft: { label: 'Draft', css: 'draft' }
+};
+function reviewStatusDisplay(value) {
+  const status = String(value || 'unknown').toLowerCase();
+  return REVIEW_STATUS_DISPLAY[status] || { label: String(value || 'unknown').replaceAll('_', ' '), css: '' };
+}
+
+// ---- Display helpers for plant tags and coordinates ----
+
+// The tag to show on screen. "plant:..." values are placeholders the database gives a plant
+// that has no physical tag yet; they are never shown. Real tags (NIAH-PLT-00001) unchanged.
+// CSV/PDF exports keep the stored value.
+const NO_PHYSICAL_TAG = 'No physical tag yet';
+function displayTag(tag, fallback) {
+  const value = String(tag ?? '').trim();
+  if (value === '') return fallback === undefined ? NO_PHYSICAL_TAG : fallback;
+  return /^plant:/i.test(value) ? NO_PHYSICAL_TAG : value;
+}
+
+// "3.817612, 113.781045" for display (6 decimals). Stored values and exports are unchanged.
+function displayCoordinates(latitude, longitude) {
+  if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) {
+    return 'Not recorded';
+  }
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return 'Not recorded';
+  return lat.toFixed(6) + ', ' + lng.toFixed(6);
+}
+
 // Starts the big detail card for an observation: its scientific name and plant tag.
 function makeObservationDetailCard(observation) {
   const card = document.createElement('div');
@@ -655,7 +823,7 @@ function makeObservationDetailCard(observation) {
   const plant = observation.plant || {};
   const record = document.createElement('p');
   record.className = 'muted';
-  record.textContent = plant.tag_code ? 'Tag ' + plant.tag_code : 'No tag attached';
+  record.textContent = plant.tag_code ? 'Tag ' + displayTag(plant.tag_code) : 'No tag attached';
   card.appendChild(record);
   return card;
 }
@@ -832,14 +1000,9 @@ function startSession(me, username) {
 
 // Logs out of Supabase, forgets the saved user and goes back to the login page.
 async function logout() {
-  await sb.auth.signOut();
+  await sb.auth.signOut({ scope: 'local' });
   localStorage.removeItem(SESSION_KEY);
   location.href = 'login.html';
-}
-
-// Opens the first page after logging in. Botanists and officers both start at the Species catalogue.
-function goToHome() {
-  location.href = 'species.html';
 }
 
 // Pages that need no login
@@ -853,7 +1016,9 @@ const OPEN_PAGES = [
 // The Distribution map and Plant catalogue are not here; their data is officer-only.
 const BOTANIST_PAGES = [
   'species.html',
-  'editor.html'
+  'editor.html',
+  'iot-workspace.html',
+  'credits.html'
 ];
 
 const OFFICER_ONLY_PAGE_MESSAGE = 'That page is for conservation officers only.';
@@ -889,6 +1054,7 @@ function tellIfSuspended() {
 // Returns true when this person may stay on this page. Page scripts check pageAllowed
 // before calling the backend, so nothing is requested while the browser is leaving.
 function guardPages() {
+  if (document.currentScript?.hasAttribute('data-navigation-only')) return true;
   const file = thisPageName();
   if (OPEN_PAGES.indexOf(file) !== -1) {
     return true;
@@ -907,18 +1073,150 @@ function guardPages() {
   return true;
 }
 
-const MENU = [
-  { file: 'species.html', label: 'Species catalogue' },
-  { file: 'proposals.html', label: 'Species proposals' },
-  { file: 'plants.html', label: 'Plant catalogue' },
-  { file: 'editor.html', label: 'Species record editor' },
-  { file: 'queue.html', label: 'Observation approval queue' },
-  { file: 'rejected.html', label: 'Rejected observations' },
-  { file: 'map.html', label: 'Distribution map' },
-  { file: 'reports.html', label: 'Reports & export' },
-  { file: 'users.html', label: 'User & role admin' },
-  { file: 'alerts.html', label: 'IoT alerts' }
+// ---- Navigation: menu sections, tab bars, review counts and the landing page ----
+//
+// Officers see five menu sections. A section with more than one page shows a tab bar at the
+// top of its pages (drawn here, not in each page's HTML). Botanists only see "Species".
+// The species editor is not in the menu: the catalogue's Add species / Edit buttons open it
+// (openSpeciesEditor), and "Species" stays highlighted there.
+const NAV_SECTIONS = [
+  {
+    label: 'Review',
+    countId: 'review-menu-count',
+    pages: [
+      { file: 'queue.html', label: 'Field records', countId: 'field-records-count' },
+      { file: 'proposals.html', label: 'Species proposals', countId: 'species-proposals-count' },
+      { file: 'rejected.html', label: 'Rejected history' }
+    ]
+  },
+  {
+    label: 'Species',
+    alsoActiveOn: ['editor.html', 'credits.html'],
+    pages: [
+      { file: 'species.html', label: 'Species catalogue' }
+    ]
+  },
+  {
+    label: 'Plants',
+    carrySpecies: true,
+    pages: [
+      { file: 'plants.html', label: 'List', alsoActiveOn: ['plant.html'] },
+      { file: 'map.html', label: 'Map' }
+    ]
+  },
+  {
+    label: 'IoT alerts',
+    countId: 'iot-alert-menu-count',
+    pages: [
+      { file: 'iot-workspace.html', label: 'Workspace' }
+    ]
+  },
+  {
+    label: 'Admin',
+    pages: [
+      { file: 'reports.html', label: 'Reports' },
+      { file: 'users.html', label: 'Users' }
+    ]
+  }
 ];
+
+// Every page reachable from the menu or a tab bar, in order.
+const MENU = NAV_SECTIONS.reduce((all, section) => all.concat(section.pages), []);
+
+function pageMatches(page, file) {
+  return page.file === file || (page.alsoActiveOn || []).indexOf(file) !== -1;
+}
+
+// "?species=<id>" when the current address has one, so Plants List <-> Map keeps the filter.
+function speciesQuery(search) {
+  const id = new URLSearchParams(search || '').get('species');
+  return id ? '?species=' + encodeURIComponent(id) : '';
+}
+
+// What the menu and tab bar show for this person on this page (no page drawing here).
+// Returns { sections: [{ label, href, active, countId }], tabs: [{ label, href, active, countId }] }.
+// Only pages the person may open are included, so no section is ever empty.
+function navFor(user, activeFile, search) {
+  const sections = [];
+  let tabs = [];
+  for (const section of NAV_SECTIONS) {
+    const pages = section.pages.filter(page => user === null || canOpen(user, page.file));
+    if (pages.length === 0) {
+      continue;
+    }
+    const activePage = pages.find(page => pageMatches(page, activeFile)) || null;
+    const active = activePage !== null || (section.alsoActiveOn || []).indexOf(activeFile) !== -1;
+    sections.push({
+      label: section.label,
+      href: pages[0].file,
+      active: active,
+      countId: section.countId || null
+    });
+    if (activePage !== null && pages.length > 1) {
+      const query = section.carrySpecies ? speciesQuery(search) : '';
+      tabs = pages.map(page => ({
+        label: page.label,
+        href: page.file + query,
+        active: page === activePage,
+        countId: page.countId || null
+      }));
+    }
+  }
+  return { sections: sections, tabs: tabs };
+}
+
+// ---- Waiting-for-review counts (officers only) ----
+// Field records: GET /api/reports/summary (officer-only), pending_observation_count.
+// Species proposals: the existing pending-proposals call. The Review menu entry shows the sum.
+const reviewCounts = { records: null, proposals: null };
+
+function validCount(count, what) {
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new Error('The ' + what + ' count was unavailable.');
+  }
+  return count;
+}
+
+async function fetchFieldRecordsCount() {
+  const result = await api('/reports/summary');
+  return validCount(result?.data?.pending_observation_count, 'field records');
+}
+
+async function fetchSpeciesProposalCount() {
+  const result = await api('/knowledge/species/proposals/pending?page=1&page_size=1');
+  return validCount(result?.pagination?.total, 'pending proposal');
+}
+
+// ---- Landing page after login ----
+// Officers: the review page when anything waits for review, otherwise the map.
+// Botanists: the species catalogue. If the counts don't arrive quickly (or fail), officers
+// go to the species catalogue, so logging in is never held up.
+const HOME_COUNT_TIMEOUT_MS = 2500;
+
+async function homePageFor(user) {
+  if (user === null || isBotanist(user)) {
+    return 'species.html';
+  }
+  try {
+    const counts = Promise.all([fetchFieldRecordsCount(), fetchSpeciesProposalCount()]);
+    let timer;
+    const timeout = new Promise((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('The review counts took too long.')), HOME_COUNT_TIMEOUT_MS);
+    });
+    const [records, proposals] = await Promise.race([counts, timeout]).finally(() => clearTimeout(timer));
+    return records + proposals > 0 ? 'queue.html' : 'map.html';
+  } catch (error) {
+    console.warn('Landing page counts unavailable; opening the species catalogue.', error);
+    return 'species.html';
+  }
+}
+
+// Opens the first page after logging in (see homePageFor).
+async function goToHome() {
+  location.href = await homePageFor(getCurrentUser());
+}
+
+// ---- end of navigation ----
 
 // Shows a warning at the top of the page when the database could not be loaded, so an
 // empty page is never mistaken for "no data".
@@ -939,7 +1237,46 @@ function showDatabaseProblem() {
   main.insertBefore(box, main.firstChild);
 }
 
-// Builds the left menu inside <nav id="menu"> and highlights the page we are on (activeFile).
+// A small count badge (hidden until a count arrives, and at 0).
+function makeCountBadge(id) {
+  const badge = document.createElement('span');
+  badge.id = id;
+  badge.className = 'menu-count';
+  badge.hidden = true;
+  return badge;
+}
+
+let iotAlertMenuTimer = null;
+
+function updateIotAlertMenuCount(count) {
+  setCountBadge('iot-alert-menu-count', validCount(count, 'IoT alert'),
+    isBotanist(getCurrentUser() || {}) ? 'assigned task' : 'unresolved alert');
+}
+
+async function refreshIotAlertMenuCount() {
+  const user = getCurrentUser();
+  if (!user || !['Conservation Officer', 'Botanist'].includes(user.role)) return;
+  const result = await api('/iot-workspace/counts');
+  updateIotAlertMenuCount(isBotanist(user) ? result.data?.assigned : result.data?.unresolved);
+}
+
+function startIotAlertMenuCount() {
+  if (iotAlertMenuTimer !== null) clearInterval(iotAlertMenuTimer);
+  // The workspace already refreshes this same count with its summary cards.
+  if (thisPageName() === 'iot-workspace.html') return;
+  const refresh = () => refreshIotAlertMenuCount().catch(() => {
+    const badge = document.getElementById('iot-alert-menu-count');
+    if (badge) badge.hidden = true;
+  });
+  void refresh();
+  iotAlertMenuTimer = setInterval(() => {
+    if (!document.hidden) void refresh();
+  }, 30000);
+}
+
+// Builds the left menu inside <nav id="menu"> and highlights the section of this page
+// (activeFile). Pages in a section with more than one page also get a tab bar at the top
+// of <main>.
 function drawMenu(activeFile) {
   const nav = document.getElementById('menu');
   if (nav === null) {
@@ -970,32 +1307,23 @@ function drawMenu(activeFile) {
   }
   nav.appendChild(sub);
 
-  for (let i = 0; i < MENU.length; i++) {
-    if (user !== null && canOpen(user, MENU[i].file) === false) {
-      continue;
-    }
+  const view = navFor(user, activeFile, location.search);
+  for (const section of view.sections) {
     const link = document.createElement('a');
-    link.href = MENU[i].file;
-    if (MENU[i].file === 'proposals.html') {
-      link.appendChild(document.createTextNode(MENU[i].label));
-      const badge = document.createElement('span');
-      badge.id = 'species-proposals-count';
-      badge.className = 'menu-count';
-      badge.hidden = true;
-      link.appendChild(badge);
-      if (user !== null && isBotanist(user) === false && thisPageName() !== 'proposals.html') {
-        refreshSpeciesProposalMenuCount().catch(error => {
-          showToast('Pending proposal count could not be loaded. ' + error.message);
-        });
-      }
-    } else {
-      link.textContent = MENU[i].label;
+    link.href = section.href;
+    link.appendChild(document.createTextNode(section.label));
+    if (section.countId) {
+      link.appendChild(makeCountBadge(section.countId));
     }
-    if (MENU[i].file === activeFile) {
+    if (section.active) {
       link.className = 'on';
+      link.setAttribute('aria-current', 'page');
     }
     nav.appendChild(link);
   }
+
+  drawSectionTabs(view.tabs);
+  startIotAlertMenuCount();
 
   const who = document.createElement('div');
   who.className = 'who';
@@ -1012,27 +1340,87 @@ function drawMenu(activeFile) {
   };
   who.appendChild(out);
   nav.appendChild(who);
+
+  // Waiting-for-review counts, for officers. The proposals and field records pages set their
+  // own count after loading their list.
+  if (user !== null && isBotanist(user) === false) {
+    if (thisPageName() !== 'proposals.html') {
+      refreshSpeciesProposalMenuCount().catch(error => {
+        showToast('Pending proposal count could not be loaded. ' + error.message);
+      });
+    }
+    if (thisPageName() !== 'queue.html') {
+      refreshFieldRecordsCount().catch(error => {
+        showToast('Field record count could not be loaded. ' + error.message);
+      });
+    }
+  }
 }
 
-function updateSpeciesProposalMenuCount(count) {
-  const badge = document.getElementById('species-proposals-count');
-  if (!badge) return;
-  if (!Number.isSafeInteger(count) || count < 0) {
-    throw new Error('The pending proposal count was invalid.');
+// The tab bar for a section with more than one page (e.g. Review: Field records · Species
+// proposals · Rejected history), at the top of <main>. Not a <nav> element: the menu's
+// nav styles would apply to it.
+function drawSectionTabs(tabs) {
+  const main = document.querySelector('main');
+  if (main === null || tabs.length === 0 || document.getElementById('section-tabs') !== null) {
+    return;
   }
+  const bar = document.createElement('div');
+  bar.id = 'section-tabs';
+  bar.className = 'section-tabs';
+  bar.setAttribute('role', 'navigation');
+  bar.setAttribute('aria-label', 'Pages in this section');
+  for (const tab of tabs) {
+    const link = document.createElement('a');
+    link.href = tab.href;
+    link.appendChild(document.createTextNode(tab.label));
+    if (tab.countId) {
+      link.appendChild(makeCountBadge(tab.countId));
+    }
+    if (tab.active) {
+      link.className = 'on';
+      link.setAttribute('aria-current', 'page');
+    }
+    bar.appendChild(link);
+  }
+  main.insertBefore(bar, main.firstChild);
+}
+
+// Shows a count on a badge (hidden at 0). noun is singular, e.g. "pending species proposal".
+function setCountBadge(id, count, noun) {
+  const badge = document.getElementById(id);
+  if (!badge) return;
   badge.textContent = String(count);
   badge.hidden = count === 0;
-  badge.title = count + ' pending species proposal' + (count === 1 ? '' : 's');
+  badge.title = count + ' ' + noun + (count === 1 ? '' : 's');
   badge.setAttribute('aria-label', badge.title);
 }
 
+// The Review menu entry: field records + species proposals waiting.
+function updateReviewMenuCount() {
+  if (reviewCounts.records === null && reviewCounts.proposals === null) return;
+  setCountBadge('review-menu-count', (reviewCounts.records || 0) + (reviewCounts.proposals || 0),
+    'item waiting for review');
+}
+
+function updateSpeciesProposalMenuCount(count) {
+  reviewCounts.proposals = validCount(count, 'pending proposal');
+  setCountBadge('species-proposals-count', count, 'pending species proposal');
+  updateReviewMenuCount();
+}
+
+function updateFieldRecordsCount(count) {
+  reviewCounts.records = validCount(count, 'field records');
+  setCountBadge('field-records-count', count, 'field record waiting for review');
+  updateReviewMenuCount();
+}
+
 async function refreshSpeciesProposalMenuCount() {
-  const result = await api('/knowledge/species/proposals/pending?page=1&page_size=1');
-  const count = result?.pagination?.total;
-  if (!Number.isSafeInteger(count) || count < 0) {
-    throw new Error('The pending proposal count was unavailable.');
-  }
-  updateSpeciesProposalMenuCount(count);
+  updateSpeciesProposalMenuCount(await fetchSpeciesProposalCount());
+}
+
+async function refreshFieldRecordsCount() {
+  updateFieldRecordsCount(await fetchFieldRecordsCount());
 }
 
 // Hides the small pop-up message.
@@ -1137,6 +1525,9 @@ function makeThumb(photo, altText, sizeClass) {
     box.classList.add(sizeClass);
   }
   const img = document.createElement('img');
+  // Lists: only images in view are fetched.
+  img.loading = 'lazy';
+  img.decoding = 'async';
   img.src = photo;
   img.alt = altText;
   img.onerror = function () {
@@ -1162,7 +1553,11 @@ function makeCell(text) {
   return td;
 }
 
-loadFromDatabase();
+// The IoT workspace verifies /api/iot-workspace/session itself and only needs
+// this file's existing navigation/session helpers, not the website-user list.
+// All existing pages retain their original bootstrap and page guards.
+const navigationOnly = document.currentScript?.hasAttribute('data-navigation-only') === true;
+if (!navigationOnly) loadFromDatabase();
 
 const pageAllowed = guardPages();
 

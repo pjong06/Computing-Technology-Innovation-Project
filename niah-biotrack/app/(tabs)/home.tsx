@@ -16,14 +16,20 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import { useAuthRole } from '../../src/context/AuthRoleContext';
-import { useRecordStore, SyncStatus, IdentificationStatus } from '../../src/store/useRecordStore';
+import { useRecordStore, SyncStatus, IdentificationStatus, type PlantRecord } from '../../src/store/useRecordStore';
 import { buildSyncSummary } from '../../src/services/syncSummary';
-import { resumePausedRecordRetries } from '../../src/services/offlineDatabase';
+import {
+  resumeAllPausedRecordRetries,
+  resumePausedRecordRetries,
+} from '../../src/services/offlineDatabase';
+import { pullServerRecords, serverPullError } from '../../src/services/serverPull';
 import { useProposalStore } from '../../src/store/useProposalStore';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
-import SpeciesPhotoCredit from '../../src/components/SpeciesPhotoCredit';
-import { preferredSpeciesPhoto } from '../../src/utils/speciesPhoto';
+import { plantReviewBadge } from '../../src/utils/reviewStatus';
+import { recordSubmitProblem } from '../../src/utils/submissionState';
+import { routesUploadedText } from '../../src/utils/routeSync';
+import MyProposals from '../../src/components/MyProposals';
 
 const FEATURED_COUNT = 4;
 
@@ -58,7 +64,11 @@ export default function HomeScreen() {
 
   const records = useRecordStore((state) => state.records);
   const syncAll = useRecordStore((state) => state.syncAll);
+  const syncRoutes = useRecordStore((state) => state.syncRoutes);
   const syncRecord = useRecordStore((state) => state.syncRecord);
+  const unsentRouteCount = useRecordStore(
+    (state) => state.routes.filter((route) => route.syncStatus !== 'uploaded').length
+  );
   const syncAllProposals = useProposalStore((state) => state.syncAllProposals);
   const refreshProposalStatuses = useProposalStore((state) => state.refreshProposalStatuses);
 
@@ -78,29 +88,55 @@ export default function HomeScreen() {
 
   const handleSyncNow = async () => {
     setSyncingAll(true);
-    const { uploaded, failed: recordsFailed, skipped, photosUploaded, photoProblems } = await syncAll();
-    const proposalsResult = await syncAllProposals();
-    await refreshProposalStatuses();
-    setSyncingAll(false);
+    try {
+      await resumeAllPausedRecordRetries();
+      const { uploaded, failed: recordsFailed, skipped, photosUploaded, photoProblems } = await syncAll();
+      const routesResult = await syncRoutes();
+      const proposalsResult = await syncAllProposals();
+      await refreshProposalStatuses();
 
-    const failed = recordsFailed + proposalsResult.failed;
-    const parts = [`${uploaded} uploaded`];
-    if (failed > 0) parts.push(`${failed} failed`);
-    if (skipped > 0) parts.push(`${skipped} already uploading`);
-    if (photosUploaded > 0) parts.push(`${photosUploaded} ${photosUploaded === 1 ? 'photo' : 'photos'} uploaded`);
-    if (photoProblems > 0) {
-      parts.push(`${photoProblems} ${photoProblems === 1 ? 'photo' : 'photos'} over 5 MB (see the plant page)`);
-    }
-    if (proposalsResult.uploaded > 0) {
-      parts.push(`${proposalsResult.uploaded} species ${proposalsResult.uploaded === 1 ? 'proposal' : 'proposals'} sent`);
-    }
+      let downloaded = 0;
+      let downloadError: string | null = null;
+      try {
+        downloaded = (await pullServerRecords()).downloaded;
+      } catch (error) {
+        downloadError = serverPullError(error);
+      }
 
-    Toast.show({
-      type: failed > 0 ? 'error' : 'success',
-      text1: failed > 0 ? 'Some records did not upload' : 'Sync complete',
-      text2: failed > 0 ? `${parts.join(' · ')}. Tap Retry to try again.` : parts.join(' · '),
-      position: 'bottom',
-    });
+      const failed = recordsFailed + proposalsResult.failed + routesResult.failed;
+      const parts = [`${uploaded} uploaded`];
+      if (downloaded > 0) parts.push(`${downloaded} downloaded`);
+      if (failed > 0) parts.push(`${failed} failed`);
+      if (skipped > 0) parts.push(`${skipped} already uploading`);
+      if (photosUploaded > 0) parts.push(`${photosUploaded} ${photosUploaded === 1 ? 'photo' : 'photos'} uploaded`);
+      if (photoProblems > 0) {
+        parts.push(`${photoProblems} ${photoProblems === 1 ? 'photo' : 'photos'} over 5 MB (see the plant page)`);
+      }
+      if (proposalsResult.uploaded > 0) {
+        parts.push(`${proposalsResult.uploaded} species ${proposalsResult.uploaded === 1 ? 'proposal' : 'proposals'} sent`);
+      }
+      if (routesResult.uploaded > 0) parts.push(routesUploadedText(routesResult.uploaded));
+      if (routesResult.failed > 0) {
+        parts.push(`${routesResult.failed} ${routesResult.failed === 1 ? 'route' : 'routes'} not uploaded`);
+      }
+
+      const problem = proposalsResult.reasons[0] ?? downloadError;
+      Toast.show({
+        type: failed > 0 || downloadError ? 'error' : 'success',
+        text1: failed > 0 ? 'Some records did not upload' : downloadError ? 'Upload complete; download pending' : 'Sync complete',
+        text2: problem ? `${parts.join(' · ')}. ${problem}` : parts.join(' · '),
+        position: 'bottom',
+      });
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Sync could not finish',
+        text2: error instanceof Error ? error.message : 'Please try again.',
+        position: 'bottom',
+      });
+    } finally {
+      setSyncingAll(false);
+    }
   };
 
   const handleRetry = async (id: string) => {
@@ -121,10 +157,15 @@ export default function HomeScreen() {
     }
   };
 
-  const getStatusBadge = (status: SyncStatus) => {
-    switch (status) {
-      case SyncStatus.UPLOADED:
-        return { bg: '#E4F2E7', text: '#215A36', label: '• Uploaded' };
+  // Before upload: the upload status. After upload: the officer's decision, with the same
+  // logic as Records (so a record never shows "Uploaded" here and "Pending" there).
+  // An approved plant with a newer visit waiting reads "Approved" plus a small waiting line.
+  const getStatusBadge = (record: PlantRecord): { bg: string; text: string; label: string; waitingNote?: string | null } => {
+    switch (record.syncStatus) {
+      case SyncStatus.UPLOADED: {
+        const { badge, waitingNote } = plantReviewBadge(record, 'Uploaded · Waiting for review');
+        return { ...badge, label: `• ${badge.label}`, waitingNote };
+      }
       case SyncStatus.NOT_UPLOADED:
         return { bg: '#FDF4D8', text: '#8C5E03', label: '• Not uploaded' };
       case SyncStatus.FAILED:
@@ -161,9 +202,11 @@ export default function HomeScreen() {
               style={styles.headerLogo}
               resizeMode="contain"
             />
-            <View>
-              <Text style={styles.headerTitle}>Niah BioTrack</Text>
-              <Text style={styles.headerSubtitle}>Hello, {userName}</Text>
+            <View style={styles.headerText}>
+              <Text style={styles.headerTitle} numberOfLines={1}>Niah BioTrack</Text>
+              <Text style={styles.headerSubtitle} numberOfLines={1} ellipsizeMode="tail">
+                Hello, {userName}
+              </Text>
             </View>
           </View>
           <TouchableOpacity
@@ -182,13 +225,16 @@ export default function HomeScreen() {
 
         {!isVisitor ? (
           <>
-            {(totalToSync > 0 || unsentProposalCount > 0) && (
+            {(totalToSync > 0 || unsentProposalCount > 0 || unsentRouteCount > 0) && (
               <View style={styles.syncCard}>
                 <Text style={styles.syncTitle}>
                   {[
                     totalToSync > 0 ? `${totalToSync} ${totalToSync === 1 ? 'record' : 'records'}` : null,
                     unsentProposalCount > 0
                       ? `${unsentProposalCount} species ${unsentProposalCount === 1 ? 'proposal' : 'proposals'}`
+                      : null,
+                    unsentRouteCount > 0
+                      ? `${unsentRouteCount} ${unsentRouteCount === 1 ? 'route' : 'routes'}`
                       : null,
                   ]
                     .filter(Boolean)
@@ -293,20 +339,24 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
 
-            {records.length === 0 ? (
-              <View style={styles.emptyContainer}>
-                <Text style={styles.emptyTitle}>No records logged yet</Text>
-                <Text style={styles.emptySub}>
-                  Field observations recorded on patrols will appear here automatically.
-                </Text>
-              </View>
-            ) : (
-              <FlatList
+            {/* Recent records, then the botanist's species proposals, in one scrolling list. */}
+            <FlatList
                 data={records.slice(0, 5)}
                 keyExtractor={(item) => item.id}
                 showsVerticalScrollIndicator={false}
+                ListEmptyComponent={
+                  <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyTitle}>No records logged yet</Text>
+                    <Text style={styles.emptySub}>
+                      Field observations recorded on patrols will appear here automatically.
+                    </Text>
+                  </View>
+                }
+                ListFooterComponent={<MyProposals />}
                 renderItem={({ item }) => {
-                  const badge = getStatusBadge(item.syncStatus);
+                  const badge = getStatusBadge(item);
+                  const notSentReason =
+                    item.syncStatus === SyncStatus.UPLOADED ? recordSubmitProblem(item) : null;
                   return (
                     <View style={styles.recordItem}>
                       <TouchableOpacity
@@ -322,24 +372,35 @@ export default function HomeScreen() {
                         <View style={styles.plantIconCircle}>
                           <Ionicons name="leaf-outline" size={20} color="#2D6A4F" />
                         </View>
-                        <View style={{ flex: 1, marginHorizontal: 12 }}>
-                          <Text style={styles.speciesText}>
+                        {/* The text takes the rest of the row and the status badge sits under the
+                            name, so a long badge never squeezes the name into broken words. */}
+                        <View style={styles.recordTextColumn}>
+                          <Text style={styles.speciesText} numberOfLines={2} ellipsizeMode="tail">
                             {item.scientificName || 'Identification pending'}
                           </Text>
-                          <Text style={styles.locationText}>
+                          <Text style={styles.locationText} numberOfLines={2} ellipsizeMode="tail">
                             {item.locationName} · {item.createdAt}
                           </Text>
+                          {item.identificationStatus === IdentificationStatus.PENDING ? (
+                            <View style={[styles.badgePill, { backgroundColor: '#FDF4D8' }]}>
+                              <Text style={[styles.badgeText, { color: '#8C5E03' }]}>• Identify later</Text>
+                            </View>
+                          ) : (
+                            <View style={[styles.badgePill, { backgroundColor: badge.bg }]}>
+                              <Text style={[styles.badgeText, { color: badge.text }]}>{badge.label}</Text>
+                            </View>
+                          )}
+                          {badge.waitingNote ? (
+                            <Text style={styles.waitingNote}>{badge.waitingNote}</Text>
+                          ) : null}
                         </View>
-                        {item.identificationStatus === IdentificationStatus.PENDING ? (
-                          <View style={[styles.badgePill, { backgroundColor: '#FDF4D8' }]}>
-                            <Text style={[styles.badgeText, { color: '#8C5E03' }]}>• Identify later</Text>
-                          </View>
-                        ) : (
-                          <View style={[styles.badgePill, { backgroundColor: badge.bg }]}>
-                            <Text style={[styles.badgeText, { color: badge.text }]}>{badge.label}</Text>
-                          </View>
-                        )}
                       </TouchableOpacity>
+
+                      {notSentReason ? (
+                        <View style={styles.errorSubRow}>
+                          <Text style={styles.errorSubText}>Not sent for review: {notSentReason}</Text>
+                        </View>
+                      ) : null}
 
                       {item.syncStatus === SyncStatus.FAILED && (
                         <View style={styles.errorSubRow}>
@@ -357,7 +418,6 @@ export default function HomeScreen() {
                   );
                 }}
               />
-            )}
           </>
         ) : (
           <View style={styles.visitorSection}>
@@ -390,7 +450,6 @@ export default function HomeScreen() {
                     const status = plainConservationStatus(item.conservation_status);
                     const colors = conservationStatusColors(status.code);
                     const photo = imageUrisBySpeciesId[item.id];
-                    const photoCredit = preferredSpeciesPhoto(item.species_media);
                     return (
                       <TouchableOpacity
                         key={item.id}
@@ -405,7 +464,6 @@ export default function HomeScreen() {
                             <Ionicons name="leaf-outline" size={26} color="#46654F" />
                           </View>
                         )}
-                        <SpeciesPhotoCredit photo={photoCredit} compact />
                         <Text style={styles.featuredName} numberOfLines={1}>
                           {item.common_name || item.scientific_name}
                         </Text>
@@ -442,7 +500,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 16,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center' },
+  // A long name never pushes the profile button off-screen.
+  headerLeft: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', marginRight: 8 },
+  headerText: { flex: 1, minWidth: 0 },
   headerLogo: { width: 38, height: 38, marginRight: 10 },
   headerTitle: { fontSize: 20, fontWeight: '800', color: '#284632' },
   headerSubtitle: { fontSize: 12, color: '#68776D', fontWeight: '600' },
@@ -527,10 +587,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  recordTextColumn: { flex: 1, minWidth: 0, marginLeft: 12 },
   speciesText: { fontSize: 14, fontWeight: '700', color: '#1E2B22' },
   locationText: { fontSize: 12, color: '#68776D', marginTop: 2 },
-  badgePill: { paddingVertical: 4, paddingHorizontal: 10, borderRadius: 14 },
+  badgePill: {
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+    marginTop: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+  },
   badgeText: { fontSize: 11, fontWeight: '700' },
+  waitingNote: { fontSize: 11.5, fontWeight: '600', color: '#1F4E8C', marginTop: 4 },
   errorSubRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

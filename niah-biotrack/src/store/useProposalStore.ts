@@ -40,6 +40,12 @@ export interface SpeciesProposal {
 }
 
 export type ProposalSyncResult = { ok: true } | { ok: false; reason: string; retryable?: boolean };
+export interface ProposalSyncAllResult {
+  uploaded: number;
+  failed: number;
+  retryable: boolean;
+  reasons: string[];
+}
 
 const LEGACY_KEY = 'niah-species-proposals';
 let proposalWork: Promise<unknown> = Promise.resolve();
@@ -48,6 +54,10 @@ function serialize<T>(work: () => Promise<T>): Promise<T> {
   const next = proposalWork.then(work);
   proposalWork = next.catch(() => {});
   return next;
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message.trim() ? error.message : fallback;
 }
 
 function saveProposal(proposal: SpeciesProposal, queue: boolean) {
@@ -143,7 +153,7 @@ interface ProposalState {
   ) => Promise<SpeciesProposal>;
   removeProposal: (id: string) => Promise<void>;
   syncProposal: (id: string) => Promise<ProposalSyncResult>;
-  syncAllProposals: () => Promise<{ uploaded: number; failed: number; retryable: boolean }>;
+  syncAllProposals: () => Promise<ProposalSyncAllResult>;
   refreshProposalStatuses: () => Promise<void>;
   clearProposals: () => Promise<void>;
 }
@@ -197,7 +207,10 @@ export const useProposalStore = create<ProposalState>()((set) => {
         const result = await uploadProposal(operation, proposal);
         await reload();
         return result;
-      }).catch(() => ({ ok: false, reason: 'Could not read or update the proposal on this phone.' })),
+      }).catch((error: unknown) => ({
+        ok: false,
+        reason: errorMessage(error, 'Could not read or update the proposal on this phone.'),
+      })),
 
       // One at a time, like syncAll for records.
       syncAllProposals: () => serialize(async () => {
@@ -205,6 +218,7 @@ export const useProposalStore = create<ProposalState>()((set) => {
         let uploaded = 0;
         let failed = 0;
         let retryable = false;
+        const reasons = new Set<string>();
         for (const operation of await getReadyOutboxOperations(-1, 'proposals')) {
           const proposal = proposals.find((item) => item.id === operation.clientRecordId);
           if (!proposal) continue;
@@ -213,11 +227,17 @@ export const useProposalStore = create<ProposalState>()((set) => {
           else {
             failed += 1;
             retryable ||= result.retryable === true;
+            reasons.add(result.reason);
           }
         }
         await reload();
-        return { uploaded, failed, retryable };
-      }).catch(() => ({ uploaded: 0, failed: 1, retryable: false })),
+        return { uploaded, failed, retryable, reasons: [...reasons] };
+      }).catch((error: unknown) => ({
+        uploaded: 0,
+        failed: 1,
+        retryable: false,
+        reasons: [errorMessage(error, 'Could not read or update saved proposals on this phone.')],
+      })),
 
       // Reads the officer's decisions from the server. Quietly does nothing offline:
       // the phone keeps showing the last known status.

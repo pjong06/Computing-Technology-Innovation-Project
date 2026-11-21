@@ -106,11 +106,55 @@ test('only officers can use the review API', async () => {
     await withApp(async base => {
       assert.equal((await call(`${base}/pending`)).status, 403);
       assert.equal((await call(`${base}/rejected`)).status, 403);
+      assert.equal((await call(`${base}/${OBS}/photos`)).status, 403);
       assert.equal((await call(`${base}/${OBS}/decision`, 'POST', { decision: 'approved' })).status, 403);
     });
     assert.equal(db.calls.length, 0);
   }
   role = 'officer';
+});
+
+test('pending and rejected observations return short-lived photo links to officers', async () => {
+  const media = { id: 'photo-1', file_path: 'visits/leaf.jpg', caption: 'Leaf' };
+  const signedUrl = 'https://example.test/signed-leaf';
+
+  for (const review_status of ['pending', 'rejected']) {
+    db = fakeDb({
+      'observations:single': { data: { id: OBS, review_status, deleted_at: null }, error: null },
+      observation_media: [media],
+    });
+    db.storage = {
+      from(bucket) {
+        assert.equal(bucket, 'observation-media');
+        return {
+          async createSignedUrls(paths, expiresIn) {
+            assert.deepEqual(paths, [media.file_path]);
+            assert.equal(expiresIn, 60);
+            return { data: [{ path: media.file_path, signedUrl }], error: null };
+          },
+        };
+      },
+    };
+
+    await withApp(async base => {
+      const result = await call(`${base}/${OBS}/photos`);
+      assert.equal(result.status, 200);
+      assert.deepEqual(result.body, { data: [{ ...media, url: signedUrl, expires_in: 60 }] });
+    });
+  }
+});
+
+test('approved and deleted observations do not use the review photo lookup', async () => {
+  for (const record of [
+    { review_status: 'approved', deleted_at: null },
+    { review_status: 'rejected', deleted_at: '2026-11-02T00:00:00Z' },
+  ]) {
+    db = fakeDb({
+      'observations:single': { data: { id: OBS, ...record }, error: null },
+    });
+    await withApp(async base => assert.equal((await call(`${base}/${OBS}/photos`)).status, 409));
+    assert.ok(db.calls.every(([table]) => table === 'observations'));
+  }
 });
 
 test('pending observations come with plant, species and botanist details', async () => {
@@ -125,8 +169,11 @@ test('pending observations come with plant, species and botanist details', async
         id: PLANT, tag_code: 'NIAH-PLT-00001', location_description: 'Left of boardwalk',
         plant_status: 'pending', scientific_name: 'Nepenthes ampullaria', common_name: 'Pitcher plant',
       },
+      thumbnail_url: null, // no photos on this observation
     }]);
   });
+  // Newest first.
+  assert.ok(db.calls.some(c => c[0] === 'observations' && c[1] === 'order' && c[2] === 'observed_at' && c[3].ascending === false));
   assert.ok(db.calls.some(c => c[0] === 'observations' && c[1] === 'eq' && c[2] === 'review_status' && c[3] === 'pending'));
   assert.ok(db.calls.some(c => c[0] === 'observations' && c[1] === 'is' && c[2] === 'deleted_at' && c[3] === null));
   assert.ok(db.calls.some(c => c[0] === 'plants' && c[1] === 'select' &&
@@ -288,4 +335,55 @@ test('an unexpected database error stays generic', async () => {
   }, { decision: 'rejected', comments: 'Blurry' });
   assert.equal(result.status, 500);
   assert.equal(result.body.message, 'Could not save observation review');
+});
+
+test('review lists come with thumbnails signed in one batch (primary photo first)', async () => {
+  const OTHER_OBS = '66666666-6666-4666-8666-666666666666';
+  const signCalls = [];
+  for (const path of ['/pending', '/rejected']) {
+    signCalls.length = 0;
+    db = fakeDb({
+      observations: [observation, { ...observation, id: OTHER_OBS }],
+      ...details,
+      observation_reviews: [],
+      observation_media: [
+        { observation_id: OBS, file_path: 'u/obs/first.jpg', is_primary: false },
+        { observation_id: OBS, file_path: 'u/obs/primary.jpg', is_primary: true },
+      ],
+    });
+    db.storage = {
+      from(bucket) {
+        assert.equal(bucket, 'observation-media');
+        return {
+          async createSignedUrls(paths, expiresIn) {
+            signCalls.push([paths, expiresIn]);
+            return { data: paths.map(p => ({ path: p, signedUrl: `https://signed/${p}` })), error: null };
+          },
+        };
+      },
+    };
+    await withApp(async base => {
+      const result = await call(`${base}${path}`);
+      assert.equal(result.status, 200, path);
+      const byId = Object.fromEntries(result.body.data.map(row => [row.id, row.thumbnail_url]));
+      assert.equal(byId[OBS], 'https://signed/u/obs/primary.jpg', path);
+      assert.equal(byId[OTHER_OBS], null, `${path}: no photo, no thumbnail`);
+    });
+    assert.equal(signCalls.length, 1, `${path}: one batch request, not one per photo`);
+    assert.deepEqual(signCalls[0], [['u/obs/primary.jpg'], 600]);
+  }
+});
+
+test('if thumbnails cannot be signed, the review list still loads without them', async () => {
+  db = fakeDb({
+    observations: [observation],
+    ...details,
+    observation_media: [{ observation_id: OBS, file_path: 'u/obs/primary.jpg', is_primary: true }],
+  });
+  db.storage = { from: () => ({ async createSignedUrls() { return { data: null, error: { message: 'storage down' } }; } }) };
+  await withApp(async base => {
+    const result = await call(`${base}/pending`);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.data[0].thumbnail_url, null);
+  });
 });

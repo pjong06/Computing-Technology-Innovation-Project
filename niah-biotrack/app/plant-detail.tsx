@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -29,13 +29,17 @@ import {
   type ObservationVisit,
 } from '../src/store/useRecordStore';
 
-import { REVIEW_BADGE } from '../src/utils/reviewStatus';
+import { REVIEW_BADGE, visitStatus } from '../src/utils/reviewStatus';
 import PlantNotFound from '../src/components/PlantNotFound';
 import { resolveStoredPhotoUri } from '../src/utils/photoStorage';
 import { formatCoordinates } from '../src/utils/formatCoordinates';
 import { fetchPlantQr, saveQrImage, type PlantQr } from '../src/api/plantQr';
 import { ApiError } from '../src/api/client';
 import { formatDiameterCm, formatHeightFromCm, parseMeasurement } from '../src/utils/units';
+import { useSpeciesStore } from '../src/store/useSpeciesStore';
+import PhotoCreditInfo from '../src/components/PhotoCreditInfo';
+import { preferredSpeciesPhoto } from '../src/utils/speciesPhoto';
+import { routeSyncLabel, routesUploadedText } from '../src/utils/routeSync';
 
 const TAG_PROBLEM_TEXT: Record<'in_use' | 'locked', string> = {
   in_use:
@@ -128,8 +132,23 @@ export default function PlantDetailScreen() {
   const submitForReview = useRecordStore((state) => state.submitForReview);
   const removePhoto = useRecordStore((state) => state.removePhoto);
   const deleteRecord = useRecordStore((state) => state.deleteRecord);
+  const syncRoutes = useRecordStore((state) => state.syncRoutes);
 
   const { width } = useWindowDimensions();
+
+  // Retry for a route that did not upload: runs the route upload only (not the plant sync).
+  const [retryingRoute, setRetryingRoute] = useState(false);
+  const retryRouteUpload = async () => {
+    setRetryingRoute(true);
+    try {
+      const result = await syncRoutes();
+      if (result.uploaded > 0 && result.failed === 0) {
+        Alert.alert('Route uploaded', routesUploadedText(result.uploaded) + '.');
+      }
+    } finally {
+      setRetryingRoute(false);
+    }
+  };
 
   const [photoIndex, setPhotoIndex] = useState(0);
   const [brokenPhotos, setBrokenPhotos] = useState<Record<string, boolean>>({});
@@ -141,12 +160,32 @@ export default function PlantDetailScreen() {
   const [qrError, setQrError] = useState('');
 
   const matched = records.find((record) => record.id === id);
+  const speciesId = matched?.speciesId ?? null;
+  const speciesImageUri = useSpeciesStore((state) =>
+    speciesId ? state.imageUrisBySpeciesId[speciesId] : undefined
+  );
+  const speciesMedia = useSpeciesStore((state) =>
+    speciesId ? state.detailsById[speciesId]?.species_media : undefined
+  );
+  const loadSpeciesDetail = useSpeciesStore((state) => state.loadSpeciesDetail);
+
+  useEffect(() => {
+    if (speciesId && !matched?.photoUris?.length) {
+      void loadSpeciesDetail(speciesId);
+    }
+  }, [loadSpeciesDetail, matched?.photoUris?.length, speciesId]);
 
   if (!matched) {
     return <PlantNotFound code={id} />;
   }
 
   const photos = (matched.photoUris ?? []).map(resolveStoredPhotoUri);
+  const speciesFallbackKey = `species:${speciesId || ''}`;
+  const speciesFallbackUri =
+    photos.length === 0 && speciesImageUri && !brokenPhotos[speciesFallbackKey]
+      ? speciesImageUri
+      : null;
+  const speciesPhotoCredit = preferredSpeciesPhoto(speciesMedia);
 
   const PHOTO_LABELS: Record<string, string> = {
     whole_plant: 'Whole plant',
@@ -420,6 +459,18 @@ export default function PlantDetailScreen() {
                 )
               }
             />
+          ) : speciesFallbackUri ? (
+            <Image
+              source={{ uri: speciesFallbackUri }}
+              style={[styles.heroPhoto, { width }]}
+              resizeMode="cover"
+              onError={() =>
+                setBrokenPhotos((previous) => ({
+                  ...previous,
+                  [speciesFallbackKey]: true,
+                }))
+              }
+            />
           ) : (
             <View
               style={[
@@ -431,6 +482,12 @@ export default function PlantDetailScreen() {
               <Text style={styles.heroEmptyText}>No photos recorded</Text>
             </View>
           )}
+
+          {speciesFallbackUri ? (
+            <View style={styles.speciesPhotoBadge}>
+              <Text style={styles.speciesPhotoBadgeText}>Species photo</Text>
+            </View>
+          ) : null}
 
           <TouchableOpacity
             onPress={() => router.back()}
@@ -446,6 +503,9 @@ export default function PlantDetailScreen() {
               </Text>
             </View>
           )}
+
+          {/* Species reference photo: its credit behind a small "i" (only when the licence needs one). */}
+          {speciesFallbackUri ? <PhotoCreditInfo photo={speciesPhotoCredit} /> : null}
         </View>
 
         <View style={styles.sheet}>
@@ -699,22 +759,23 @@ export default function PlantDetailScreen() {
               <View style={styles.timelineLine} />
               <View style={styles.timelineDot} />
               <View style={styles.obsCard}>
-                <View style={styles.obsCardTop}>
-                  <Text style={styles.obsDate}>{observation.date}</Text>
-                  <Text
-                    style={[
-                      styles.obsStatus,
-                      observation.syncStatus === SyncStatus.NOT_UPLOADED && {
-                        color: '#8C5E03',
-                      },
-                      observation.syncStatus === SyncStatus.FAILED && {
-                        color: '#B42318',
-                      },
-                    ]}
-                  >
-                    • {observation.syncStatus}
-                  </Text>
-                </View>
+                {/* Each visit's status and reason (visits are no longer rows on the Plants tab). */}
+                {(() => {
+                  const status = visitStatus(observation, matched.syncError);
+                  return (
+                    <>
+                      <View style={styles.obsCardTop}>
+                        <Text style={styles.obsDate}>{observation.date}</Text>
+                        <View style={[styles.visitBadge, { backgroundColor: status.badge.bg }]}>
+                          <Text style={[styles.visitBadgeText, { color: status.badge.text }]} numberOfLines={1}>
+                            {status.badge.label}
+                          </Text>
+                        </View>
+                      </View>
+                      {status.reason ? <Text style={styles.visitReason}>{status.reason}</Text> : null}
+                    </>
+                  );
+                })()}
 
                 <Text style={styles.obsAuthor}>{observation.recordedBy}</Text>
 
@@ -760,6 +821,22 @@ export default function PlantDetailScreen() {
           >
             <Text style={styles.addObsBtnText}>+ Add observation</Text>
           </TouchableOpacity>
+
+          {/* From the old Plants tab: register another plant of the same species. */}
+          {matched.speciesId ? (
+            <TouchableOpacity
+              style={styles.addSameSpeciesBtn}
+              onPress={() =>
+                router.push({
+                  pathname: '/new-record',
+                  params: { speciesId: matched.speciesId },
+                } as any)
+              }
+              accessibilityRole="button"
+            >
+              <Text style={styles.addSameSpeciesText}>+ Add plant of this species</Text>
+            </TouchableOpacity>
+          ) : null}
 
           {/* Delete Record */}
           {canDelete && (
@@ -847,6 +924,27 @@ export default function PlantDetailScreen() {
 }
 
 const styles = StyleSheet.create({
+  routeProblemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#EEF2EF',
+  },
+  routeProblemText: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 12,
+    color: '#9B1C1C',
+    lineHeight: 17,
+  },
+  routeRetry: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#9B1C1C',
+    textDecorationLine: 'underline',
+  },
   tagProblemBox: {
     paddingVertical: 8,
     borderTopWidth: 1,
@@ -907,6 +1005,20 @@ const styles = StyleSheet.create({
   },
   photoCountText: {
     color: '#FFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  speciesPhotoBadge: {
+    position: 'absolute',
+    bottom: 16,
+    left: 16,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+  },
+  speciesPhotoBadgeText: {
+    color: '#FFFFFF',
     fontSize: 11,
     fontWeight: '700',
   },
@@ -1164,6 +1276,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#215A36',
   },
+  visitBadge: { flexShrink: 1, marginLeft: 8, paddingVertical: 3, paddingHorizontal: 9, borderRadius: 12 },
+  visitBadgeText: { fontSize: 11, fontWeight: '700' },
+  visitReason: { fontSize: 12, fontWeight: '600', color: '#9B1C1C', marginTop: 4 },
   obsAuthor: {
     fontSize: 11.5,
     color: '#7E8F83',
@@ -1212,6 +1327,22 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontWeight: '700',
     fontSize: 14.5,
+  },
+  addSameSpeciesBtn: {
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 1.2,
+    borderColor: '#213B2A',
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: -6,
+    marginBottom: 16,
+  },
+  addSameSpeciesText: {
+    color: '#213B2A',
+    fontWeight: '700',
+    fontSize: 14,
   },
   deleteBtn: {
     height: 50,

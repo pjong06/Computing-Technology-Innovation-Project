@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase';
 import { signOutOnThisPhone } from '../lib/auth';
 import { useRecordStore } from '../store/useRecordStore';
 import { useProposalStore } from '../store/useProposalStore';
+import { useIotTaskStore } from '../store/useIotTaskStore';
 import { deleteAllStoredPhotos } from '../utils/photoStorage';
 
 // 'pending': signed in, but the account isn't active (waiting for an officer to
@@ -26,7 +27,7 @@ interface AuthRoleContextType {
   canEdit: boolean;
   userName: string;
   setVisitorMode: () => Promise<void>;
-  checkUserRole: () => Promise<void>;
+  checkUserRole: () => Promise<UserRole>;
   logout: () => Promise<void>;
 }
 
@@ -38,7 +39,7 @@ const AuthRoleContext = createContext<AuthRoleContextType>({
   canEdit: false,
   userName: 'Visitor',
   setVisitorMode: async () => {},
-  checkUserRole: async () => {},
+  checkUserRole: async () => 'visitor',
   logout: async () => {},
 });
 
@@ -55,7 +56,7 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
         setRole('visitor');
         setUserName('Park Visitor');
         setIsGuest(true);
-        return;
+        return 'visitor';
       }
       setIsGuest(false);
 
@@ -69,28 +70,34 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
 
         // Couldn't read the profile (e.g. no signal): keep the role we already have
         // rather than guessing, so offline staff aren't locked out or promoted.
-        if (profileError) return;
+        if (profileError) return role;
 
         if (profile && profile.account_status === 'active' && STAFF_ROLES.has(profile.role)) {
-          setRole(profile.role as UserRole);
+          const activeRole = profile.role as UserRole;
+          setRole(activeRole);
           setUserName(profile.full_name || authData.user.email || '');
+          return activeRole;
         } else if (profile && profile.account_status === 'active' && profile.role === 'visitor') {
           // A visitor account ("Create a free account"): the visitor experience, signed in.
           setRole('visitor');
           setUserName(profile.full_name || authData.user.email || '');
+          return 'visitor';
         } else {
           // Never default to botanist: a pending, suspended or role-less account gets
           // the "Account awaiting approval" screen (the server refuses it anyway).
           setRole('pending');
           setUserName(profile?.full_name || authData.user.email || '');
+          return 'pending';
         }
       } else {
         setRole('visitor');
         setUserName('Park Visitor');
+        return 'visitor';
       }
     } catch {
       setRole('visitor');
       setUserName('Park Visitor');
+      return 'visitor';
     }
   };
 
@@ -102,7 +109,7 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  // "Explore without an account". Any saved login is removed first, so a guest never
+  // "Continue as guest" on the login screen. Any saved login is removed first, so a guest never
   // sends a token: every server call is either public or refused before it's sent.
   const setVisitorMode = async () => {
     await signOutOnThisPhone();
@@ -119,6 +126,7 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
   const logout = async () => {
     try {
       await useProposalStore.getState().clearProposals();
+      await useIotTaskStore.getState().clearTasks();
       await useRecordStore.getState().clearAllData(); // records, routes, draft route
       await deleteAllStoredPhotos();
       await AsyncStorage.removeItem('niah_is_guest_visitor');

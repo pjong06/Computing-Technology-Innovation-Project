@@ -1,0 +1,16 @@
+{
+  "migration": "20261119103249_camera_ai_no_person_resolution",
+  "enabled": true,
+  "station": "steven-sprint2-test-01",
+  "new_photos_only": true,
+  "historical_backfill": false,
+  "backend_tests": {"passed":589,"failed":0},
+  "isolated_postgres_checks":29,
+  "hosted_rollback_checks":["No-person result automatically resolves with deterministic reason", "AI resolution does not impersonate a staff actor", "Human-review flag cleared only after qualifying closure", "Additional evidence reopens AI resolution", "Person result remains open"],
+  "hosted_check_method":"Simulated model results through service-role claims in a rolled-back transaction using existing storage evidence; no Gemini request and no photo upload",
+  "data_after":{"alerts":5,"evidence":3,"reviews":0,"readings":1519,"storage_objects":654},
+  "browser_fixture_checks":["Closed by AI filter", "AI resolved badge", "Saved AI resolution reason"],
+  "security_advisor_findings_for_new_private_functions":0,
+  "runtime_observation":{"window":"last hour checked","edge_log_entries":2367,"ai_claim_requests":0,"ai_finish_requests":0,"conclusion":"No worker activity observed; Render worker configuration and real fresh-photo processing remain unverified"},
+  "dashboard_deployment":"Local connected dashboard updated; branch not pushed and Render dashboard changes not deployed"
+}

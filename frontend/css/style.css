@@ -13,6 +13,11 @@
   --wat: #a67c00;
   --er: #d99b99;
   --ert: #a01818;
+  /* Review status colours (same meaning as the mobile app) */
+  --info: #dbe8f6;     /* Waiting for review: blue */
+  --infot: #1f4e8c;
+  --neutral: #eef1ef;  /* Draft: grey */
+  --neutralt: #4a5a50;
 
   box-sizing: border-box;
   padding-top: env(safe-area-inset-top, 0px);
@@ -36,6 +41,10 @@
     --wat: #f6e4a0;
     --er: #5a2a29;
     --ert: #f0b3b1;
+    --info: #1d3350;
+    --infot: #b8d4f5;
+    --neutral: #2a312d;
+    --neutralt: #c3cec7;
   }
 }
 
@@ -53,6 +62,10 @@
   --wat: #f6e4a0;
   --er: #5a2a29;
   --ert: #f0b3b1;
+  --info: #1d3350;
+  --infot: #b8d4f5;
+  --neutral: #2a312d;
+  --neutralt: #c3cec7;
 }
 
 /* Base */
@@ -162,9 +175,14 @@ nav a.on {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) nav a.on {
+  :root:not([data-theme="light"]) nav a.on,
+  :root:not([data-theme="light"]) .section-tabs a.on {
     color: #10170f;
   }
+}
+
+:root[data-theme="dark"] .section-tabs a.on {
+  color: #10170f;
 }
 
 nav .who {
@@ -368,6 +386,99 @@ tr.row:hover td {
   color: var(--ert);
 }
 
+/* Review status, one scheme for the whole portal (same colours as the mobile app):
+   Waiting for review = blue, Approved = green, Needs changes / Rejected = red, Draft = grey.
+   Used by the plant catalogue and plant detail (.plant-status), and anywhere else with
+   .status-badge. */
+.plant-status,
+.status-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--neutral);
+  color: var(--neutralt);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.plant-status.pending,
+.status-badge.pending {
+  background: var(--info);
+  color: var(--infot);
+}
+
+.plant-status.approved,
+.status-badge.approved {
+  background: var(--ok);
+  color: var(--okt);
+}
+
+.plant-status.rejected,
+.status-badge.rejected {
+  background: var(--er);
+  color: var(--ert);
+}
+
+.plant-status.draft,
+.status-badge.draft {
+  background: var(--neutral);
+  color: var(--neutralt);
+}
+
+/* Tab bar at the top of a menu section with more than one page (drawn by shared.js). */
+.section-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 18px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  width: fit-content;
+  max-width: 100%;
+}
+
+.section-tabs a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.section-tabs a:hover {
+  background: var(--mint);
+}
+
+.section-tabs a.on {
+  background: var(--pri);
+  color: #fff;
+}
+
+.section-tabs .menu-count {
+  float: none;
+}
+
+/* Phones: the tabs fill the width and scroll sideways if they don't fit. */
+@media (max-width: 600px) {
+  .section-tabs {
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .section-tabs a {
+    flex: 1 0 auto;
+    justify-content: center;
+  }
+}
+
 /* Images / Thumbnails */
 
 .thumb {
@@ -434,11 +545,69 @@ tr.row:hover td {
   object-fit: cover;
 }
 
-.species-photo-credit {
-  margin: 4px 0;
-  color: var(--mute);
+/* Photo credit: a small "i" in the photo's corner; hover, focus or tap shows the plain-text
+   credit. The photo's box is position: relative (.pv, .species-photo-fallback). */
+.pv,
+.species-photo-fallback {
+  position: relative;
+}
+
+.photo-credit-info {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 2;
+}
+
+.photo-credit-button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font: italic 700 13px/24px Georgia, serif;
+  text-align: center;
+  cursor: pointer;
+}
+
+.photo-credit-tip {
+  display: none;
+  position: absolute;
+  right: 0;
+  bottom: 30px;
+  width: max-content;
+  max-width: min(260px, 70vw);
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.8);
+  color: #fff;
   font-size: 12px;
   line-height: 1.4;
+  white-space: normal;
+}
+
+.photo-credit-info:hover .photo-credit-tip,
+.photo-credit-info:focus-within .photo-credit-tip,
+.photo-credit-info.open .photo-credit-tip {
+  display: block;
+}
+
+/* Photo credits page */
+.credits-table td {
+  overflow-wrap: break-word;
+}
+
+.page-footer {
+  margin-top: 24px;
+  color: var(--mute);
+  font-size: 13px;
+}
+
+.page-footer a {
+  color: var(--pri);
+  font-weight: 600;
 }
 
 /* Flex / Spacing */
@@ -651,6 +820,25 @@ tr.row:hover td {
 }
 
 /* Map page */
+
+/* "Show routes" checkbox in the map's filter bar */
+.map-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.map-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--pri);
+}
 #map-box {
   height: 480px;
   border-radius: 14px;
@@ -1039,10 +1227,11 @@ table.big .btn {
   background: #9ca3af;
 }
 
+/* One definition for light and dark: the colour tokens change with the theme. */
 .iot-status-live {
-  color: #166534;
-  border-color: #bbdfc5;
-  background: #f0fdf4;
+  color: var(--okt);
+  border-color: var(--ok);
+  background: var(--ok);
 }
 
 .iot-status-live .iot-live-dot {
@@ -1052,9 +1241,9 @@ table.big .btn {
 }
 
 .iot-status-loading {
-  color: #8a6a00;
-  border-color: #ead99a;
-  background: #fffbea;
+  color: var(--wat);
+  border-color: var(--wa);
+  background: var(--wa);
 }
 
 .iot-status-loading .iot-live-dot {
@@ -1062,9 +1251,9 @@ table.big .btn {
 }
 
 .iot-status-error {
-  color: #991b1b;
-  border-color: #efc4c4;
-  background: #fff5f5;
+  color: var(--ert);
+  border-color: var(--er);
+  background: var(--er);
 }
 
 .iot-status-error .iot-live-dot {
@@ -1695,27 +1884,6 @@ table.big .btn {
 @media (prefers-color-scheme: dark) {
 
   :root:not([data-theme="light"])
-  .iot-status-live {
-    color: #b9e8c5;
-    border-color: #315c3b;
-    background: #1c3021;
-  }
-
-  :root:not([data-theme="light"])
-  .iot-status-loading {
-    color: #f4de89;
-    border-color: #61521d;
-    background: #302b17;
-  }
-
-  :root:not([data-theme="light"])
-  .iot-status-error {
-    color: #efb2b2;
-    border-color: #693333;
-    background: #351e1e;
-  }
-
-  :root:not([data-theme="light"])
   .iot-sensor-warning .iot-sensor-icon {
     background: #463d18;
   }
@@ -1726,27 +1894,6 @@ table.big .btn {
   }
 }
 
-
-:root[data-theme="dark"]
-.iot-status-live {
-  color: #b9e8c5;
-  border-color: #315c3b;
-  background: #1c3021;
-}
-
-:root[data-theme="dark"]
-.iot-status-loading {
-  color: #f4de89;
-  border-color: #61521d;
-  background: #302b17;
-}
-
-:root[data-theme="dark"]
-.iot-status-error {
-  color: #efb2b2;
-  border-color: #693333;
-  background: #351e1e;
-}
 
 :root[data-theme="dark"]
 .iot-sensor-warning
@@ -2206,4 +2353,73 @@ table.big .btn {
   color: var(--mute);
 
   font-size: 12px;
+}
+
+/* ============================================================
+   LISTS AND LONG TEXT (usability pass)
+   Last in the file so these win over the layout rules above.
+   ============================================================ */
+
+/* "Newest first / Oldest first" under a list's count line. */
+.list-sort-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin: -6px 0 12px;
+}
+
+.sort-select {
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+/* A short line under a list card (e.g. the reason on Rejected history). */
+.q .list-note {
+  display: block;
+  margin-top: 4px;
+  color: var(--ert);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Long names, tags and emails wrap at a space; only a single word too long for its box
+   breaks, instead of pushing the page sideways. */
+body {
+  overflow-wrap: break-word;
+}
+
+/* The page column may shrink below its widest content, so wide tables scroll inside their
+   own box (.tw, .table-wrap) and the page itself never scrolls sideways. */
+.app {
+  grid-template-columns: 230px minmax(0, 1fr);
+}
+
+main {
+  min-width: 0;
+}
+
+.split > *,
+.form > *,
+.sp > * {
+  min-width: 0;
+}
+
+input,
+select,
+textarea {
+  max-width: 100%;
+}
+
+/* Review lists: list and detail one above the other when there is no room for both. */
+@media (max-width: 1000px) {
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 820px) {
+  .app {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

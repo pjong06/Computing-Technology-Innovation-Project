@@ -44,12 +44,26 @@ import {
   type SyncRunResult,
 } from '../services/syncEngine';
 import { requestSyncRetry } from '../services/syncRetry';
+import { uploadablePhotoFile } from '../services/uploadablePhoto';
+import {
+  applyServerReview,
+  isPhotoLockFinal,
+  oversizedPhotoMessage,
+} from '../utils/submissionState';
 
 import {
   checkDiameterCm,
   checkHeightMetres,
   metresToCm,
 } from '../utils/units';
+
+import {
+  buildRouteUpload,
+  linkedPlantServerId,
+  migrateRoutesToV10,
+  routesToUpload,
+  type RouteSyncStatus,
+} from '../utils/routeSync';
 
 /* =========================================================
  * ENUMS
@@ -218,6 +232,15 @@ export interface ObservationVisit {
   reviewComment?:
     | string
     | null;
+
+  /*
+   * Why this visit could not be sent for review
+   * (the server's refusal, or a photo over 5 MB),
+   * in plain words. Cleared once it is submitted.
+   */
+  submitError?:
+    | string
+    | null;
 }
 
 /*
@@ -243,6 +266,13 @@ export interface PlantRecord {
   serverId?: string;
   plantName?: string;
   rowVersion?: number;
+
+  /*
+   * Another botanist's approved plant, kept on the phone after a tag scan
+   * (src/services/tagLookup.ts). Not counted as "My plants" unless this
+   * botanist has added visits to it.
+   */
+  otherBotanist?: boolean;
 
   tagCode:
     | string
@@ -391,6 +421,23 @@ export interface RecordedRoute {
   linkedPlantId?: string;
 
   createdAt: string;
+
+  /*
+   * Route upload (separate from the plant/visit
+   * sync; see src/utils/routeSync.ts).
+   * clientRouteId never changes, so a repeated
+   * upload finds the same server row.
+   */
+  clientRouteId?: string;
+
+  syncStatus?: RouteSyncStatus;
+
+  serverId?: string;
+
+  /*
+   * Plain reason when the last upload failed.
+   */
+  syncError?: string | null;
 }
 
 export type SyncResult =
@@ -444,6 +491,34 @@ export type SubmitResult =
 /* =========================================================
  * HELPERS
  * ======================================================= */
+
+/*
+ * One route upload run at a time (Sync now and the
+ * automatic sync can both start one).
+ */
+let routeSyncRunning = false;
+
+/*
+ * Plain reason for a route that did not upload.
+ */
+function routeUploadProblem(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 0) {
+      return 'No connection to the server. It will upload on the next sync.';
+    }
+    if (error.status === 401) {
+      return 'You are signed out. Sign in, then sync again.';
+    }
+    if (isRetryableStatus(error.status)) {
+      return 'The server could not save the route right now. Please try again.';
+    }
+    // 400/403 from POST /api/routes carry a plain message.
+    return error.message;
+  }
+  return error instanceof Error
+    ? error.message
+    : 'The route could not be uploaded. Please try again.';
+}
 
 const uploadsInProgress =
   new Set<string>();
@@ -957,6 +1032,16 @@ interface RecordState {
     routeId: string,
     plantId: string
   ) => Promise<void>;
+
+  /*
+   * Uploads saved routes with POST /api/routes,
+   * one at a time. Separate from syncAll(): it
+   * never touches plant records or the outbox.
+   */
+  syncRoutes: () => Promise<{
+    uploaded: number;
+    failed: number;
+  }>;
 
   discardDraftRoute:
     () => void;
@@ -1766,10 +1851,19 @@ export const useRecordStore =
                     );
                   }
 
+                  /*
+                   * "Locked" is final only once the visit is waiting
+                   * for review or approved. A photo marked locked while
+                   * the visit is still a draft (or sent back) is tried
+                   * again (older app versions marked any refusal locked).
+                   */
                   if (
                     meta.uploaded ||
-                    meta.problem ===
-                      'locked'
+                    (meta.problem ===
+                      'locked' &&
+                      isPhotoLockFinal(
+                        currentObservation.reviewStatus
+                      ))
                   ) {
                     continue;
                   }
@@ -1813,6 +1907,16 @@ export const useRecordStore =
                   }
 
                   try {
+                    /*
+                     * The backend takes JPEG/PNG/WebP only: an iPhone
+                     * library photo saved as HEIC is converted to a
+                     * JPEG copy first (the saved original stays).
+                     */
+                    const uploadFile =
+                      await uploadablePhotoFile(
+                        read.file
+                      );
+
                     await apiUpload(
                       `/api/observations/${currentObservation.serverId}/photo`,
 
@@ -1821,7 +1925,7 @@ export const useRecordStore =
                           meta.id,
                       },
 
-                      read.file
+                      uploadFile
                     );
 
                     await saveObservationPhotoMeta(
@@ -1910,6 +2014,58 @@ export const useRecordStore =
                 photoProblems >
                 0
               ) {
+                /*
+                 * Tell the botanist on each affected visit
+                 * (Records and Home show it), so the
+                 * skipped submit is never silent.
+                 */
+                const oversizedByVisit =
+                  new Map<string, number>();
+                for (const observation of refreshed.observations) {
+                  const count = Object.values(
+                    observation.photoMeta ?? {}
+                  ).filter(
+                    (meta) =>
+                      !meta.uploaded &&
+                      meta.problem === 'too_large'
+                  ).length;
+                  if (count > 0) {
+                    oversizedByVisit.set(observation.id, count);
+                  }
+                }
+                if (oversizedByVisit.size > 0) {
+                  refreshed = {
+                    ...refreshed,
+                    observations:
+                      refreshed.observations.map(
+                        (observation) =>
+                          oversizedByVisit.has(observation.id)
+                            ? {
+                                ...observation,
+                                submitError:
+                                  oversizedPhotoMessage(
+                                    oversizedByVisit.get(observation.id)!
+                                  ),
+                              }
+                            : observation
+                      ),
+                  };
+                  await persistRecordSnapshot(
+                    refreshed
+                  );
+                  set(
+                    (state) => ({
+                      records:
+                        state.records.map(
+                          (item) =>
+                            item.id === id
+                              ? refreshed!
+                              : item
+                        ),
+                    })
+                  );
+                }
+
                 return {
                   ok: false,
 
@@ -1946,6 +2102,16 @@ export const useRecordStore =
                 const submittedIds =
                   new Set<string>();
 
+                /*
+                 * Visits the server refused to send for
+                 * review (4xx), with its message. They stay
+                 * "Not submitted yet" and are tried again on
+                 * the next sync. Network and server errors
+                 * still fail the whole sync, as before.
+                 */
+                const refusedById =
+                  new Map<string, string>();
+
                 for (
                   const observation of [
                     ...refreshed.observations,
@@ -1973,13 +2139,28 @@ export const useRecordStore =
                     continue;
                   }
 
-                  await apiFetch(
-                    `/api/observations/${observation.serverId}/submit`,
-                    {
-                      method:
-                        'PATCH',
+                  try {
+                    await apiFetch(
+                      `/api/observations/${observation.serverId}/submit`,
+                      {
+                        method:
+                          'PATCH',
+                      }
+                    );
+                  } catch (error) {
+                    if (
+                      error instanceof ApiError &&
+                      !isRetryableStatus(error.status) &&
+                      error.status !== 401
+                    ) {
+                      refusedById.set(
+                        observation.id,
+                        error.message
+                      );
+                      continue;
                     }
-                  );
+                    throw error;
+                  }
 
                   submittedIds.add(
                     observation.id
@@ -1988,7 +2169,9 @@ export const useRecordStore =
 
                 if (
                   submittedIds.size >
-                  0
+                    0 ||
+                  refusedById.size >
+                    0
                 ) {
                   refreshed =
                     {
@@ -2010,8 +2193,38 @@ export const useRecordStore =
 
                                   submissionRequested:
                                     false,
+
+                                  submitError:
+                                    null,
+
+                                  /*
+                                   * The server has it as pending now
+                                   * (a refresh may have said draft).
+                                   */
+                                  reviewStatus:
+                                    observation.reviewStatus ===
+                                      ReviewStatus.DRAFT
+                                      ? ReviewStatus.PENDING
+                                      : observation.reviewStatus,
                                 }
-                              : observation
+                              : refusedById.has(
+                                    observation.id
+                                  )
+                                ? {
+                                    ...observation,
+
+                                    submittedForReview:
+                                      false,
+
+                                    submissionRequested:
+                                      true,
+
+                                    submitError:
+                                      refusedById.get(
+                                        observation.id
+                                      ),
+                                  }
+                                : observation
                         ),
                     };
 
@@ -2035,6 +2248,13 @@ export const useRecordStore =
                   );
                 }
               }
+
+              const refusal =
+                refreshed.observations.find(
+                  (observation) =>
+                    observation.submitError &&
+                    !observation.submittedForReview
+                )?.submitError;
 
               /* =========================================
                * 7. FINAL RESULT
@@ -2134,6 +2354,27 @@ export const useRecordStore =
                 metadataCompletelyUploaded &&
                 plantPhotosReady &&
                 observationPhotosReady;
+
+              /*
+               * Everything uploaded, but the server refused
+               * to send a visit for review: say so (Sync now
+               * and Retry show this reason).
+               */
+              if (
+                completelyUploaded &&
+                refusal
+              ) {
+                return {
+                  ok: false,
+
+                  reason:
+                    `Uploaded, but not sent for review: ${refusal}`,
+
+                  photosUploaded,
+
+                  photoProblems,
+                };
+              }
 
               if (
                 completelyUploaded
@@ -2556,9 +2797,12 @@ export const useRecordStore =
               )
               .filter(
                 (observation) =>
-                  observation.serverId &&
-                  (observation.submittedForReview ||
-                    observation.reviewStatus)
+                  /*
+                   * Every visit the server has, including
+                   * drafts, so the phone learns the real
+                   * status (e.g. a submit that never happened).
+                   */
+                  Boolean(observation.serverId)
               )
               .map(
                 (observation) =>
@@ -2614,17 +2858,6 @@ export const useRecordStore =
               return;
             }
 
-            const toStatus = (
-              value: string
-            ): ReviewStatus | null =>
-              value === 'approved'
-                ? ReviewStatus.APPROVED
-                : value === 'rejected'
-                  ? ReviewStatus.REJECTED
-                  : value === 'pending'
-                    ? ReviewStatus.PENDING
-                    : null; // e.g. still 'draft' on the server: not reviewed
-
             const changedRecords:
               PlantRecord[] = [];
 
@@ -2645,68 +2878,22 @@ export const useRecordStore =
                           )
                         : undefined;
 
-                    const status = row
-                      ? toStatus(
-                          row.review_status
-                        )
-                      : null;
-
-                    if (!row || !status) {
+                    if (!row) {
                       return observation;
                     }
 
-                    /*
-                     * A visit resubmitted on the phone but
-                     * not uploaded yet keeps its new state
-                     * until the next sync (the server still
-                     * shows the old decision).
-                     */
-                    if (
-                      !observation.submittedForReview &&
-                      observation.reviewStatus ===
-                        ReviewStatus.REJECTED &&
-                      status ===
-                        ReviewStatus.REJECTED
-                    ) {
-                      return observation;
+                    // Rules in src/utils/submissionState.ts (tested there).
+                    const next =
+                      applyServerReview(
+                        observation,
+                        row.review_status,
+                        row.rejection_comment
+                      ) as ObservationVisit;
+
+                    if (next !== observation) {
+                      changed = true;
                     }
-
-                    const comment =
-                      status ===
-                      ReviewStatus.REJECTED
-                        ? row.rejection_comment
-                        : null;
-
-                    if (
-                      observation.reviewStatus ===
-                        status &&
-                      (observation.reviewComment ??
-                        null) === comment
-                    ) {
-                      return observation;
-                    }
-
-                    changed = true;
-
-                    return {
-                      ...observation,
-
-                      reviewStatus:
-                        status,
-
-                      reviewComment:
-                        comment,
-
-                      /*
-                       * Rejected: the botanist fixes it and
-                       * submits again, which must send it again.
-                       */
-                      submittedForReview:
-                        status ===
-                        ReviewStatus.REJECTED
-                          ? false
-                          : observation.submittedForReview,
-                    };
+                    return next;
                   }
                 );
 
@@ -2731,7 +2918,9 @@ export const useRecordStore =
                 observations.filter(
                   (observation) =>
                     observation.serverId &&
-                    observation.reviewStatus
+                    observation.reviewStatus &&
+                    observation.reviewStatus !==
+                      ReviewStatus.DRAFT
                 );
 
               const resubmitting =
@@ -3280,6 +3469,14 @@ export const useRecordStore =
 
               createdAt:
                 new Date().toISOString(),
+
+              clientRouteId:
+                randomUUID(),
+
+              syncStatus:
+                'not_uploaded',
+
+              syncError: null,
             };
 
             set(
@@ -3296,6 +3493,93 @@ export const useRecordStore =
 
             return route;
           },
+
+        /* -------------------------------------------------
+         * ROUTE UPLOAD (separate from syncAll)
+         * ------------------------------------------------ */
+
+        syncRoutes: async () => {
+          if (routeSyncRunning) {
+            return { uploaded: 0, failed: 0 };
+          }
+          routeSyncRunning = true;
+
+          let uploaded = 0;
+          let failed = 0;
+
+          // Changes one saved route only; plant records are never touched.
+          const updateRoute = (
+            routeId: string,
+            changes: Partial<RecordedRoute>
+          ) =>
+            set((state) => ({
+              routes: state.routes.map((item) =>
+                item.id === routeId ? { ...item, ...changes } : item
+              ),
+              activeDraftRoute:
+                state.activeDraftRoute?.id === routeId
+                  ? { ...state.activeDraftRoute, ...changes }
+                  : state.activeDraftRoute,
+            }));
+
+          try {
+            const pending = routesToUpload(
+              get().routes,
+              get().activeDraftRoute?.id ?? null,
+              Date.now()
+            );
+
+            // One at a time.
+            for (const route of pending) {
+              const clientRouteId = route.clientRouteId || randomUUID();
+              updateRoute(route.id, {
+                clientRouteId,
+                syncStatus: 'uploading',
+                syncError: null,
+              });
+
+              try {
+                // Read the route again: it may have been linked meanwhile.
+                const current =
+                  get().routes.find((item) => item.id === route.id) ?? route;
+                const body = buildRouteUpload(
+                  { ...current, clientRouteId },
+                  // Option A: the plant only when it has already synced.
+                  linkedPlantServerId(current, get().records)
+                );
+                // 201 for a new route, 200 when it was uploaded before (same id).
+                const result = await apiFetch<{ data?: { id?: string } }>(
+                  '/api/routes',
+                  { method: 'POST', body }
+                );
+                updateRoute(route.id, {
+                  syncStatus: 'uploaded',
+                  serverId: result?.data?.id,
+                  syncError: null,
+                });
+                uploaded += 1;
+              } catch (error) {
+                failed += 1;
+                updateRoute(route.id, {
+                  syncStatus: 'failed',
+                  syncError: routeUploadProblem(error),
+                });
+                // Offline or signed out: the others would fail the same way; they
+                // stay "Not uploaded" for the next sync.
+                if (
+                  error instanceof ApiError &&
+                  (error.status === 0 || error.status === 401)
+                ) {
+                  break;
+                }
+              }
+            }
+          } finally {
+            routeSyncRunning = false;
+          }
+
+          return { uploaded, failed };
+        },
 
         linkRouteToPlant:
           async (
@@ -3475,7 +3759,7 @@ export const useRecordStore =
               AsyncStorage
           ),
 
-        version: 9,
+        version: 10,
 
         migrate: (
           persistedState,
@@ -3487,6 +3771,14 @@ export const useRecordStore =
                 string,
                 unknown
               >[];
+              routes?: Record<
+                string,
+                unknown
+              >[];
+              activeDraftRoute?: Record<
+                string,
+                unknown
+              > | null;
             };
 
           /*
@@ -3811,6 +4103,36 @@ export const useRecordStore =
                   };
                 }
               );
+          }
+
+          /*
+           * v10:
+           * routes get an upload ID and
+           * "not uploaded" (route sync). Plant
+           * records are not touched.
+           */
+          if (
+            version < 10 &&
+            Array.isArray(
+              state.routes
+            )
+          ) {
+            state.routes =
+              migrateRoutesToV10(
+                state.routes,
+                randomUUID
+              );
+
+            // Keep the route waiting on Link route in step with its copy in the list.
+            const draftId =
+              state.activeDraftRoute?.id;
+            if (draftId) {
+              state.activeDraftRoute =
+                state.routes.find(
+                  (route) =>
+                    route.id === draftId
+                ) ?? null;
+            }
           }
 
           return state as unknown as

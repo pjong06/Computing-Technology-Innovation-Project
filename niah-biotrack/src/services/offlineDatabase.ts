@@ -510,6 +510,43 @@ export async function getLocalEntities<T = Record<string, unknown>>(
   }));
 }
 
+export async function removeUploadedLocalEntity(
+  entityType: 'plant' | 'observation',
+  clientRecordId: string
+): Promise<boolean> {
+  await initializeOfflineDatabase();
+  const db = await getDatabase();
+  let removed = false;
+
+  await db.withExclusiveTransactionAsync(async (transaction) => {
+    const entity = await transaction.getFirstAsync<{ sync_status: LocalSyncStatus }>(
+      `
+        SELECT sync_status
+        FROM local_entities
+        WHERE entity_type = ?
+          AND client_record_id = ?
+      `,
+      entityType,
+      clientRecordId
+    );
+
+    if (entity?.sync_status !== 'uploaded') return;
+
+    await transaction.runAsync(
+      `
+        DELETE FROM local_entities
+        WHERE entity_type = ?
+          AND client_record_id = ?
+      `,
+      entityType,
+      clientRecordId
+    );
+    removed = true;
+  });
+
+  return removed;
+}
+
 export async function getReadyOutboxOperations(
   limit = 50,
   queue: 'records' | 'proposals' = 'records',
@@ -561,6 +598,26 @@ export async function resumePausedRecordRetries(plantId: string, observationIds:
       (entity_type = 'observation' AND client_record_id IN (SELECT value FROM json_each(?)))
     )
   `, plantId, JSON.stringify(observationIds));
+}
+
+export async function resumeAllPausedRecordRetries(): Promise<void> {
+  await initializeOfflineDatabase();
+  const db = await getDatabase();
+  const timestamp = nowIso();
+
+  await db.runAsync(
+    `
+      UPDATE sync_outbox
+      SET retry_count = 0,
+          next_retry_at = 0,
+          last_error = NULL,
+          updated_at = ?
+      WHERE entity_type IN ('plant', 'observation')
+        AND status = 'retry'
+        AND next_retry_at IS NULL
+    `,
+    timestamp
+  );
 }
 
 function toOutboxOperation(row: OutboxRow): OutboxOperation {

@@ -8,6 +8,8 @@ const { createTelemetryPersistence } = require('../src/services/telemetryPersist
 test('HTTP auth/validation/station boundary, persistence mapping and sanitized errors', async () => {
   const token = randomBytes(32).toString('hex');
   let mode = 'ok';
+  let alertMode = 'found';
+  let alertLookups = 0;
   const inserts = [];
   const client = { from(table) {
     if (table === 'sensor_stations') return { select(columns) {
@@ -15,6 +17,35 @@ test('HTTP auth/validation/station boundary, persistence mapping and sanitized e
       return { eq() { return this; }, single: async () => mode === 'missing'
         ? {data:null,error:{code:'PGRST116'}} : {data:{id:'station-uuid'},error:null} };
     } };
+    if (table === 'alerts') {
+      alertLookups++;
+      return {
+        select(columns) {
+          assert.equal(columns, 'id');
+          return {
+            eq() { return this; },
+            like(column, pattern) {
+              assert.equal(column, 'alert_message');
+              assert.equal(pattern, '% (movement_nearby_cm)');
+              return this;
+            },
+            order() { return this; },
+            limit() { return this; },
+            async maybeSingle() {
+              if (alertMode === 'error') {
+                return { data: null, error: { message: 'database error' } };
+              }
+              return {
+                data: alertMode === 'found'
+                  ? { id: 'movement-alert-uuid' }
+                  : null,
+                error: null,
+              };
+            },
+          };
+        },
+      };
+    }
     assert.equal(table,'sensor_readings');
     return { insert(row) { inserts.push(row); return { select(columns) {
       assert.equal(columns,'id'); return { single: async () => mode === 'error'
@@ -46,6 +77,53 @@ test('HTTP auth/validation/station boundary, persistence mapping and sanitized e
     assert.equal((await send({...payload,dht_valid:false,distance_valid:false})).status,201);
     assert.equal(inserts[1].temperature_c,null); assert.equal(inserts[1].humidity_percent,null);
     assert.equal(inserts[1].distance_cm,null); assert.equal(inserts[1].distance_valid,false);
+    // A new proximity alert is returned with the persisted reading.
+    const movement = {
+      ...payload,
+      motion_detected: true,
+      distance_cm: 10,
+      distance_valid: true,
+    };
+
+    alertMode = 'found';
+    const foundResponse = await send(movement);
+    assert.equal(foundResponse.status, 201);
+    assert.deepEqual(await foundResponse.json(), {
+      reading_id: 'reading-uuid',
+      movement_alert_id: 'movement-alert-uuid',
+    });
+
+    // Cooldown-suppressed reading has no new alert.
+    alertMode = 'missing';
+    const suppressedResponse = await send({
+      ...movement,
+      sequence: 2,
+    });
+    assert.equal(suppressedResponse.status, 201);
+    assert.deepEqual(await suppressedResponse.json(), {
+      reading_id: 'reading-uuid',
+      movement_alert_id: null,
+    });
+
+    // Failed alert lookup must not authorize a cloud capture.
+    alertMode = 'error';
+    const failedLookupResponse = await send({
+      ...movement,
+      sequence: 3,
+    });
+    assert.equal(failedLookupResponse.status, 201);
+    assert.equal(
+      (await failedLookupResponse.json()).movement_alert_id,
+      null
+    );
+
+    // No valid movement means no proximity alert query.
+    const lookupsBefore = alertLookups;
+    await send({ ...movement, motion_detected: false });
+    await send({ ...movement, distance_valid: false });
+    assert.equal(alertLookups, lookupsBefore);
+
+    alertMode = 'found';
     mode='error'; const error=await send(payload); assert.equal(error.status,503);
     assert.doesNotMatch(await error.text(),/sensitive/);
     mode='ok';

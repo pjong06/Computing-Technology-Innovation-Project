@@ -45,6 +45,8 @@ function fakeDb({
   existingMedia = null,
   insertErrors = [],
   uploadError = null,
+  // What the visit lookup returns after a refused upload (e.g. submitted meanwhile).
+  observationAfterRefusal = null,
 } = {}) {
   const calls = { uploads: [], inserts: [], removes: [], buckets: [] };
   const lookups = { plants: plant, observations: observation };
@@ -92,6 +94,7 @@ function fakeDb({
         return {
           async upload(filePath, buffer, options) {
             calls.uploads.push({ bucket, filePath, options });
+            if (uploadError && observationAfterRefusal) lookups.observations = observationAfterRefusal;
             return { error: uploadError };
           },
           async remove(paths) {
@@ -290,11 +293,35 @@ test('two attempts racing with the same photo ID end with one saved row (200)', 
   });
 });
 
-test('a storage RLS refusal on a visit photo becomes "locked"', async () => {
+test('a storage refusal while the visit is still a draft is a clear "refused", not "locked"', async () => {
   db = fakeDb({ uploadError: { statusCode: '403', message: 'new row violates row-level security policy' } });
+  await withApp(async base => {
+    const result = await visitPhoto(base, {});
+    assert.equal(result.status, 403);
+    assert.equal(result.body.code, 'photo_refused');
+    assert.match(result.body.message, /stays on this phone and will be tried again on the next sync/);
+    assert.doesNotMatch(result.body.message, /after submission/);
+  });
+});
+
+test('a storage refusal after the visit was submitted meanwhile is still "locked"', async () => {
+  db = fakeDb({
+    uploadError: { statusCode: '403', message: 'new row violates row-level security policy' },
+    observationAfterRefusal: { id: OBSERVATION, observer_id: BOTANIST, review_status: 'pending', deleted_at: null },
+  });
   await withApp(async base => {
     const result = await visitPhoto(base, {});
     assert.equal(result.status, 409);
     assert.equal(result.body.code, 'photos_locked');
+  });
+});
+
+test('a refused observation_media row on a draft visit is "refused" and the stored file is removed', async () => {
+  db = fakeDb({ insertErrors: [{ code: '42501', message: 'new row violates row-level security policy' }] });
+  await withApp(async base => {
+    const result = await visitPhoto(base, {});
+    assert.equal(result.status, 403);
+    assert.equal(result.body.code, 'photo_refused');
+    assert.equal(db.calls.removes.length, 1, 'nothing unlinked is left in storage');
   });
 });

@@ -96,6 +96,7 @@ export default function RootLayout() {
         <Stack.Screen name="index" />
         <Stack.Screen name="forgot-password" />
         <Stack.Screen name="change-password" />
+        <Stack.Screen name="photo-credits" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="new-record" />
         <Stack.Screen name="save-confirm" />
@@ -109,6 +110,7 @@ export default function RootLayout() {
         <Stack.Screen name="propose-species" />
         <Stack.Screen name="sign-up" />
         <Stack.Screen name="plant-info" />
+        <Stack.Screen name="iot-task-detail" />
       </Stack>
 
       <Toast />

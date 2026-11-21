@@ -10,6 +10,7 @@ let pending = [];      // the observations waiting for review, as the backend se
 let selectedId = null;
 let photosById = {};   // short-lived photo links for each observation, once loaded
 let busy = false;      // a decision is being saved
+let sortOrder = SORT_NEWEST; // newest field record first; the select switches it
 
 // Makes one small card for the list on the left, with the first photo once it is loaded.
 function visitKind(observation) {
@@ -26,7 +27,11 @@ function visitKindBadge(observation) {
 
 function makeListCard(observation) {
   const photos = photosById[observation.id];
-  const firstPhoto = photos && photos.length > 0 && photos[0].url ? photos[0].url : PICTURE_BLANK;
+  // The list thumbnail comes with the list (signed in one batch), so no click is needed;
+  // once the photos are opened, the first one is used.
+  const firstPhoto = photos && photos.length > 0 && photos[0].url
+    ? photos[0].url
+    : observation.thumbnail_url || PICTURE_BLANK;
   const card = makeObservationListCard(observation, observation.id === selectedId, firstPhoto, function () {
     selectedId = observation.id;
     drawQueue();
@@ -120,30 +125,36 @@ function drawQueue() {
   if (pending.length === 0) {
     document.getElementById('queue-area').hidden = true;
     document.getElementById('queue-empty').hidden = false;
-    document.getElementById('queue-count').textContent = '0 field observations waiting for review.';
+    document.getElementById('queue-count').textContent = '0 field records waiting for review.';
     return;
   }
   document.getElementById('queue-area').hidden = false;
   document.getElementById('queue-empty').hidden = true;
 
-  let word = 'observations';
+  let word = 'records';
   if (pending.length === 1) {
-    word = 'observation';
+    word = 'record';
   }
   document.getElementById('queue-count').textContent =
     pending.length + ' field ' + word + ' waiting for review.';
 
-  let selected = findObservation(pending, selectedId);
+  addListSortSelect('queue-count', 'queue-sort', function (order) {
+    sortOrder = order;
+    drawQueue();
+  });
+  const ordered = sortByDate(pending, item => item.observed_at, sortOrder);
+
+  let selected = findObservation(ordered, selectedId);
   if (selected === null) {
-    selected = pending[0];
+    selected = ordered[0];
     selectedId = selected.id;
   }
   loadPhotos(selected.id).catch(showUnexpectedError);
 
   const listBox = document.getElementById('queue-list');
   listBox.innerHTML = '';
-  for (let i = 0; i < pending.length; i++) {
-    listBox.appendChild(makeListCard(pending[i]));
+  for (let i = 0; i < ordered.length; i++) {
+    listBox.appendChild(makeListCard(ordered[i]));
   }
 
   const detailBox = document.getElementById('queue-detail');
@@ -204,7 +215,7 @@ async function reviewObservation(id, decision) {
       method: 'POST',
       body: JSON.stringify({ decision: decision, comments: comments }),
     });
-    showToast(decision === 'approved' ? 'Observation approved' : 'Observation rejected');
+    showToast(decision === 'approved' ? 'Field record approved' : 'Field record sent back (Needs changes)');
     delete photosById[id];
   } catch (error) {
     // e.g. "Observation must be Pending; approval requires an approved species"
@@ -228,6 +239,10 @@ async function loadQueue() {
     return;
   }
   drawQueue();
+  // Keep the Field records and Review badges in step after every load (and so after each decision).
+  refreshFieldRecordsCount().catch(error => {
+    showToast('Field record count could not be loaded. ' + error.message);
+  });
 }
 
 loadQueue().catch(showUnexpectedError);

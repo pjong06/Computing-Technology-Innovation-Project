@@ -155,7 +155,7 @@ async function botanistReport(client, from, to) {
     const observations = await readReportRows(query, "observation");
 
     const [plants, profiles] = await Promise.all([
-        rowsByIds(client, "plants", "id, species_id, qr_code_value, data_source", observations.map(item => item.plant_id)),
+        rowsByIds(client, "plants", "id, species_id, qr_code_value, data_source, source_observer", observations.map(item => item.plant_id)),
         rowsByIds(client, "profiles", "id, full_name", observations.map(item => item.observer_id)),
     ]);
     const activePlantIds = new Set(plants.map(plant => plant.id));
@@ -186,7 +186,9 @@ async function botanistReport(client, from, to) {
                 observed_at: dateOnly(item.observed_at),
                 scientific_name: speciesById.get(plant?.species_id)?.scientific_name || "Unknown",
                 plant_tag: plant?.qr_code_value || "No tag",
-                source: plant?.data_source === "inaturalist" ? "iNaturalist" : "Field",
+                source: plant?.data_source === "inaturalist"
+                    ? `Imported from iNaturalist · Observer: ${plant.source_observer || "Unknown"}`
+                    : "Field",
                 botanist: profileById.get(item.observer_id)?.full_name || "Unknown",
                 health_status: item.health_status || "",
                 life_stage: item.life_stage || "",
@@ -208,14 +210,12 @@ async function locationsReport(client, from, to) {
     plantQuery = applyDateRange(plantQuery, "created_at", from, to);
     const plantRows = await readReportRows(plantQuery, "plant");
     const plantIds = plantRows.map(plant => plant.id);
-    const points = plantIds.length
-        ? await readReportRows(
-            client.from("plant_map_points")
-                .select("id, species_id, qr_code_value, plant_status, location_description, latitude, longitude, data_source")
-                .in("id", plantIds),
-            "plant location"
-        )
-        : [];
+    const points = await rowsByIds(
+        client,
+        "plant_map_points",
+        "id, species_id, qr_code_value, plant_status, location_description, latitude, longitude, data_source, source_observer",
+        plantIds
+    );
     const species = await rowsByIds(client, "species", "id, scientific_name", points.map(point => point.species_id));
     const speciesById = new Map(species.map(item => [item.id, item]));
 
@@ -234,7 +234,9 @@ async function locationsReport(client, from, to) {
         rows: points.map(point => ({
             scientific_name: speciesById.get(point.species_id)?.scientific_name || "Unknown",
             plant_tag: point.qr_code_value || "No tag",
-            source: point.data_source === "inaturalist" ? "iNaturalist" : "Field",
+            source: point.data_source === "inaturalist"
+                ? `Imported from iNaturalist · Observer: ${point.source_observer || "Unknown"}`
+                : "Field",
             landmark: point.location_description || "Not recorded",
             latitude: point.latitude,
             longitude: point.longitude,

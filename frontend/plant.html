@@ -18,12 +18,10 @@
 .detail-label { color: var(--mute); font-size: 12px; }
 .detail-value { margin-top: 2px; overflow-wrap: anywhere; font-weight: 600; }
 .plant-source { margin: 8px 0 0; color: var(--mute); font-size: 13px; overflow-wrap: anywhere; }
-.plant-status { display: inline-block; padding: 4px 10px; border-radius: 999px; background: var(--mint); }
-.plant-status.approved { background: var(--ok); color: var(--okt); }
-.plant-status.pending { background: var(--wa); color: var(--wat); }
-.plant-status.rejected { background: var(--er); color: var(--ert); }
 .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin-top: 14px; }
 .photo-grid img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 10px; background: var(--mint); }
+.species-photo-fallback { max-width: 360px; margin: 0; }
+.species-photo-fallback figcaption { margin-top: 4px; color: var(--mute); font-size: 12px; }
 #plant-map { height: 260px; margin-top: 12px; border-radius: 10px; background: var(--mint); }
 .history-card { margin-top: 18px; overflow: hidden; }
 .table-wrap { overflow-x: auto; }
@@ -31,7 +29,6 @@
 .history-table th, .history-table td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 .history-table th { color: var(--mute); font-size: 12px; font-weight: 700; }
 .history-table td { font-size: 13px; }
-.review-rejected { color: var(--ert); }
 .plant-state { padding: 18px; }
 .plant-state[hidden] { display: none; }
 @media (max-width: 760px) {
@@ -50,6 +47,7 @@
 <main>
 <section class="page on">
   <a class="back-link" href="plants.html">‹ Plant catalogue</a>
+  <p class="lead">One plant's details, photos, location and visit history, for conservation officers.</p>
   <div class="card plant-state" id="plant-loading" role="status">Loading plant details...</div>
   <div class="card plant-state" id="plant-error" role="alert" hidden></div>
   <div id="plant-detail" hidden>
@@ -61,7 +59,7 @@
         <p class="plant-source" id="plant-source"></p>
         <div class="detail-facts">
           <div class="detail-fact"><div class="detail-label">Plant status</div><div class="detail-value" id="plant-status"></div></div>
-          <div class="detail-fact"><div class="detail-label">Registered by</div><div class="detail-value" id="plant-registered-by"></div></div>
+          <div class="detail-fact"><div class="detail-label" id="plant-registered-label">Registered by</div><div class="detail-value" id="plant-registered-by"></div></div>
           <div class="detail-fact"><div class="detail-label">Registered</div><div class="detail-value" id="plant-registered-at"></div></div>
           <div class="detail-fact"><div class="detail-label">Last observation</div><div class="detail-value" id="plant-last-observation"></div></div>
           <div class="detail-fact"><div class="detail-label">Location note</div><div class="detail-value" id="plant-location"></div></div>
@@ -69,7 +67,7 @@
           <div class="detail-fact"><div class="detail-label">Coordinates</div><div class="detail-value" id="plant-coordinates"></div></div>
           <div class="detail-fact"><div class="detail-label">Observations</div><div class="detail-value" id="plant-observation-count"></div></div>
         </div>
-        <h2>Plant photos</h2>
+        <h2 id="plant-photo-heading">Plant photos</h2>
         <div class="photo-grid" id="plant-photos"></div>
         <p class="muted" id="plant-no-photos" hidden>No photos have been added to this plant.</p>
       </article>

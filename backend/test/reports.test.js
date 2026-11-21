@@ -25,6 +25,7 @@ function fakeDb(tables = {}, counts = {}) {
         query[method] = (...args) => {
           calls.push([table, method, ...args]);
           if (method === 'limit') query.limitValue = args[0];
+          if (table === 'plant_map_points' && method === 'in' && args[0] === 'id') query.ids = args[1];
           return query;
         };
       }
@@ -36,7 +37,7 @@ function fakeDb(tables = {}, counts = {}) {
       };
       query.then = (resolve, reject) => {
         const answer = tables[table] || { data: [], error: null };
-        const rows = answer.data || [];
+        const rows = query.ids ? (answer.data || []).filter(row => query.ids.includes(row.id)) : answer.data || [];
         const data = rows.slice(query.start, query.end + 1);
         const result = {
           data,
@@ -142,6 +143,7 @@ test('field observations include species, plant, botanist, health and review det
       species_id: SPECIES_ID,
       qr_code_value: 'NIAH-PLT-1',
       data_source: 'inaturalist',
+      source_observer: 'Aina Rahman',
     }] },
     profiles: { data: [{ id: '22222222-2222-4222-8222-222222222222', full_name: 'Aina Rahman' }] },
     species: { data: [{ id: SPECIES_ID, scientific_name: 'Nepenthes ampullaria' }] },
@@ -154,7 +156,7 @@ test('field observations include species, plant, botanist, health and review det
     observed_at: '2026-11-02',
     scientific_name: 'Nepenthes ampullaria',
     plant_tag: 'NIAH-PLT-1',
-    source: 'iNaturalist',
+    source: 'Imported from iNaturalist · Observer: Aina Rahman',
     botanist: 'Aina Rahman',
     health_status: 'healthy',
     life_stage: 'flowering',
@@ -170,6 +172,8 @@ test('field observations include species, plant, botanist, health and review det
   assert.ok(!labels.includes('Height (cm)'));
   assert.ok(db.calls.some(call => call[0] === 'plants' && call[1] === 'is' &&
     call[2] === 'deleted_at' && call[3] === null));
+  assert.ok(db.calls.some(call => call[0] === 'plants' && call[1] === 'select' &&
+    call[2].includes('source_observer')));
 });
 
 test('field observations for soft-deleted plants are omitted', async () => {
@@ -207,6 +211,7 @@ test('plant locations use the map view and are officer-only', async () => {
         latitude: 3.2,
         longitude: 113.7,
         data_source: 'inaturalist',
+        source_observer: 'Aina Rahman',
       }],
     },
     species: { data: [{ id: SPECIES_ID, scientific_name: 'Nepenthes ampullaria' }] },
@@ -217,7 +222,7 @@ test('plant locations use the map view and are officer-only', async () => {
   assert.deepEqual(result.body.data.rows[0], {
     scientific_name: 'Nepenthes ampullaria',
     plant_tag: 'NIAH-PLT-1',
-    source: 'iNaturalist',
+    source: 'Imported from iNaturalist · Observer: Aina Rahman',
     landmark: 'Trail entrance',
     latitude: 3.2,
     longitude: 113.7,
@@ -225,7 +230,7 @@ test('plant locations use the map view and are officer-only', async () => {
   });
   assert.ok(db.calls.some(call => call[0] === 'plant_map_points'));
   assert.ok(db.calls.some(call => call[0] === 'plant_map_points' && call[1] === 'select' &&
-    call[2].includes('data_source')));
+    call[2].includes('data_source') && call[2].includes('source_observer')));
   assert.ok(db.calls.some(call => call[0] === 'plants' && call[1] === 'lte' &&
     call[2] === 'created_at' && call[3] === '2026-10-31T23:59:59.999Z'));
   assert.ok(db.calls.some(call => call[0] === 'plants' && call[1] === 'is' &&
@@ -236,6 +241,25 @@ test('plant locations use the map view and are officer-only', async () => {
   assert.equal((await get('/locations')).status, 403);
   assert.equal(db.calls.length, 0);
   role = 'officer';
+});
+
+test('plant locations fetch and combine batches of at most 100 IDs', async () => {
+  const plants = Array.from({ length: 205 }, (_, index) => ({ id: String(index) }));
+  db = fakeDb({
+    plants: { data: plants },
+    plant_map_points: {
+      data: plants.map(plant => ({ ...plant, qr_code_value: plant.id })),
+    },
+  });
+
+  const result = await get('/locations');
+  assert.equal(result.status, 200);
+  const batches = db.calls
+    .filter(([table, method]) => table === 'plant_map_points' && method === 'in')
+    .map(([, , , ids]) => ids);
+  assert.deepEqual(batches.map(ids => ids.length), [100, 100, 5]);
+  assert.deepEqual(batches.flat(), plants.map(plant => plant.id));
+  assert.deepEqual(result.body.data.rows.map(row => row.plant_tag), plants.map(plant => plant.id));
 });
 
 test('plant source is included in CSV and PDF exports', async t => {
@@ -254,6 +278,7 @@ test('plant source is included in CSV and PDF exports', async t => {
         qr_code_value: 'NIAH-PLT-1',
         plant_status: 'approved',
         data_source: 'inaturalist',
+        source_observer: 'Aina Rahman',
         latitude: 3.2,
         longitude: 113.7,
       }],
@@ -266,7 +291,7 @@ test('plant source is included in CSV and PDF exports', async t => {
   assert.equal(csv.status, 200);
   assert.match(csv.contentType, /text\/csv/);
   assert.match(csv.body.toString('utf8'), /"Source"/);
-  assert.match(csv.body.toString('utf8'), /"iNaturalist"/);
+  assert.match(csv.body.toString('utf8'), /"Imported from iNaturalist · Observer: Aina Rahman"/);
 
   db = fakeDb(tables);
   const pdf = await getExport(t, '/locations?format=pdf');

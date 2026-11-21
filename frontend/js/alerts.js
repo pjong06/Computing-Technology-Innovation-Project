@@ -68,6 +68,10 @@ const telemetryBody =
 const alertFilter =
   document.getElementById('alert-filter');
 
+// Newest alert first unless the officer picks Oldest first.
+const alertSort =
+  document.getElementById('alert-sort');
+
 const alertMessage =
   document.getElementById('alert-message');
 
@@ -118,8 +122,30 @@ const alertActionsInProgress =
 
 const cameraEvidenceState =
   new Map();
+const CAMERA_REFRESH_COOLDOWN_MS = 10000;
 
+const cameraRefreshCooldowns = new Map();
+function updateCameraRefreshButtons() {
+  document.querySelectorAll('[data-camera-refresh-id]').forEach((button) => {
+    const alertId = button.dataset.cameraRefreshId;
+    const remaining = Math.max(
+      0,
+      Math.ceil(
+        ((cameraRefreshCooldowns.get(alertId) || 0) - Date.now()) / 1000
+      )
+    );
 
+    const loading = getCameraState(alertId).status === 'loading';
+
+    button.textContent = loading
+      ? 'Loading photo...'
+      : remaining > 0
+        ? `Refresh in ${remaining}s`
+        : 'Refresh photo';
+
+    button.disabled = loading || remaining > 0;
+  });
+}
 /* General helpers */
 
 function formatNumber(
@@ -137,29 +163,9 @@ function formatNumber(
 }
 
 
+// The portal's one date format: "21 Nov 2026, 11:30" (shared.js formatWhen).
 function formatTime(value) {
-  if (!value) {
-    return 'Not available';
-  }
-
-  const date =
-    new Date(value);
-
-  if (
-    Number.isNaN(
-      date.getTime()
-    )
-  ) {
-    return 'Not available';
-  }
-
-  return date.toLocaleString(
-    'en-MY',
-    {
-      dateStyle: 'medium',
-      timeStyle: 'medium',
-    }
-  );
+  return formatWhen(value, 'Not available');
 }
 
 
@@ -1782,13 +1788,12 @@ async function fetchCameraEvidence(
       alert.id
     );
 
-  if (
-    current.status ===
-      'loading' &&
-    !force
-  ) {
-    return current;
-  }
+  const manualRequest =
+    force === true;
+
+if (current.status === 'loading') {
+  return current;
+}
 
   setCameraState(
     alert.id,
@@ -1837,6 +1842,8 @@ async function fetchCameraEvidence(
     ) + 1;
 
   const emptyState = {
+    ...previous,
+
     status:
       'empty',
 
@@ -1860,6 +1867,9 @@ async function fetchCameraEvidence(
     nextRetryAt:
       Date.now() +
       5000,
+
+    manualRefreshRequired:
+      manualRequest,
   };
 
   setCameraState(
@@ -1897,6 +1907,8 @@ async function fetchCameraEvidence(
       );
 
     const readyState = {
+      ...current,
+
       status:
         'ready',
 
@@ -1925,6 +1937,9 @@ async function fetchCameraEvidence(
         0,
       nextRetryAt:
         0,
+
+      manualRefreshRequired:
+        false,
     };
 
     setCameraState(
@@ -1970,6 +1985,9 @@ async function fetchCameraEvidence(
     nextRetryAt:
       Date.now() +
       5000,
+
+    manualRefreshRequired:
+      manualRequest,
   };
 
     setCameraState(
@@ -1984,6 +2002,12 @@ async function fetchCameraEvidence(
 function cameraNeedsRefresh(
   state
 ) {
+  if (
+    state.manualRefreshRequired
+  ) {
+    return false;
+  }
+
   if (
     state.status ===
     'idle'
@@ -2009,15 +2033,43 @@ function cameraNeedsRefresh(
     state.status ===
       'ready'
   ) {
-    return (
-      !state.url ||
-      Date.now() >=
-        state.expiresAt -
-          3000
-    );
+    return false;
   }
 
   return false;
+}
+
+function cameraImageFailureState(
+  state
+) {
+  return {
+    ...state,
+
+    status:
+      'error',
+
+    url:
+      null,
+
+    expiresAt:
+      0,
+
+    message:
+      'The photo link expired or could not be loaded. Use Refresh photo to request a new link.',
+
+    retryCount:
+      Math.max(
+        3,
+        state.retryCount ||
+          0
+      ),
+
+    nextRetryAt:
+      0,
+
+    manualRefreshRequired:
+      true,
+  };
 }
 
 function queueCameraLoad(
@@ -2085,20 +2137,41 @@ function getCameraState(
 
       nextRetryAt:
         0,
+
+      manualRefreshRequired:
+        false,
     }
   );
 }
 
 
-async function refreshCameraAlert(
-  alert
-) {
-  await fetchCameraEvidence(
-    alert,
-    true
+async function refreshCameraAlert(alert) {
+  const now = Date.now();
+  const state = getCameraState(alert.id);
+
+  if (state.status === 'loading') {
+    return;
+  }
+
+  const nextAllowedAt =
+    cameraRefreshCooldowns.get(alert.id) || 0;
+
+  if (now < nextAllowedAt) {
+    return;
+  }
+
+  cameraRefreshCooldowns.set(
+    alert.id,
+    now + CAMERA_REFRESH_COOLDOWN_MS
   );
 
   renderAlerts();
+
+  try {
+    await fetchCameraEvidence(alert, true);
+  } finally {
+    renderAlerts();
+  }
 }
 
 function showPhotoPopup(
@@ -2325,7 +2398,7 @@ function showPhotoPopup(
 async function openFullPhoto(
   alert
 ) {
-  let state =
+  const state =
     getCameraState(
       alert.id
     );
@@ -2338,22 +2411,8 @@ async function openFullPhoto(
       state.expiresAt -
         3000
   ) {
-    state =
-      await fetchCameraEvidence(
-        alert,
-        true
-      );
-
-    renderAlerts();
-  }
-
-  if (
-    state.status !==
-      'ready' ||
-    !state.url
-  ) {
     notify(
-      'No camera photo is available for this alert.'
+      'The photo link has expired or is unavailable. Use Refresh photo to request a new link.'
     );
 
     return;
@@ -2775,18 +2834,9 @@ function renderCameraAlertCard( alert) {
       () => {
         setCameraState(
           alert.id,
-          {
-            ...state,
-
-            status:
-              'idle',
-
-            url:
-              null,
-
-            expiresAt:
-              0,
-          }
+          cameraImageFailureState(
+            state
+          )
         );
 
         renderAlerts();
@@ -2888,6 +2938,16 @@ function renderCameraAlertCard( alert) {
       text.textContent =
         state.message ||
         'Camera evidence unavailable.';
+    } else if (
+      state.status ===
+        'ready' &&
+      state.url &&
+      Date.now() >=
+        state.expiresAt -
+          3000
+    ) {
+      text.textContent =
+        'Photo link expired. Use Refresh photo to request a new link.';
     } else {
       text.textContent =
         'Checking camera evidence...';
@@ -3330,7 +3390,10 @@ if (
   if (
     state.status ===
     'ready' &&
-    state.url
+    state.url &&
+    Date.now() <
+      state.expiresAt -
+        3000
   ) {
     const fullPhoto =
       document.createElement(
@@ -3370,16 +3433,23 @@ if (
 
   refreshPhoto.className =
     'btn ghost';
+refreshPhoto.dataset.cameraRefreshId = alert.id;
+const remainingCooldown = Math.max(
+  0,
+  Math.ceil(
+    ((cameraRefreshCooldowns.get(alert.id) || 0) - Date.now()) / 1000
+  )
+);
 
-  refreshPhoto.textContent =
-    state.status ===
-      'loading'
-      ? 'Loading photo...'
+refreshPhoto.textContent =
+  state.status === 'loading'
+    ? 'Loading photo...'
+    : remainingCooldown > 0
+      ? `Refresh in ${remainingCooldown}s`
       : 'Refresh photo';
 
-  refreshPhoto.disabled =
-    state.status ===
-    'loading';
+refreshPhoto.disabled =
+  state.status === 'loading' || remainingCooldown > 0;
 
   refreshPhoto.addEventListener(
     'click',
@@ -3739,6 +3809,14 @@ function renderCompactAlertRow(
     );
   }
 
+  const action =
+    document.createElement(
+      'div'
+    );
+
+  action.style.flex =
+    '0 0 auto';
+
   if (
       canDeleteAlerts()
     ) {
@@ -3828,14 +3906,6 @@ function renderCompactAlertRow(
       reading
     );
   }
-
-  const action =
-    document.createElement(
-      'div'
-    );
-
-  action.style.flex =
-    '0 0 auto';
 
   if (
     status ===
@@ -4111,6 +4181,14 @@ function renderCompactAlertGroup(
 /* Alert list */
 
 function getFilteredPersistentAlerts() {
+  return sortByDate(
+    filterPersistentAlerts(),
+    (alert) => alert.triggered_at,
+    alertSort ? alertSort.value : SORT_NEWEST
+  );
+}
+
+function filterPersistentAlerts() {
   const filter =
     alertFilter.value;
 
@@ -4533,7 +4611,7 @@ async function loadDashboard({
 
     setDashboardStatus(
       'live',
-      'Supabase synced'
+      'Live data'
     );
   } catch (error) {
     if (
@@ -4608,6 +4686,12 @@ alertFilter.addEventListener(
   }
 );
 
+if (alertSort) {
+  alertSort.addEventListener('change', () => {
+    renderAlerts();
+  });
+}
+
 
 /* Auto refresh */
 
@@ -4662,3 +4746,10 @@ clearSensorDisplay();
 void loadDashboard();
 
 startAutoRefresh();
+
+
+setInterval(() => {
+  if (!document.hidden) {
+    updateCameraRefreshButtons();
+  }
+}, 1000);

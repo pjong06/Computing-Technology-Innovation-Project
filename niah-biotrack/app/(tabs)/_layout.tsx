@@ -6,7 +6,7 @@ import { useAuthRole } from '../../src/context/AuthRoleContext';
 import AwaitingApproval from '../../src/components/AwaitingApproval';
 
 export default function TabLayout() {
-  const { isVisitor, isPending } = useAuthRole();
+  const { isVisitor, isPending, role } = useAuthRole();
 
   if (isPending) return <AwaitingApproval />;
 
@@ -30,20 +30,22 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="species"
+        name="plants"
         options={{
           title: 'Plants',
-          href: isVisitor ? null : undefined,
+          href: isVisitor ? undefined : null,
           tabBarIcon: ({ color }) => (
             <Ionicons name="leaf-outline" size={22} color={color as string} />
           ),
         }}
       />
+      {/* Staff: Plants = one row per plant (route "records"); visits are in Plant detail and
+          species proposals are on Home. Visitors have their own Plants tab above. */}
       <Tabs.Screen
-        name="plants"
+        name="records"
         options={{
           title: 'Plants',
-          href: isVisitor ? undefined : null,
+          href: isVisitor ? null : undefined,
           tabBarIcon: ({ color }) => (
             <Ionicons name="leaf-outline" size={22} color={color as string} />
           ),
@@ -59,12 +61,12 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="records"
+        name="tasks"
         options={{
-          title: 'My submissions',
-          href: isVisitor ? null : undefined,
+          title: 'Tasks',
+          href: role === 'botanist' ? undefined : null,
           tabBarIcon: ({ color }) => (
-            <Ionicons name="document-text-outline" size={22} color={color as string} />
+            <Ionicons name="alert-circle-outline" size={22} color={color as string} />
           ),
         }}
       />

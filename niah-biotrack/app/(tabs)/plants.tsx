@@ -16,8 +16,6 @@ import {
 import { useRouter } from 'expo-router';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
-import SpeciesPhotoCredit from '../../src/components/SpeciesPhotoCredit';
-import { preferredSpeciesPhoto } from '../../src/utils/speciesPhoto';
 
 // The visitor and guest "Plant guide": the approved species list (public data, cached on
 // the phone), in plain language. Botanists use the Species tab instead.
@@ -128,7 +126,6 @@ export default function PlantGuideScreen() {
             const status = plainConservationStatus(item.conservation_status);
             const colors = conservationStatusColors(status.code);
             const photo = imageUrisBySpeciesId[item.id];
-            const photoCredit = preferredSpeciesPhoto(item.species_media);
             return (
               <TouchableOpacity
                 style={styles.row}
@@ -143,7 +140,6 @@ export default function PlantGuideScreen() {
                       <Text style={{ fontSize: 22 }}>🌿</Text>
                     </View>
                   )}
-                  <SpeciesPhotoCredit photo={photoCredit} compact />
                 </View>
                 <View style={{ flex: 1, marginLeft: 12 }}>
                   <Text style={styles.commonName}>{item.common_name || item.scientific_name}</Text>

@@ -4,30 +4,14 @@ drawMenu('plant.html');
 
 const byId = id => document.getElementById(id);
 
+// The portal's one date format: "21 Nov 2026, 11:30" (shared.js formatWhen).
 function displayDate(value) {
-  if (!value) return 'None recorded';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? String(value)
-    : date.toLocaleString('en-GB', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+  return formatWhen(value, 'None recorded');
 }
 
+// Waiting for review / Approved / Needs changes / Draft, with its colour class (shared.js).
 function plantStatus(value) {
-  const status = String(value || 'unknown');
-  return {
-    label: {
-      pending: 'Pending',
-      approved: 'Approved',
-      rejected: 'Needs changes',
-    }[status.toLowerCase()] || status.replaceAll('_', ' '),
-    css: ['pending', 'approved', 'rejected'].includes(status.toLowerCase()) ? status.toLowerCase() : '',
-  };
+  return reviewStatusDisplay(value);
 }
 
 function cell(row, value, className) {
@@ -49,10 +33,13 @@ function formatDiameter(diameterCm) {
     : `${Math.round(Number(diameterCm) * 100) / 100} cm`;
 }
 
-function renderPhotos(photos) {
+function renderPhotos(photos, speciesPhoto) {
   const grid = byId('plant-photos');
   grid.replaceChildren();
-  byId('plant-no-photos').hidden = photos.length > 0;
+  const speciesFallback = photos.length === 0 && speciesPhoto?.url ? speciesPhoto : null;
+  byId('plant-no-photos').hidden = photos.length > 0 || Boolean(speciesFallback);
+  byId('plant-photo-heading').textContent =
+    speciesFallback ? 'Species reference photo' : 'Plant photos';
   photos.forEach(photo => {
     const image = document.createElement('img');
     image.src = photo.url || PICTURE_BLANK;
@@ -64,15 +51,47 @@ function renderPhotos(photos) {
     };
     grid.appendChild(image);
   });
+
+  if (speciesFallback) {
+    const figure = document.createElement('figure');
+    figure.className = 'species-photo-fallback';
+    const image = document.createElement('img');
+    image.src = speciesFallback.url;
+    image.alt = 'Species reference photo';
+    image.loading = 'lazy';
+    const caption = document.createElement('figcaption');
+    caption.textContent = 'Species photo';
+    // Photo credit behind a small "i" on the photo (only when the licence needs one).
+    const credit = makePhotoCreditInfo(speciesFallback);
+    image.onerror = function () {
+      image.onerror = null;
+      image.src = PICTURE_BLANK;
+      figure.hidden = true;
+      byId('plant-no-photos').hidden = false;
+    };
+    figure.appendChild(image);
+    figure.appendChild(caption);
+    if (credit) figure.appendChild(credit);
+    grid.appendChild(figure);
+  }
 }
 
+// Visit history: newest first; the select switches to oldest first.
+let historySort = SORT_NEWEST;
+let historyRows = [];
+
 function renderObservations(observations) {
+  historyRows = observations;
+  addListSortSelect('observations-count', 'observations-sort', function (order) {
+    historySort = order;
+    renderObservations(historyRows);
+  });
   const body = byId('observations-body');
   body.replaceChildren();
   byId('observations-count').textContent =
     `${observations.length} observation${observations.length === 1 ? '' : 's'}`;
   byId('observations-empty').hidden = observations.length > 0;
-  observations.forEach(observation => {
+  sortByDate(observations, observation => observation.observed_at, historySort).forEach(observation => {
     const row = document.createElement('tr');
     cell(row, displayDate(observation.observed_at));
     cell(row, observation.observer_name);
@@ -80,8 +99,14 @@ function renderObservations(observations) {
     cell(row, observation.life_stage);
     cell(row, formatHeight(observation.height_cm));
     cell(row, formatDiameter(observation.diameter_cm));
+    // Review status as a coloured badge, the same scheme as everywhere else.
     const review = plantStatus(observation.review_status);
-    cell(row, review.label, review.css === 'rejected' ? 'review-rejected' : '');
+    const statusCell = document.createElement('td');
+    const statusBadge = document.createElement('span');
+    statusBadge.className = ('status-badge ' + review.css).trim();
+    statusBadge.textContent = review.label;
+    statusCell.appendChild(statusBadge);
+    row.appendChild(statusCell);
     cell(row, observation.reviewer_comment);
     body.appendChild(row);
   });
@@ -113,7 +138,7 @@ function renderMap(plant) {
 
 function renderPlant(plant) {
   byId('plant-detail').hidden = false;
-  byId('plant-tag').textContent = plant.tag_code || 'No tag code';
+  byId('plant-tag').textContent = displayTag(plant.tag_code, 'No tag code');
   byId('plant-title').textContent = plant.species?.common_name || plant.species?.scientific_name || 'Plant';
   byId('plant-species').textContent = plant.species?.scientific_name || 'Species not recorded';
   byId('plant-source').textContent = plant.data_source === 'inaturalist'
@@ -123,16 +148,18 @@ function renderPlant(plant) {
   const statusElement = byId('plant-status');
   statusElement.textContent = status.label;
   statusElement.className = 'detail-value plant-status ' + status.css;
-  byId('plant-registered-by').textContent = plant.registered_by || 'Unknown';
+  const imported = plant.data_source === 'inaturalist';
+  byId('plant-registered-label').textContent = imported ? 'Imported source' : 'Registered by';
+  byId('plant-registered-by').textContent = imported
+    ? `Imported from iNaturalist · Observer: ${plant.source_observer || 'Unknown'}`
+    : plant.registered_by || 'Unknown';
   byId('plant-registered-at').textContent = displayDate(plant.registered_at);
   byId('plant-last-observation').textContent = displayDate(plant.last_observation_at);
   byId('plant-location').textContent = plant.location_description || 'Not recorded';
   byId('plant-conservation').textContent = plant.species?.conservation_status || 'Not assessed';
-  byId('plant-coordinates').textContent = plant.latitude === null || plant.longitude === null
-    ? 'Not recorded'
-    : `${plant.latitude}, ${plant.longitude}`;
+  byId('plant-coordinates').textContent = displayCoordinates(plant.latitude, plant.longitude);
   byId('plant-observation-count').textContent = String(plant.observation_count);
-  renderPhotos(plant.photos || []);
+  renderPhotos(plant.photos || [], plant.species_photo);
   renderObservations(plant.observations || []);
   renderMap(plant);
 }

@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Camera AI 辅助审核 Prototype</title><script src="/camera-ai-demo/app.js" defer></script></head>
+<body>
+<main>
+<h1>Camera AI 辅助审核 Prototype</h1>
+<p>仅显示已排队的新照片。AI 无目标不代表现场安全；人工复核不会关闭 alert。</p>
+<form id="login"><label>邮箱 <input name="email" type="email" autocomplete="username" required></label> <label>密码 <input name="password" type="password" autocomplete="current-password" required></label> <button>登录</button></form>
+<p><button id="refresh" disabled>刷新结果</button> <button id="older" disabled>下一页</button> <button id="logout" disabled>退出</button></p>
+<p id="status" role="status">请用 active Officer／Botanist／Researcher 登录。</p>
+<section id="results" aria-label="AI 分析结果"></section>
+</main>
+</body></html>

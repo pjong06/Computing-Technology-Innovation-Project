@@ -27,9 +27,13 @@ import { useProposalStore } from '../../src/store/useProposalStore';
 
 import { buildSyncSummary } from '../../src/services/syncSummary';
 
+import { routesUploadedText } from '../../src/utils/routeSync';
+
 import {
   getLastSuccessfulSync,
+  resumeAllPausedRecordRetries,
 } from '../../src/services/offlineDatabase';
+import { pullServerRecords, serverPullError } from '../../src/services/serverPull';
 
 const NOT_RECORDED = 'Not recorded';
 
@@ -57,6 +61,25 @@ export default function ProfileScreen() {
 
   const syncAll = useRecordStore(
     (state) => state.syncAll
+  );
+
+  const syncRoutes = useRecordStore(
+    (state) => state.syncRoutes
+  );
+
+  // Saved trace routes still to upload, and how many of those failed last time.
+  const routesNotUploaded = useRecordStore(
+    (state) =>
+      state.routes.filter(
+        (route) => route.syncStatus !== 'uploaded'
+      ).length
+  );
+
+  const routesFailed = useRecordStore(
+    (state) =>
+      state.routes.filter(
+        (route) => route.syncStatus === 'failed'
+      ).length
   );
 
   const unsentProposalCount = useProposalStore(
@@ -250,12 +273,20 @@ export default function ProfileScreen() {
     setIsSyncing(true);
 
     try {
+      await resumeAllPausedRecordRetries();
       /*
        * syncAll() also processes the durable SQLite outbox first,
        * including operations such as an offline delete.
        */
       const recordResult =
         await syncAll();
+
+      /*
+       * Trace routes upload on their own path, after
+       * the plant/visit sync (never inside syncAll).
+       */
+      const routeResult =
+        await syncRoutes();
 
       /*
        * Main also has Species Proposal synchronization.
@@ -271,6 +302,14 @@ export default function ProfileScreen() {
         // successful field-record synchronization.
       }
 
+      let downloaded = 0;
+      let downloadError: string | null = null;
+      try {
+        downloaded = (await pullServerRecords()).downloaded;
+      } catch (error) {
+        downloadError = serverPullError(error);
+      }
+
       const latestSuccessfulSync =
         await getLastSuccessfulSync();
 
@@ -280,14 +319,26 @@ export default function ProfileScreen() {
 
       const totalFailed =
         recordResult.failed +
-        proposalResult.failed;
+        proposalResult.failed +
+        routeResult.failed;
+
+      const routesLine =
+        routeResult.uploaded > 0
+          ? ` ${routesUploadedText(routeResult.uploaded)}.`
+          : '';
 
       if (totalFailed > 0) {
+        const reason = proposalResult.reasons[0] ?? downloadError;
         Alert.alert(
           'Sync needs attention',
-          `${totalFailed} item(s) could not be uploaded. They remain safely stored on this phone and can retry automatically when connectivity returns.`
+          `${totalFailed} item(s) could not be uploaded. They remain safely stored on this phone.${reason ? ` ${reason}` : ''}${routesLine}`
         );
 
+        return;
+      }
+
+      if (downloadError) {
+        Alert.alert('Upload complete; download pending', downloadError);
         return;
       }
 
@@ -297,9 +348,9 @@ export default function ProfileScreen() {
 
       Alert.alert(
         'Sync complete',
-        processed > 0
-          ? `${processed} item(s) processed successfully.`
-          : 'The local sync queue was checked successfully.'
+        processed > 0 || routeResult.uploaded > 0 || downloaded > 0
+          ? `${processed} item(s) uploaded and ${downloaded} server change(s) downloaded.${routesLine}`
+          : 'The local and server sync queues were checked successfully.'
       );
     } catch (error) {
       Alert.alert(
@@ -350,7 +401,7 @@ export default function ProfileScreen() {
     );
   };
 
-  const handleGuestLogIn =
+  const handleGuestLogOut =
     async () => {
       await logout();
 
@@ -876,6 +927,19 @@ export default function ProfileScreen() {
               </View>
             </View>
 
+            {routesNotUploaded > 0 ? (
+              <Text
+                style={
+                  styles.routesLine
+                }
+              >
+                Routes: {routesNotUploaded} not uploaded
+                {routesFailed > 0
+                  ? ` · ${routesFailed} failed (Sync now to retry)`
+                  : ''}
+              </Text>
+            ) : null}
+
             <View
               style={
                 styles.syncFooterRow
@@ -975,6 +1039,62 @@ export default function ProfileScreen() {
           </View>
         )}
 
+        {/* Account Security - Signed-in accounts only */}
+
+        {!isGuest && (
+          <TouchableOpacity
+            style={styles.actionRowCard}
+            activeOpacity={0.8}
+            onPress={() => router.push('/change-password' as never)}
+          >
+            <View style={styles.actionRowLeft}>
+              <View style={styles.actionIconBox}>
+                <Ionicons
+                  name="key-outline"
+                  size={18}
+                  color="#213B2A"
+                />
+              </View>
+              <Text style={styles.actionRowTitle}>
+                Change password
+              </Text>
+            </View>
+            <Ionicons
+              name="chevron-forward"
+              size={18}
+              color="#76877B"
+            />
+          </TouchableOpacity>
+        )}
+
+        {/* Photo credits - everyone (the species photos are public) */}
+
+        <TouchableOpacity
+          style={[styles.actionRowCard, styles.actionRowSpaced]}
+          activeOpacity={0.8}
+          onPress={() => router.push('/photo-credits' as never)}
+          accessibilityRole="button"
+          accessibilityLabel="Photo credits"
+        >
+          <View style={styles.actionRowLeft}>
+            <View style={styles.actionIconBox}>
+              <Ionicons
+                name="images-outline"
+                size={18}
+                color="#213B2A"
+              />
+            </View>
+            <Text style={styles.actionRowTitle}>
+              Photo credits
+            </Text>
+          </View>
+          <Ionicons
+            name="chevron-forward"
+            size={18}
+            color="#76877B"
+          />
+        </TouchableOpacity>
+
         {/* Actions */}
 
         {isGuest && (
@@ -1003,7 +1123,7 @@ export default function ProfileScreen() {
 
           onPress={
             isGuest
-              ? handleGuestLogIn
+              ? handleGuestLogOut
               : handleLogout
           }
         >
@@ -1012,9 +1132,7 @@ export default function ProfileScreen() {
               styles.logoutText
             }
           >
-            {isGuest
-              ? 'Log in'
-              : 'Log out'}
+            Log out
           </Text>
         </TouchableOpacity>
       </ScrollView>
@@ -1292,6 +1410,14 @@ const styles =
       textAlign: 'center',
     },
 
+    routesLine: {
+      fontSize: 12,
+      color: '#526659',
+      fontWeight: '600',
+      textAlign: 'center',
+      marginBottom: 8,
+    },
+
     syncSummaryText: {
       fontSize: 11.5,
       color: '#76877B',
@@ -1328,6 +1454,43 @@ const styles =
       color: '#8A998E',
       textAlign: 'center',
       marginTop: 8,
+    },
+
+    actionRowSpaced: {
+      marginTop: 10,
+    },
+
+    actionRowCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: '#FFFFFF',
+      borderRadius: 18,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      borderWidth: 1,
+      borderColor: '#E6ECE8',
+    },
+
+    actionRowLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+
+    actionIconBox: {
+      width: 34,
+      height: 34,
+      borderRadius: 10,
+      backgroundColor: '#EDF3EE',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+
+    actionRowTitle: {
+      fontSize: 14.5,
+      fontWeight: '700',
+      color: '#213B2A',
     },
 
     signUpBtn: {

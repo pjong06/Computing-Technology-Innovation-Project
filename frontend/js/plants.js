@@ -10,43 +10,42 @@ let totalPages = 0;
 
 const byId = id => document.getElementById(id);
 
+// Waiting for review / Approved / Needs changes / Draft, with its colour class (shared.js).
 function formattedStatus(value) {
-  const status = String(value || 'unknown');
-  const label = {
-    pending: 'Pending',
-    approved: 'Approved',
-    rejected: 'Needs changes'
-  }[status.toLowerCase()] || status.replaceAll('_', ' ');
-  const css = ['pending', 'approved', 'rejected'].includes(status.toLowerCase())
-    ? status.toLowerCase()
-    : '';
-  return { label, css };
+  return reviewStatusDisplay(value);
 }
 
+// The portal's one date format, date only here: "21 Nov 2026" (shared.js formatDay).
 function displayDate(value) {
-  if (!value) return 'None recorded';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? String(value)
-    : date.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  return formatDay(value, 'None recorded');
 }
 
 function makePlantRow(plant) {
   const link = document.createElement('a');
   link.className = 'card plant-row';
   link.href = 'plant.html?id=' + encodeURIComponent(plant.id);
-  link.setAttribute('aria-label', 'View plant ' + (plant.tag_code || 'without a tag code'));
+  link.setAttribute('aria-label', 'View plant ' + displayTag(plant.tag_code, 'without a tag code'));
 
+  const speciesPhoto = plant.photo_thumbnail?.url ? null : plant.species_photo;
+  const photoWrapper = document.createElement('div');
+  photoWrapper.className = 'plant-photo-wrap';
   const image = document.createElement('img');
   image.className = 'plant-thumb';
-  image.alt = '';
+  image.alt = speciesPhoto?.url ? 'Species reference photo' : '';
   image.loading = 'lazy';
-  image.src = plant.photo_thumbnail?.url || PICTURE_BLANK;
+  image.src = plant.photo_thumbnail?.url || speciesPhoto?.url || PICTURE_BLANK;
+  const speciesPhotoLabel = document.createElement('span');
+  speciesPhotoLabel.className = 'species-photo-label';
+  speciesPhotoLabel.textContent = 'Species photo';
+  speciesPhotoLabel.hidden = !speciesPhoto?.url;
+  photoWrapper.appendChild(image);
+  if (speciesPhoto?.url) photoWrapper.appendChild(speciesPhotoLabel);
   image.onerror = function () {
     image.onerror = null;
     image.src = PICTURE_BLANK;
+    speciesPhotoLabel.hidden = true;
   };
-  link.appendChild(image);
+  link.appendChild(photoWrapper);
 
   const info = document.createElement('div');
   const heading = document.createElement('h2');
@@ -68,15 +67,18 @@ function makePlantRow(plant) {
 
   const meta = document.createElement('div');
   meta.className = 'plant-meta';
-  meta.textContent = 'Tag: ' + (plant.tag_code || 'No tag') +
+  meta.textContent = 'Tag: ' + displayTag(plant.tag_code, 'No tag') +
     ' · Location: ' + (plant.location_description || 'Not recorded');
   info.appendChild(meta);
 
   const registered = document.createElement('div');
   registered.className = 'plant-meta';
-  registered.textContent = 'Registered by: ' + (plant.registered_by || 'Unknown') +
+  registered.textContent = (plant.data_source === 'inaturalist'
+    ? 'Imported from iNaturalist · Observer: ' + (plant.source_observer || 'Unknown')
+    : 'Registered by: ' + (plant.registered_by || 'Unknown')) +
     ' · Last visit: ' + displayDate(plant.last_observation_at);
   info.appendChild(registered);
+  // No photo credit in the list: it is on plant detail and the Photo credits page.
   link.appendChild(info);
 
   const status = formattedStatus(plant.plant_status);
@@ -121,6 +123,8 @@ async function loadPlants() {
   if (conservation) params.set('conservation_status', conservation);
   if (registeredBy) params.set('registered_by', registeredBy);
   if (source) params.set('source', source);
+  // Newest registered first unless the officer picks Oldest first.
+  if (byId('plant-sort').value === 'oldest') params.set('sort', 'oldest');
 
   try {
     const result = await api('/officer/plants?' + params.toString());
@@ -210,7 +214,7 @@ if (pageAllowed === false) {
     currentPage = 1;
     void loadPlants();
   });
-  ['plant-species', 'plant-status-filter', 'conservation-filter', 'registered-by-filter', 'source-filter']
+  ['plant-species', 'plant-status-filter', 'conservation-filter', 'registered-by-filter', 'source-filter', 'plant-sort']
     .forEach(id => byId(id).addEventListener('change', () => {
       currentPage = 1;
       void loadPlants();

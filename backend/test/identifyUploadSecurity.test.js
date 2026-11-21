@@ -4,6 +4,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
+const { mockAuth } = require('./helpers/routeTestKit');
+mockAuth(() => ({ userId: 'upload-test-user', role: 'botanist' }));
 
 // Mock PlantNet so tests never call the real AI service.
 const servicePath = require.resolve('../src/services/plantAiService');
@@ -25,7 +27,11 @@ require.cache[servicePath] = {
   },
 };
 
-const identifyRouter = require('../src/routes/identify');
+const {
+  createIdentifyRouter,
+  limitIdentifyRequestSize,
+  MAX_IDENTIFY_REQUEST_BYTES,
+} = require('../src/routes/identify');
 
 // Restore the original module cache so other tests are unaffected.
 if (originalService) {
@@ -36,7 +42,8 @@ if (originalService) {
 
 async function withApp(run) {
   const app = express();
-  app.use('/api/identify', identifyRouter);
+  app.disable('x-powered-by');
+  app.use('/api/identify', createIdentifyRouter());
 
   const server = await new Promise(resolve => {
     const instance = app.listen(0, '127.0.0.1', () => {
@@ -63,6 +70,29 @@ function jpegBlob(size = 4) {
   return new Blob([bytes], { type: 'image/jpeg' });
 }
 
+function checkRequestLength(value) {
+  let responseStatus;
+  let responseBody;
+  let nextCalled = false;
+  const req = {
+    get: name => name.toLowerCase() === 'content-length' ? value : undefined,
+  };
+  const res = {
+    status(status) {
+      responseStatus = status;
+      return this;
+    },
+    json(body) {
+      responseBody = body;
+      return this;
+    },
+  };
+  limitIdentifyRequestSize(req, res, () => {
+    nextCalled = true;
+  });
+  return { responseStatus, responseBody, nextCalled };
+}
+
 async function uploadImage(base, options = {}) {
   const form = new FormData();
 
@@ -72,7 +102,7 @@ async function uploadImage(base, options = {}) {
 
   form.append(
     'image',
-    jpegBlob(options.size ?? 4),
+    options.blob ?? jpegBlob(options.size ?? 4),
     'plant.jpg'
   );
 
@@ -103,6 +133,48 @@ test('Identify: accepts a valid JPEG image', async () => {
   });
 });
 
+test('Identify: PNG and WebP uploads work; WebP reaches AI as a decoded JPEG', async () => {
+  const sharp = require('sharp');
+  const source = { create: { width: 20, height: 20, channels: 3, background: '#228844' } };
+  for (const format of ['png', 'webp']) {
+    identifyCalls = 0;
+    let received;
+    identifyHandler = async image => { received = image; return []; };
+    try {
+      const buffer = await sharp(source).toFormat(format).toBuffer();
+      await withApp(async base => {
+        const response = await uploadImage(base, { blob: new Blob([buffer], { type: `image/${format}` }) });
+        assert.equal(response.status, 200);
+        assert.equal(identifyCalls, 1);
+        const expected = format === 'webp' ? 'jpeg' : 'png';
+        assert.equal(received.mimetype, `image/${expected}`);
+        assert.equal((await sharp(received.buffer).metadata()).format, expected);
+        if (format === 'webp') assert.equal(received.filename, 'plant.jpg');
+      });
+    } finally { identifyHandler = async () => []; }
+  }
+});
+
+test('Identify: rejects disallowed MIME types and spoofed image contents before AI', async () => {
+  identifyCalls = 0;
+  const samples = [
+    ['text/plain', Buffer.from('not an image')],
+    ['image/gif', Buffer.from('GIF89a')],
+    ['image/svg+xml', Buffer.from('<svg></svg>')],
+    ['image/jpeg', Buffer.from('not an image')],
+    ['image/png', Buffer.from('not an image')],
+    ['image/webp', Buffer.from('RIFF0000WEBPinvalid')],
+  ];
+  await withApp(async base => {
+    for (const [type, buffer] of samples) {
+      const response = await uploadImage(base, { blob: new Blob([buffer], { type }) });
+      assert.equal(response.status, 400);
+      assert.match(response.body.message, /JPEG|PNG|WebP/);
+    }
+    assert.equal(identifyCalls, 0);
+  });
+});
+
 test('Identify: rejects images larger than 10 MiB', async () => {
   identifyCalls = 0;
 
@@ -111,11 +183,23 @@ test('Identify: rejects images larger than 10 MiB', async () => {
       size: 10 * 1024 * 1024 + 1,
     });
 
-    assert.equal(result.status, 400);
+    assert.equal(result.status, 413);
     assert.equal(result.body.success, false);
     assert.match(result.body.message, /10 MB/);
     assert.equal(identifyCalls, 0);
   });
+});
+
+test('Identify: rejects oversized HTTP requests before Multer reads the body', () => {
+  const result = checkRequestLength(String(MAX_IDENTIFY_REQUEST_BYTES + 1));
+  assert.equal(result.responseStatus, 413);
+  assert.equal(result.responseBody.success, false);
+  assert.equal(result.nextCalled, false);
+});
+
+test('Identify: accepts a safe or missing Content-Length and still relies on Multer', () => {
+  assert.equal(checkRequestLength(String(MAX_IDENTIFY_REQUEST_BYTES)).nextCalled, true);
+  assert.equal(checkRequestLength(undefined).nextCalled, true);
 });
 
 test('Identify: rejects unexpected multipart fields', async () => {

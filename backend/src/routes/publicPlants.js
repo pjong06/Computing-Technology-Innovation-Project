@@ -1,4 +1,6 @@
 const express = require('express');
+const path = require('node:path');
+const sharp = require('sharp');
 const { TAG_PATTERN } = require('../services/qrService');
 const { removeLegacyObservationSource } = require('../utils/speciesDescription');
 
@@ -6,19 +8,19 @@ const STYLES = `
 :root{color-scheme:light;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#20392d;background:#f3f4ec}
 *{box-sizing:border-box}body{margin:0}header,main,footer{max-width:820px;margin:auto;padding:24px 28px}
 header{display:flex;justify-content:space-between;gap:20px;align-items:center;padding-top:30px}
-.brand{font-weight:750;letter-spacing:-.04em;font-size:23px}.place{font-size:13px;color:#516353}
+.brand{display:block;width:160px;height:auto;max-width:100%}.place{font-size:13px;color:#516353}
 main{padding-top:48px;padding-bottom:56px}.tag{font-size:14px;font-weight:650;color:#48604e;overflow-wrap:anywhere}
 h1{font-family:Georgia,"Times New Roman",serif;font-weight:400;font-style:italic;font-size:clamp(36px,7vw,62px);line-height:1.08;margin:18px 0 14px;overflow-wrap:anywhere}
 .common{font-size:23px;margin:0 0 10px}.local{color:#516353;margin:0}.status{display:inline-block;margin:28px 0 12px;padding:9px 14px;background:#dfebcf;font-size:14px;font-weight:650}
 section{margin-top:34px;max-width:68ch}h2{font-size:18px;line-height:1.4;margin:0 0 10px}p{line-height:1.75;margin:0;white-space:pre-line;overflow-wrap:anywhere}
+.reference-photo{margin:24px 0 0;max-width:540px}.reference-photo img{display:block;width:100%;height:auto;border-radius:10px}.reference-photo figcaption{margin-top:8px;font-size:13px;color:#516353;overflow-wrap:anywhere}
 .demo{margin:20px 0;padding:16px 18px;background:#f5e8c9;color:#574421;font-size:15px;line-height:1.6}footer{color:#516353;font-size:13px;padding-bottom:38px}.notice{margin-top:20px;font-size:14px;color:#516353}
 @media(max-width:480px){header,main,footer{padding-left:22px;padding-right:22px}header{align-items:flex-start;flex-direction:column;gap:8px}main{padding-top:24px}.common{font-size:21px}}
 `;
 const PUBLIC_FIELDS = ['scientific_name', 'common_name', 'local_name', 'description',
     'morphology', 'habitat', 'conservation_status', 'cultural_significance'];
 const STATUS_NAMES = { LC: 'Least Concern', NT: 'Near Threatened', VU: 'Vulnerable',
-    EN: 'Endangered', CR: 'Critically Endangered', EW: 'Extinct in the Wild', EX: 'Extinct',
-    DD: 'Data Deficient', NE: 'Not Evaluated' };
+    EN: 'Endangered', CR: 'Critically Endangered', NE: 'Not Evaluated' };
 
 function escapeHtml(value) {
     return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
@@ -29,19 +31,21 @@ function documentHtml(title, content) {
     return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow"><title>${escapeHtml(title)} | Niah Biotrack</title>
+<link rel="icon" type="image/png" href="/public-assets/logo.png">
 <link rel="stylesheet" href="/public-assets/plant.css"></head><body>
-<header><span class="brand">Niah Biotrack</span><span class="place">Plant reference | Niah National Park</span></header>
+<header><img class="brand" src="/public-assets/logo.png" alt="Niah Biotrack"><span class="place">Plant reference | Niah National Park</span></header>
 <main>${content}</main><footer>Public plant information. Exact locations are not shown on this page.</footer></body></html>`;
 }
 
-function publicPlantHtml(tag, row) {
+function publicPlantHtml(tag, row, photo) {
     // Explicit allowlist: never serialize the RPC result, staff identity or coordinates into HTML.
     const plant = Object.fromEntries(PUBLIC_FIELDS.map(key => [key,
         typeof row[key] === 'string'
             ? (key === 'description' ? removeLegacyObservationSource(row[key]) : row[key]).slice(0, 10000)
             : '']));
     const isDemo = Object.values(plant).some(value => /\bDEMO\b/i.test(value));
-    const status = plant.conservation_status || 'Unknown';
+    const status = plant.conservation_status.trim();
+    const statusLabel = STATUS_NAMES[status] || status || 'Not recorded';
     const sections = [['About this species', plant.description], ['Appearance', plant.morphology],
         ['Habitat', plant.habitat], ['Cultural significance', plant.cultural_significance]];
     const sourceLine = row.data_source === 'inaturalist'
@@ -58,10 +62,54 @@ function publicPlantHtml(tag, row) {
         (plant.common_name ? `<p class="common">${escapeHtml(plant.common_name)}</p>` : '') +
         (plant.local_name ? `<p class="local">Local name: ${escapeHtml(plant.local_name)}</p>` : '') +
         sourceLine +
-        `<div class="status">Conservation status: ${escapeHtml(STATUS_NAMES[status] || status)}</div>` +
+        (photo ? `<figure class="reference-photo"><img src="data:image/jpeg;base64,${photo.image}" alt="${escapeHtml(plant.scientific_name)} species reference photo"><figcaption>${escapeHtml(photo.caption)}</figcaption></figure>` : '') +
+        `<div class="status">Conservation status: ${escapeHtml(statusLabel)}</div>` +
         sections.filter(([, value]) => value.trim()).map(([label, value]) =>
             `<section><h2>${label}</h2><p>${escapeHtml(value)}</p></section>`).join('') +
         (!plant.description.trim() ? '<p class="notice">A species description has not yet been provided.</p>' : ''));
+}
+
+async function loadReferencePhoto(database, scientificName) {
+    if (!scientificName) return null;
+    try {
+        const signal = AbortSignal.timeout(4000);
+        // Both catalogue metadata and downloads use the anonymous client's existing RLS.
+        // The scientific name is unique, and comes from the approved public QR lookup.
+        const { data: species, error: speciesError } = await database.from('species')
+            .select('id').eq('scientific_name', scientificName)
+            .eq('verification_status', 'approved').abortSignal(signal).maybeSingle();
+        if (speciesError || !species) return null;
+
+        const { data: photos, error: photosError } = await database.from('species_media')
+            .select('file_path, source, photographer, attribution, licence_code')
+            .eq('species_id', species.id).eq('media_type', 'image/jpeg')
+            .order('is_primary', { ascending: false }).order('id').limit(3).abortSignal(signal);
+        if (photosError || !photos) return null;
+
+        for (const photo of photos) {
+            const { data: file, error } = await database.storage.from('species-media')
+                .download(photo.file_path, {}, { signal });
+            if (error || !file || file.size > 5 * 1024 * 1024) continue;
+
+            try {
+                // Re-encode before publishing to remove embedded metadata such as GPS.
+                const input = sharp(Buffer.from(await file.arrayBuffer()), { limitInputPixels: 16_000_000 });
+                if ((await input.metadata()).format !== 'jpeg') continue;
+                const jpeg = await input.rotate().resize({ width: 720, height: 720, fit: 'inside',
+                    withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+                const credit = [photo.attribution || photo.photographer,
+                    photo.source === 'inaturalist' ? 'iNaturalist' : '', photo.licence_code?.toUpperCase()]
+                    .filter(Boolean).map(value => value.slice(0, 250));
+                return { image: jpeg.toString('base64'),
+                    caption: ['Species reference photo', ...credit].join(' · ') };
+            } catch {
+                // A missing or invalid primary photo can fall back to another catalogue photo.
+            }
+        }
+    } catch {
+        // Photo failures must not hide the plant's visitor information.
+    }
+    return null;
 }
 
 const { publicQrData } = require('../middleware/publicQrProtection');
@@ -110,10 +158,12 @@ function createPublicPlantsRouter({ client } = {}) {
     router.use(['/p', '/public-assets'], (_req, res, next) => {
         res.set({ 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
             'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY',
-            'Content-Security-Policy': "default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" });
+            'Content-Security-Policy': "default-src 'none'; img-src 'self' data:; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" });
         next();
     });
     router.get('/public-assets/plant.css', (_req, res) => res.type('css').send(STYLES));
+    router.get('/public-assets/logo.png', (_req, res) =>
+        res.sendFile(path.join(__dirname, '../../../frontend/images/logo.png')));
     router.get('/p/:tag', async (req, res) => {
         const tag = req.params.tag;
         const errorPage = (status, title, message) => res.status(status).type('html')
@@ -138,7 +188,8 @@ function createPublicPlantsRouter({ client } = {}) {
             if (result.status === 'not-found') {
                 return errorPage(404, 'Plant information unavailable', 'This tag has no approved public record yet.');
             }
-            return res.type('html').send(publicPlantHtml(tag, result.plant));
+            const photo = await loadReferencePhoto(database, result.plant.scientific_name);
+            return res.type('html').send(publicPlantHtml(tag, result.plant, photo));
         } catch {
             return errorPage(503, 'Temporarily unavailable', 'Plant information could not be loaded. Please try again later.');
         }

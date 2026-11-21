@@ -72,14 +72,59 @@ async function withReviewDetails(supabase, observations) {
     });
 }
 
-// Observations waiting for an officer, oldest first, with plant, species and botanist.
+// List thumbnails: signed links last long enough for a list the officer scrolls through
+// (images load lazily as they come into view). Full-size photos in the detail card use the
+// 60-second links from /:observationId/photos.
+const THUMBNAIL_URL_TTL_SECONDS = 600;
+
+// Adds thumbnail_url to each observation: its primary photo (or its first one), signed in
+// ONE batch request for the whole list. If the links can't be made the list still loads,
+// without thumbnails.
+async function withThumbnails(supabase, observations) {
+    if (observations.length === 0) return observations;
+    try {
+        const { data: media, error: mediaError } = await supabase
+            .from("observation_media")
+            .select("observation_id, file_path, is_primary")
+            .in("observation_id", observations.map(row => row.id));
+        if (mediaError) throw mediaError;
+
+        const chosen = new Map();
+        for (const photo of media || []) {
+            if (!photo.file_path) continue;
+            const current = chosen.get(photo.observation_id);
+            if (!current || (photo.is_primary && !current.is_primary)) {
+                chosen.set(photo.observation_id, photo);
+            }
+        }
+        const paths = [...new Set([...chosen.values()].map(photo => photo.file_path))];
+        if (paths.length === 0) {
+            return observations.map(row => ({ ...row, thumbnail_url: null }));
+        }
+        const { data: signed, error: signError } = await supabase.storage
+            .from("observation-media")
+            .createSignedUrls(paths, THUMBNAIL_URL_TTL_SECONDS);
+        if (signError) throw signError;
+        const urlByPath = new Map((signed || []).map(file => [file.path, file.signedUrl]));
+        return observations.map(row => ({
+            ...row,
+            thumbnail_url: urlByPath.get(chosen.get(row.id)?.file_path) || null,
+        }));
+    } catch (error) {
+        console.error("Observation thumbnail error:", error);
+        return observations.map(row => ({ ...row, thumbnail_url: null }));
+    }
+}
+
+// Observations waiting for an officer, newest first, with plant, species, botanist and a
+// thumbnail. (The page can switch to oldest first.)
 router.get("/pending", async (req, res) => {
     const { data, error } = await req.supabase
         .from("observations")
         .select(OBSERVATION_COLUMNS)
         .eq("review_status", "pending")
         .is("deleted_at", null)
-        .order("observed_at", { ascending: true })
+        .order("observed_at", { ascending: false })
         .limit(100);
 
     if (error) {
@@ -90,7 +135,8 @@ router.get("/pending", async (req, res) => {
     }
 
     try {
-        return res.json({ data: await withReviewDetails(req.supabase, data || []) });
+        const rows = await withReviewDetails(req.supabase, data || []);
+        return res.json({ data: await withThumbnails(req.supabase, rows) });
     } catch (detailError) {
         console.error("Pending observation details error:", detailError);
         return res.status(500).json({ message: "Could not load pending observations" });
@@ -132,20 +178,19 @@ router.get("/rejected", async (req, res) => {
         for (const review of reviews || []) {
             if (!latest.has(review.observation_id)) latest.set(review.observation_id, review);
         }
-        return res.json({
-            data: rows.map(row => ({
-                ...row,
-                rejection_comment: latest.get(row.id)?.comments ?? null,
-                rejected_at: latest.get(row.id)?.reviewed_at ?? null,
-            })),
-        });
+        const withReasons = rows.map(row => ({
+            ...row,
+            rejection_comment: latest.get(row.id)?.comments ?? null,
+            rejected_at: latest.get(row.id)?.reviewed_at ?? null,
+        }));
+        return res.json({ data: await withThumbnails(req.supabase, withReasons) });
     } catch (detailError) {
         console.error("Rejected observation details error:", detailError);
         return res.status(500).json({ message: "Could not load rejected observations" });
     }
 });
 
-// Return short-lived photo links for an observation awaiting officer review.
+// Return short-lived photo links for pending and rejected observations.
 router.get("/:observationId/photos", async (req, res) => {
     const observationId = req.params.observationId;
     const uuidPattern =
@@ -176,9 +221,9 @@ router.get("/:observationId/photos", async (req, res) => {
         });
     }
 
-    if (observation.review_status !== "pending" || observation.deleted_at !== null) {
+    if (!["pending", "rejected"].includes(observation.review_status) || observation.deleted_at !== null) {
         return res.status(409).json({
-            message: "Photos are available only for pending observations"
+            message: "Photos are available only for pending or rejected observations"
         });
     }
 

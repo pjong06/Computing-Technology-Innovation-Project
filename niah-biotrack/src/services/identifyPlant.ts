@@ -1,6 +1,8 @@
 import type * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { fetch } from 'expo/fetch';
 import { File } from 'expo-file-system';
+import { supabase } from '../lib/supabase';
 
 export interface SpeciesSuggestion {
   rank: number;
@@ -8,20 +10,15 @@ export interface SpeciesSuggestion {
   commonName: string | null;
   family: string | null;
   confidence: number;
-  confidenceLevel:
-    | 'High'
-    | 'Moderate'
-    | 'Low';
+  confidenceLevel: 'High' | 'Moderate' | 'Low';
 }
 
 interface IdentificationResponse {
   success: boolean;
-  message?: string;
+  message: string;
   suggestions?: SpeciesSuggestion[];
 }
 
-// Thrown when the request never reached the backend
-// (no connection, or the server address is unreachable).
 export class IdentifyNetworkError extends Error {
   constructor(message: string) {
     super(message);
@@ -29,147 +26,147 @@ export class IdentifyNetworkError extends Error {
   }
 }
 
-const MAX_IMAGE_SIZE =
-  10 * 1024 * 1024;
-
-function trimTrailingSlashes(value: string): string {
-  let end = value.length;
-  while (end > 0 && value[end - 1] === '/') end -= 1;
-  return value.slice(0, end);
-}
-
-const configuredApiBaseUrl =
-  process.env
-    .EXPO_PUBLIC_API_BASE_URL
-    ?.trim();
-
 const API_BASE_URL =
-  configuredApiBaseUrl === undefined ? undefined : trimTrailingSlashes(configuredApiBaseUrl);
+  process.env.EXPO_PUBLIC_API_BASE_URL?.replace(/\/$/, '');
 
-function getUploadName(
-  photo: ImagePicker.ImagePickerAsset
-) {
-  const uriPath =
-    photo.uri
-      .split('?')[0]
-      .toLowerCase();
+/*
+ * Convert the selected image into one consistent upload format.
+ *
+ * This allows common Gallery / Camera formats such as:
+ *
+ * - JPEG / JPG
+ * - PNG
+ * - HEIC
+ * - HEIF
+ * - WebP
+ *
+ * to be sent to the backend as JPEG.
+ *
+ * The exact source formats that can be decoded still depend on
+ * the device / operating system.
+ */
+async function prepareImageForIdentification(
+  photo: ImagePicker.ImagePickerAsset,
+): Promise<{
+  uri: string;
+  name: string;
+  type: string;
+}> {
+  try {
+    /*
+     * Downsample very large phone photos while loading them.
+     *
+     * 2048px keeps enough visual detail for plant
+     * identification while reducing upload size.
+     */
+    const context =
+      ImageManipulator.ImageManipulator.manipulate(
+        photo.uri,
+        {
+          maxWidth: 2048,
+          maxHeight: 2048,
+        },
+      );
 
-  const suppliedName =
-    photo.fileName?.trim();
+    const renderedImage = await context.renderAsync();
 
-  const suppliedNameLower =
-    suppliedName?.toLowerCase();
+    /*
+     * Always save the final upload as JPEG.
+     *
+     * This removes differences between:
+     * iPhone HEIC,
+     * Android WebP,
+     * PNG,
+     * JPEG, etc.
+     */
+    const result = await renderedImage.saveAsync({
+      format: ImageManipulator.SaveFormat.JPEG,
+      compress: 0.85,
+    });
 
-  const isPng =
-    uriPath.endsWith('.png') ||
-    suppliedNameLower?.endsWith(
-      '.png'
-    ) ||
-    photo.mimeType === 'image/png';
+    return {
+      uri: result.uri,
+      name: `plant-${Date.now()}.jpg`,
+      type: 'image/jpeg',
+    };
+  } catch (error) {
+    console.warn(
+      'Image conversion failed:',
+      error,
+    );
 
-  const isJpeg =
-    uriPath.endsWith('.jpg') ||
-    uriPath.endsWith('.jpeg') ||
-    suppliedNameLower?.endsWith(
-      '.jpg'
-    ) ||
-    suppliedNameLower?.endsWith(
-      '.jpeg'
-    ) ||
-    photo.mimeType === 'image/jpeg' ||
-    photo.mimeType === 'image/jpg';
-
-  if (!isPng && !isJpeg) {
     throw new Error(
-      'Choose a JPG or PNG image.'
+      'This image could not be prepared for AI identification. Please choose another image.',
     );
   }
-
-  if (isPng) {
-    return suppliedNameLower?.endsWith(
-      '.png'
-    )
-      ? suppliedName!
-      : 'plant.png';
-  }
-
-  return suppliedNameLower?.endsWith(
-    '.jpg'
-  ) ||
-    suppliedNameLower?.endsWith(
-      '.jpeg'
-    )
-    ? suppliedName!
-    : 'plant.jpg';
 }
 
 export async function identifyPlant(
   photo: ImagePicker.ImagePickerAsset,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<SpeciesSuggestion[]> {
   if (!API_BASE_URL) {
     throw new Error(
-      'EXPO_PUBLIC_API_BASE_URL is not configured.'
+      'Set EXPO_PUBLIC_API_BASE_URL to your backend address.',
     );
   }
 
-  const imageFile =
-    new File(photo.uri);
-
-  if (!imageFile.exists) {
-    throw new Error(
-      'The selected photo is no longer available.'
-    );
+  const { data, error } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (error || !token) {
+    throw new Error('Please sign in before identifying a plant.');
   }
 
-  const fileSize =
-    photo.fileSize ??
-    imageFile.size;
+  /*
+   * Normalise the image before uploading.
+   *
+   * Do not reject HEIC / HEIF / WebP here.
+   * They are converted to JPEG first.
+   */
+  const preparedPhoto =
+    await prepareImageForIdentification(photo);
 
-  if (
-    fileSize &&
-    fileSize > MAX_IMAGE_SIZE
-  ) {
-    throw new Error(
-      'Choose a photo smaller than 10 MB.'
-    );
+  const preparedFile = new File(preparedPhoto.uri);
+  if (!preparedFile.exists) {
+    throw new Error('The prepared image is no longer available.');
   }
 
-  const uploadName =
-    getUploadName(photo);
+  const body = new FormData();
 
-  const formData =
-    new FormData();
-
-  formData.append(
+  body.append(
     'image',
-    imageFile,
-    uploadName
+    preparedFile,
+    preparedPhoto.name,
   );
 
-  let response;
+  let response: Response;
 
   try {
+    /*
+     * Let React Native automatically create the
+     * multipart/form-data boundary.
+     *
+     * Do not manually set Content-Type here.
+     */
     response = await fetch(
       `${API_BASE_URL}/api/identify`,
       {
         method: 'POST',
-        body: formData,
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body,
         signal,
-      }
+      },
     );
   } catch (error) {
     if (signal?.aborted) {
       throw error;
     }
 
-    const detail =
-      error instanceof Error
-        ? error.message
-        : 'Unknown network error';
-
     throw new IdentifyNetworkError(
-      `Photo upload failed: ${detail}`
+      'Cannot reach the backend. Check your internet connection and backend availability.',
     );
   }
 
@@ -180,23 +177,18 @@ export async function identifyPlant(
       (await response.json()) as IdentificationResponse;
   } catch {
     throw new Error(
-      `Backend returned an invalid response (${response.status}).`
+      'The backend returned an invalid response.',
     );
   }
 
-  if (
-    !response.ok ||
-    !result.success
-  ) {
+  if (!response.ok || !result.success) {
     throw new Error(
       result.message ||
-        `Species identification failed (${response.status}).`
+        'Species identification failed. Please retry.',
     );
   }
 
-  return Array.isArray(
-    result.suggestions
-  )
+  return Array.isArray(result.suggestions)
     ? result.suggestions
     : [];
 }
