@@ -29,6 +29,7 @@ import {
   describeAccuracy,
 } from '../src/utils/formatCoordinates';
 import { isPhysicalTag } from '../src/utils/myTags';
+import { navigableCoordinates } from '../src/utils/plantDetails';
 import TransectMapView, {
   type MapTargetPoint,
 } from '../src/components/TransectMapView';
@@ -101,14 +102,9 @@ function resolvePlantCoordinates(
   plant: PlantRecord,
   routes: RecordedRoute[]
 ): { latitude: number; longitude: number } | null {
-  if (
-    typeof plant.latitude === 'number' &&
-    typeof plant.longitude === 'number' &&
-    !Number.isNaN(plant.latitude) &&
-    !Number.isNaN(plant.longitude)
-  ) {
-    return { latitude: plant.latitude, longitude: plant.longitude };
-  }
+  // The plant's own location on the phone, or (approved plants) the server's.
+  const known = navigableCoordinates(plant);
+  if (known) return known;
 
   const linkedRoute = routes.find(
     (r) =>

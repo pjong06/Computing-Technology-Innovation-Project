@@ -39,6 +39,7 @@ import { ApiError, BASE_URL } from '../src/api/client';
 import PlantThumbnail from '../src/components/PlantThumbnail';
 import { thumbnailSources } from '../src/utils/thumbnailSources';
 import { usePlantListStore } from '../src/store/usePlantListStore';
+import { pickPlantDetails } from '../src/utils/plantDetails';
 import { isPhysicalTag } from '../src/utils/myTags';
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
 import { plainConservationStatus } from '../src/utils/conservationStatus';
@@ -72,22 +73,19 @@ function syncStatusText(status: SyncStatus | string | undefined): string {
   }
 }
 
-// The plant's latest measured height and diameter: from the newest visit that has one
-// (stored in cm), otherwise from what was typed when the plant was registered
-// (height in m, diameter in cm). Height is shown in metres, diameter in centimetres.
-function latestHeight(record: { height?: string; observations: ObservationVisit[] }): string {
+// The phone's latest height and diameter (cm): from the newest visit that has one,
+// otherwise from what was typed when the plant was registered (height in m, diameter in cm).
+function localHeightCm(record: { height?: string; observations: ObservationVisit[] }): number | null {
   const visit = record.observations.find((observation) => observation.heightCm !== undefined);
-  const fromVisit = formatHeightFromCm(visit?.heightCm);
-  if (fromVisit) return fromVisit;
+  if (typeof visit?.heightCm === 'number') return visit.heightCm;
   const typed = parseMeasurement(record.height);
-  return typed === null ? NOT_RECORDED : `${typed} m`;
+  return typed === null ? null : Math.round(typed * 100);
 }
 
-function latestDiameter(record: { diameter?: string; observations: ObservationVisit[] }): string {
+function localDiameterCm(record: { diameter?: string; observations: ObservationVisit[] }): number | null {
   const visit = record.observations.find((observation) => observation.diameterCm !== undefined);
-  const fromVisit = formatDiameterCm(visit?.diameterCm);
-  if (fromVisit) return fromVisit;
-  return formatDiameterCm(parseMeasurement(record.diameter)) ?? NOT_RECORDED;
+  if (typeof visit?.diameterCm === 'number') return visit.diameterCm;
+  return parseMeasurement(record.diameter);
 }
 
 function visitChips(observation: ObservationVisit): string[] {
@@ -124,13 +122,18 @@ function visitChips(observation: ObservationVisit): string[] {
   return chips;
 }
 
-// The newest observation's health or life stage, in plain words ("Seedling sapling").
-function latestCondition(visits: ObservationVisit[], field: 'health' | 'stage'): string | null {
+// The phone's newest observation health or life stage (as stored), or null.
+function localCondition(visits: ObservationVisit[], field: 'health' | 'stage'): string | null {
   const newest = [...visits]
     .filter((visit) => Boolean(visit?.[field]))
     .sort((a, b) => Date.parse(b.observedAt || b.date || '') - Date.parse(a.observedAt || a.date || ''))[0];
-  const value = String(newest?.[field] ?? '').replace(/_/g, ' ').trim();
-  return value ? value.charAt(0).toUpperCase() + value.slice(1) : null;
+  return newest?.[field] ? String(newest[field]) : null;
+}
+
+// Health or life stage in plain words ("seedling_sapling" -> "Seedling sapling").
+function conditionText(value: string | null): string | null {
+  const text = String(value ?? '').replace(/_/g, ' ').trim();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : null;
 }
 
 function DetailRow({
@@ -197,6 +200,11 @@ export default function PlantDetailScreen() {
   );
   // The signed server thumbnail of an own plant (from the shared plant list), used when the
   // phone has no photo of it: the same picture its list row shows.
+  // The server's details of this plant from the Plants list (approved plants), when the
+  // phone has none of its own from the tag lookup.
+  const listDetails = usePlantListStore((state) =>
+    matched?.serverId ? state.detailsById[matched.serverId] ?? null : null
+  );
   const signedThumbnail = usePlantListStore((state) =>
     matched && !matched.otherBotanist && matched.serverId ? state.ownThumbnails[matched.serverId] ?? null : null
   );
@@ -336,13 +344,28 @@ export default function PlantDetailScreen() {
     );
   };
 
+  // "This plant": the phone's values and the server's details of an approved plant, merged
+  // (own plants: the phone first; someone else's: the server first; src/utils/plantDetails.ts).
+  const visitsHere = matched.observations ?? [];
+  const shown = pickPlantDetails(
+    !matched.otherBotanist,
+    {
+      locationNote: matched.locationName === 'Location not recorded' ? null : matched.locationName,
+      latitude: matched.latitude ?? null,
+      longitude: matched.longitude ?? null,
+      gpsAccuracyM: matched.gpsAccuracyM ?? null,
+      morphology: matched.morphology ?? null,
+      notes: matched.description ?? null,
+      heightCm: localHeightCm({ ...matched, observations: visitsHere }),
+      diameterCm: localDiameterCm({ ...matched, observations: visitsHere }),
+      health: localCondition(visitsHere, 'health'),
+      stage: localCondition(visitsHere, 'stage'),
+    },
+    matched.serverDetails ?? listDetails
+  );
   const coordinates =
-    matched.latitude !== undefined && matched.longitude !== undefined
-      ? formatCoordinates(
-          matched.latitude,
-          matched.longitude,
-          matched.gpsAccuracyM ?? null
-        )
+    shown.latitude !== null && shown.longitude !== null
+      ? formatCoordinates(shown.latitude, shown.longitude, shown.gpsAccuracyM)
       : matched.gpsCoordination;
 
   const review =
@@ -634,31 +657,31 @@ export default function PlantDetailScreen() {
                 ) : null}
               </View>
             ) : null}
-            <DetailRow label="Location note" value={matched.locationName} />
+            <DetailRow label="Location note" value={shown.locationNote} />
             <DetailRow label="Coordinates" value={coordinates} />
             <DetailRow
               label="Height (m)"
-              value={latestHeight(matched)}
+              value={formatHeightFromCm(shown.heightCm) ?? NOT_RECORDED}
             />
             <DetailRow
               label="Diameter (cm)"
-              value={latestDiameter(matched)}
+              value={formatDiameterCm(shown.diameterCm) ?? NOT_RECORDED}
             />
-            <DetailRow label="Health" value={latestCondition(matched.observations ?? [], 'health')} />
-            <DetailRow label="Life stage" value={latestCondition(matched.observations ?? [], 'stage')} />
+            <DetailRow label="Health" value={conditionText(shown.health)} />
+            <DetailRow label="Life stage" value={conditionText(shown.stage)} />
           </View>
 
-          {matched.morphology?.trim() ? (
+          {shown.morphology ? (
             <>
               <Text style={styles.heading}>MORPHOLOGICAL CHARACTERISTICS</Text>
-              <Text style={styles.body}>{matched.morphology.trim()}</Text>
+              <Text style={styles.body}>{shown.morphology}</Text>
             </>
           ) : null}
 
-          {matched.description?.trim() ? (
+          {shown.notes ? (
             <>
               <Text style={styles.heading}>NOTES</Text>
-              <Text style={styles.body}>{matched.description.trim()}</Text>
+              <Text style={styles.body}>{shown.notes}</Text>
             </>
           ) : null}
 

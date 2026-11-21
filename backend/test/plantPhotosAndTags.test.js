@@ -68,10 +68,13 @@ test('plant list: photo_url only for others\' public plants with a copy; own pla
   const result = await callRoute('/api/plants', plantRouter, { path: '/?page=1' });
   assert.equal(result.status, 200, JSON.stringify(result.body));
   const byId = Object.fromEntries(result.body.data.map((row) => [row.id, row.photo_url]));
-  assert.deepEqual(byId, { p1: '/p/NIAH-PLT-00001/photo', p2: null, p3: null, p4: null, p5: null, p6: null });
+  // p4 (another botanist's plant that isn't approved) is not listed at all.
+  assert.deepEqual(byId, { p1: '/p/NIAH-PLT-00001/photo', p2: null, p3: null, p5: null, p6: null });
   // Who registered a plant is used, not sent; no paths, no links to storage.
   assert.ok(result.body.data.every((row) => !('registered_by' in row)));
-  assert.doesNotMatch(JSON.stringify(result.body), /storage|token=|\.jpg|signed|latitude|longitude|location/);
+  assert.doesNotMatch(JSON.stringify(result.body), /storage|token=|\.jpg|signed/);
+  // Coordinates of approved plants only inside "details" (staff), never as top-level fields.
+  assert.ok(result.body.data.every((row) => !('latitude' in row) && !('location' in row)));
   // Only the plants with a copy were checked with the visitor page's rule.
   assert.deepEqual(db.calls.filter((c) => c[0] === 'rpc').map((c) => c[2].p_qr).sort(), ['NIAH-PLT-00001', 'NIAH-PLT-00003']);
 });

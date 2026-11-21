@@ -1,5 +1,6 @@
 import { apiFetch, ApiError } from '../api/client';
 import { parseTagCode } from '../utils/tagCode';
+import { detailsFromServer } from '../utils/plantDetails';
 import {
   IdentificationStatus,
   RecordStatus,
@@ -39,6 +40,8 @@ interface TagLookupResponse {
     gps_accuracy_m?: number | null;
     // Public photo address for a plant someone else registered ("/p/<tag>/photo"), or null.
     photo_url?: string | null;
+    // "This plant" details of an approved plant (location, notes, latest approved observation).
+    details?: unknown;
     scientific_name?: string | null;
     common_name?: string | null;
     species?: {
@@ -77,6 +80,7 @@ export async function lookupTag(rawTag: string): Promise<TagLookupResult> {
         ? new Date(data.registered_at)
         : new Date();
     const plantStatus = data.plant_status?.toLowerCase();
+    const serverDetails = detailsFromServer(data.details);
     const cachedRecord: PlantRecord = {
       id: data.client_record_id || serverId,
       serverId,
@@ -97,8 +101,12 @@ export async function lookupTag(rawTag: string): Promise<TagLookupResult> {
         data.location_name ||
         data.location_description ||
         'Location not recorded',
-      gpsAccuracyM: data.gps_accuracy_m ?? null,
+      // Approved plants: their location, so "Find plant" can navigate to them.
+      latitude: serverDetails?.latitude ?? undefined,
+      longitude: serverDetails?.longitude ?? undefined,
+      gpsAccuracyM: serverDetails?.gpsAccuracyM ?? data.gps_accuracy_m ?? null,
       gpsCoordination: '',
+      serverDetails,
       photoUris: [],
       photoEntries: [],
       recordStatus: RecordStatus.COMPLETE,
