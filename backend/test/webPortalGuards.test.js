@@ -197,9 +197,10 @@ test('species proposals page is officer-only, guarded, and its controls match th
   assert.match(html, /<script src="js\/proposals\.js"><\/script>/);
 });
 
-test('approval queue labels pending first plant records and revisits', () => {
+test('approval queue labels pending first plant records NEW PLANT and visits OBSERVATION', () => {
   const queue = read('frontend/js/queue.js');
-  assert.match(queue, /observation\.plant\?\.plant_status === 'pending' \? 'New plant' : 'Revisit'/);
+  assert.match(queue, /observation\.plant\?\.plant_status === 'pending' \? 'New plant' : 'Observation'/);
+  assert.match(queue, /label\.textContent = visitKind\(observation\)\.toUpperCase\(\);/);
   assert.match(queue, /visitKindBadge\(observation\)/);
   const reviews = read('backend/src/routes/officerReviews.js');
   assert.match(reviews, /species_id, plant_status/);
@@ -783,7 +784,8 @@ test('tab bars are drawn by shared.js as a div (not a <nav>, which has the menu 
 });
 
 test('review page headings, and a one-sentence description under every page heading', () => {
-  assert.match(read('frontend/queue.html'), /<h1>Field records <span>to review<\/span><\/h1>/);
+  // Review > Field records: the section name as the heading, then one plain line.
+  assert.match(read('frontend/queue.html'), /<h1>Review<\/h1>\s*<p class="lead">Check field records before they become official, for the conservation officer\.<\/p>/);
   assert.match(read('frontend/proposals.html'), /<h1>Species <span>proposals<\/span><\/h1>/);
   assert.match(read('frontend/rejected.html'), /<h1>Rejected <span>history<\/span><\/h1>/);
   for (const page of ['species', 'editor', 'proposals', 'queue', 'rejected', 'plants', 'plant', 'map', 'alerts', 'reports', 'users']) {

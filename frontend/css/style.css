@@ -93,10 +93,25 @@ body {
   min-height: 100vh;
 }
 
+/* The page uses the full width, with the same space left and right (32 px). On very wide
+   screens the content stays at about 1600 px and is centred (equal space on both sides). */
 main {
   width: 100%;
-  max-width: 1280px;
-  padding: 28px 32px;
+  padding: 28px max(32px, calc((100% - 1600px) / 2));
+}
+
+/* Wide pages: forms and description text keep a readable width inside their cards. */
+.form {
+  max-width: 980px;
+}
+
+.lead {
+  max-width: 80ch;
+}
+
+/* Long text stays at a readable line length on wide screens. */
+main p {
+  max-width: 110ch;
 }
 
 /* Navigation */
@@ -308,6 +323,8 @@ textarea {
 .grow {
   flex: 1;
   min-width: 180px;
+  /* On wide screens search boxes and filters don't stretch across the whole page. */
+  max-width: 560px;
 }
 
 /* Cards */
