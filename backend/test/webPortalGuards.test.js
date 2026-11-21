@@ -410,6 +410,21 @@ test('the map loads routes only from the officer-only endpoint, after the page g
   assert.doesNotMatch(map, /loadRoutes\(\)\.catch\(error => \{[^}]*showUnexpectedError/);
 });
 
+test('the map does not offer trace routes (the app no longer records them); the code stays', () => {
+  const map = read('frontend/js/map.js');
+  const html = read('frontend/map.html');
+  assert.match(map, /const ROUTES_ON_MAP = false;/);
+  // No checkbox, no note, no layer and no request while it is off.
+  assert.match(html, /<label class="map-toggle" id="map-routes-toggle" hidden>/);
+  assert.match(html, /<p class="muted" id="map-route-note" hidden>/);
+  assert.match(read('frontend/css/style.css'), /\.map-toggle\[hidden\] \{\s*display: none;/);
+  assert.match(map, /if \(ROUTES_ON_MAP && document\.getElementById\('map-show-routes'\)\.checked\) \{\s*routeLayer\.addTo\(map\);/);
+  assert.match(map, /if \(ROUTES_ON_MAP\) \{\s*loadRoutes\(\)\.catch/);
+  assert.doesNotMatch(html, /trace routes|marker or line/);
+  // The endpoint is kept.
+  assert.match(read('backend/src/routes/officerMap.js'), /router\.get\("\/routes"/);
+});
+
 test('route popups escape every value (botanist, plant tag, scientific name)', () => {
   const vm = require('node:vm');
   const map = read('frontend/js/map.js');
@@ -464,11 +479,12 @@ test('route popups escape every value (botanist, plant tag, scientific name)', (
   assert.match(popupSource, /escapePopupText\('Not linked to a plant'\)/);
 });
 
-test('the "Show routes" checkbox exists, is on by default and is remembered in this browser', () => {
+test('the "Show routes" checkbox is kept (hidden for now), on by default and remembered in this browser', () => {
   const html = read('frontend/map.html');
   const map = read('frontend/js/map.js');
+  // Hidden while ROUTES_ON_MAP is false (the app no longer records routes); the code stays.
   assert.match(html, /<input type="checkbox" id="map-show-routes" checked onchange="toggleRoutes\(this\.checked\)">\s*Show routes/);
-  assert.match(html, /id="map-route-note">Routes from the last 90 days\.</);
+  assert.match(html, /id="map-route-note" hidden>Routes from the last 90 days\.</);
   assert.match(map, /function toggleRoutes\(show\)/);
   assert.match(map, /const SHOW_ROUTES_KEY = 'niah_map_show_routes';/);
   // Unknown or missing value: shown (on by default); storage errors never break the map.
