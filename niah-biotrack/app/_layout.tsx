@@ -111,6 +111,7 @@ export default function RootLayout() {
         <Stack.Screen name="propose-species" />
         <Stack.Screen name="sign-up" />
         <Stack.Screen name="plant-info" />
+        <Stack.Screen name="iot-task-detail" />
       </Stack>
 
       <Toast />
