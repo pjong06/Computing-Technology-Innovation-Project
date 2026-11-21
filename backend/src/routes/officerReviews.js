@@ -73,6 +73,73 @@ async function withReviewDetails(supabase, observations) {
     });
 }
 
+// For the review queue's detail card: the plant's GPS point and its accuracy, its morphology
+// text, and its previous approved visit (date and height) before this one. Each lookup is
+// separate and optional: if one can't be read, those fields are null and the queue still loads.
+async function withQueueExtras(supabase, observations) {
+    if (observations.length === 0) return observations;
+    const plantIds = idsOf(observations, "plant_id");
+
+    const readOptional = async (label, run) => {
+        try {
+            const { data, error } = await run();
+            if (error) throw error;
+            return data || [];
+        } catch (error) {
+            console.error(`Review queue ${label} error:`, error?.message || error);
+            return [];
+        }
+    };
+
+    const [points, plantRows, approvedVisits] = await Promise.all([
+        readOptional("GPS", () => supabase
+            .from("plant_map_points")
+            .select("id, latitude, longitude")
+            .in("id", plantIds)),
+        readOptional("plant details", () => supabase
+            .from("plants")
+            .select("id, gps_accuracy_m, morphology")
+            .in("id", plantIds)),
+        readOptional("previous visit", () => supabase
+            .from("observations")
+            .select("plant_id, observed_at, height_cm")
+            .in("plant_id", plantIds)
+            .eq("review_status", "approved")
+            .is("deleted_at", null)
+            .order("observed_at", { ascending: false })
+            .limit(1000)),
+    ]);
+
+    const pointById = new Map(points.map(row => [row.id, row]));
+    const plantById = new Map(plantRows.map(row => [row.id, row]));
+    const number = value => (value === null || value === undefined || !Number.isFinite(Number(value)) ? null : Number(value));
+
+    return observations.map(observation => {
+        const point = pointById.get(observation.plant_id);
+        const extra = plantById.get(observation.plant_id);
+        // Visits are newest first: the first one before this visit is the previous one.
+        const previous = approvedVisits.find(visit =>
+            visit.plant_id === observation.plant_id &&
+            visit.observed_at && observation.observed_at &&
+            visit.observed_at < observation.observed_at) || null;
+        return {
+            ...observation,
+            plant: observation.plant
+                ? {
+                    ...observation.plant,
+                    latitude: number(point?.latitude),
+                    longitude: number(point?.longitude),
+                    gps_accuracy_m: number(extra?.gps_accuracy_m),
+                    morphology: extra?.morphology || null,
+                }
+                : null,
+            previous_observation: previous
+                ? { observed_at: previous.observed_at, height_cm: number(previous.height_cm) }
+                : null,
+        };
+    });
+}
+
 // List thumbnails: signed links last long enough for a list the officer scrolls through
 // (images load lazily as they come into view). Full-size photos in the detail card use the
 // 60-second links from /:observationId/photos.
@@ -136,7 +203,7 @@ router.get("/pending", async (req, res) => {
     }
 
     try {
-        const rows = await withReviewDetails(req.supabase, data || []);
+        const rows = await withQueueExtras(req.supabase, await withReviewDetails(req.supabase, data || []));
         return res.json({ data: await withThumbnails(req.supabase, rows) });
     } catch (detailError) {
         console.error("Pending observation details error:", detailError);

@@ -168,7 +168,10 @@ test('pending observations come with plant, species and botanist details', async
       plant: {
         id: PLANT, tag_code: 'NIAH-PLT-00001', location_description: 'Left of boardwalk',
         plant_status: 'pending', scientific_name: 'Nepenthes ampullaria', common_name: 'Pitcher plant',
+        // GPS, accuracy and morphology for the detail card (none recorded here).
+        latitude: null, longitude: null, gps_accuracy_m: null, morphology: null,
       },
+      previous_observation: null,
       thumbnail_url: null, // no photos on this observation
     }]);
   });
@@ -385,5 +388,45 @@ test('if thumbnails cannot be signed, the review list still loads without them',
     const result = await call(`${base}/pending`);
     assert.equal(result.status, 200);
     assert.equal(result.body.data[0].thumbnail_url, null);
+  });
+});
+
+// ---- The review page's detail card ----
+
+test('pending records carry the GPS point, accuracy, morphology and the previous approved visit', async () => {
+  const visit = { ...observation, observed_at: '2026-11-19T07:30:00Z', height_cm: 160 };
+  db = fakeDb({
+    observations: [
+      visit,
+      // Approved visits of the same plant, newest first (as the query orders them).
+      { plant_id: PLANT, observed_at: '2026-11-25T01:00:00Z', height_cm: 170 }, // after this visit: ignored
+      { plant_id: PLANT, observed_at: '2026-11-12T02:00:00Z', height_cm: 150 },
+      { plant_id: PLANT, observed_at: '2026-10-01T02:00:00Z', height_cm: 120 },
+    ],
+    ...details,
+    plant_map_points: [{ id: PLANT, latitude: 3.8147558, longitude: 113.7793922 }],
+    plants: [{ ...details.plants[0], gps_accuracy_m: 4.6, morphology: 'Climbing, lower pitchers green' }],
+  });
+  await withApp(async base => {
+    const result = await call(`${base}/pending`);
+    assert.equal(result.status, 200);
+    const row = result.body.data.find(item => item.id === OBS);
+    assert.equal(row.plant.latitude, 3.8147558);
+    assert.equal(row.plant.longitude, 113.7793922);
+    assert.equal(row.plant.gps_accuracy_m, 4.6);
+    assert.equal(row.plant.morphology, 'Climbing, lower pitchers green');
+    assert.deepEqual(row.previous_observation, { observed_at: '2026-11-12T02:00:00Z', height_cm: 150 });
+  });
+  // Previous visits: approved and not hidden only.
+  assert.ok(db.calls.some(c => c[0] === 'observations' && c[1] === 'eq' && c[2] === 'review_status' && c[3] === 'approved'));
+});
+
+test('if the extra details cannot be read, the queue still loads without them', async () => {
+  db = fakeDb({ observations: [observation], ...details, plant_map_points: { error: { message: 'PRIVATE' } } });
+  await withApp(async base => {
+    const result = await call(`${base}/pending`);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.data[0].plant.latitude, null);
+    assert.doesNotMatch(JSON.stringify(result.body), /PRIVATE/);
   });
 });

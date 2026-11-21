@@ -3,10 +3,99 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Field records to review - Niah Biotrack</title>
+<title>Review - Niah Biotrack</title>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous">
 <link rel="icon" href="images/logo.png">
 <link rel="stylesheet" href="css/style.css">
+<style>
+.review-layout { display: grid; grid-template-columns: 440px minmax(0, 1fr); gap: 20px; align-items: start; }
+/* The count on the left, the sort select (added by shared.js after the count) on the right. */
+.review-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 12px; }
+.review-toolbar #queue-count { margin: 0; }
+.review-toolbar .list-sort-bar { margin: 0; }
+.review-layout[hidden] { display: none; }
+#queue-list { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.review-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; align-items: center; width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 14px; background: var(--card); color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.review-row:hover { border-color: var(--sage); }
+.review-row.selected { outline: 2px solid var(--pri); outline-offset: -1px; border-color: var(--pri); }
+.review-row img { width: 64px; height: 64px; border-radius: 10px; object-fit: cover; background: var(--mint); }
+.review-row-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.review-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.review-type { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--mute); }
+.review-type.new-plant { color: var(--infot); }
+.review-tag { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.review-sci { font-style: italic; overflow-wrap: anywhere; }
+.review-meta { color: var(--mute); font-size: 12px; overflow-wrap: anywhere; }
+.review-row .status-badge { flex-shrink: 0; }
+#queue-more { align-self: flex-start; }
+#queue-more[hidden] { display: none; }
+.review-detail { min-width: 0; padding: 18px; container-type: inline-size; }
+/* Top of the card: the photo (about 320 x 320) on the left, the details on the right. */
+.review-top { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; align-items: start; }
+.review-media { min-width: 0; }
+.review-info { min-width: 0; }
+.review-photo { display: block; width: 100%; height: 320px; object-fit: cover; border-radius: 12px; background: var(--mint); }
+.review-photo.can-open { cursor: zoom-in; }
+.review-photo.can-open:focus-visible { outline: 2px solid var(--pri); outline-offset: 2px; }
+.review-info .review-title { margin-top: 0; }
+.review-previous { margin: 12px 0 0; }
+/* The photo full size over the page. */
+.photo-overlay { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(0, 0, 0, 0.85); cursor: zoom-out; }
+.photo-overlay img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
+.photo-overlay-close { position: absolute; top: 14px; right: 18px; width: 40px; height: 40px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.15); color: #fff; font-size: 26px; line-height: 40px; cursor: pointer; }
+/* Below the two columns, full width: the map on the left, the GPS text on the right. */
+.review-map-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 260px); gap: 16px; align-items: center; margin-top: 18px; }
+.review-map-row.no-map { grid-template-columns: 1fr; }
+.review-map-row .review-gps { margin: 0; }
+.review-thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.review-thumbs button { padding: 0; border: 2px solid transparent; border-radius: 8px; background: none; cursor: pointer; }
+.review-thumbs button.on { border-color: var(--pri); }
+.review-thumbs img { display: block; width: 56px; height: 56px; object-fit: cover; border-radius: 6px; }
+.review-title { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 16px 0 4px; }
+.review-title h2 { margin: 0; font-size: 22px; font-style: italic; font-weight: 600; overflow-wrap: anywhere; }
+.review-subline { color: var(--mute); font-size: 13px; overflow-wrap: anywhere; }
+.review-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 16px 0; }
+.review-tile { padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; min-width: 0; }
+.review-tile .tile-label { color: var(--mute); font-size: 12px; }
+.review-tile .tile-value { margin-top: 2px; font-weight: 700; overflow-wrap: anywhere; }
+#review-map { height: 220px; border-radius: 12px; background: var(--mint); }
+.review-gps { margin: 6px 0 0; color: var(--mute); font-size: 13px; }
+.review-section { margin-top: 14px; }
+.review-section h3 { margin: 0 0 4px; font-size: 13px; color: var(--mute); font-weight: 600; }
+.review-section p { margin: 0; white-space: pre-line; overflow-wrap: anywhere; }
+.review-actions { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.review-actions label { display: flex; flex-direction: column; gap: 4px; color: var(--mute); font-size: 13px; }
+.review-actions textarea { min-height: 70px; }
+.send-back-box { margin-top: 14px; padding: 12px; border: 1px solid var(--er); border-radius: 12px; }
+.send-back-box[hidden] { display: none; }
+.review-actions .btn[hidden] { display: none; }
+/* Approve / Send back (and Confirm send back / Cancel) side by side, equal width. */
+.review-actions .acts { display: flex; gap: 10px; }
+.review-actions .acts > .btn { flex: 1 1 0; min-width: 0; }
+.review-error { margin: 6px 0 0; color: var(--ert); font-size: 13px; font-weight: 600; }
+.review-error[hidden] { display: none; }
+.btn.danger-outline { background: none; color: var(--ert); border: 1px solid var(--ert); }
+.btn:disabled { opacity: 0.6; cursor: default; }
+/* Just above the breakpoint the list is a little narrower, so the record has room. */
+@media (min-width: 1000px) and (max-width: 1199px) {
+  .review-layout { grid-template-columns: 360px minmax(0, 1fr); }
+}
+@media (max-width: 999px) {
+  .review-layout { grid-template-columns: 1fr; }
+}
+/* Under 1200 px wide (or whenever the card is too narrow for two columns): the photo above
+   the details. */
+@media (max-width: 1199px) {
+  .review-top { grid-template-columns: minmax(0, 1fr); }
+}
+@container (max-width: 759px) {
+  .review-top { grid-template-columns: minmax(0, 1fr); }
+}
+@container (max-width: 520px) {
+  .review-map-row { grid-template-columns: minmax(0, 1fr); }
+}
+</style>
 </head>
 <body>
 <div class="app">
@@ -15,11 +104,18 @@
 
 <main>
 <section class="page on">
-  <h1>Field records <span>to review</span></h1>
-  <p class="lead">New plants and revisits sent from the mobile app, for the conservation officer to approve or send back with a reason.</p>
-  <p class="muted" id="queue-count"></p>
-  <div class="split" id="queue-area">
-    <div id="queue-list"></div>
+  <div id="queue-header">
+    <h1>Review</h1>
+    <p class="lead">Check field records before they become official, for the conservation officer.</p>
+  </div>
+  <div class="review-toolbar">
+    <p class="muted" id="queue-count"></p>
+  </div>
+  <div class="review-layout" id="queue-area">
+    <div>
+      <div id="queue-list"></div>
+      <button class="btn ghost" id="queue-more" type="button" hidden></button>
+    </div>
     <div id="queue-detail"></div>
   </div>
   <div class="card" id="queue-empty" hidden>Nothing waiting for review. New field records from the mobile app will appear here after they sync.</div>
@@ -28,6 +124,7 @@
 </div>
 
 <div id="toast" role="status"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R" crossorigin="anonymous"></script>
 <script src="js/shared.js"></script>
 <script src="js/queue.js"></script>
