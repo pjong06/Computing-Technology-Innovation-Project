@@ -194,7 +194,6 @@ void (async()=>{
       if(action==='metric'){state.metric=v;render();return;}
       if(action==='range'){state.range=v;await loadReadings();render();return;}
       if(action==='apply-dates'){state.from=root.querySelector('#from-date').value;state.to=root.querySelector('#to-date').value;await loadReadings();render();return;}
-      if(action==='more-readings'){await loadReadings(true);render();return;}
       if(action==='export'){await exportReadings();return;}
       if(action==='history'){const index=state.stations.findIndex(s=>s.id===state.station);openWorkspaceHistory({station:state.station,name:'Station '+(index+1)+' · '+(state.stations[index]?.station_code||''),range:{...(state.readingBounds||bounds())},readings:state.readings,hasMore:state.readingsMore,api,exportReadings,formatTime:time,formatValue:value,escape:esc,onClose:()=>root.querySelector('[data-action=history]')?.focus()});return;}
       if(action==='full-photo'){

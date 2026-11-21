@@ -3,7 +3,7 @@
 // If someone is already logged in, skip the form and go to their home page.
 const alreadyIn = getCurrentUser();
 if (alreadyIn !== null) {
-  goToHome();
+  goToHome().catch(error => showAuthError(error.message || 'Unable to open the portal. Please try again.'));
 }
 
 // Shows a red message under the form. Pass '' to hide it.
