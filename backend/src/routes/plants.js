@@ -6,6 +6,7 @@ const { generateQrLabelPng } = require("../services/qrLabelService");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { stripPhotoMetadata, InvalidPhotoError } = require("../services/photoSanitizer");
 const { publicPhotoUrlsFor, removePublicPlantPhotoByTag } = require("../services/publicPlantPhotos");
+const { ownPlantThumbnails } = require("../services/plantThumbnails");
 
 const router = express.Router();
 
@@ -84,6 +85,8 @@ router.get("/", requireRole("botanist", "officer", "researcher"), async (req, re
             "id, species_id, qr_code_value, plant_status, registered_at, registered_by",
             { count: "exact" }
         )
+        // Deleted plants are not listed.
+        .is("deleted_at", null)
         .order("registered_at", { ascending: false })
         .range(firstRow, firstRow + pageSize - 1);
 
@@ -92,20 +95,30 @@ router.get("/", requireRole("botanist", "officer", "researcher"), async (req, re
         return res.status(500).json({ message: "Could not load plants" });
     }
 
-    // Other botanists' and imported plants on the public QR page: their public photo
-    // (photo_url). Own plants use their own photos. registered_by is only used here and is
-    // not sent.
-    const photoUrls = await publicPhotoUrlsFor(
-        req.supabase,
-        data.filter(plant => plant.registered_by !== req.user.id)
-    );
+    // Thumbnails for every row, batched for the whole page (no request per plant):
+    //   - other botanists' and imported plants on the public QR page: their public photo
+    //     (photo_url, "/p/<tag>/photo");
+    //   - the botanist's own plants: a short-lived signed link to the plant's main photo, or
+    //     its first observation's photo (thumbnail_url, thumbnail_key, thumbnail_expires_at).
+    // registered_by is only used here and is not sent.
+    const mine = data.filter(plant => plant.registered_by === req.user.id);
+    const [photoUrls, ownThumbnails] = await Promise.all([
+        publicPhotoUrlsFor(req.supabase, data.filter(plant => plant.registered_by !== req.user.id)),
+        ownPlantThumbnails(req.supabase, mine),
+    ]);
 
     return res.json({
-        data: data.map(({ registered_by: _registeredBy, ...plant }) => ({
-            ...plant,
-            plant_id: plant.id,
-            photo_url: photoUrls.get(plant.id) || null
-        })),
+        data: data.map(({ registered_by: _registeredBy, ...plant }) => {
+            const own = ownThumbnails.get(plant.id);
+            return {
+                ...plant,
+                plant_id: plant.id,
+                photo_url: photoUrls.get(plant.id) || null,
+                thumbnail_url: own ? own.url : null,
+                thumbnail_key: own ? own.key : null,
+                thumbnail_expires_at: own ? own.expires_at : null
+            };
+        }),
         pagination: {
             page,
             page_size: pageSize,

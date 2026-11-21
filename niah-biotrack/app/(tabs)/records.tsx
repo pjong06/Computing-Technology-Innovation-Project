@@ -56,11 +56,12 @@ import { routesUploadedText } from '../../src/utils/routeSync';
 import { resolveStoredPhotoUri } from '../../src/utils/photoStorage';
 import { getLastSuccessfulSync, resumeAllPausedRecordRetries } from '../../src/services/offlineDatabase';
 import { pullServerRecords, serverPullError } from '../../src/services/serverPull';
-import { fetchOtherApprovedPlants, type OtherApprovedPlant } from '../../src/services/approvedPlants';
+import { type OtherApprovedPlant } from '../../src/services/approvedPlants';
+import { resetExpiryRefresh, usePlantListStore } from '../../src/store/usePlantListStore';
 import { lookupTag, describeTagLookup } from '../../src/services/tagLookup';
 import { FilterButton, FilterPills, FilterSheet } from '../../src/components/FilterSheet';
-import RemotePhoto from '../../src/components/RemotePhoto';
-import { publicPhotoUri } from '../../src/utils/publicPhoto';
+import PlantThumbnail from '../../src/components/PlantThumbnail';
+import { thumbnailSources, type SignedThumbnail, type ThumbnailSource } from '../../src/utils/thumbnailSources';
 import { BASE_URL } from '../../src/api/client';
 
 // Plants (botanist tab, route "records"): one row per plant. Each row shows the most urgent
@@ -74,15 +75,13 @@ type PlantItem = PlantRow & {
   record: PlantRecord | null; // null: another botanist's plant that is not on this phone
   tag: string | null;
   speciesId: string | null;
-  photoUri: string | null;
+  // Where its picture comes from, in order (phone photo, signed thumbnail, public copy).
+  photo: ThumbnailSource[];
   place: string;
   badge: Badge;
   action: NeedsActionReason | null;
   reason: string | null;
 };
-
-// Kept between visits to the tab, so the list does not flicker while it reloads.
-let otherPlantsCache: OtherApprovedPlant[] = [];
 
 function timestampFor(value?: string | null): number {
   const time = value ? Date.parse(value) : Number.NaN;
@@ -96,9 +95,10 @@ function dayText(value?: string | null): string | null {
     : new Date(time).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-// The thumbnail is the plant's own photo, or the leaf placeholder (species reference photos
-// are not shown).
-function localItem(key: string, stored: PlantRecord): PlantItem {
+// The thumbnail is the plant's own photo (on the phone, else the signed server thumbnail
+// from the list), its public copy for someone else's plant, or the leaf placeholder
+// (species reference photos are not shown).
+function localItem(key: string, stored: PlantRecord, signed: SignedThumbnail | null): PlantItem {
   // Older or partly downloaded records may lack these lists; treat them as empty.
   const visits = (Array.isArray(stored.observations) ? stored.observations : []).filter(Boolean);
   const record: PlantRecord = { ...stored, observations: visits };
@@ -151,12 +151,14 @@ function localItem(key: string, stored: PlantRecord): PlantItem {
     reason: pick.reason,
     tag: record.tagCode ?? null,
     speciesId: record.speciesId,
-    // Its own photo on this phone; for a plant someone else registered, its public photo.
-    photoUri: ownPhoto
-      ? resolveStoredPhotoUri(ownPhoto)
-      : record.otherBotanist
-        ? publicPhotoUri(BASE_URL, record.publicPhotoUrl)
-        : null,
+    // Its own photo on this phone, else its signed server thumbnail; for a plant someone else
+    // registered, its public photo.
+    photo: thumbnailSources({
+      localUri: ownPhoto ? resolveStoredPhotoUri(ownPhoto) : null,
+      signed: record.otherBotanist ? null : signed,
+      publicPath: record.otherBotanist ? record.publicPhotoUrl : null,
+      baseUrl: BASE_URL,
+    }),
     place: [record.locationName, when].filter(Boolean).join(' · '),
     searchText: [name, record.commonName, record.plantName, record.tagCode].filter(Boolean).join(' '),
   };
@@ -181,8 +183,8 @@ function otherItem(
     reason: null,
     tag: plant.tagCode,
     speciesId: plant.speciesId,
-    // Its public stripped photo (served by the backend), or the placeholder.
-    photoUri: publicPhotoUri(BASE_URL, plant.photoUrl),
+    // Its public stripped photo (small copy, served by the backend), or the placeholder.
+    photo: thumbnailSources({ publicPath: plant.photoUrl, baseUrl: BASE_URL }),
     place: registered ? `Registered ${registered}` : '',
     searchText: [name, species?.common_name, plant.tagCode].filter(Boolean).join(' '),
   };
@@ -213,26 +215,17 @@ export default function PlantsListScreen() {
   const [syncingAll, setSyncingAll] = useState(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const [otherPlants, setOtherPlants] = useState<OtherApprovedPlant[]>(otherPlantsCache);
-  const [othersState, setOthersState] = useState<'loading' | 'ok' | 'offline'>('loading');
+  // Other botanists' plants and own plants' thumbnails: one request per page, shared with
+  // Home and plant detail, and kept between visits so the list does not flicker.
+  const otherPlants = usePlantListStore((state) => state.others);
+  const ownThumbnails = usePlantListStore((state) => state.ownThumbnails);
+  const listState = usePlantListStore((state) => state.state);
+  const othersState = listState === 'idle' ? 'loading' : listState;
   const [openingKey, setOpeningKey] = useState<string | null>(null);
 
-  const loadOtherPlants = useCallback(async () => {
-    const own = new Set(
-      useRecordStore
-        .getState()
-        .records.map((record) => record.serverId)
-        .filter((id): id is string => Boolean(id))
-    );
-    setOthersState('loading');
-    try {
-      const plants = await fetchOtherApprovedPlants(own);
-      otherPlantsCache = plants;
-      setOtherPlants(plants);
-      setOthersState('ok');
-    } catch {
-      setOthersState('offline');
-    }
+  const loadOtherPlants = useCallback(async (force = false) => {
+    if (force) resetExpiryRefresh();
+    await usePlantListStore.getState().load({ force });
   }, []);
 
   useFocusEffect(
@@ -268,14 +261,14 @@ export default function PlantsListScreen() {
     );
     return merged.map((entry) =>
       entry.source === 'local'
-        ? localItem(entry.key, entry.plant)
+        ? localItem(entry.key, entry.plant, entry.plant.serverId ? ownThumbnails[entry.plant.serverId] ?? null : null)
         : otherItem(
             entry.key,
             entry.plant,
             entry.plant.speciesId ? speciesById.get(entry.plant.speciesId) : undefined
           )
     );
-  }, [records, otherPlants, speciesById]);
+  }, [records, otherPlants, ownThumbnails, speciesById]);
 
   const visible = useMemo(() => filterAndSortPlants(items, filters, searchQuery), [items, filters, searchQuery]);
   const draftCount = useMemo(() => filterAndSortPlants(items, draft, searchQuery).length, [items, draft, searchQuery]);
@@ -337,7 +330,8 @@ export default function PlantsListScreen() {
       setSyncingAll(false);
       void getLastSuccessfulSync().then(setLastSync).catch(() => undefined);
       setNow(Date.now());
-      void loadOtherPlants();
+      // After a sync: fresh list and thumbnails (new photos may have been uploaded).
+      void loadOtherPlants(true);
     }
   };
 
@@ -499,8 +493,8 @@ export default function PlantsListScreen() {
               accessibilityRole="button"
               accessibilityLabel={`${item.name}${item.tag ? `, tag ${item.tag}` : ''}, ${item.badge.label}`}
             >
-              <RemotePhoto
-                uri={item.photoUri}
+              <PlantThumbnail
+                sources={item.photo}
                 style={styles.thumb}
                 placeholder={
                   <View style={[styles.thumb, styles.thumbPlaceholder]}>

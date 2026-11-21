@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -36,11 +36,12 @@ import { formatCoordinates } from '../src/utils/formatCoordinates';
 import { fetchPlantQr, type PlantQr } from '../src/api/plantQr';
 import { downloadTagImage, saveFile, shareFile } from '../src/services/myTags';
 import { ApiError, BASE_URL } from '../src/api/client';
-import RemotePhoto from '../src/components/RemotePhoto';
+import PlantThumbnail from '../src/components/PlantThumbnail';
+import { thumbnailSources } from '../src/utils/thumbnailSources';
+import { usePlantListStore } from '../src/store/usePlantListStore';
 import { isPhysicalTag } from '../src/utils/myTags';
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
 import { plainConservationStatus } from '../src/utils/conservationStatus';
-import { publicPhotoUri } from '../src/utils/publicPhoto';
 import { formatDiameterCm, formatHeightFromCm, parseMeasurement } from '../src/utils/units';
 import { routeSyncLabel, routesUploadedText } from '../src/utils/routeSync';
 
@@ -179,6 +180,18 @@ export default function PlantDetailScreen() {
   const speciesListItem = useSpeciesStore((state) =>
     speciesId ? state.species.find((item) => item.id === speciesId) ?? null : null
   );
+  // The signed server thumbnail of an own plant (from the shared plant list), used when the
+  // phone has no photo of it: the same picture its list row shows.
+  const signedThumbnail = usePlantListStore((state) =>
+    matched && !matched.otherBotanist && matched.serverId ? state.ownThumbnails[matched.serverId] ?? null : null
+  );
+  const needsServerPhoto = Boolean(
+    matched && !matched.otherBotanist && matched.serverId && (matched.photoUris ?? []).length === 0
+  );
+  useEffect(() => {
+    // Opened without going through a list (e.g. after a scan): load the list once (reused if fresh).
+    if (needsServerPhoto) void usePlantListStore.getState().load();
+  }, [needsServerPhoto]);
   if (!matched) {
     return <PlantNotFound code={id} />;
   }
@@ -455,10 +468,16 @@ export default function PlantDetailScreen() {
               }
             />
           ) : (
-            // No photo on this phone. For a plant someone else registered (or an imported
-            // one) that is public: its public stripped photo; otherwise the placeholder.
-            <RemotePhoto
-              uri={matched.otherBotanist ? publicPhotoUri(BASE_URL, matched.publicPhotoUrl) : null}
+            // No photo on this phone: the same sources, in the same order, as the list row
+            // (its signed server thumbnail for an own plant; the public copy, full size then
+            // the small one, for someone else's), otherwise the placeholder.
+            <PlantThumbnail
+              sources={thumbnailSources({
+                signed: signedThumbnail,
+                publicPath: matched.otherBotanist ? matched.publicPhotoUrl : null,
+                baseUrl: BASE_URL,
+                size: 'full',
+              })}
               style={[styles.heroPhoto, { width }]}
               placeholder={
                 <View

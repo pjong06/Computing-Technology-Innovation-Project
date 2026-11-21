@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -28,8 +28,9 @@ import {
   type ActivityItem,
 } from '../utils/recentActivity';
 import { FilterButton, FilterPills, FilterSheet } from './FilterSheet';
-import RemotePhoto from './RemotePhoto';
-import { publicPhotoUri } from '../utils/publicPhoto';
+import PlantThumbnail from './PlantThumbnail';
+import { thumbnailSources, type SignedThumbnail, type ThumbnailSource } from '../utils/thumbnailSources';
+import { usePlantListStore } from '../store/usePlantListStore';
 import { BASE_URL } from '../api/client';
 
 // Home's "Recent activity" (botanists): the botanist's own new plants, observations and
@@ -45,7 +46,8 @@ type ActivityRow = ActivityItem & {
   when: string | null; // ISO or text, for activityTime
   badge: Badge;
   reason: string | null;
-  photoUri: string | null;
+  // Where its picture comes from, in order (phone photo, signed thumbnail, public copy).
+  photo: ThumbnailSource[];
   recordId: string | null; // plants and observations: opens Plant detail
   request: SpeciesProposal | null;
   retry: 'record' | 'request' | null;
@@ -59,7 +61,11 @@ function timestampFor(value?: string | null): number {
 const tagOf = (tag?: string | null) => (tag ? parseTagCode(tag) : null);
 
 // The rows, built with the same status rules as the Plants tab and Plant detail.
-function buildRows(records: PlantRecord[], requests: SpeciesProposal[]): ActivityRow[] {
+function buildRows(
+  records: PlantRecord[],
+  requests: SpeciesProposal[],
+  ownThumbnails: Record<string, SignedThumbnail>
+): ActivityRow[] {
   const rows: ActivityRow[] = [];
   const seen = new Set<string>();
   const push = (row: ActivityRow) => {
@@ -75,6 +81,10 @@ function buildRows(records: PlantRecord[], requests: SpeciesProposal[]): Activit
     const firstVisit = firstVisitOf(record);
     const name = record.scientificName || 'Identification pending';
     const tag = tagOf(record.tagCode);
+    // The plant's picture when the phone has none: its signed server thumbnail (own plants,
+    // from the shared list) or its public copy (someone else's plant).
+    const signed = !record.otherBotanist && record.serverId ? ownThumbnails[record.serverId] ?? null : null;
+    const publicPath = record.otherBotanist ? record.publicPhotoUrl : null;
 
     // The plant's first record (registering it): only for plants this botanist registered.
     if (!record.otherBotanist) {
@@ -99,7 +109,12 @@ function buildRows(records: PlantRecord[], requests: SpeciesProposal[]): Activit
           firstVisit && !isVisitSubmitted(firstVisit) ? firstVisit.submitError : null,
           record.syncError
         ),
-        photoUri: ownPhoto ? resolveStoredPhotoUri(ownPhoto) : null,
+        photo: thumbnailSources({
+          localUri: ownPhoto ? resolveStoredPhotoUri(ownPhoto) : null,
+          signed,
+          publicPath,
+          baseUrl: BASE_URL,
+        }),
         recordId: record.id,
         request: null,
         retry: record.syncStatus !== SyncStatus.UPLOADED ? 'record' : null,
@@ -121,13 +136,13 @@ function buildRows(records: PlantRecord[], requests: SpeciesProposal[]): Activit
         when: visit.observedAt || visit.date || null,
         badge: status.badge,
         reason: status.reason,
-        // The observation's own photo; on a plant someone else registered, else the plant's
-        // public photo.
-        photoUri: photo
-          ? resolveStoredPhotoUri(photo)
-          : record.otherBotanist
-            ? publicPhotoUri(BASE_URL, record.publicPhotoUrl)
-            : null,
+        // The observation's own photo, else the plant's picture (signed thumbnail or public copy).
+        photo: thumbnailSources({
+          localUri: photo ? resolveStoredPhotoUri(photo) : null,
+          signed,
+          publicPath,
+          baseUrl: BASE_URL,
+        }),
         recordId: record.id,
         request: null,
         retry: visit.syncStatus !== SyncStatus.UPLOADED ? 'record' : null,
@@ -151,7 +166,7 @@ function buildRows(records: PlantRecord[], requests: SpeciesProposal[]): Activit
         status.action === 'not_added'
           ? `Officer's reason: ${request.reviewComment?.trim() || 'No reason was given.'}`
           : null,
-      photoUri: null,
+      photo: [],
       recordId: null,
       request,
       retry: request.syncStatus !== SyncStatus.UPLOADED ? 'request' : null,
@@ -184,7 +199,12 @@ export default function RecentActivity({
   const [sheetOpen, setSheetOpen] = useState(false);
   const [retryingRequestId, setRetryingRequestId] = useState<string | null>(null);
 
-  const rows = useMemo(() => buildRows(records, requests), [records, requests]);
+  const ownThumbnails = usePlantListStore((state) => state.ownThumbnails);
+  // The list's thumbnails in one request (shared with the Plants tab; reused if fresh).
+  useEffect(() => {
+    void usePlantListStore.getState().load();
+  }, []);
+  const rows = useMemo(() => buildRows(records, requests, ownThumbnails), [records, requests, ownThumbnails]);
   const matching = useMemo(() => filterActivity([...rows], filters), [rows, filters]);
   const draftCount = useMemo(() => filterActivity([...rows], draft).length, [rows, draft]);
   const shown = matching.slice(0, RECENT_ACTIVITY_LIMIT);
@@ -246,8 +266,8 @@ export default function RecentActivity({
           accessibilityLabel={`${ACTIVITY_TYPE_LABELS[item.type]}: ${item.name}, ${item.badge.label}`}
         >
           {item.type === 'species_request' ? null : (
-            <RemotePhoto
-              uri={item.photoUri}
+            <PlantThumbnail
+              sources={item.photo}
               style={styles.thumb}
               placeholder={
                 <View style={[styles.thumb, styles.thumbPlaceholder]}>

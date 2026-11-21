@@ -27,9 +27,9 @@ import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
 import { routesUploadedText } from '../../src/utils/routeSync';
 import { plantPhotoCaption } from '../../src/utils/plantPhotoCaption';
-import { publicPhotoUri } from '../../src/utils/publicPhoto';
 import { BASE_URL } from '../../src/api/client';
-import RemotePhoto from '../../src/components/RemotePhoto';
+import PlantThumbnail from '../../src/components/PlantThumbnail';
+import { thumbnailSources } from '../../src/utils/thumbnailSources';
 import RecentActivity from '../../src/components/RecentActivity';
 
 const FEATURED_COUNT = 4;
@@ -354,8 +354,8 @@ export default function HomeScreen() {
                         activeOpacity={0.8}
                         onPress={() => router.push({ pathname: '/plant-info', params: { speciesId: item.id } } as any)}
                       >
-                        <RemotePhoto
-                          uri={publicPhotoUri(BASE_URL, photo?.url)}
+                        <PlantThumbnail
+                          sources={thumbnailSources({ publicPath: photo?.url, baseUrl: BASE_URL })}
                           style={styles.featuredPhoto}
                           caption={
                             photo ? (

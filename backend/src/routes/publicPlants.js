@@ -1,7 +1,7 @@
 const express = require('express');
 const path = require('node:path');
 const { TAG_PATTERN } = require('../services/qrService');
-const { publicPlantPhotoExists, publicPhotoUrl, readPublicPlantPhoto } = require('../services/publicPlantPhotos');
+const { publicPlantPhotoExists, publicPhotoUrl, readPublicPlantPhoto, PUBLIC_THUMBNAIL_MAX_SIDE } = require('../services/publicPlantPhotos');
 const { removeLegacyObservationSource } = require('../utils/speciesDescription');
 
 const STYLES = `
@@ -181,7 +181,10 @@ function createPublicPlantsRouter({ client } = {}) {
         try {
             const result = await lookupPublicPlant(database(), tag);
             if (result.status !== 'found') return notFound();
-            const photo = await readPublicPlantPhoto(database(), tag);
+            // ?size=thumb: a small copy (at most 300 px) for app lists. Anything else: full size.
+            const thumb = req.query.size === 'thumb';
+            const photo = await readPublicPlantPhoto(database(), tag,
+                thumb ? { maxSide: PUBLIC_THUMBNAIL_MAX_SIDE } : undefined);
             if (!photo) return notFound();
             res.set('Cache-Control', 'public, max-age=86400');
             return res.type('image/jpeg').send(photo);

@@ -18,7 +18,8 @@ import { conservationStatusColors, plainConservationStatus } from '../../src/uti
 import { plantPhotoCaption } from '../../src/utils/plantPhotoCaption';
 import { publicPhotoUri } from '../../src/utils/publicPhoto';
 import { BASE_URL } from '../../src/api/client';
-import RemotePhoto from '../../src/components/RemotePhoto';
+import PlantThumbnail from '../../src/components/PlantThumbnail';
+import { thumbnailSources } from '../../src/utils/thumbnailSources';
 
 // The visitor and guest "Plant guide": the approved species list (public data, cached on
 // the phone), in plain language. Botanists use the Species tab instead.
@@ -137,8 +138,8 @@ export default function PlantGuideScreen() {
                 onPress={() => router.push({ pathname: '/plant-info', params: { speciesId: item.id } } as any)}
               >
                 <View style={styles.photoColumn}>
-                  <RemotePhoto
-                    uri={photoUri}
+                  <PlantThumbnail
+                    sources={thumbnailSources({ publicPath: photo?.url, baseUrl: BASE_URL })}
                     style={styles.thumb}
                     placeholder={
                       <View style={[styles.thumb, styles.thumbPlaceholder]}>

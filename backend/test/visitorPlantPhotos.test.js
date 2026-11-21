@@ -234,7 +234,9 @@ test('the migration opens only the public copies bucket; originals stay staff-on
 test('staff screens keep their own photos; visitor screens use the public photo', () => {
   for (const screen of ['app/(tabs)/home.tsx', 'app/(tabs)/plants.tsx', 'app/plant-info.tsx']) {
     const code = read(`niah-biotrack/${screen}`);
-    assert.match(code, /publicPhotoUri\(BASE_URL, /, screen);
+    // Only the public copy: thumbnailSources with a publicPath and no signed thumbnail.
+    assert.match(code, /thumbnailSources\(\{ publicPath: photo\?\.url, baseUrl: BASE_URL/, screen);
+    assert.doesNotMatch(code, /signed:|ownThumbnails|usePlantListStore/, screen);
     assert.doesNotMatch(code, /plantPhotosBySpeciesId/, screen);
   }
   assert.match(read('niah-biotrack/app/species-reference/[id].tsx'), /plantPhotosBySpeciesId/);
