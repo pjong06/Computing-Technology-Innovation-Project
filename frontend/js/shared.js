@@ -1022,7 +1022,6 @@ const NAV_SECTIONS = [
     label: 'IoT alerts',
     countId: 'iot-alert-menu-count',
     pages: [
-      { file: 'alerts.html', label: 'IoT alerts' },
       { file: 'iot-workspace.html', label: 'Workspace' }
     ]
   },
