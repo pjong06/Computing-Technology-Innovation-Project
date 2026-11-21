@@ -6,6 +6,8 @@
 //   location_description, morphology, description (Notes)
 // Observation fields (the app and web show the newest observation that has each one):
 //   height_cm, diameter_cm, health_status, life_stage
+// Coordinates (plants.location, shown on the officer map via plant_map_points and in the plant
+// details): plants with no location get a demo point inside Niah National Park.
 // Only EMPTY fields are filled; anything a botanist entered is kept.
 
 export const PLANT_FIELDS = ['location_description', 'morphology', 'description'];
@@ -35,7 +37,8 @@ const between = (random, low, high) => low + random() * (high - low);
 
 // ---- growth forms ----
 // Height in metres and stem diameter in centimetres for a mature plant; young plants are
-// smaller (see measurements). diameter null: not measured for that form (mosses).
+// smaller (see measurements). Mosses and liverworts have no stem, so their "diameter" is the
+// width of the clump or cushion (CLUMP_FORMS), 2-15 cm.
 export const GROWTH_FORMS = {
   tree: { height: [6, 30], diameter: [12, 70] },
   small_tree: { height: [3, 12], diameter: [5, 25] },
@@ -46,8 +49,10 @@ export const GROWTH_FORMS = {
   herb: { height: [0.1, 1.2], diameter: [0.3, 2.5] },
   fern: { height: [0.2, 1.5], diameter: [0.4, 4] },
   epiphyte: { height: [0.05, 0.6], diameter: [0.2, 1.5] },
-  moss: { height: [0.01, 0.06], diameter: null },
+  moss: { height: [0.01, 0.06], diameter: [2, 15] },
+  liverwort: { height: [0.005, 0.03], diameter: [2, 15] },
 };
+export const CLUMP_FORMS = ['moss', 'liverwort'];
 
 const GENUS_FORMS = {
   tree: ['Shorea', 'Dipterocarpus', 'Eusideroxylon', 'Artocarpus', 'Alstonia', 'Octomeles', 'Pometia', 'Scaphium',
@@ -64,7 +69,8 @@ const GENUS_FORMS = {
     'Drynaria', 'Microsorum', 'Nephrolepis', 'Taenitis', 'Tectaria', 'Pleocnemia', 'Grypothrix', 'Antrophyum',
     'Haplopteris', 'Helminthostachys', 'Monachosorum', 'Selaginella'],
   epiphyte: ['Bulbophyllum', 'Dendrobium', 'Liparis', 'Claderia', 'Myrmecodia'],
-  moss: ['Leucobryum', 'Cyathodium'],
+  moss: ['Leucobryum'],
+  liverwort: ['Cyathodium'],
 };
 const FAMILY_FORMS = {
   Dipterocarpaceae: 'tree', Lauraceae: 'tree', Myristicaceae: 'tree', Meliaceae: 'tree', Anacardiaceae: 'tree',
@@ -82,7 +88,7 @@ const FAMILY_FORMS = {
   Bignoniaceae: 'tree', Cornaceae: 'tree', Tetramelaceae: 'tree', Sapindaceae: 'tree', Dilleniaceae: 'tree',
   Calophyllaceae: 'tree', Gnetaceae: 'small_tree', Caricaceae: 'small_tree', Oxalidaceae: 'small_tree',
 };
-const BROAD_FORMS = { Bryophyta: 'moss', Marchantiophyta: 'moss', Polypodiopsida: 'fern', Polypodiineae: 'fern' };
+const BROAD_FORMS = { Bryophyta: 'moss', Marchantiophyta: 'liverwort', Polypodiopsida: 'fern', Polypodiineae: 'fern' };
 
 // The growth form for a species: by genus, else by family, else by a broad group, else herb.
 export function growthForm(scientificName, family) {
@@ -140,6 +146,10 @@ const MORPHOLOGY = {
     'Low moss forming a soft cushion on soil or bark. Tiny leaves crowded along short upright shoots.',
     'Moss forming a pale green mat. Tiny overlapping leaves; no flowers.',
   ],
+  liverwort: [
+    'Thallose liverwort forming a flat, ribbon-like green patch pressed to damp soil or rock. No stems or flowers.',
+    'Liverwort forming a thin, translucent green mat on moist limestone. Lobes forked; no flowers.',
+  ],
 };
 const FAMILY_MORPHOLOGY = {
   Araceae: 'Aroid with leaves on long stalks. Tiny flowers packed on a spike (spadix) within a hood-like spathe.',
@@ -163,7 +173,7 @@ const PLACES_FOREST = ['Mixed dipterocarp forest beside the main trail', 'Shaded
   'Forest edge along the Madu trail', 'Clearing near the observation tower'];
 
 export function locationNote(random, form, family) {
-  const rocky = ['Begoniaceae', 'Gesneriaceae'].includes(family) || form === 'moss';
+  const rocky = ['Begoniaceae', 'Gesneriaceae'].includes(family) || CLUMP_FORMS.includes(form);
   const place = pick(random, rocky && random() < 0.7 ? PLACES_LIMESTONE : [...PLACES_FOREST, ...PLACES_LIMESTONE]);
   return `${place}, ${pick(random, ZONES)}`;
 }
@@ -181,7 +191,7 @@ export function healthAndStage(random, form) {
   const r = random();
   const health = r < 0.8 ? 'healthy' : r < 0.93 ? 'stressed' : 'damaged';
   const s = random();
-  const noFlowers = form === 'fern' || form === 'moss';
+  const noFlowers = form === 'fern' || CLUMP_FORMS.includes(form);
   const young = form === 'tree' || form === 'small_tree' || form === 'palm' || form === 'shrub' ? 'sapling' : 'seedling';
   let stage = 'mature';
   if (s < 0.15) stage = young;
@@ -200,7 +210,11 @@ export function measurements(random, form, stage) {
     : between(random, ranges.height[0], ranges.height[1]);
   const heightCm = Math.max(1, Math.round(heightM * 100));
   let diameterCm = null;
-  if (ranges.diameter) {
+  if (CLUMP_FORMS.includes(form)) {
+    // Clump or cushion width: a young patch is small (2-5 cm), an established one up to 15 cm.
+    const d = young ? between(random, 2, 5) : between(random, ranges.diameter[0], ranges.diameter[1]);
+    diameterCm = Math.round(d * 10) / 10;
+  } else if (ranges.diameter) {
     const d = young
       ? ranges.diameter[0] * scale + (ranges.diameter[1] - ranges.diameter[0]) * 0.05 * random()
       : between(random, ranges.diameter[0], ranges.diameter[1]);
@@ -231,6 +245,63 @@ export function demoValuesFor(plant, species, known = {}) {
   };
 }
 
+// ---- demo coordinates ----
+// The demo area: the plank walk and Great Cave side of Niah National Park.
+export const NIAH_BOUNDS = { south: 3.80, north: 3.83, west: 113.76, east: 113.80 };
+// Each zone in a location note ("..., Zone C") is one part of that area: three columns west to
+// east, Zones A-C in the north row and D-F in the south row. A plant whose note names a zone is
+// placed in that zone's part, so plants with the same zone appear together on the map.
+export const ZONE_AREAS = Object.fromEntries(ZONES.map((zone, index) => {
+  const column = index % 3;
+  const northRow = index < 3;
+  const width = (NIAH_BOUNDS.east - NIAH_BOUNDS.west) / 3;
+  const middle = (NIAH_BOUNDS.south + NIAH_BOUNDS.north) / 2;
+  return [zone.slice(-1), {
+    south: northRow ? middle : NIAH_BOUNDS.south,
+    north: northRow ? NIAH_BOUNDS.north : middle,
+    west: NIAH_BOUNDS.west + column * width,
+    east: NIAH_BOUNDS.west + (column + 1) * width,
+  }];
+}));
+// Demo points are at least this far from every other plant, so map markers don't overlap.
+export const MIN_SPACING_M = 20;
+export const ACCURACY_RANGE_M = [8, 15];
+
+// The zone letter named in a location note, or null ("Limestone slope, Zone B" -> "B").
+export function zoneOf(note) {
+  const match = /\bZone ([A-F])\b/i.exec(String(note ?? ''));
+  return match ? match[1].toUpperCase() : null;
+}
+
+// Distance in metres between two points (flat-earth approximation; fine over a few km).
+export function distanceM(a, b) {
+  const metresPerDegree = 111320;
+  const dy = (a.latitude - b.latitude) * metresPerDegree;
+  const dx = (a.longitude - b.longitude) * metresPerDegree * Math.cos((a.latitude * Math.PI) / 180);
+  return Math.hypot(dx, dy);
+}
+
+export const hasCoordinates = (plant) => Number.isFinite(plant?.latitude) && Number.isFinite(plant?.longitude);
+
+// A demo point for one plant, inside its zone's area (or anywhere in the demo area when the note
+// names no zone) and at least MIN_SPACING_M from every point in `occupied`. If the area is too
+// crowded for that, the candidate farthest from its nearest neighbour is used. Coordinates are
+// rounded to 6 decimals (about 0.1 m), the precision the screens show.
+export function demoCoordinates(random, note, occupied) {
+  const area = ZONE_AREAS[zoneOf(note)] ?? NIAH_BOUNDS;
+  let best = null;
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const point = {
+      latitude: Math.round(between(random, area.south, area.north) * 1e6) / 1e6,
+      longitude: Math.round(between(random, area.west, area.east) * 1e6) / 1e6,
+    };
+    const nearest = occupied.reduce((min, other) => Math.min(min, distanceM(point, other)), Infinity);
+    if (!best || nearest > best.nearest) best = { point, nearest };
+    if (nearest >= MIN_SPACING_M) break;
+  }
+  return best.point;
+}
+
 // When the demo observation is dated: after the plant was registered and after its newest
 // observation, but before the day the script runs (yesterday at the latest).
 export function demoObservedAt(plant, observations, now, random) {
@@ -246,14 +317,19 @@ export function demoObservedAt(plant, observations, now, random) {
   return new Date(Math.min(time, yesterday)).toISOString();
 }
 
-// What fill.mjs does for each active plant: the EMPTY plant columns get demo values; the
-// observation fields that none of its active observations has get one demo observation.
+// What fill.mjs does for each active plant: the EMPTY plant columns get demo values; a plant
+// with no coordinates gets a demo point; the observation fields that none of its active
+// observations has get one demo observation.
 // plants: { id, qr_code_value, registered_by, registered_at, species_id, location_description,
-//           morphology, description }
+//           morphology, description, latitude, longitude, gps_accuracy_m }
+//         (latitude/longitude null when the plant has no location)
 // observationsByPlant: Map plant id -> active observations ({ height_cm, ... observed_at })
 // speciesById: Map species id -> { scientific_name, family }
 export function planFill(plants, observationsByPlant, speciesById, { now = Date.now(), observerId = null } = {}) {
   const plans = [];
+  // Every point already on the map (real ones first), so demo points keep clear of them and of
+  // each other. Plants are planned in a fixed order (by id), so the dry run and --apply agree.
+  const occupied = plants.filter(hasCoordinates).map(({ latitude, longitude }) => ({ latitude, longitude }));
   for (const plant of plants) {
     const species = plant.species_id ? speciesById.get(plant.species_id) : null;
     const visits = observationsByPlant.get(plant.id) ?? [];
@@ -275,14 +351,32 @@ export function planFill(plants, observationsByPlant, speciesById, { now = Date.
       const known = visits.some((visit) => !isEmpty(visit[field]));
       if (!known && values.observation[field] !== null) observationValues[field] = values.observation[field];
     }
+    // Coordinates only when the plant has none; real ones are never moved. The zone comes from
+    // the note the plant will show (its own, or the demo one filled above).
+    let coordinates = null;
+    if (!hasCoordinates(plant)) {
+      const random = seededRandom(`${plant.id}:location`);
+      const note = plantValues.location_description ?? plant.location_description;
+      coordinates = demoCoordinates(random, note, occupied);
+      occupied.push(coordinates);
+      // Accuracy too, unless the plant somehow already has one.
+      if (plant.gps_accuracy_m === null || plant.gps_accuracy_m === undefined) {
+        coordinates.gps_accuracy_m = Math.round(between(random, ...ACCURACY_RANGE_M));
+      }
+    }
     const observer = plant.registered_by ?? observerId;
     const needsObservation = Object.keys(observationValues).length > 0;
+    // A plant that already has a demo observation from an earlier run (e.g. a moss filled before
+    // mosses got a clump width) gets the missing fields added to THAT observation, so it keeps
+    // one demo visit and remove.mjs still takes everything out by deleting it.
+    const demoVisit = visits.find((visit) => visit.is_demo === true) ?? null;
     plans.push({
       plant,
       species: species?.scientific_name ?? '',
       form: values.form,
       plantValues,
-      observation: needsObservation && observer
+      coordinates,
+      observation: needsObservation && !demoVisit && observer
         ? {
             ...observationValues,
             plant_id: plant.id,
@@ -293,11 +387,37 @@ export function planFill(plants, observationsByPlant, speciesById, { now = Date.
             is_demo: true,
           }
         : null,
+      observationUpdate: needsObservation && demoVisit ? { id: demoVisit.id, values: observationValues } : null,
       // Observation fields left empty because the plant has no botanist to record them under.
-      skippedObservation: needsObservation && !observer ? observationValues : null,
+      skippedObservation: needsObservation && !demoVisit && !observer ? observationValues : null,
     });
   }
   return plans;
+}
+
+// The PATCH fill.mjs sends for one plan: `filters` keep it to fields that are STILL empty (so a
+// value a botanist entered since the dry run is never overwritten), and demo_values records every
+// generated value, coordinates included, on top of what an earlier run recorded.
+// null when the plan changes nothing on the plant row.
+export function plantUpdate(plan, currentDemoValues) {
+  const fields = Object.keys(plan.plantValues);
+  if (fields.length === 0 && !plan.coordinates) return null;
+  const filters = fields.map((field) => `${field}=is.null`);
+  const body = { ...plan.plantValues };
+  const generated = { ...(currentDemoValues ?? {}), ...plan.plantValues };
+  if (plan.coordinates) {
+    const { latitude, longitude, gps_accuracy_m: accuracy } = plan.coordinates;
+    filters.push('location=is.null');
+    // Extended WKT; PostGIS reads it straight into the geography column (longitude first).
+    body.location = `SRID=4326;POINT(${longitude} ${latitude})`;
+    if (accuracy !== undefined) {
+      filters.push('gps_accuracy_m=is.null');
+      body.gps_accuracy_m = accuracy;
+    }
+    generated.coordinates = plan.coordinates;
+  }
+  body.demo_values = generated;
+  return { filters, body };
 }
 
 // Report rows for the plans (one per generated value).
@@ -308,11 +428,21 @@ export function reportRows(plans, action) {
     for (const [field, value] of Object.entries(plan.plantValues)) {
       rows.push({ ...base, field, old: plan.plant[field] ?? '', new: value, where: 'plant', action });
     }
+    if (plan.coordinates) {
+      const { latitude, longitude, gps_accuracy_m: accuracy } = plan.coordinates;
+      rows.push({ ...base, field: 'coordinates', old: '', new: `${latitude}, ${longitude}`, where: 'plant', action });
+      if (accuracy !== undefined) rows.push({ ...base, field: 'gps_accuracy_m', old: '', new: accuracy, where: 'plant', action });
+    }
     if (plan.observation) {
       for (const field of OBSERVATION_FIELDS) {
         if (plan.observation[field] !== undefined) {
           rows.push({ ...base, field, old: '', new: plan.observation[field], where: 'demo observation', action });
         }
+      }
+    }
+    if (plan.observationUpdate) {
+      for (const [field, value] of Object.entries(plan.observationUpdate.values)) {
+        rows.push({ ...base, field, old: '', new: value, where: 'existing demo observation', action });
       }
     }
     if (plan.skippedObservation) {
@@ -325,9 +455,69 @@ export function reportRows(plans, action) {
   return rows;
 }
 
+// What every active plant should show once the fill is done, and where each value comes from.
+export const REQUIRED_DETAILS = [
+  { field: 'coordinates', label: 'coordinates' },
+  { field: 'location_description', label: 'location note' },
+  { field: 'height_cm', label: 'height' },
+  { field: 'diameter_cm', label: 'diameter' },
+  { field: 'health_status', label: 'health' },
+  { field: 'life_stage', label: 'life stage' },
+  { field: 'morphology', label: 'morphology' },
+  { field: 'description', label: 'notes' },
+];
+
+// The details a plant would STILL be missing after its plan is applied, each with the reason.
+// Plant columns and coordinates count from the plant row (its own value or the generated one).
+// Height, diameter, health and life stage count only from an APPROVED observation (its newest
+// approved one that has the field, the demo observation included), the record an officer has
+// accepted.
+export function missingAfterFill(plan, visits) {
+  const update = plan.observationUpdate;
+  const approved = [...visits, ...(plan.observation ? [plan.observation] : [])]
+    .map((visit) => (update && visit.id === update.id ? { ...visit, ...update.values } : visit))
+    .filter((visit) => visit.review_status === 'approved');
+  const gaps = [];
+  for (const { field, label } of REQUIRED_DETAILS) {
+    let present;
+    if (field === 'coordinates') present = hasCoordinates(plan.plant) || Boolean(plan.coordinates);
+    else if (PLANT_FIELDS.includes(field)) present = !isEmpty(plan.plant[field]) || plan.plantValues[field] !== undefined;
+    else present = approved.some((visit) => !isEmpty(visit[field]));
+    if (present) continue;
+
+    let reason = 'no value found';
+    if (plan.skippedObservation && plan.skippedObservation[field] !== undefined) {
+      reason = 'plant has no botanist to record the demo observation under (use --observer <profile id>)';
+    } else if (visits.some((visit) => !isEmpty(visit[field]))) {
+      // Recorded by a botanist, so no demo value is added; it just isn't approved yet.
+      reason = 'recorded only on an observation that is not approved yet (pending, draft or rejected)';
+    }
+    gaps.push({ field, label, reason });
+  }
+  return gaps;
+}
+
+// Report rows for those gaps, in the same CSV as the fill rows.
+export function missingRows(plans, observationsByPlant) {
+  const rows = [];
+  for (const plan of plans) {
+    for (const gap of missingAfterFill(plan, observationsByPlant.get(plan.plant.id) ?? [])) {
+      rows.push({ plant_id: plan.plant.id, tag: plan.plant.qr_code_value ?? '', species: plan.species, growth_form: plan.form,
+        field: gap.field, old: '', new: '', where: '', action: `still missing ${gap.label}: ${gap.reason}` });
+    }
+  }
+  return rows;
+}
+
+// Same point? Both sides are rounded to 6 decimals when generated; allow float noise only.
+export const samePoint = (plant, generated) =>
+  hasCoordinates(plant) && Math.abs(plant.latitude - generated.latitude) < 1e-7
+  && Math.abs(plant.longitude - generated.longitude) < 1e-7;
+
 // What remove.mjs takes out: for each plant with demo_values, the plant columns that still
-// hold exactly the generated value (anything changed since is kept), and every observation
-// with is_demo = true. Nothing else.
+// hold exactly the generated value (anything changed since is kept), the demo coordinates if
+// the plant is still at that point, and every observation with is_demo = true. Nothing else.
+// plants: rows with demo_values, plus latitude/longitude (from plant_map_points) and gps_accuracy_m.
 export function planRemoval(plants, demoObservations) {
   const plantResets = [];
   for (const plant of plants) {
@@ -339,6 +529,19 @@ export function planRemoval(plants, demoObservations) {
       if (!PLANT_FIELDS.includes(field)) continue;
       if (plant[field] === value) reset[field] = null;
       else kept[field] = plant[field];
+    }
+    const point = generated.coordinates;
+    if (point && typeof point === 'object') {
+      if (samePoint(plant, point)) {
+        reset.location = null;
+        // The accuracy goes with it, unless someone changed it since.
+        if (point.gps_accuracy_m !== undefined) {
+          if (Number(plant.gps_accuracy_m) === point.gps_accuracy_m) reset.gps_accuracy_m = null;
+          else kept.gps_accuracy_m = plant.gps_accuracy_m;
+        }
+      } else {
+        kept.location = hasCoordinates(plant) ? `${plant.latitude}, ${plant.longitude}` : null;
+      }
     }
     plantResets.push({ plant, reset, kept });
   }
