@@ -142,10 +142,16 @@ test('api() renews an expiring login and sends the officer to log in when it can
   assert.match(shared, /const SESSION_EXPIRED_MESSAGE = 'Your session expired, please log in again\.';/);
   const getToken = shared.slice(shared.indexOf('window.getOfficerAccessToken'), shared.indexOf('async function sendToLoginExpired'));
   assert.match(getToken, /sb\.auth\.refreshSession\(\)/);
-  const api = shared.slice(shared.indexOf('async function api('));
-  const apiBody = api.slice(0, api.indexOf('\n}\n'));
-  assert.match(apiBody, /response\.status === 401/);
-  assert.match(apiBody, /sendToLoginExpired\(\)/);
+  // api() (JSON) and apiFile() (exports) both send through fetchWithLogin, which renews the
+  // login once on a 401 and otherwise sends the officer to log in.
+  const send = shared.slice(shared.indexOf('async function fetchWithLogin('));
+  const sendBody = send.slice(0, send.indexOf('\n}\n'));
+  assert.match(sendBody, /response\.status === 401/);
+  assert.match(sendBody, /sendToLoginExpired\(\)/);
+  for (const name of ['api', 'apiFile']) {
+    const fn = shared.slice(shared.indexOf(`async function ${name}(`));
+    assert.match(fn.slice(0, fn.indexOf('\n}\n')), /await fetchWithLogin\(path, /, name);
+  }
   assert.match(shared, /location\.replace\('login\.html'\)/);
 });
 
@@ -386,7 +392,9 @@ test('every element overview.js reads exists in overview.html, and the report ta
     assert.ok(htmlIds.has(id), `overview.js reads #${id}, which is missing from overview.html`);
   }
   // overview.js fills the table's <thead> and first <tbody>, so both must be inside #report-table.
-  assert.match(html, /<table id="report-table">\s*<thead>[\s\S]*<\/thead>\s*<tbody>[\s\S]*<\/tbody>\s*<\/table>/);
+  assert.match(html, /<table id="report-table">\s*(?:<caption[^>]*>[^<]*<\/caption>\s*)?<thead>[\s\S]*<\/thead>\s*<tbody>[\s\S]*<\/tbody>\s*<\/table>/);
+  // The table has a header row from the start (replaced when a report loads).
+  assert.match(html, /<thead><tr><th scope="col">Report<\/th><\/tr><\/thead>/);
 });
 
 test('Overview layout: four cards, three panels, the Report card with tabs, filters and exports', () => {

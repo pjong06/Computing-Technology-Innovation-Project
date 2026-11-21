@@ -10,6 +10,9 @@ drawMenu('overview.html');
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
   'September', 'October', 'November', 'December'];
 const STATUS_CLASS = { CR: 'critical', EN: 'critical', VU: 'warning', NT: 'near', LC: 'safe' };
+// A sensor key in an alert message (letter, underscore, letter: "soil_moisture"). The same
+// test as before, without repeated quantifiers.
+const SENSOR_KEY = /[a-z]_[a-z]/;
 
 function setOverviewText(id, value) {
   const element = document.getElementById(id);
@@ -130,16 +133,19 @@ function drawIot(iot) {
   setOverviewText('open-alert-count', iot.open_alerts);
   const latest = document.getElementById('latest-alert');
   if (!latest) return;
-  const alert = iot.latest_alert;
-  if (!alert) {
+  // Named latestAlert: "alert" would hide the browser's global alert().
+  const latestAlert = iot.latest_alert;
+  if (!latestAlert) {
     latest.textContent = 'Latest alert: None recorded';
     return;
   }
-  const what = alert.alert_message && !/[a-z]+_[a-z]+/.test(alert.alert_message)
-    ? alert.alert_message
-    : (readableValue(alert.severity || '') || 'Alert');
-  latest.textContent = 'Latest alert: ' + what + ' · ' + (alert.station_code || 'Unknown station') +
-    ' · ' + formatWhen(alert.triggered_at);
+  // A raw sensor message (with keys such as soil_moisture) is replaced by its severity.
+  const message = latestAlert.alert_message || '';
+  const what = message && !SENSOR_KEY.test(message)
+    ? message
+    : readableValue(latestAlert.severity || '') || 'Alert';
+  latest.textContent = 'Latest alert: ' + what + ' · ' + (latestAlert.station_code || 'Unknown station') +
+    ' · ' + formatWhen(latestAlert.triggered_at);
 }
 
 async function loadOverview() {
@@ -198,59 +204,73 @@ function fillSelect(select, options, value, allLabel) {
   select.replaceChildren();
   if (allLabel) select.add(new Option(allLabel, ''));
   for (const option of options) select.add(new Option(option.label, option.value));
-  select.value = options.some(option => option.value === value) ? value : (allLabel ? '' : (options[0]?.value || ''));
+  // The chosen value if it is offered; otherwise "All" (when there is one) or the first option.
+  let chosen = allLabel ? '' : (options[0]?.value || '');
+  if (options.some(option => option.value === value)) chosen = value;
+  select.value = chosen;
 }
+
+// A <span> with a class and (optional) text: tags, badges, dots and bars in the table.
+function labelSpan(className, text) {
+  const span = document.createElement('span');
+  span.className = className;
+  if (text !== undefined) span.textContent = text;
+  return span;
+}
+
+function statusBadge(td, text, row) {
+  if (text) td.appendChild(labelSpan('status-badge ' + (row.status_code || ''), text));
+}
+
+function dateCell(td, text) {
+  td.textContent = text ? formatDay(text, text) : '—';
+}
+
+// How each special column is drawn: (td, text, row, maxPlants). Other columns: plain text.
+const CELL_RENDERERS = {
+  scientific_name(td, text, row) {
+    const name = document.createElement('i');
+    name.className = 'sci';
+    name.textContent = text;
+    td.appendChild(name);
+    if (row.rank && row.rank !== 'Species') td.appendChild(labelSpan('rank-tag', row.rank));
+  },
+  family(td, text) {
+    if (text) td.textContent = text;
+    else td.appendChild(labelSpan('missing-badge', 'Missing'));
+  },
+  conservation_status(td, text, row) {
+    const dot = labelSpan('status-dot ' + (STATUS_CLASS[row.status_code] || 'unknown'));
+    dot.setAttribute('aria-hidden', 'true');
+    td.append(dot, text);
+  },
+  plant_count(td, text, row, maxPlants) {
+    const count = Number(text);
+    if (count === 0) {
+      td.appendChild(labelSpan('no-plants', 'No plants yet'));
+      return;
+    }
+    const bar = labelSpan('');
+    bar.style.width = Math.max(4, Math.round(count * 90 / Math.max(1, maxPlants))) + 'px';
+    bar.setAttribute('aria-hidden', 'true');
+    const wrap = labelSpan('plant-bar');
+    wrap.append(bar, document.createTextNode(count.toLocaleString()));
+    td.appendChild(wrap);
+  },
+  plant_status: statusBadge,
+  review_status: statusBadge,
+  first_recorded: dateCell,
+  observed_at: dateCell,
+  last_observation: dateCell,
+};
 
 function reportCell(column, row, maxPlants) {
   const td = document.createElement('td');
   const value = row[column.key];
   const text = value === null || value === undefined ? '' : String(value);
-  if (column.key === 'scientific_name') {
-    const name = document.createElement('i');
-    name.className = 'sci';
-    name.textContent = text;
-    td.appendChild(name);
-    if (row.rank && row.rank !== 'Species') {
-      const tag = document.createElement('span');
-      tag.className = 'rank-tag';
-      tag.textContent = row.rank;
-      td.appendChild(tag);
-    }
-  } else if (column.key === 'family' && !text) {
-    const badge = document.createElement('span');
-    badge.className = 'missing-badge';
-    badge.textContent = 'Missing';
-    td.appendChild(badge);
-  } else if (column.key === 'conservation_status') {
-    const dot = document.createElement('span');
-    dot.className = 'status-dot ' + (STATUS_CLASS[row.status_code] || 'unknown');
-    dot.setAttribute('aria-hidden', 'true');
-    td.append(dot, text);
-  } else if (column.key === 'plant_count') {
-    if (Number(value) === 0) {
-      const none = document.createElement('span');
-      none.className = 'no-plants';
-      none.textContent = 'No plants yet';
-      td.appendChild(none);
-    } else {
-      const wrap = document.createElement('span');
-      wrap.className = 'plant-bar';
-      const bar = document.createElement('span');
-      bar.style.width = Math.max(4, Math.round(Number(value) * 90 / Math.max(1, maxPlants))) + 'px';
-      bar.setAttribute('aria-hidden', 'true');
-      wrap.append(bar, document.createTextNode(Number(value).toLocaleString()));
-      td.appendChild(wrap);
-    }
-  } else if ((column.key === 'plant_status' || column.key === 'review_status') && text) {
-    const badge = document.createElement('span');
-    badge.className = 'status-badge ' + (row.status_code || '');
-    badge.textContent = text;
-    td.appendChild(badge);
-  } else if (['first_recorded', 'observed_at', 'last_observation'].includes(column.key)) {
-    td.textContent = text ? formatDay(text, text) : '—';
-  } else {
-    td.textContent = text;
-  }
+  const render = CELL_RENDERERS[column.key];
+  if (render) render(td, text, row, maxPlants);
+  else td.textContent = text;
   return td;
 }
 
@@ -347,40 +367,50 @@ async function exportReport(format) {
   }
 }
 
+// A group of buttons where one is chosen (tabs: aria-selected; chips: aria-pressed). Marks the
+// clicked one and calls onChoose(button).
+function chooseOne(selector, attribute, onChoose) {
+  const buttons = document.querySelectorAll(selector);
+  for (const button of buttons) {
+    button.addEventListener('click', () => {
+      for (const other of buttons) other.setAttribute(attribute, String(other === button));
+      onChoose(button);
+    });
+  }
+}
+
+// Moves the table by one page (step -1 or +1) when that page exists.
+function changePage(step) {
+  if (!report.data) return;
+  const pages = Math.max(1, Math.ceil(report.data.rows.length / REPORT_PAGE_SIZE));
+  const page = report.page + step;
+  if (page < 1 || page > pages) return;
+  report.page = page;
+  drawReportTable();
+}
+
 function setUpReport() {
-  for (const tab of document.querySelectorAll('.report-tabs [role="tab"]')) {
-    tab.addEventListener('click', () => {
-      for (const other of document.querySelectorAll('.report-tabs [role="tab"]')) {
-        other.setAttribute('aria-selected', String(other === tab));
-      }
-      report.type = tab.dataset.type;
-      // Each tab has its own statuses and sort orders.
-      report.status = '';
-      report.sort = '';
-      reloadReport();
-    });
-  }
-  for (const chip of document.querySelectorAll('.report-chips [data-range]')) {
-    chip.addEventListener('click', () => {
-      for (const other of document.querySelectorAll('.report-chips [data-range]')) {
-        other.setAttribute('aria-pressed', String(other === chip));
-      }
-      report.range = chip.dataset.range;
-      document.getElementById('report-custom').hidden = report.range !== 'custom';
-      if (report.range !== 'custom') reloadReport();
-    });
-  }
+  chooseOne('.report-tabs [role="tab"]', 'aria-selected', tab => {
+    report.type = tab.dataset.type;
+    // Each tab has its own statuses and sort orders.
+    report.status = '';
+    report.sort = '';
+    reloadReport();
+  });
+  chooseOne('.report-chips [data-range]', 'aria-pressed', chip => {
+    report.range = chip.dataset.range;
+    document.getElementById('report-custom').hidden = report.range !== 'custom';
+    if (report.range !== 'custom') reloadReport();
+  });
   for (const id of ['report-from', 'report-to']) {
     document.getElementById(id).addEventListener('change', reloadReport);
   }
-  document.getElementById('report-status').addEventListener('change', event => {
-    report.status = event.target.value;
-    reloadReport();
-  });
-  document.getElementById('report-sort').addEventListener('change', event => {
-    report.sort = event.target.value;
-    reloadReport();
-  });
+  for (const [id, key] of [['report-status', 'status'], ['report-sort', 'sort']]) {
+    document.getElementById(id).addEventListener('change', event => {
+      report[key] = event.target.value;
+      reloadReport();
+    });
+  }
   let searchTimer = null;
   document.getElementById('report-search').addEventListener('input', event => {
     clearTimeout(searchTimer);
@@ -389,18 +419,8 @@ function setUpReport() {
       reloadReport();
     }, 300);
   });
-  document.getElementById('report-previous').addEventListener('click', () => {
-    if (report.data && report.page > 1) {
-      report.page -= 1;
-      drawReportTable();
-    }
-  });
-  document.getElementById('report-next').addEventListener('click', () => {
-    if (report.data && report.page * REPORT_PAGE_SIZE < report.data.rows.length) {
-      report.page += 1;
-      drawReportTable();
-    }
-  });
+  document.getElementById('report-previous').addEventListener('click', () => changePage(-1));
+  document.getElementById('report-next').addEventListener('click', () => changePage(1));
   document.getElementById('report-csv').addEventListener('click', () => void exportReport('csv'));
   document.getElementById('report-pdf').addEventListener('click', () => void exportReport('pdf'));
 }

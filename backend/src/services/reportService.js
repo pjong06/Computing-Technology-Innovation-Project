@@ -162,6 +162,15 @@ const SEVERITY_ORDER = { critical: 0, high: 1, warning: 2, medium: 3, low: 4, in
 
 // ---- filtering, search and sort (the same for the table and the exports) ----
 
+// Shared option lists for the tabs.
+const NEWEST_FIRST = { value: "newest", label: "Newest first" };
+const OLDEST_FIRST = { value: "oldest", label: "Oldest first" };
+const REVIEW_STATUS_OPTIONS = [
+    { value: "pending", label: REVIEW_WORDS.pending },
+    { value: "approved", label: REVIEW_WORDS.approved },
+    { value: "rejected", label: REVIEW_WORDS.rejected },
+];
+
 // The tabs: what each one filters on and how it can be sorted.
 const TABS = {
     inventory: {
@@ -174,34 +183,18 @@ const TABS = {
         sortOptions: [
             { value: "name", label: "Name A–Z" },
             { value: "plants", label: "Most plants first" },
-            { value: "newest", label: "Newest first" },
+            NEWEST_FIRST,
         ],
     },
     plants: {
         unit: "plant records",
-        statusOptions: [
-            { value: "pending", label: "Waiting for review" },
-            { value: "approved", label: "Approved" },
-            { value: "rejected", label: "Needs changes" },
-        ],
-        sortOptions: [
-            { value: "newest", label: "Newest first" },
-            { value: "oldest", label: "Oldest first" },
-            { value: "species", label: "Species A–Z" },
-        ],
+        statusOptions: REVIEW_STATUS_OPTIONS,
+        sortOptions: [NEWEST_FIRST, OLDEST_FIRST, { value: "species", label: "Species A–Z" }],
     },
     botanist: {
         unit: "field observations",
-        statusOptions: [
-            { value: "pending", label: "Waiting for review" },
-            { value: "approved", label: "Approved" },
-            { value: "rejected", label: "Needs changes" },
-            { value: "draft", label: "Not submitted yet" },
-        ],
-        sortOptions: [
-            { value: "newest", label: "Newest first" },
-            { value: "oldest", label: "Oldest first" },
-        ],
+        statusOptions: [...REVIEW_STATUS_OPTIONS, { value: "draft", label: REVIEW_WORDS.draft }],
+        sortOptions: [NEWEST_FIRST, OLDEST_FIRST],
     },
     alerts: {
         unit: "alerts",
@@ -210,11 +203,7 @@ const TABS = {
             { value: "acknowledged", label: "Acknowledged" },
             { value: "resolved", label: "Resolved" },
         ],
-        sortOptions: [
-            { value: "newest", label: "Newest first" },
-            { value: "oldest", label: "Oldest first" },
-            { value: "severity", label: "Most severe first" },
-        ],
+        sortOptions: [NEWEST_FIRST, OLDEST_FIRST, { value: "severity", label: "Most severe first" }],
     },
 };
 
@@ -257,6 +246,35 @@ function filtersText(type, { from, to, status, q, sort }) {
     return parts.join(" · ");
 }
 
+// ---- helpers shared by the tabs ----
+
+// Runs a query with a newer, optional column first, then without it (before its migration
+// is applied). Any other error is passed on.
+async function withOptionalColumn(run) {
+    try {
+        return await run(true);
+    } catch (error) {
+        if (error instanceof ReportError && error.status === 500) return run(false);
+        throw error;
+    }
+}
+
+// Staff names (profiles.full_name) by id, for the given ids.
+async function staffNames(client, ids) {
+    const profiles = await rowsByIds(client, "profiles", "id, full_name", ids);
+    return new Map(profiles.map(item => [item.id, item.full_name]));
+}
+
+// How many rows have this status (status_code).
+function countStatus(rows, code) {
+    return rows.filter(row => row.status_code === code).length;
+}
+
+// Rows come newest first; "oldest" reverses them.
+function inOrder(rows, sort) {
+    return sort === "oldest" ? [...rows].reverse() : rows;
+}
+
 // ---- the tabs ----
 
 async function inventoryReport(client, { from, to, status, sort }) {
@@ -272,14 +290,8 @@ async function inventoryReport(client, { from, to, status, sort }) {
         else if (status) query = query.eq("conservation_status", status);
         return readReportRows(query, "species inventory");
     };
-    let species;
-    try {
-        species = await run(true);
-    } catch (error) {
-        // Before the taxon_rank migration: the rank is read from the name.
-        if (error instanceof ReportError && error.status === 500) species = await run(false);
-        else throw error;
-    }
+    // Before the taxon_rank migration the rank is read from the name.
+    const species = await withOptionalColumn(run);
     const plants = species.length
         ? await readAllRows(
             client.from("plants")
@@ -338,16 +350,15 @@ async function plantsReport(client, { from, to, status, sort }) {
     query = applyDateRange(query, "registered_at", from, to);
     if (status) query = query.eq("plant_status", status);
     const plants = await readReportRows(query, "plant records");
-    const [species, profiles, visits] = await Promise.all([
+    const [species, nameById, visits] = await Promise.all([
         rowsByIds(client, "species", "id, scientific_name", plants.map(plant => plant.species_id)),
-        rowsByIds(client, "profiles", "id, full_name", plants.map(plant => plant.registered_by)),
+        staffNames(client, plants.map(plant => plant.registered_by)),
         plants.length
             ? readAllRows(client.from("observations").select("plant_id, observed_at").is("deleted_at", null)
                 .in("plant_id", plants.map(plant => plant.id)), "observation")
             : [],
     ]);
     const speciesById = new Map(species.map(item => [item.id, item]));
-    const nameById = new Map(profiles.map(item => [item.id, item.full_name]));
     const lastVisit = new Map();
     for (const visit of visits) {
         if (!lastVisit.has(visit.plant_id) || visit.observed_at > lastVisit.get(visit.plant_id)) lastVisit.set(visit.plant_id, visit.observed_at);
@@ -362,7 +373,7 @@ async function plantsReport(client, { from, to, status, sort }) {
         first_recorded: dateOnly(plant.registered_at),
         last_observation: dateOnly(lastVisit.get(plant.id)),
     }));
-    if (sort === "oldest") rows = [...rows].reverse();
+    rows = inOrder(rows, sort);
     if (sort === "species") rows = [...rows].sort((a, b) => a.scientific_name.localeCompare(b.scientific_name));
 
     return {
@@ -380,9 +391,9 @@ async function plantsReport(client, { from, to, status, sort }) {
         rows,
         summary: (shown) => [
             { label: "Plant records", value: shown.length },
-            { label: "Approved", value: shown.filter(row => row.status_code === "approved").length },
-            { label: "Waiting for review", value: shown.filter(row => row.status_code === "pending").length },
-            { label: "Needs changes", value: shown.filter(row => row.status_code === "rejected").length },
+            { label: "Approved", value: countStatus(shown, "approved") },
+            { label: "Waiting for review", value: countStatus(shown, "pending") },
+            { label: "Needs changes", value: countStatus(shown, "rejected") },
         ],
     };
 }
@@ -397,15 +408,14 @@ async function botanistReport(client, { from, to, status, sort }) {
     if (status) query = query.eq("review_status", status);
     const observations = await readReportRows(query, "field observations");
 
-    const [plants, profiles] = await Promise.all([
+    const [plants, nameById] = await Promise.all([
         rowsByIds(client, "plants", "id, species_id, qr_code_value", observations.map(item => item.plant_id)),
-        rowsByIds(client, "profiles", "id, full_name", observations.map(item => item.observer_id)),
+        staffNames(client, observations.map(item => item.observer_id)),
     ]);
     const activePlantIds = new Set(plants.map(plant => plant.id));
     const activeObservations = observations.filter(item => activePlantIds.has(item.plant_id));
     const species = await rowsByIds(client, "species", "id, scientific_name", plants.map(item => item.species_id));
     const plantById = new Map(plants.map(item => [item.id, item]));
-    const profileById = new Map(profiles.map(item => [item.id, item]));
     const speciesById = new Map(species.map(item => [item.id, item]));
 
     let rows = activeObservations.map(item => {
@@ -414,7 +424,7 @@ async function botanistReport(client, { from, to, status, sort }) {
             observed_at: dateOnly(item.observed_at),
             scientific_name: speciesById.get(plant?.species_id)?.scientific_name || "Species not recorded",
             plant_tag: tagText(plant?.qr_code_value),
-            botanist: profileById.get(item.observer_id)?.full_name || "Not recorded",
+            botanist: nameById.get(item.observer_id) || "Not recorded",
             health_status: readable(item.health_status),
             life_stage: readable(item.life_stage),
             // Stored in cm; reported in metres (2 decimals). Diameter stays in cm.
@@ -424,7 +434,7 @@ async function botanistReport(client, { from, to, status, sort }) {
             status_code: item.review_status || null,
         };
     });
-    if (sort === "oldest") rows = [...rows].reverse();
+    rows = inOrder(rows, sort);
 
     return {
         title: "Field observations",
@@ -444,8 +454,8 @@ async function botanistReport(client, { from, to, status, sort }) {
         summary: (shown) => [
             { label: "Field observations", value: shown.length },
             { label: "Botanists", value: new Set(shown.map(row => row.botanist)).size },
-            { label: "Waiting for review", value: shown.filter(row => row.status_code === "pending").length },
-            { label: "Approved", value: shown.filter(row => row.status_code === "approved").length },
+            { label: "Waiting for review", value: countStatus(shown, "pending") },
+            { label: "Approved", value: countStatus(shown, "approved") },
         ],
     };
 }
@@ -460,20 +470,14 @@ async function alertsReport(client, { from, to, status, sort }) {
         if (status) query = query.eq("alert_status", status);
         return readReportRows(query, "IoT alerts");
     };
-    let alerts;
-    try {
-        alerts = await run(true);
-    } catch (error) {
-        if (error instanceof ReportError && error.status === 500) alerts = await run(false);
-        else throw error;
-    }
-    const [stations, profiles] = await Promise.all([
+    // Before the camera AI migration there is no resolution_source.
+    const alerts = await withOptionalColumn(run);
+    const [stations, nameById] = await Promise.all([
         // Station codes only: never their coordinates.
         rowsByIds(client, "sensor_stations", "id, station_code", alerts.map(alert => alert.station_id)),
-        rowsByIds(client, "profiles", "id, full_name", alerts.map(alert => alert.resolved_by)),
+        staffNames(client, alerts.map(alert => alert.resolved_by)),
     ]);
     const stationById = new Map(stations.map(item => [item.id, item.station_code]));
-    const nameById = new Map(profiles.map(item => [item.id, item.full_name]));
     let rows = alerts.map(alert => ({
         triggered_at: dayTimeText(alert.triggered_at),
         sort_time: alert.triggered_at || "",
@@ -488,8 +492,7 @@ async function alertsReport(client, { from, to, status, sort }) {
             : (alert.resolved_by ? nameById.get(alert.resolved_by) || "Officer" : ""),
         note: alert.resolution_notes || "",
     }));
-    rows = [...rows].sort((a, b) => b.sort_time.localeCompare(a.sort_time));
-    if (sort === "oldest") rows.reverse();
+    rows = inOrder([...rows].sort((a, b) => b.sort_time.localeCompare(a.sort_time)), sort);
     if (sort === "severity") {
         rows = [...rows].sort((a, b) => (SEVERITY_ORDER[a.severity_code] ?? 9) - (SEVERITY_ORDER[b.severity_code] ?? 9) ||
             b.sort_time.localeCompare(a.sort_time));
@@ -510,9 +513,9 @@ async function alertsReport(client, { from, to, status, sort }) {
         rows,
         summary: (shown) => [
             { label: "Alerts", value: shown.length },
-            { label: "Open", value: shown.filter(row => row.status_code === "open").length },
-            { label: "Acknowledged", value: shown.filter(row => row.status_code === "acknowledged").length },
-            { label: "Resolved", value: shown.filter(row => row.status_code === "resolved").length },
+            { label: "Open", value: countStatus(shown, "open") },
+            { label: "Acknowledged", value: countStatus(shown, "acknowledged") },
+            { label: "Resolved", value: countStatus(shown, "resolved") },
         ],
     };
 }
