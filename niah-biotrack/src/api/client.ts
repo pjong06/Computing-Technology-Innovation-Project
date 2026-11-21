@@ -75,7 +75,7 @@ export async function apiFetch<T>(path: string, options: ApiOptions = {}): Promi
       });
     } catch {
       // Network failure or our 15-second timeout.
-      throw new ApiError(`Could not reach the server at ${BASE_URL}`, 0);
+      throw new ApiError('Couldn\'t reach the server. Check your connection and try again.', 0);
     }
 
     // Read the body once as text; some error responses aren't JSON.
@@ -89,7 +89,7 @@ export async function apiFetch<T>(path: string, options: ApiOptions = {}): Promi
 
     if (!response.ok) {
       const { message, code } = (json as { message?: string; code?: string } | null) ?? {};
-      const error = new ApiError(message ?? `Server returned ${response.status}`, response.status, code);
+      const error = new ApiError(message ?? 'The server had a problem. Please try again.', response.status, code);
       error.retryAfterMs = readRetryAfter(response.headers.get('Retry-After'));
       throw error;
     }
@@ -127,7 +127,7 @@ export async function apiUpload<T>(path: string, fields: Record<string, string>,
         signal: controller.signal,
       });
     } catch {
-      throw new ApiError(`Could not reach the server at ${BASE_URL}`, 0);
+      throw new ApiError('Couldn\'t reach the server. Check your connection and try again.', 0);
     }
 
     const text = await response.text();
@@ -139,7 +139,7 @@ export async function apiUpload<T>(path: string, fields: Record<string, string>,
     }
     if (!response.ok) {
       const { message, code } = (json as { message?: string; code?: string } | null) ?? {};
-      throw new ApiError(message ?? `Server returned ${response.status}`, response.status, code);
+      throw new ApiError(message ?? 'The server had a problem. Please try again.', response.status, code);
     }
     return json as T;
   } finally {
@@ -176,7 +176,7 @@ export async function apiDownload(path: string, body?: unknown): Promise<Uint8Ar
             signal: controller.signal,
           });
     } catch {
-      throw new ApiError(`Could not reach the server at ${BASE_URL}`, 0);
+      throw new ApiError('Couldn\'t reach the server. Check your connection and try again.', 0);
     }
     if (!response.ok) {
       const text = await response.text().catch(() => '');
@@ -186,7 +186,7 @@ export async function apiDownload(path: string, body?: unknown): Promise<Uint8Ar
       } catch {
         // not JSON
       }
-      throw new ApiError(message ?? `Server returned ${response.status}`, response.status);
+      throw new ApiError(message ?? 'The server had a problem. Please try again.', response.status);
     }
     return new Uint8Array(await response.arrayBuffer());
   } finally {

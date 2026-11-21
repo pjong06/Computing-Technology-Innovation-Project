@@ -132,7 +132,7 @@ test('visitor page never shows a species reference photo; it only checks the pub
   const html = await response.text();
   assert.equal(response.status, 200);
   assert.match(html, /Shorea albida/);
-  assert.match(html, /Conservation status: Not recorded/);
+  assert.match(html, /Conservation status: Not assessed/);
   // No copy for this plant: no photo at all.
   assert.doesNotMatch(html, /<figure|<img(?![^>]*class="brand")|data:image|reference photo|iNaturalist ·/i);
   assert.deepEqual(touched, ['public-plant-photos']);
@@ -156,7 +156,9 @@ test('the visitor page and the QR API show no source, observer or licence', asyn
   const page = await fetch(url + '/p/' + TAG);
   const html = await page.text();
   assert.equal(page.status, 200);
-  assert.match(html, /<h2>This plant<\/h2>/);
+  assert.match(html, /<h2>About this species<\/h2>/);
+  // No photo of this plant: no "This plant" section, and the tag is shown once, at the top.
+  assert.doesNotMatch(html, /<h2>This plant<\/h2>|Tag: /);
   assert.doesNotMatch(html, /Source|Observer|CC-BY-NC|naturalist|<a\b|source_url/i);
 
   const api = await fetch(url + '/api/public/plants/by-qr?code=' + TAG);
@@ -176,7 +178,7 @@ test('unavailable or unapproved public records return 404', async t => {
   const url = await start(t, publicRouter({ data: [], error: null }, []));
   const response = await fetch(url + '/p/' + TAG);
   assert.equal(response.status, 404);
-  assert.match(await response.text(), /no approved public record/);
+  assert.match(await response.text(), /Information about this plant isn&#39;t available yet/);
 });
 
 for (const result of [{ error: { message: 'SECRET_DATABASE_ERROR' } }, new Error('SECRET_DATABASE_ERROR')]) {

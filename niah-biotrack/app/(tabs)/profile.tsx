@@ -37,6 +37,17 @@ import { pullServerRecords, serverPullError } from '../../src/services/serverPul
 
 const NOT_RECORDED = 'Not recorded';
 
+const ROLE_LABELS: Record<string, string> = {
+  botanist: 'Botanist',
+  officer: 'Conservation officer',
+  researcher: 'Researcher',
+};
+
+function roleLabel(role: string): string {
+  const key = role.trim().toLowerCase();
+  return ROLE_LABELS[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
+}
+
 interface ProfileData {
   fullName: string | null;
   email: string | null;
@@ -331,14 +342,14 @@ export default function ProfileScreen() {
         const reason = proposalResult.reasons[0] ?? downloadError;
         Alert.alert(
           'Sync needs attention',
-          `${totalFailed} item(s) could not be uploaded. They remain safely stored on this phone.${reason ? ` ${reason}` : ''}${routesLine}`
+          `${totalFailed} ${totalFailed === 1 ? 'item' : 'items'} could not be uploaded. They remain safely stored on this phone.${reason ? ` ${reason}` : ''}${routesLine}`
         );
 
         return;
       }
 
       if (downloadError) {
-        Alert.alert('Upload complete; download pending', downloadError);
+        Alert.alert('Uploaded, but couldn\'t download updates', downloadError);
         return;
       }
 
@@ -349,8 +360,8 @@ export default function ProfileScreen() {
       Alert.alert(
         'Sync complete',
         processed > 0 || routeResult.uploaded > 0 || downloaded > 0
-          ? `${processed} item(s) uploaded and ${downloaded} server change(s) downloaded.${routesLine}`
-          : 'The local and server sync queues were checked successfully.'
+          ? `${processed} ${processed === 1 ? 'item' : 'items'} uploaded and ${downloaded} server ${downloaded === 1 ? 'change' : 'changes'} downloaded.${routesLine}`
+          : 'Everything is up to date.'
       );
     } catch (error) {
       Alert.alert(
@@ -415,7 +426,7 @@ export default function ProfileScreen() {
           ? 'Exit Visitor Mode'
           : hasUnsent
             ? 'Log out with unsynced data?'
-            : 'Log Out',
+            : 'Log out',
 
         isVisitor
           ? 'Return to sign-in screen?'
@@ -434,7 +445,7 @@ export default function ProfileScreen() {
               ? 'Exit'
               : hasUnsent
                 ? 'Log out anyway'
-                : 'Log Out',
+                : 'Log out',
 
             style: 'destructive',
 
@@ -735,8 +746,9 @@ export default function ProfileScreen() {
                     styles.metaVal
                   }
                 >
-                  {profile?.role ||
-                    NOT_RECORDED}
+                  {profile?.role
+                    ? roleLabel(profile.role)
+                    : NOT_RECORDED}
                 </Text>
               </View>
 
@@ -788,7 +800,7 @@ export default function ProfileScreen() {
                   styles.cardTitle
                 }
               >
-                Database Sync
+                Sync
               </Text>
 
               <View
@@ -806,10 +818,10 @@ export default function ProfileScreen() {
                     : failedCount > 0
                       ? 'Attention needed'
                       : pendingCount > 0
-                        ? `${pendingCount} Queued`
+                        ? `${pendingCount} queued`
                         : records.length >
                             0
-                          ? 'All Synced'
+                          ? 'All synced'
                           : 'No records'}
                 </Text>
               </View>
@@ -888,7 +900,7 @@ export default function ProfileScreen() {
                     styles.metricLabel
                   }
                 >
-                  Pending
+                  Waiting
                 </Text>
               </View>
 

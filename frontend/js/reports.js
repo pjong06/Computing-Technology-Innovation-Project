@@ -63,8 +63,12 @@ function makeReportCell(column, value) {
     text = displayTag(text, text);
   }
   // On screen only: the review status in words (exports keep the stored value).
-  if (column.key === 'review_status' && text) {
+  if ((column.key === 'review_status' || column.key === 'plant_status') && text) {
     text = reviewStatusDisplay(text).label;
+  }
+  // On screen only: "seedling_sapling" -> "Seedling sapling".
+  if ((column.key === 'health_status' || column.key === 'life_stage') && text) {
+    text = readableValue(text);
   }
   // On screen only: the portal's date format ("21 Nov 2026").
   if (column.key === 'observed_at' && text) {

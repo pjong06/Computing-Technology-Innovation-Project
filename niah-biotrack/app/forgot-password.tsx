@@ -11,7 +11,6 @@ import {
   KeyboardAvoidingView,
   ScrollView,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -78,7 +77,6 @@ export default function ForgotPasswordScreen() {
         text2: `A 6-digit recovery code was sent to ${targetEmail}.`,
       });
     } catch (error: any) {
-      Alert.alert('Send Failed', error.message || 'Could not send verification code.');
       Toast.show({
         type: 'error',
         text1: 'Request Failed',
@@ -98,7 +96,7 @@ export default function ForgotPasswordScreen() {
       Toast.show({
         type: 'error',
         text1: 'Invalid Code',
-        text2: 'Enter the full 6-digit code sent to your Gmail.',
+        text2: 'Enter the full 6-digit code sent to your email.',
       });
       return;
     }
@@ -155,7 +153,6 @@ export default function ForgotPasswordScreen() {
         text2: 'Your account password has been reset successfully.',
       });
     } catch (error: any) {
-      Alert.alert('Reset Failed', error.message || 'Verification code failed or expired.');
       Toast.show({
         type: 'error',
         text1: 'Reset Failed',

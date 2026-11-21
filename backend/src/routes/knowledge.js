@@ -3,7 +3,7 @@ const multer = require("multer");
 const sharp = require("sharp");
 const { randomUUID } = require("node:crypto");
 const { requireAuth, requireRole } = require("../middleware/auth");
-const { removeLegacyObservationSource } = require("../utils/speciesDescription");
+const { cleanSpeciesFields } = require("../utils/speciesDescription");
 const { createKnowledgeRateLimit } = require("../middleware/knowledgeRateLimit");
 const { publicPhotoUrl } = require("../services/publicPlantPhotos");
 
@@ -27,12 +27,8 @@ function paginationMetadata(paging, count) {
 function orderSpeciesMedia(data) {
     const prepare = (species) => {
         if (!species) return species;
-        const prepared = {
-            ...species,
-            ...(typeof species.description === "string"
-                ? { description: removeLegacyObservationSource(species.description) }
-                : {}),
-        };
+        // Text fields without leftover photo credits, sources or links (speciesDescription.js).
+        const prepared = cleanSpeciesFields(species);
         if (Array.isArray(species.species_media)) {
             prepared.species_media = [...species.species_media].sort((a, b) =>
                 Number(b.source === "sfc") - Number(a.source === "sfc")
@@ -46,6 +42,28 @@ function orderSpeciesMedia(data) {
 function textLimit(field) {
     return ["common_name", "local_name"].includes(field) ? 200 :
         ["species_category", "conservation_status"].includes(field) ? 100 : 10000;
+}
+// Plain names for fields, for messages people read ("Common name must be ...").
+const FIELD_LABELS = {
+    scientific_name: "Scientific name",
+    common_name: "Common name",
+    local_name: "Local name",
+    family: "Family",
+    genus: "Genus",
+    kingdom: "Kingdom",
+    division: "Division",
+    class_name: "Class",
+    order_name: "Order",
+    species_category: "Category",
+    conservation_status: "Conservation status",
+    description: "Description",
+    morphology: "Appearance",
+    habitat: "Habitat",
+    distribution_notes: "Distribution notes",
+    cultural_significance: "Cultural significance",
+};
+function fieldLabel(field) {
+    return FIELD_LABELS[field] || field.replaceAll("_", " ").replace(/^./, (first) => first.toUpperCase());
 }
 function validOptionalText(field, value) {
     return typeof value === "string" && value.trim().length > 0 && value.trim().length <= textLimit(field);
@@ -130,7 +148,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
 
             if (value == null) {
                 if (field === "family" || field === "genus") {
-                    return res.status(400).json({ message: `${field} is required` });
+                    return res.status(400).json({ message: `${fieldLabel(field)} is required.` });
                 }
                 taxonomy[field] = null;
                 continue;
@@ -138,7 +156,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
 
             if (typeof value !== "string" || !value.trim() || value.trim().length > 100) {
                 return res.status(400).json({
-                    message: `${field} must be text between 1 and 100 characters`,
+                    message: `${fieldLabel(field)} must be text between 1 and 100 characters.`,
                 });
             }
 
@@ -426,7 +444,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         const scientificName = typeof body.scientific_name === "string" ? body.scientific_name.trim() : "";
         if (!scientificName || scientificName.length > 200) {
             return res.status(400).json({
-                message: "scientific_name is required and must be at most 200 characters",
+                message: "Scientific name is required and must be at most 200 characters.",
             });
         }
         // The phone's own ID for the proposal, so a retried upload isn't saved twice.
@@ -449,7 +467,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             const limitField = field === "family" ? "common_name" : field; // family: 200 like names
             if (!validOptionalText(limitField, value)) {
                 return res.status(400).json({
-                    message: `${field} must be non-empty text of at most ${textLimit(limitField)} characters or null`,
+                    message: `${fieldLabel(field)} must be at most ${textLimit(limitField)} characters, or left empty.`,
                 });
             }
             proposal[column] = value.trim();
@@ -483,7 +501,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             return res.status(500).json({ message: "Could not check for an existing species" });
         }
         if (Array.isArray(sameName) && sameName.length > 0) {
-            return res.status(409).json({ message: "A species with this scientific name already exists or is already proposed" });
+            return res.status(409).json({ message: "A species with this scientific name already exists or is already requested" });
         }
 
         const { data, error } = await req.supabase
@@ -493,7 +511,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             .single();
 
         if (error?.code === "23505") {
-            return res.status(409).json({ message: "A species with this scientific name already exists or is already proposed" });
+            return res.status(409).json({ message: "A species with this scientific name already exists or is already requested" });
         }
         if (error) {
             console.error("Create species proposal error:", error);
@@ -541,7 +559,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         const scientificName = typeof body.scientific_name === "string" ? body.scientific_name.trim() : "";
         if (!scientificName || scientificName.length > 200) {
             return res.status(400).json({
-                message: "scientific_name is required and must be at most 200 characters",
+                message: "Scientific name is required and must be at most 200 characters.",
             });
         }
         const fields = {};
@@ -554,7 +572,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             const limitField = field === "family" ? "common_name" : field;
             if (!validOptionalText(limitField, value)) {
                 return res.status(400).json({
-                    message: `${field} must be non-empty text of at most ${textLimit(limitField)} characters or null`,
+                    message: `${fieldLabel(field)} must be at most ${textLimit(limitField)} characters, or left empty.`,
                 });
             }
             fields[field] = value.trim();
@@ -645,14 +663,14 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         }
         const { decision, comment, taxonomy_id: taxonomyId } = body;
         if (decision !== "approved" && decision !== "rejected") {
-            return res.status(400).json({ message: "decision must be 'approved' or 'rejected'" });
+            return res.status(400).json({ message: "Choose approve or don't add." });
         }
         if (comment != null && !validOptionalText("description", comment)) {
-            return res.status(400).json({ message: "comment must be non-empty text or null" });
+            return res.status(400).json({ message: "The reason must be text." });
         }
         // The botanist needs to know why, so a rejection must say it.
         if (decision === "rejected" && comment == null) {
-            return res.status(400).json({ message: "A comment is required when rejecting a proposal" });
+            return res.status(400).json({ message: "A reason is required when not adding a species request." });
         }
         if (taxonomyId != null && (typeof taxonomyId !== "string" || !PROPOSAL_UUID.test(taxonomyId))) {
             return res.status(400).json({ message: "Invalid taxonomy ID" });
@@ -671,11 +689,11 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             .maybeSingle();
 
         if (error?.code === "23503") {
-            return res.status(400).json({ message: "taxonomy_id does not refer to an existing taxonomy row" });
+            return res.status(400).json({ message: "The family could not be found." });
         }
         if (error) {
             console.error("Review species proposal error:", error);
-            return res.status(500).json({ message: "Could not review species proposal" });
+            return res.status(500).json({ message: "Could not review the species request." });
         }
         if (data) return res.json({ data });
 
@@ -687,10 +705,10 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             .maybeSingle();
         if (currentError) {
             console.error("Review species proposal lookup error:", currentError);
-            return res.status(500).json({ message: "Could not review species proposal" });
+            return res.status(500).json({ message: "Could not review the species request." });
         }
         if (!current) return res.status(404).json({ message: "Species not found" });
-        return res.status(409).json({ message: "Only pending proposals can be reviewed" });
+        return res.status(409).json({ message: "Only species requests waiting for review can be reviewed." });
     });
 
     // GET /api/knowledge/species
@@ -888,7 +906,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             .select("id, description_is_draft")
             .maybeSingle();
         if (missingDraftColumn(error)) {
-            return res.status(400).json({ message: "Draft descriptions can't be marked until the species draft migration is applied." });
+            return res.status(400).json({ message: "This can't be saved yet. Please contact the system administrator." });
         }
         if (error) {
             console.error("Mark species reviewed error:", error);
@@ -912,7 +930,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
 
         if (!scientificName || scientificName.length > 200) {
             return res.status(400).json({
-                message: "scientific_name is required and must be at most 200 characters",
+                message: "Scientific name is required and must be at most 200 characters.",
             });
         }
 
@@ -946,7 +964,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
                 if (body[field] === null) { species[field] = null; continue; }
                 if (!validOptionalText(field, body[field])) {
                     return res.status(400).json({
-                        message: `${field} must be non-empty text of at most ${textLimit(field)} characters or null`,
+                        message: `${fieldLabel(field)} must be at most ${textLimit(field)} characters, or left empty.`,
                     });
                 }
                 species[field] = body[field].trim();
@@ -954,7 +972,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         }
 
         if (Object.hasOwn(body, "taxon_rank") && !TAXON_RANKS.includes(body.taxon_rank)) {
-            return res.status(400).json({ message: "taxon_rank must be species, genus, family or other" });
+            return res.status(400).json({ message: "Identified to must be species, genus, family or other." });
         }
         const rank = Object.hasOwn(body, "taxon_rank") ? body.taxon_rank : undefined;
 
@@ -972,7 +990,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
 
         if (error?.code === "23503") {
             return res.status(400).json({
-                message: "taxonomy_id does not refer to an existing taxonomy row",
+                message: "The family could not be found.",
             });
         }
 
@@ -1005,7 +1023,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
 
             if (typeof name !== "string" || !name.trim() || name.trim().length > 200) {
                 return res.status(400).json({
-                    message: "scientific_name must be text between 1 and 200 characters",
+                    message: "Scientific name must be text between 1 and 200 characters.",
                 });
             }
 
@@ -1032,7 +1050,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
                     changes[field] = value.trim();
                 } else {
                     return res.status(400).json({
-                        message: `${field} must be non-empty text of at most ${textLimit(field)} characters or null`,
+                        message: `${fieldLabel(field)} must be at most ${textLimit(field)} characters, or left empty.`,
                     });
                 }
             }
@@ -1054,7 +1072,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         let rank;
         if (Object.hasOwn(req.body, "taxon_rank")) {
             if (!TAXON_RANKS.includes(req.body.taxon_rank)) {
-                return res.status(400).json({ message: "taxon_rank must be species, genus, family or other" });
+                return res.status(400).json({ message: "Identified to must be species, genus, family or other." });
             }
             rank = req.body.taxon_rank;
         }
@@ -1080,7 +1098,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         });
         if (!rankIncluded && missingRankColumn(error)) {
             return res.status(400).json({
-                message: "Identified to can't be saved until the species taxon_rank migration is applied.",
+                message: "This can't be saved yet. Please contact the system administrator.",
             });
         }
 
@@ -1092,7 +1110,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
 
         if (error?.code === "23503") {
             return res.status(400).json({
-                message: "taxonomy_id does not refer to an existing taxonomy row",
+                message: "The family could not be found.",
             });
         }
 

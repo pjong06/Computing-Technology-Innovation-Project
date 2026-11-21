@@ -28,6 +28,7 @@ import {
   formatCoordinates,
   describeAccuracy,
 } from '../src/utils/formatCoordinates';
+import { isPhysicalTag } from '../src/utils/myTags';
 import TransectMapView, {
   type MapTargetPoint,
 } from '../src/components/TransectMapView';
@@ -367,7 +368,7 @@ export default function NavigatePlantScreen() {
         title: selectedTarget.plant.scientificName || 'Target Plant',
         subtitle:
           [
-            selectedTarget.plant.tagCode
+            isPhysicalTag(selectedTarget.plant.tagCode)
               ? `Tag ${selectedTarget.plant.tagCode}`
               : null,
             selectedTarget.plant.locationName || null,
@@ -475,7 +476,7 @@ export default function NavigatePlantScreen() {
                 {selectedTarget.plant.scientificName || 'Identification pending'}
               </Text>
               <Text style={styles.targetSub}>
-                {selectedTarget.plant.tagCode
+                {isPhysicalTag(selectedTarget.plant.tagCode)
                   ? `Tag ${selectedTarget.plant.tagCode} · `
                   : ''}
                 {selectedTarget.plant.locationName || 'Saved plant location'}
@@ -521,7 +522,7 @@ export default function NavigatePlantScreen() {
                         {item.plant.scientificName || 'Identification pending'}
                       </Text>
                       <Text style={styles.plantOptionMeta}>
-                        {item.plant.tagCode ? `Tag ${item.plant.tagCode} · ` : ''}
+                        {isPhysicalTag(item.plant.tagCode) ? `Tag ${item.plant.tagCode} · ` : ''}
                         {item.plant.locationName ||
                           formatCoordinates(item.latitude, item.longitude, null)}
                       </Text>
@@ -546,31 +547,35 @@ export default function NavigatePlantScreen() {
         )}
 
         {/* Interactive Phone-to-Plant Map */}
-        <Text style={styles.sectionLabel}>LIVE NAVIGATION MAP</Text>
-        <View style={styles.mapCard}>
-          <View style={styles.mapHeader}>
-            <Text style={styles.mapTitle}>YOUR PHONE TO PLANT</Text>
-            <View style={styles.legendRow}>
-              <View style={styles.legendItem}>
-                <View style={[styles.legendDot, { backgroundColor: '#2563EB' }]} />
-                <Text style={styles.legendText}>You</Text>
+        {selectedTarget && (
+          <>
+            <Text style={styles.sectionLabel}>LIVE NAVIGATION MAP</Text>
+            <View style={styles.mapCard}>
+              <View style={styles.mapHeader}>
+                <Text style={styles.mapTitle}>YOUR PHONE TO PLANT</Text>
+                <View style={styles.legendRow}>
+                  <View style={styles.legendItem}>
+                    <View style={[styles.legendDot, { backgroundColor: '#2563EB' }]} />
+                    <Text style={styles.legendText}>You</Text>
+                  </View>
+                  <View style={styles.legendItem}>
+                    <View style={[styles.legendDot, { backgroundColor: '#DC2626' }]} />
+                    <Text style={styles.legendText}>Plant</Text>
+                  </View>
+                </View>
               </View>
-              <View style={styles.legendItem}>
-                <View style={[styles.legendDot, { backgroundColor: '#DC2626' }]} />
-                <Text style={styles.legendText}>Plant</Text>
-              </View>
-            </View>
-          </View>
 
-          <TransectMapView
-            currentPoint={currentPoint}
-            targetPoint={mapTarget}
-            height={280}
-          />
-          <Text style={styles.mapHint}>
-            Blue dot = your phone · Red P = target plant · Dashed line = path
-          </Text>
-        </View>
+              <TransectMapView
+                currentPoint={currentPoint}
+                targetPoint={mapTarget}
+                height={280}
+              />
+              <Text style={styles.mapHint}>
+                Blue dot = your phone · Red P = target plant · Dashed line = path
+              </Text>
+            </View>
+          </>
+        )}
 
         {/* Arrival Banner */}
         {selectedTarget && hasArrived && (

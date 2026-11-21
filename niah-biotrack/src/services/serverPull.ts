@@ -339,7 +339,8 @@ async function runPull(): Promise<ServerPullResult> {
       measurement: existingVisit?.measurement ?? measurement(heightCm, diameterCm),
       heightCm,
       diameterCm,
-      notes: textValue(payload.notes) ?? existingVisit?.notes ?? 'Observation downloaded from server.',
+      // The observation's own notes, or nothing (no filler note).
+      notes: textValue(payload.notes) ?? existingVisit?.notes ?? '',
       syncStatus: SyncStatus.UPLOADED,
       latitude: position.latitude ?? existingVisit?.latitude,
       longitude: position.longitude ?? existingVisit?.longitude,

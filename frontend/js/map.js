@@ -89,13 +89,18 @@ function displayVisitDate(value) {
 function makePopup(plant) {
   const species = plant.species;
   const scientificName = species && species.scientific_name ? species.scientific_name : 'Unknown species';
-  const commonName = species && species.common_name ? species.common_name : 'Unknown species';
+  const commonName = species && species.common_name ? species.common_name : 'Not recorded';
   return '<strong><em>' + escapePopupText(scientificName) + '</em></strong>' +
     '<div>Common name: ' + escapePopupText(commonName) + '</div>' +
     '<div>Tag: ' + escapePopupText(displayTag(plant.tag, 'No tag')) + '</div>' +
-    '<div>Status: ' + escapePopupText(plant.status || 'Not recorded') + '</div>' +
-    '<div>Landmark: ' + escapePopupText(plant.landmark || 'Not recorded') + '</div>' +
+    '<div>Status: ' + escapePopupText(reviewStatusDisplay(plant.status).label) + '</div>' +
+    '<div>Location note: ' + escapePopupText(plant.landmark || 'Not recorded') + '</div>' +
     '<div>Last observation: ' + escapePopupText(displayVisitDate(plant.last_visit)) + '</div>';
+}
+
+// "online" -> "Online", "offline" -> "Offline"; anything else with a capital first letter.
+function stationStatusText(status) {
+  return readableValue(status) || 'Unknown';
 }
 
 function drawSensorMarkers() {
@@ -107,9 +112,9 @@ function drawSensorMarkers() {
     const point = [station.latitude, station.longitude];
 
     const popup =
-      '<strong>IoT Sensor Station</strong>' +
+      '<strong>IoT sensor station</strong>' +
       '<div>Station: ' + escapePopupText(station.station_code) + '</div>' +
-      '<div>Status: ' + escapePopupText(station.status || 'Unknown') + '</div>' +
+      '<div>Status: ' + escapePopupText(stationStatusText(station.status)) + '</div>' +
       '<div>Location: ' + escapePopupText(station.location_note || 'Not recorded') + '</div>';
 
     L.circleMarker(point, {
@@ -128,7 +133,7 @@ async function loadSensorStations() {
   const result = await api('/officer/map/stations');
 
   if (!result || !Array.isArray(result.data)) {
-    throw new Error('The sensor station response was invalid.');
+    throw new Error('The data could not be read. Please reload the page.');
   }
 
 sensorStations = result.data;
@@ -291,7 +296,7 @@ function toggleRoutes(show) {
 async function loadRoutes() {
   const result = await api('/officer/map/routes');
   if (!result || !Array.isArray(result.data)) {
-    throw new Error('The routes response was invalid.');
+    throw new Error('The data could not be read. Please reload the page.');
   }
   fieldRoutes = result.data;
   drawRoutes();
@@ -303,7 +308,7 @@ async function loadRoutes() {
 async function loadPlants() {
   const result = await api('/officer/map/plants');
   if (!result || !Array.isArray(result.data)) {
-    throw new Error('The plant locations response was invalid.');
+    throw new Error('The data could not be read. Please reload the page.');
   }
   plants = result.data;
   fillSpeciesFilter();

@@ -5,8 +5,10 @@
 //
 // For one page of plants this makes a fixed number of calls, whatever the page size:
 //   1. plant_media: the plants' photos (the main one wins, else the first);
-//   2. for plants without one: their observations, then observation_media (the first
-//      observation's photo);
+//   2. for plants without one: their observations, then observation_media: the main photo
+//      of the first APPROVED observation (the same rule as the public copy,
+//      publicPlantPhotos.publicPhotoSource), else of the first observation (these are the
+//      botanist's own plants, so their own photos waiting for review may be shown to them);
 //   3. one createSignedUrls per bucket.
 // Everything is read through the caller's own client, so RLS decides what is visible: no new
 // permissions. The response carries a short-lived signed link, an opaque cache key (the media
@@ -55,14 +57,21 @@ async function ownPlantThumbnails(supabase, plants, { now = Date.now() } = {}) {
         if (missing.length > 0) {
             const { data: visits, error: visitError } = await supabase
                 .from("observations")
-                .select("id, plant_id, observed_at")
+                .select("id, plant_id, observed_at, review_status")
                 .in("plant_id", missing)
                 .is("deleted_at", null);
             if (visitError) throw visitError;
+            // Earliest approved observation first; plants with none: their earliest observation.
+            const earlier = (a, b) => String(a.observed_at) < String(b.observed_at) ||
+                (String(a.observed_at) === String(b.observed_at) && String(a.id) < String(b.id));
             const firstVisit = new Map();
             for (const visit of visits || []) {
                 const current = firstVisit.get(visit.plant_id);
-                if (!current || String(visit.observed_at) < String(current.observed_at)) firstVisit.set(visit.plant_id, visit);
+                const approved = visit.review_status === "approved";
+                const currentApproved = current && current.review_status === "approved";
+                if (!current || (approved && !currentApproved) || (approved === currentApproved && earlier(visit, current))) {
+                    firstVisit.set(visit.plant_id, visit);
+                }
             }
             const plantByVisit = new Map([...firstVisit.values()].map(visit => [visit.id, visit.plant_id]));
             if (plantByVisit.size > 0) {

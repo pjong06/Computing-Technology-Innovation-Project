@@ -24,13 +24,13 @@ function cell(row, value, className) {
 function formatHeight(heightCm) {
   return heightCm === null || heightCm === undefined
     ? '—'
-    : `${Math.round(Number(heightCm)) / 100} m`;
+    : String(Math.round(Number(heightCm)) / 100);
 }
 
 function formatDiameter(diameterCm) {
   return diameterCm === null || diameterCm === undefined
     ? '—'
-    : `${Math.round(Number(diameterCm) * 100) / 100} cm`;
+    : String(Math.round(Number(diameterCm) * 100) / 100);
 }
 
 // The plant's own photos only. A plant without photos shows the placeholder message
@@ -68,12 +68,14 @@ function renderObservations(observations) {
   byId('observations-count').textContent =
     `${observations.length} observation${observations.length === 1 ? '' : 's'}`;
   byId('observations-empty').hidden = observations.length > 0;
+  // No observations: show only the message, not an empty table.
+  body.closest('.table-wrap').hidden = observations.length === 0;
   sortByDate(observations, observation => observation.observed_at, historySort).forEach(observation => {
     const row = document.createElement('tr');
     cell(row, displayDate(observation.observed_at));
     cell(row, observation.observer_name);
-    cell(row, observation.health_status);
-    cell(row, observation.life_stage);
+    cell(row, readableValue(observation.health_status));
+    cell(row, readableValue(observation.life_stage));
     cell(row, formatHeight(observation.height_cm));
     cell(row, formatDiameter(observation.diameter_cm));
     // Review status as a coloured badge, the same scheme as everywhere else.
@@ -126,7 +128,7 @@ function renderPlant(plant) {
   byId('plant-registered-at').textContent = displayDate(plant.registered_at);
   byId('plant-last-observation').textContent = displayDate(plant.last_observation_at);
   byId('plant-location').textContent = plant.location_description || 'Not recorded';
-  byId('plant-conservation').textContent = plant.species?.conservation_status || 'Not assessed';
+  byId('plant-conservation').textContent = statusLabel(plant.species?.conservation_status);
   byId('plant-coordinates').textContent = displayCoordinates(plant.latitude, plant.longitude);
   byId('plant-observation-count').textContent = String(plant.observation_count);
   renderPhotos(plant.photos || []);
@@ -138,21 +140,21 @@ async function loadPlant() {
   const id = new URLSearchParams(location.search).get('id') || '';
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
     byId('plant-loading').hidden = true;
-    byId('plant-error').textContent = 'A valid plant ID is required.';
+    byId('plant-error').textContent = 'This plant link is not valid. Open the plant from the Plants list.';
     byId('plant-error').hidden = false;
     return;
   }
   try {
     const result = await api('/officer/plants/' + encodeURIComponent(id));
     if (!result?.data || !Array.isArray(result.data.photos) || !Array.isArray(result.data.observations)) {
-      throw new Error('The plant details response was invalid.');
+      throw new Error('The data could not be read. Please reload the page.');
     }
     renderPlant(result.data);
   } catch (error) {
     byId('plant-error').textContent =
       'Plant details could not be loaded. ' + (error.message || 'Please try again.');
     byId('plant-error').hidden = false;
-    showUnexpectedError(error);
+    console.error('Plant details failed to load:', error);
   } finally {
     byId('plant-loading').hidden = true;
   }

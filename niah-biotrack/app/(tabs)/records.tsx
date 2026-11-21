@@ -33,6 +33,7 @@ import {
   visitStatus,
 } from '../../src/utils/reviewStatus';
 import { firstVisitOf, isVisitSubmitted, newPlantReview } from '../../src/utils/submissionState';
+import { isPhysicalTag } from '../../src/utils/myTags';
 import {
   DEFAULT_FILTERS,
   SHOW_FILTERS,
@@ -46,7 +47,6 @@ import {
   mostUrgent,
   needsActionCount,
   rowStatus,
-  syncStatusText,
   type NeedsActionReason,
   type PlantFilters,
   type PlantRow,
@@ -54,7 +54,7 @@ import {
 } from '../../src/utils/recordsList';
 import { routesUploadedText } from '../../src/utils/routeSync';
 import { resolveStoredPhotoUri } from '../../src/utils/photoStorage';
-import { getLastSuccessfulSync, resumeAllPausedRecordRetries } from '../../src/services/offlineDatabase';
+import { resumeAllPausedRecordRetries } from '../../src/services/offlineDatabase';
 import { pullServerRecords, serverPullError } from '../../src/services/serverPull';
 import { type OtherApprovedPlant } from '../../src/services/approvedPlants';
 import { resetExpiryRefresh, usePlantListStore } from '../../src/store/usePlantListStore';
@@ -125,7 +125,7 @@ function localItem(key: string, stored: PlantRecord, signed: SignedThumbnail | n
   const revisits = visits.filter((visit) => visit !== firstVisit);
   for (const visit of revisits) {
     const status = visitStatus(visit, record.syncError);
-    candidates.push({ ...status, reason: status.reason ? `Observation ${visit.date}: ${status.reason}` : null });
+    candidates.push({ ...status, reason: status.reason ? `Observation on ${visit.date}: ${status.reason}` : null });
   }
   const pick = mostUrgent(candidates)?.item ?? candidates[0];
 
@@ -213,8 +213,6 @@ export default function PlantsListScreen() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [syncingAll, setSyncingAll] = useState(false);
-  const [lastSync, setLastSync] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
   // Other botanists' plants and own plants' thumbnails: one request per page, shared with
   // Home and plant detail, and kept between visits so the list does not flicker.
   const otherPlants = usePlantListStore((state) => state.others);
@@ -233,13 +231,9 @@ export default function PlantsListScreen() {
       if (blocked) return undefined;
       void refreshReviewStatuses();
       void refreshProposalStatuses();
-      void getLastSuccessfulSync().then(setLastSync).catch(() => undefined);
       if (useSpeciesStore.getState().species.length === 0) void loadSpecies();
       void loadOtherPlants();
-      setNow(Date.now());
-      // Keeps "Synced 2 min ago" current while the tab is open.
-      const timer = setInterval(() => setNow(Date.now()), 60000);
-      return () => clearInterval(timer);
+      return undefined;
     }, [blocked, refreshReviewStatuses, refreshProposalStatuses, loadSpecies, loadOtherPlants])
   );
 
@@ -315,7 +309,7 @@ export default function PlantsListScreen() {
       const problem = proposalsResult.reasons[0] ?? downloadError;
       Toast.show({
         type: failed > 0 || downloadError ? 'error' : 'success',
-        text1: failed > 0 ? 'Some records did not upload' : downloadError ? 'Upload complete; download pending' : 'Sync complete',
+        text1: failed > 0 ? 'Some records did not upload' : downloadError ? 'Uploaded, but couldn\'t download updates' : 'Sync complete',
         text2: problem ? `${parts.join(' · ')}. ${problem}` : parts.join(' · '),
         position: 'bottom',
       });
@@ -328,8 +322,6 @@ export default function PlantsListScreen() {
       });
     } finally {
       setSyncingAll(false);
-      void getLastSuccessfulSync().then(setLastSync).catch(() => undefined);
-      setNow(Date.now());
       // After a sync: fresh list and thumbnails (new photos may have been uploaded).
       void loadOtherPlants(true);
     }
@@ -429,13 +421,9 @@ export default function PlantsListScreen() {
       <View style={styles.container}>
         <View style={styles.titleRow}>
           <Text style={styles.headerTitle}>Plants</Text>
+          {/* Sync status ("Synced 2 min ago" / "Not synced yet") is on Home and Profile; here
+              only "Sync now", when something is waiting to upload. */}
           <View style={styles.syncRow}>
-            <Text
-              style={[styles.syncText, notUploaded > 0 && styles.syncTextPending]}
-              numberOfLines={1}
-            >
-              {syncStatusText(lastSync, notUploaded, now)}
-            </Text>
             {notUploaded > 0 ? (
               syncingAll ? (
                 <ActivityIndicator size="small" color="#213B2A" />
@@ -491,7 +479,7 @@ export default function PlantsListScreen() {
                 }
               }}
               accessibilityRole="button"
-              accessibilityLabel={`${item.name}${item.tag ? `, tag ${item.tag}` : ''}, ${item.badge.label}`}
+              accessibilityLabel={`${item.name}${isPhysicalTag(item.tag) ? `, tag ${item.tag}` : ''}, ${item.badge.label}`}
             >
               <PlantThumbnail
                 sources={item.photo}
@@ -504,7 +492,7 @@ export default function PlantsListScreen() {
               />
               <View style={styles.plantText}>
                 <Text style={styles.plantName} numberOfLines={2}>{item.name}</Text>
-                {item.tag ? <Text style={styles.plantMeta} numberOfLines={1}>{item.tag}</Text> : null}
+                {isPhysicalTag(item.tag) ? <Text style={styles.plantMeta} numberOfLines={1}>{item.tag}</Text> : null}
                 {item.place ? <Text style={styles.plantMeta} numberOfLines={1}>{item.place}</Text> : null}
                 <View style={styles.badgeRow}>
                   <View style={[styles.statusBadge, { backgroundColor: item.badge.bg }]}>
@@ -570,8 +558,6 @@ const styles = StyleSheet.create({
   },
   headerTitle: { fontSize: 24, fontWeight: '800', color: '#1E2B22' },
   syncRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1, minWidth: 0 },
-  syncText: { fontSize: 12, color: '#68776D', flexShrink: 1 },
-  syncTextPending: { color: '#8C5E03', fontWeight: '700' },
   syncBtn: { backgroundColor: '#213B2A', borderRadius: 14, paddingVertical: 6, paddingHorizontal: 12 },
   syncBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
   searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },

@@ -226,7 +226,7 @@ test('before the migration every species counts as reviewed, and marking says to
   assert.deepEqual(await (await s.get(`${SPECIES_ID}/draft-status`)).json(), { data: { description_is_draft: false } });
   const marked = await s.post(`${SPECIES_ID}/mark-reviewed`);
   assert.equal(marked.status, 400);
-  assert.match((await marked.json()).message, /migration/);
+  assert.match((await marked.json()).message, /can't be saved yet/);
 });
 
 test('species editor: "Draft description: please review" with "Mark as reviewed", for officers only; other pages unchanged', () => {

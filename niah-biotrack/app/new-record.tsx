@@ -484,7 +484,8 @@ export default function NewRecordScreen() {
       heightCm: heightMetres === undefined ? undefined : metresToCm(heightMetres),
       diameterCm,
       measurement: `Height ${heightMetres ?? '-'} m · Diameter ${diameterCm ?? '-'} cm`,
-      notes: morphology.trim() || 'Initial registration record.',
+      // What the botanist wrote, or nothing: no filler note.
+      notes: morphology.trim(),
       photoUris: photoList,
       syncStatus: submitForReview ? SyncStatus.NOT_UPLOADED : SyncStatus.LOCAL_ONLY,
       reviewStatus: ReviewStatus.DRAFT,
@@ -561,7 +562,7 @@ export default function NewRecordScreen() {
           Toast.show({
             type: 'info',
             text1: 'Saved on this device',
-            text2: `Upload pending: ${result.reason}`,
+            text2: `Not uploaded yet: ${result.reason}`,
           });
         }
       });
@@ -759,7 +760,7 @@ export default function NewRecordScreen() {
         </View>
 
         {/* Section 4: Observation Condition */}
-        <Text style={styles.fieldLabel}>Life Stage</Text>
+        <Text style={styles.fieldLabel}>Life stage</Text>
         <View style={styles.chipGrid}>
           {LIFE_STAGES.map((stage) => {
             const selected = lifeStage === stage;
@@ -778,7 +779,7 @@ export default function NewRecordScreen() {
           })}
         </View>
 
-        <Text style={[styles.fieldLabel, { marginTop: 14 }]}>Health Status</Text>
+        <Text style={[styles.fieldLabel, { marginTop: 14 }]}>Health status</Text>
         <View style={styles.chipGrid}>
           {HEALTH_STATUSES.map((item) => {
             const selected = healthStatus === item.label;

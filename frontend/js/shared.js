@@ -85,7 +85,7 @@ async function api(path, options) {
 
   const body = await response.json().catch(function () { return {}; });
   if (response.ok === false) {
-    throw new Error(body.message || ('Request failed (' + response.status + ')'));
+    throw new Error(body.message || 'Something went wrong on the server. Please try again.');
   }
   return body;
 }
@@ -363,7 +363,7 @@ function databaseRequest(method, body) {
       request.send(JSON.stringify(body));
     }
   } catch (error) {
-    return { ok: false, message: 'Could not reach the backend. Is it running?' };
+    return { ok: false, message: SERVER_UNREACHABLE_MESSAGE };
   }
 
   let reply = {};
@@ -377,7 +377,7 @@ function databaseRequest(method, body) {
     return { ok: false, message: SESSION_EXPIRED_MESSAGE, expired: true };
   }
   if (request.status < 200 || request.status >= 300) {
-    return { ok: false, message: reply.message || ('Database error ' + request.status) };
+    return { ok: false, message: reply.message || 'Could not load the user list.' };
   }
   return { ok: true, data: reply.data };
 }
@@ -676,7 +676,17 @@ const REVIEW_STATUS_DISPLAY = {
 };
 function reviewStatusDisplay(value) {
   const status = String(value || 'unknown').toLowerCase();
-  return REVIEW_STATUS_DISPLAY[status] || { label: String(value || 'unknown').replaceAll('_', ' '), css: '' };
+  if (REVIEW_STATUS_DISPLAY[status]) return REVIEW_STATUS_DISPLAY[status];
+  if (!value) return { label: 'Status not recorded', css: '' };
+  const words = String(value).replaceAll('_', ' ');
+  return { label: words.charAt(0).toUpperCase() + words.slice(1), css: '' };
+}
+
+// A stored value in plain words: "healthy" -> "Healthy", "seedling_sapling" -> "Seedling
+// sapling". Empty values stay empty (tables show "—" for them).
+function readableValue(value) {
+  const text = String(value ?? '').replaceAll('_', ' ').trim();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
 }
 
 // ---- Display helpers for plant tags and coordinates ----
@@ -969,11 +979,17 @@ function guardPages() {
 
 // ---- Navigation: menu sections, tab bars, review counts and the landing page ----
 //
-// Officers see five menu sections. A section with more than one page shows a tab bar at the
+// Officers see six menu sections, Overview first. A section with more than one page shows a tab bar at the
 // top of its pages (drawn here, not in each page's HTML). Botanists only see "Species".
 // The species editor is not in the menu: the catalogue's Add species / Edit buttons open it
 // (openSpeciesEditor), and "Species" stays highlighted there.
 const NAV_SECTIONS = [
+  {
+    label: 'Overview',
+    pages: [
+      { file: 'overview.html', label: 'Overview' }
+    ]
+  },
   {
     label: 'Review',
     countId: 'review-menu-count',
@@ -1078,31 +1094,16 @@ async function fetchFieldRecordsCount() {
 
 async function fetchSpeciesProposalCount() {
   const result = await api('/knowledge/species/proposals/pending?page=1&page_size=1');
-  return validCount(result?.pagination?.total, 'pending species request');
+  return validCount(result?.pagination?.total, 'species request');
 }
 
 // ---- Landing page after login ----
-// Officers: the review page when anything waits for review, otherwise the map.
-// Botanists: the species catalogue. If the counts don't arrive quickly (or fail), officers
-// go to the species catalogue, so logging in is never held up.
-const HOME_COUNT_TIMEOUT_MS = 2500;
-
+// Officers open the overview; botanists open the species catalogue.
 async function homePageFor(user) {
   if (user === null || isBotanist(user)) {
     return 'species.html';
   }
-  try {
-    const counts = Promise.all([fetchFieldRecordsCount(), fetchSpeciesProposalCount()]);
-    let timer;
-    const timeout = new Promise((resolve, reject) => {
-      timer = setTimeout(() => reject(new Error('The review counts took too long.')), HOME_COUNT_TIMEOUT_MS);
-    });
-    const [records, proposals] = await Promise.race([counts, timeout]).finally(() => clearTimeout(timer));
-    return records + proposals > 0 ? 'queue.html' : 'map.html';
-  } catch (error) {
-    console.warn('Landing page counts unavailable; opening the species catalogue.', error);
-    return 'species.html';
-  }
+  return 'overview.html';
 }
 
 // Opens the first page after logging in (see homePageFor).
@@ -1126,7 +1127,7 @@ function showDatabaseProblem() {
   box.id = 'database-problem';
   box.className = 'card';
   box.setAttribute('role', 'alert');
-  box.textContent = 'Could not load data from the database: ' + databaseProblem +
+  box.textContent = 'Could not load data from the database: ' + databaseProblem.replace(/[.\s]+$/, '') +
     '. What you see may be incomplete. Reload the page to try again.';
   main.insertBefore(box, main.firstChild);
 }
@@ -1245,7 +1246,8 @@ function drawMenu(activeFile) {
     }
     if (thisPageName() !== 'queue.html') {
       refreshFieldRecordsCount().catch(error => {
-        showToast('Field record count could not be loaded. ' + error.message);
+        console.error('Field record count failed:', error);
+        showToast('Field record count could not be loaded.');
       });
     }
   }
@@ -1280,13 +1282,15 @@ function drawSectionTabs(tabs) {
   main.insertBefore(bar, main.firstChild);
 }
 
-// Shows a count on a badge (hidden at 0). noun is singular, e.g. "pending species proposal".
-function setCountBadge(id, count, noun) {
+// Shows a count on a badge (hidden at 0). noun is singular, e.g. "species request"; after
+// is optional words that follow it, e.g. "waiting for review" ("3 species requests waiting
+// for review").
+function setCountBadge(id, count, noun, after) {
   const badge = document.getElementById(id);
   if (!badge) return;
   badge.textContent = String(count);
   badge.hidden = count === 0;
-  badge.title = count + ' ' + noun + (count === 1 ? '' : 's');
+  badge.title = count + ' ' + noun + (count === 1 ? '' : 's') + (after ? ' ' + after : '');
   badge.setAttribute('aria-label', badge.title);
 }
 
@@ -1294,18 +1298,18 @@ function setCountBadge(id, count, noun) {
 function updateReviewMenuCount() {
   if (reviewCounts.records === null && reviewCounts.proposals === null) return;
   setCountBadge('review-menu-count', (reviewCounts.records || 0) + (reviewCounts.proposals || 0),
-    'item waiting for review');
+    'item', 'waiting for review');
 }
 
 function updateSpeciesProposalMenuCount(count) {
-  reviewCounts.proposals = validCount(count, 'pending species request');
-  setCountBadge('species-proposals-count', count, 'pending species request');
+  reviewCounts.proposals = validCount(count, 'species request');
+  setCountBadge('species-proposals-count', count, 'species request', 'waiting for review');
   updateReviewMenuCount();
 }
 
 function updateFieldRecordsCount(count) {
   reviewCounts.records = validCount(count, 'field records');
-  setCountBadge('field-records-count', count, 'field record waiting for review');
+  setCountBadge('field-records-count', count, 'field record', 'waiting for review');
   updateReviewMenuCount();
 }
 

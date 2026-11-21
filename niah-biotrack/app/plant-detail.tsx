@@ -29,7 +29,7 @@ import {
   type ObservationVisit,
 } from '../src/store/useRecordStore';
 
-import { REVIEW_BADGE, visitStatus } from '../src/utils/reviewStatus';
+import { NOT_SUBMITTED_BADGE, REVIEW_BADGE, visitStatus } from '../src/utils/reviewStatus';
 import PlantNotFound from '../src/components/PlantNotFound';
 import { resolveStoredPhotoUri } from '../src/utils/photoStorage';
 import { formatCoordinates } from '../src/utils/formatCoordinates';
@@ -56,6 +56,21 @@ const TAG_NOT_ON_SERVER_TEXT =
   "The new tag hasn't reached the server yet. Use Sync now on Home, then try again.";
 
 const NOT_RECORDED = 'Not recorded';
+
+// Plain words for the record's upload state (never the raw enum value).
+function syncStatusText(status: SyncStatus | string | undefined): string {
+  switch (String(status ?? '').toLowerCase()) {
+    case 'uploaded':
+      return 'Uploaded';
+    case 'failed':
+    case 'upload failed':
+      return 'Upload failed';
+    case 'syncing':
+      return 'Uploading';
+    default:
+      return 'Saved on this phone';
+  }
+}
 
 // The plant's latest measured height and diameter: from the newest visit that has one
 // (stored in cm), otherwise from what was typed when the plant was registered
@@ -331,11 +346,7 @@ export default function PlantDetailScreen() {
       : matched.gpsCoordination;
 
   const review =
-    (matched.reviewStatus && REVIEW_BADGE[matched.reviewStatus]) || {
-      bg: '#E4F2E7',
-      text: '#215A36',
-      label: 'Draft',
-    };
+    (matched.reviewStatus && REVIEW_BADGE[matched.reviewStatus]) || NOT_SUBMITTED_BADGE;
 
   const needsIdentification =
     matched.identificationStatus === IdentificationStatus.PENDING ||
@@ -371,7 +382,7 @@ export default function PlantDetailScreen() {
 
             if (result.sync.ok && result.sync.submittedForReview) {
               Alert.alert(
-                'Submitted to officer review',
+                'Sent for review',
                 'A Conservation Officer can now review this record.'
               );
               return;
@@ -394,7 +405,7 @@ export default function PlantDetailScreen() {
   const handleDelete = () => {
     Alert.alert(
       'Delete plant record?',
-      'This record will be removed from this phone immediately. If it was already synchronized, the deletion will also be sent to the server automatically.',
+      'This record will be removed from this phone immediately. If it was already synced, the deletion will also be sent to the server automatically.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -526,7 +537,7 @@ export default function PlantDetailScreen() {
                 {review.label}
               </Text>
             </View>
-            <Text style={styles.syncText}>{matched.syncStatus}</Text>
+            <Text style={styles.syncText}>{syncStatusText(matched.syncStatus)}</Text>
           </View>
 
           {/* Identification Pending Notice */}
@@ -560,9 +571,9 @@ export default function PlantDetailScreen() {
           {/* Officer Rejection Comment */}
           {matched.reviewStatus === ReviewStatus.REJECTED && (
             <View style={styles.commentBox}>
-              <Text style={styles.commentTitle}>Officer's comment</Text>
+              <Text style={styles.commentTitle}>Officer's reason</Text>
               <Text style={styles.commentBody}>
-                {matched.reviewComment?.trim() || 'No comment was given.'}
+                {matched.reviewComment?.trim() || 'No reason was given.'}
               </Text>
             </View>
           )}
@@ -635,49 +646,46 @@ export default function PlantDetailScreen() {
             />
             <DetailRow label="Health" value={latestCondition(matched.observations ?? [], 'health')} />
             <DetailRow label="Life stage" value={latestCondition(matched.observations ?? [], 'stage')} />
-            <DetailRow label="Observations" value={String((matched.observations ?? []).length)} />
           </View>
 
-          <Text style={styles.heading}>MORPHOLOGICAL CHARACTERISTICS</Text>
-          <Text
-            style={[
-              styles.body,
-              !matched.morphology?.trim() && styles.detailEmpty,
-            ]}
-          >
-            {matched.morphology?.trim() || NOT_RECORDED}
-          </Text>
+          {matched.morphology?.trim() ? (
+            <>
+              <Text style={styles.heading}>MORPHOLOGICAL CHARACTERISTICS</Text>
+              <Text style={styles.body}>{matched.morphology.trim()}</Text>
+            </>
+          ) : null}
 
-          <Text style={styles.heading}>NOTES</Text>
-          <Text
-            style={[
-              styles.body,
-              !matched.description?.trim() && styles.detailEmpty,
-            ]}
-          >
-            {matched.description?.trim() || NOT_RECORDED}
-          </Text>
+          {matched.description?.trim() ? (
+            <>
+              <Text style={styles.heading}>NOTES</Text>
+              <Text style={styles.body}>{matched.description.trim()}</Text>
+            </>
+          ) : null}
 
           {/* About this species: what is known about the species in general. */}
-          <Text style={styles.heading}>ABOUT THIS SPECIES</Text>
-          <View style={styles.detailCard}>
-            <DetailRow
-              label="Scientific name"
-              value={speciesDetail?.scientific_name ?? speciesListItem?.scientific_name ?? matched.scientificName}
-            />
-            <DetailRow
-              label="Common name"
-              value={speciesDetail?.common_name ?? speciesListItem?.common_name ?? matched.commonName}
-            />
-            <DetailRow label="Local name" value={speciesDetail?.local_name ?? speciesListItem?.local_name} />
-            <DetailRow label="Family" value={speciesDetail?.taxonomy?.family ?? speciesListItem?.taxonomy?.family ?? matched.family} />
-            <DetailRow
-              label="Conservation status"
-              value={plainConservationStatus(speciesDetail?.conservation_status ?? speciesListItem?.conservation_status).label}
-            />
-            <DetailRow label="Habitat" value={speciesDetail?.habitat} />
-            <DetailRow label="Description" value={speciesDetail?.description ?? speciesListItem?.description} />
-          </View>
+          {!needsIdentification && (
+            <>
+              <Text style={styles.heading}>ABOUT THIS SPECIES</Text>
+              <View style={styles.detailCard}>
+                <DetailRow
+                  label="Scientific name"
+                  value={speciesDetail?.scientific_name ?? speciesListItem?.scientific_name ?? matched.scientificName}
+                />
+                <DetailRow
+                  label="Common name"
+                  value={speciesDetail?.common_name ?? speciesListItem?.common_name ?? matched.commonName}
+                />
+                <DetailRow label="Local name" value={speciesDetail?.local_name ?? speciesListItem?.local_name} />
+                <DetailRow label="Family" value={speciesDetail?.taxonomy?.family ?? speciesListItem?.taxonomy?.family ?? matched.family} />
+                <DetailRow
+                  label="Conservation status"
+                  value={plainConservationStatus(speciesDetail?.conservation_status ?? speciesListItem?.conservation_status).label}
+                />
+                <DetailRow label="Habitat" value={speciesDetail?.habitat} />
+                <DetailRow label="Description" value={speciesDetail?.description ?? speciesListItem?.description} />
+              </View>
+            </>
+          )}
 
           {/* Photos Upload Status */}
           {photoStates.length > 0 && (

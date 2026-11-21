@@ -68,7 +68,7 @@ function makeRoleSelect(index) {
     }
     list[index].role = select.value;
     writeStorage(USERS_KEY, list);
-    showToast('Role updated');
+    showToast('Role updated.');
   };
   return select;
 }
@@ -151,6 +151,9 @@ function drawUsers() {
   }
   const body = document.getElementById('user-body');
   body.innerHTML = '';
+  // No accounts: show only the count message, not an empty table.
+  const tableCard = body.closest('.card');
+  if (tableCard) tableCard.hidden = list.length === 0;
   const indexes = list.map((_, i) => i);
   if (userSort === SORT_NEWEST) indexes.reverse();
   for (const i of indexes) {
@@ -278,7 +281,7 @@ function deleteUser(index) {
 
   list.splice(index, 1);
   writeStorage(USERS_KEY, list);
-  showToast('User deleted');
+  showToast('User deleted.');
   drawUsers();
 }
 

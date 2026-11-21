@@ -149,12 +149,12 @@ export default function ScanScreen() {
     return (
       <View style={styles.permissionContainer}>
         <Ionicons name="camera-outline" size={64} color="#2D6A4F" />
-        <Text style={styles.permissionTitle}>Camera Access Required</Text>
+        <Text style={styles.permissionTitle}>Camera access required</Text>
         <Text style={styles.permissionSub}>
           Niah BioTrack uses your camera to scan botanical QR tags affixed to specimens.
         </Text>
         <TouchableOpacity style={styles.permissionBtn} onPress={requestPermission}>
-          <Text style={styles.permissionBtnText}>Enable Camera</Text>
+          <Text style={styles.permissionBtnText}>Enable camera</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.galleryPermissionBtn}
@@ -252,7 +252,7 @@ export default function ScanScreen() {
             {isLookingUp && (
               <View style={styles.lookupLoader}>
                 <ActivityIndicator size="large" color="#52B788" />
-                <Text style={styles.lookupText}>Verifying Tag...</Text>
+                <Text style={styles.lookupText}>Checking tag…</Text>
               </View>
             )}
           </View>
@@ -279,7 +279,7 @@ export default function ScanScreen() {
             onPress={() => router.push('/manual-qr')}
           >
             <Ionicons name="keypad-outline" size={18} color="#FFFFFF" />
-            <Text style={styles.manualEntryText}>Manual Tag Lookup</Text>
+            <Text style={styles.manualEntryText}>Type a tag</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -314,7 +314,7 @@ export default function ScanScreen() {
                 ) : null}
                 {staffResult.record.family ? (
                   <View style={styles.familyRow}>
-                    <Text style={styles.familyLabel}>Taxonomy Family:</Text>
+                    <Text style={styles.familyLabel}>Family:</Text>
                     <Text style={styles.familyVal}>{staffResult.record.family}</Text>
                   </View>
                 ) : null}
@@ -348,7 +348,7 @@ export default function ScanScreen() {
             {canEdit ? (
               <View style={styles.sheetActionRow}>
                 <TouchableOpacity style={styles.sheetCancelBtn} onPress={handleDismissSheet}>
-                  <Text style={styles.sheetCancelText}>Scan Again</Text>
+                  <Text style={styles.sheetCancelText}>Scan again</Text>
                 </TouchableOpacity>
 
                 {staffResult?.status === 'on-phone' ? (
@@ -356,7 +356,7 @@ export default function ScanScreen() {
                     style={styles.sheetConfirmBtn}
                     onPress={handleProceedToObservation}
                   >
-                    <Text style={styles.sheetConfirmText}>Record Observation →</Text>
+                    <Text style={styles.sheetConfirmText}>Record observation →</Text>
                   </TouchableOpacity>
                 ) : null}
               </View>

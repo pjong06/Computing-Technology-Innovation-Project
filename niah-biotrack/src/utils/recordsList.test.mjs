@@ -224,3 +224,12 @@ test('Plants screen: rows come from mergePlants and the list is keyed by them', 
   assert.ok(screen.includes("keyExtractor={(item) => item.key}"));
   assert.ok(!screen.includes("key: `server:"));
 });
+
+test('notes stay empty when the botanist leaves them empty: no filler text', () => {
+  const register = read('../../app/new-record.tsx');
+  assert.match(register, /notes: morphology\.trim\(\),/);
+  assert.doesNotMatch(register, /Initial registration record/);
+  const pull = read('../services/serverPull.ts');
+  assert.match(pull, /notes: textValue\(payload\.notes\) \?\? existingVisit\?\.notes \?\? '',/);
+  assert.doesNotMatch(pull, /Observation downloaded from server/);
+});

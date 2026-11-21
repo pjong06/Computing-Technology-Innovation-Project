@@ -106,7 +106,7 @@ export default function ProposeSpeciesScreen() {
     // An exact name match can never be accepted by the server, so stop here.
     const exact = approvedSpecies.find((s) => normalise(s.scientific_name) === normalise(name));
     if (exact) {
-      setError(`${exact.scientific_name} is already in the approved species list. Choose it in New Record instead.`);
+      setError(`${exact.scientific_name} is already in the approved species list. Choose it in Register plant instead.`);
       return;
     }
     if (proposals.some((p) => p.id !== editing?.id && normalise(p.scientificName) === normalise(name) && p.review !== 'rejected')) {
@@ -190,7 +190,7 @@ export default function ProposeSpeciesScreen() {
         ) : null}
         <Text style={styles.intro}>
           Only for a species that isn't in the approved list. An officer will review it; until then it
-          won't appear in the species list or in New Record.
+          won't appear in the species list or in Register plant.
         </Text>
 
         <Text style={styles.fieldLabel}>Scientific name *</Text>

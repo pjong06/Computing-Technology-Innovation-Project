@@ -493,10 +493,7 @@ export default function IotTaskDetailScreen() {
         task.station_id
     )?.station_code ??
     location?.station_code ??
-    `Station ${task.station_id.slice(
-      0,
-      8
-    )}`;
+    'Unknown station';
 
   const severity =
     SEVERITY_COLOURS[
@@ -659,13 +656,15 @@ export default function IotTaskDetailScreen() {
                 )}
               </Text>
 
-              <Text
-                style={
-                  styles.rawMetric
-                }
-              >
-                {task.alert_message}
-              </Text>
+              {!/[a-z]+_[a-z]+/.test(task.alert_message) ? (
+                <Text
+                  style={
+                    styles.rawMetric
+                  }
+                >
+                  {task.alert_message}
+                </Text>
+              ) : null}
             </View>
 
             <View
@@ -744,14 +743,6 @@ export default function IotTaskDetailScreen() {
             )}
           />
 
-          {task.reading_id ? (
-            <DetailRow
-              label="Reading ID"
-              value={
-                task.reading_id
-              }
-            />
-          ) : null}
         </View>
 
         {task.assignment_notes ? (

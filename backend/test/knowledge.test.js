@@ -313,7 +313,7 @@ test('invalid species creation never queries the database', async t => {
 
 for (const [code, status, message] of [
   ['23505', 409, 'A species with this scientific name already exists'],
-  ['23503', 400, 'taxonomy_id does not refer to an existing taxonomy row'],
+  ['23503', 400, 'The family could not be found.'],
 ]) {
   for (const method of ['POST', 'PATCH']) {
     test(`${method} species maps database ${code} to ${status}`, async t => {

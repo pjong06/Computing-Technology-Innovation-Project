@@ -13,6 +13,7 @@ const viewerIsOfficer = viewer !== null && isBotanist(viewer) === false;
 let speciesList = [];   // the species shown in the grid, as the backend sent them
 let plantCountsBySpecies = new Map();
 let plantCountsLoaded = false;
+const overviewStatusFilter = new URLSearchParams(location.search).get('status');
 
 // Makes the big photo box of a card. The status pill sits on the photo.
 // The species list already carries a signed link for one plant photo (plant_photo), so no
@@ -171,7 +172,10 @@ function drawSpeciesTable() {
       (species.local_name || '')).toLowerCase();
 
     const nameMatches = names.includes(searchText);
-    const statusMatches = chosenStatus === '' || statusLabel(species.conservation_status) === chosenStatus;
+    const overviewStatusMatches = overviewStatusFilter !== 'threatened' ||
+      ['CR', 'EN'].includes(species.conservation_status);
+    const statusMatches = overviewStatusMatches &&
+      (chosenStatus === '' || statusLabel(species.conservation_status) === chosenStatus);
 
     if (nameMatches && statusMatches) {
       grid.appendChild(makePlantCard(species));
@@ -241,7 +245,7 @@ async function loadPlantCounts() {
   try {
     const result = await api('/officer/plants/facets');
     if (!Array.isArray(result?.data?.species_counts)) {
-      throw new Error('The plant counts response was invalid.');
+      throw new Error('The data could not be read. Please reload the page.');
     }
     plantCountsBySpecies = new Map(
       result.data.species_counts.map(item => [item.species_id, item.count])
@@ -257,7 +261,7 @@ async function loadPlantCounts() {
 if (viewerIsOfficer === false) {
   const addButton = document.getElementById('add-species');
   if (addButton) {
-    addButton.textContent = 'Propose a species';
+    addButton.textContent = 'Request a species';
   }
 }
 

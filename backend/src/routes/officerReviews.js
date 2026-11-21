@@ -237,7 +237,7 @@ router.get("/pending", async (req, res) => {
     if (error) {
         console.error("Pending observations error:", error);
         return res.status(500).json({
-            message: "Could not load pending observations"
+            message: "Could not load field records."
         });
     }
 
@@ -246,7 +246,7 @@ router.get("/pending", async (req, res) => {
         return res.json({ data: await withThumbnails(req.supabase, rows) });
     } catch (detailError) {
         console.error("Pending observation details error:", detailError);
-        return res.status(500).json({ message: "Could not load pending observations" });
+        return res.status(500).json({ message: "Could not load field records." });
     }
 });
 
@@ -264,7 +264,7 @@ router.get("/rejected", async (req, res) => {
 
     if (error) {
         console.error("Rejected observations error:", error);
-        return res.status(500).json({ message: "Could not load rejected observations" });
+        return res.status(500).json({ message: "Could not load field records that need changes." });
     }
 
     try {
@@ -304,7 +304,7 @@ router.get("/rejected", async (req, res) => {
         return res.json({ data: await withThumbnails(req.supabase, withReasons) });
     } catch (detailError) {
         console.error("Rejected observation details error:", detailError);
-        return res.status(500).json({ message: "Could not load rejected observations" });
+        return res.status(500).json({ message: "Could not load field records that need changes." });
     }
 });
 
@@ -341,7 +341,7 @@ router.get("/:observationId/photos", async (req, res) => {
 
     if (!["pending", "rejected"].includes(observation.review_status) || observation.deleted_at !== null) {
         return res.status(409).json({
-            message: "Photos are available only for pending or rejected observations"
+            message: "Photos are only available for field records waiting for review or needing changes."
         });
     }
 
@@ -455,7 +455,7 @@ async function speciesBlocksApproval(supabase, plantId) {
     if (!species || species.verification_status !== "approved") {
         const name = species && species.scientific_name ? species.scientific_name : "this plant's species";
         return `${name} is not an approved species yet. ` +
-            "Approve it in the Species catalogue first, then approve this observation.";
+            "Approve its species request first, then approve this field record.";
     }
     return null;
 }
@@ -526,7 +526,7 @@ router.post("/:observationId/decision", async (req, res) => {
 
     if (observation.review_status !== "pending" || observation.deleted_at !== null) {
         return res.status(409).json({
-            message: "This observation is no longer waiting for review. Reload the queue."
+            message: "This observation is no longer waiting for review. Reload the page."
         });
     }
 
@@ -578,14 +578,16 @@ router.post("/:observationId/decision", async (req, res) => {
             error.message ===
             "Observation must be Pending; approval requires an approved species"
         ) {
-            return res.status(409).json({ message: error.message });
+            return res.status(409).json({
+                message: "This field record can't be approved until its species is approved."
+            });
         }
 
         if (
             error.message === "Reviewer must be an active officer" ||
             error.message === "Reviewer identity mismatch"
         ) {
-            return res.status(403).json({ message: error.message });
+            return res.status(403).json({ message: "You must be signed in as an active officer." });
         }
 
         const refusal = reviewRefusal(error);

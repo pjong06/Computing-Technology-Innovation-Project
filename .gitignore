@@ -13,3 +13,6 @@ scripts/photo-metadata/*.csv
 # Plant tag report
 scripts/plant-tags/*.csv
 scripts/species-descriptions/*.csv
+# Species text cleaning and demo plant details reports
+scripts/clean-species-text/*.csv
+scripts/demo-plant-details/*.csv

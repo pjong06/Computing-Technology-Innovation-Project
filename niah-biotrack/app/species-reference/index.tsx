@@ -191,7 +191,7 @@ export default function SpeciesReferenceBookScreen() {
           >
             <Text style={styles.backChevron}>‹</Text>
             <Text style={styles.backButtonText}>
-              Back to New Plant Record
+              Back to Register plant
             </Text>
           </TouchableOpacity>
         </View>
