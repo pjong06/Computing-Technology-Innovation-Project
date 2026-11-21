@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,12 +11,15 @@ import {
   ActivityIndicator,
   TextInput,
   Linking,
+  Alert,
+  Vibration,
 } from 'react-native';
 
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import NetInfo from '@react-native-community/netinfo';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 
 import { useStaffOnly } from '../src/context/AuthRoleContext';
 import {
@@ -38,11 +41,27 @@ import TransectMapView, {
 import OfflinePlantMap from '../src/components/OfflinePlantMap';
 import { usePlantListStore } from '../src/store/usePlantListStore';
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
+import { describeTagLookup, lookupTag } from '../src/services/tagLookup';
+import {
+  ACCURACY_WARNING_M,
+  appendTrailPoint,
+  arrivalRadius,
+  bearingDegrees,
+  bearingInWords,
+  distanceMeters,
+  hasArrived as isWithinArrival,
+  isAccuracyPoor,
+  relativeArrowAngle,
+} from '../src/utils/plantGuidance';
 
 const INITIAL_FIX_TIMEOUT_MS = 8_000;
-const MAX_TRACKING_ACCURACY_M = 30;
+// Positions weaker than this are not used for tracking (the same limit as the accuracy warning).
+const MAX_TRACKING_ACCURACY_M = ACCURACY_WARNING_M;
 const MAX_INITIAL_ACCURACY_M = 50;
-const ARRIVAL_THRESHOLD_M = 10;
+// Keeps the screen on while navigating (expo-keep-awake), released on Stop or leaving.
+const KEEP_AWAKE_TAG = 'find-plant-navigation';
+// A short buzz when the botanist reaches the plant.
+const ARRIVAL_VIBRATION_MS = 400;
 
 // What the screen needs of a plant: a record on the phone, or (offline too) a plant someone
 // else registered whose coordinates were saved when the plant list loaded.
@@ -75,31 +94,6 @@ function haversineMeters(
       Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
-}
-
-function computeBearingDegrees(
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number
-): number {
-  const toRad = (deg: number) => (deg * Math.PI) / 180;
-  const toDeg = (rad: number) => (rad * 180) / Math.PI;
-  const phi1 = toRad(lat1);
-  const phi2 = toRad(lat2);
-  const dLambda = toRad(lon2 - lon1);
-
-  const y = Math.sin(dLambda) * Math.cos(phi2);
-  const x =
-    Math.cos(phi1) * Math.sin(phi2) -
-    Math.sin(phi1) * Math.cos(phi2) * Math.cos(dLambda);
-
-  return (toDeg(Math.atan2(y, x)) + 360) % 360;
-}
-
-function bearingToCardinal(deg: number): string {
-  const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-  return dirs[Math.round(deg / 45) % 8];
 }
 
 function formatDistanceDisplay(meters: number): string {
@@ -168,6 +162,15 @@ export default function NavigatePlantScreen() {
   const [gpsWarning, setGpsWarning] = useState('');
   const [currentPoint, setCurrentPoint] = useState<RoutePoint | null>(null);
   const [headingDegrees, setHeadingDegrees] = useState<number | null>(null);
+  // Accuracy of the newest GPS reading, also when it was too weak to use (for the warning).
+  const [latestAccuracy, setLatestAccuracy] = useState<number | null>(null);
+
+  // Live guidance ("Start navigation" ... "Stop"): the walked trail, and whether the
+  // botanist has reached the plant during this navigation (so the buzz happens once).
+  const [navigating, setNavigating] = useState(false);
+  const [trail, setTrail] = useState<RoutePoint[]>([]);
+  const [arrived, setArrived] = useState(false);
+  const [openingObservation, setOpeningObservation] = useState(false);
 
   const locationSubRef = useRef<Location.LocationSubscription | null>(null);
   const headingSubRef = useRef<Location.LocationSubscription | null>(null);
@@ -255,8 +258,12 @@ export default function NavigatePlantScreen() {
     );
   }, [navigablePlants, searchQuery]);
 
-  useEffect(() => {
+  // GPS and compass run only while this screen is in front: they stop when the botanist
+  // leaves it (back, or on to Scan / Record observation) and start again on return.
+  useFocusEffect(
+    useCallback(() => {
     let active = true;
+    hasInitialFixRef.current = false;
 
     const startSensors = async () => {
       try {
@@ -284,6 +291,7 @@ export default function NavigatePlantScreen() {
           allowCoarse = false
         ) => {
           const accuracy = coords.accuracy ?? null;
+          setLatestAccuracy(accuracy);
           const limit =
             allowCoarse || !hasInitialFixRef.current
               ? MAX_INITIAL_ACCURACY_M
@@ -342,8 +350,9 @@ export default function NavigatePlantScreen() {
         const locSub = await Location.watchPositionAsync(
           {
             accuracy: Location.Accuracy.BestForNavigation,
-            timeInterval: 2_000,
-            distanceInterval: 2,
+            // Live guidance: a new position every second or so.
+            timeInterval: 1_000,
+            distanceInterval: 1,
           },
           (loc) => {
             if (!active) return;
@@ -390,8 +399,45 @@ export default function NavigatePlantScreen() {
       locationSubRef.current = null;
       headingSubRef.current?.remove();
       headingSubRef.current = null;
+      // Leaving the screen ends the navigation (and releases the keep-awake).
+      setNavigating(false);
     };
-  }, []);
+  }, [])
+  );
+
+  // A different target: start over.
+  useEffect(() => {
+    setNavigating(false);
+    setTrail([]);
+    setArrived(false);
+  }, [selectedPlantId]);
+
+  // Keep the screen on only while navigating.
+  useEffect(() => {
+    if (!navigating) return undefined;
+    void activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch(() => undefined);
+    return () => {
+      void deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => undefined);
+    };
+  }, [navigating]);
+
+  // While navigating, every usable position extends the walked trail (thinned).
+  useEffect(() => {
+    if (navigating && currentPoint) setTrail((current) => appendTrailPoint(current, currentPoint));
+  }, [navigating, currentPoint]);
+
+  // Reaching the plant during navigation: one short vibration, and the arrival stays shown
+  // even if the next GPS reading scatters a little.
+  const arrivedNow = Boolean(
+    navigating && currentPoint && selectedTarget &&
+    isWithinArrival(distanceMeters(currentPoint, selectedTarget), currentPoint.accuracy ?? null)
+  );
+  useEffect(() => {
+    if (arrivedNow && !arrived) {
+      setArrived(true);
+      Vibration.vibrate(ARRIVAL_VIBRATION_MS);
+    }
+  }, [arrivedNow, arrived]);
 
   if (blocked) return null;
 
@@ -426,26 +472,63 @@ export default function NavigatePlantScreen() {
       : null;
 
   const bearingToPlant =
-    currentPoint && selectedTarget
-      ? computeBearingDegrees(
-          currentPoint.latitude,
-          currentPoint.longitude,
-          selectedTarget.latitude,
-          selectedTarget.longitude
-        )
-      : null;
+    currentPoint && selectedTarget ? bearingDegrees(currentPoint, selectedTarget) : null;
 
+  // The arrow turns with the phone so it always points at the plant (north-up map stays).
   const arrowRotationDeg =
-    bearingToPlant !== null
-      ? headingDegrees !== null
-        ? (bearingToPlant - headingDegrees + 360) % 360
-        : bearingToPlant
-      : 0;
+    bearingToPlant !== null ? relativeArrowAngle(bearingToPlant, headingDegrees) : 0;
 
-  const hasArrived =
-    distanceToPlant !== null && distanceToPlant <= ARRIVAL_THRESHOLD_M;
+  // Within 10 m, allowing up to 10 m more for the GPS reading's own accuracy.
+  const hasArrived = isWithinArrival(distanceToPlant, currentPoint?.accuracy ?? null);
+  const accuracyPoor = isAccuracyPoor(latestAccuracy);
 
-  const handleOpenGoogleMaps = () => {
+  const startNavigation = () => {
+    setTrail(currentPoint ? [currentPoint] : []);
+    setArrived(false);
+    setNavigating(true);
+  };
+
+  const stopNavigation = () => {
+    setNavigating(false);
+  };
+
+  // Record observation for this plant: a plant on the phone opens straight away; a plant only
+  // known from the saved server list is looked up by its tag first (needs the internet).
+  const recordObservation = async () => {
+    if (!selectedTarget) return;
+    const record = records.find(
+      (item) => item.id === selectedTarget.plant.id || (item.serverId && item.serverId === selectedTarget.plant.serverId)
+    );
+    if (record) {
+      router.push({
+        pathname: '/add-observation',
+        params: { plantId: record.id, tagCode: record.tagCode ?? '', scientificName: record.scientificName },
+      } as any);
+      return;
+    }
+    if (!isPhysicalTag(selectedTarget.plant.tagCode)) {
+      Alert.alert('Scan the tag first', 'This plant is not saved on your phone yet. Scan its tag to record an observation.');
+      return;
+    }
+    setOpeningObservation(true);
+    try {
+      const result = await lookupTag(selectedTarget.plant.tagCode as string);
+      if (result.status === 'on-phone') {
+        router.push({
+          pathname: '/add-observation',
+          params: { plantId: result.record.id, tagCode: result.tagCode, scientificName: result.record.scientificName },
+        } as any);
+      } else {
+        const { title, message } = describeTagLookup(result);
+        Alert.alert(title, message);
+      }
+    } finally {
+      setOpeningObservation(false);
+    }
+  };
+
+  // Secondary only: the same destination in the phone's own maps app.
+  const handleOpenInMaps = () => {
     if (!selectedTarget) return;
     const url = `https://www.google.com/maps/dir/?api=1&destination=${selectedTarget.latitude},${selectedTarget.longitude}&travelmode=walking`;
     void Linking.openURL(url);
@@ -583,6 +666,59 @@ export default function NavigatePlantScreen() {
           </View>
         )}
 
+        {/* Navigation happens here in the app: "Start navigation" turns on live guidance. */}
+        {selectedTarget && !showPicker && !navigating && (
+          <TouchableOpacity
+            style={styles.startNavBtn}
+            onPress={startNavigation}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+          >
+            <Ionicons name="navigate" size={20} color="#FFFFFF" />
+            <Text style={styles.startNavBtnText}>Start navigation</Text>
+          </TouchableOpacity>
+        )}
+
+        {selectedTarget && navigating && (
+          <View style={styles.guideCard}>
+            <View style={styles.guideTop}>
+              <View
+                style={[styles.guideArrow, { transform: [{ rotate: `${arrowRotationDeg}deg` }] }]}
+                accessibilityLabel={
+                  bearingToPlant !== null ? `Plant is ${bearingInWords(bearingToPlant)}` : 'Waiting for GPS'
+                }
+              >
+                <Ionicons name="arrow-up" size={64} color="#FFFFFF" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.guideDistance}>
+                  {distanceToPlant !== null ? formatDistanceDisplay(distanceToPlant) : '--'}
+                </Text>
+                <Text style={styles.guideBearing}>
+                  {bearingToPlant !== null
+                    ? `${bearingInWords(bearingToPlant)} · ${Math.round(bearingToPlant)}°`
+                    : 'Waiting for GPS...'}
+                </Text>
+                <Text style={styles.guideHint}>
+                  {headingDegrees !== null
+                    ? 'Walk the way the arrow points.'
+                    : 'No compass: the arrow points correctly when the phone faces north.'}
+                </Text>
+              </View>
+            </View>
+            <Text style={[styles.guideAccuracy, accuracyPoor && styles.guideAccuracyPoor]}>
+              {latestAccuracy !== null
+                ? accuracyPoor
+                  ? `GPS accuracy ±${Math.round(latestAccuracy)} m: weak signal, the distance may be off. Move to a clearer spot if you can.`
+                  : `GPS accuracy ±${Math.round(latestAccuracy)} m`
+                : 'Waiting for GPS accuracy...'}
+            </Text>
+            <TouchableOpacity style={styles.stopNavBtn} onPress={stopNavigation} accessibilityRole="button">
+              <Text style={styles.stopNavBtnText}>Stop</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Interactive Phone-to-Plant Map */}
         {selectedTarget && (
           <>
@@ -607,10 +743,12 @@ export default function NavigatePlantScreen() {
                 targetPoint={mapTarget}
                 height={280}
                 offline={offline}
+                trail={navigating ? trail : []}
                 offlineView={
                   <OfflinePlantMap
                     here={currentPoint}
                     headingDegrees={headingDegrees}
+                    trail={navigating ? trail : []}
                     target={{
                       key: selectedTarget.key,
                       latitude: selectedTarget.latitude,
@@ -640,23 +778,47 @@ export default function NavigatePlantScreen() {
         )}
 
         {/* Arrival Banner */}
-        {selectedTarget && hasArrived && (
+        {selectedTarget && (hasArrived || (navigating && arrived)) && (
           <View style={styles.arrivalBanner}>
             <View style={styles.arrivalTop}>
               <Ionicons name="checkmark-circle" size={22} color="#16A34A" />
-              <Text style={styles.arrivalTitle}>
-                You have arrived near this plant!
-              </Text>
+              <Text style={styles.arrivalTitle}>You've arrived</Text>
             </View>
             <Text style={styles.arrivalSub}>
-              Within {Math.round(distanceToPlant ?? 0)} m of{' '}
-              {selectedTarget.plant.scientificName || 'target specimen'}.
+              {distanceToPlant !== null ? `About ${Math.round(distanceToPlant)} m from ` : 'Near '}
+              {selectedTarget.plant.scientificName || 'the target plant'}
+              {currentPoint ? ` (arrival radius ${Math.round(arrivalRadius(currentPoint.accuracy ?? null))} m)` : ''}.
             </Text>
+            <View style={styles.arrivalActions}>
+              <TouchableOpacity
+                style={styles.arrivalBtn}
+                onPress={() => router.push('/(tabs)/scan' as any)}
+                accessibilityRole="button"
+              >
+                <Ionicons name="qr-code-outline" size={16} color="#FFFFFF" />
+                <Text style={styles.arrivalBtnText}>Scan tag</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.arrivalBtn, openingObservation && { opacity: 0.6 }]}
+                onPress={() => void recordObservation()}
+                disabled={openingObservation}
+                accessibilityRole="button"
+              >
+                {openingObservation ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="create-outline" size={16} color="#FFFFFF" />
+                    <Text style={styles.arrivalBtnText}>Record observation</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         )}
 
-        {/* Distance & Live Compass Arrow */}
-        {selectedTarget && (
+        {/* Distance & Live Compass Arrow (the guide card above replaces it while navigating) */}
+        {selectedTarget && !navigating && (
           <View style={styles.telemetryCard}>
             <View style={styles.telemetryCol}>
               <Text style={styles.telemetryLabel}>DISTANCE TO PLANT</Text>
@@ -684,7 +846,7 @@ export default function NavigatePlantScreen() {
                     <Ionicons name="arrow-up" size={18} color="#FFFFFF" />
                   </View>
                   <Text style={styles.telemetryValue}>
-                    {bearingToCardinal(bearingToPlant)} ·{' '}
+                    {bearingInWords(bearingToPlant)} ·{' '}
                     {Math.round(bearingToPlant)}°
                   </Text>
                 </View>
@@ -736,17 +898,14 @@ export default function NavigatePlantScreen() {
           )}
         </View>
 
-        {/* External Google Maps Option */}
+        {/* Secondary: the phone's maps app (navigation itself happens on this screen). */}
         {selectedTarget && (
           <TouchableOpacity
-            style={styles.externalMapsBtn}
-            onPress={handleOpenGoogleMaps}
-            activeOpacity={0.85}
+            style={styles.openInMapsLink}
+            onPress={handleOpenInMaps}
+            accessibilityRole="link"
           >
-            <Ionicons name="map-outline" size={18} color="#213B2A" />
-            <Text style={styles.externalMapsBtnText}>
-              Open walking directions in Google Maps
-            </Text>
+            <Text style={styles.openInMapsText}>Open in Maps</Text>
           </TouchableOpacity>
         )}
       </ScrollView>
@@ -755,6 +914,63 @@ export default function NavigatePlantScreen() {
 }
 
 const styles = StyleSheet.create({
+  startNavBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#213B2A',
+    height: 54,
+    borderRadius: 27,
+    marginBottom: 16,
+  },
+  startNavBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
+  guideCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    borderWidth: 1.4,
+    borderColor: '#213B2A',
+    padding: 16,
+    marginBottom: 16,
+  },
+  guideTop: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  guideArrow: {
+    width: 104,
+    height: 104,
+    borderRadius: 52,
+    backgroundColor: '#2563EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  guideDistance: { fontSize: 34, fontWeight: '800', color: '#1E2B22' },
+  guideBearing: { fontSize: 16, fontWeight: '700', color: '#213B2A', marginTop: 2 },
+  guideHint: { fontSize: 12, color: '#68776D', marginTop: 4 },
+  guideAccuracy: { fontSize: 12.5, color: '#526659', marginTop: 12 },
+  guideAccuracyPoor: { color: '#B45309', fontWeight: '700' },
+  stopNavBtn: {
+    marginTop: 12,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1.4,
+    borderColor: '#B42318',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stopNavBtnText: { color: '#B42318', fontSize: 15, fontWeight: '800' },
+  arrivalActions: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  arrivalBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#16A34A',
+    height: 42,
+    borderRadius: 21,
+  },
+  arrivalBtnText: { color: '#FFFFFF', fontSize: 13.5, fontWeight: '800' },
+  openInMapsLink: { alignSelf: 'center', paddingVertical: 10, paddingHorizontal: 16 },
+  openInMapsText: { fontSize: 12.5, fontWeight: '600', color: '#526659', textDecorationLine: 'underline' },
   safeArea: {
     flex: 1,
     backgroundColor: '#F6F8F6',
@@ -1088,21 +1304,5 @@ const styles = StyleSheet.create({
     color: '#B45309',
     marginTop: 8,
     lineHeight: 17,
-  },
-  externalMapsBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    height: 48,
-    borderRadius: 24,
-    borderWidth: 1.4,
-    borderColor: '#213B2A',
-    backgroundColor: '#FFFFFF',
-  },
-  externalMapsBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#213B2A',
   },
 });
