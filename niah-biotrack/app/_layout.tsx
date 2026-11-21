@@ -105,9 +105,7 @@ export default function RootLayout() {
         <Stack.Screen name="species-reference/[id]" />
         <Stack.Screen name="attach-tag" />
         <Stack.Screen name="add-observation" />
-        <Stack.Screen name="record-route" />
-        <Stack.Screen name="link-route" />
-        <Stack.Screen name="offline-map" />
+        <Stack.Screen name="navigate-plant" />
         <Stack.Screen name="manual-qr" />
         <Stack.Screen name="propose-species" />
         <Stack.Screen name="sign-up" />

@@ -129,7 +129,6 @@ export default function PlantDetailScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
 
   const records = useRecordStore((state) => state.records);
-  const routes = useRecordStore((state) => state.routes);
   const submitForReview = useRecordStore((state) => state.submitForReview);
   const removePhoto = useRecordStore((state) => state.removePhoto);
   const deleteRecord = useRecordStore((state) => state.deleteRecord);
@@ -179,26 +178,6 @@ export default function PlantDetailScreen() {
   if (!matched) {
     return <PlantNotFound code={id} />;
   }
-
-  const linkedRoute = routes.find(
-    (route) =>
-      route.linkedPlantId === matched.id ||
-      (matched.serverId && route.linkedPlantId === matched.serverId)
-  );
-
-  const displayRouteLength =
-    matched.routeLength ??
-    (linkedRoute
-      ? linkedRoute.distanceMeters >= 1000
-        ? `${(linkedRoute.distanceMeters / 1000).toFixed(2)} km`
-        : `${Math.round(linkedRoute.distanceMeters)} m`
-      : undefined);
-
-  const displayWalkingTime =
-    matched.walkingTime ??
-    (linkedRoute
-      ? `${Math.max(1, Math.round(linkedRoute.durationSeconds / 60))} min`
-      : undefined);
 
   const photos = (matched.photoUris ?? []).map(resolveStoredPhotoUri);
   const speciesFallbackKey = `species:${speciesId || ''}`;
@@ -683,46 +662,6 @@ export default function PlantDetailScreen() {
               value={matched.locationName}
             />
             <DetailRow label="Coordinates" value={coordinates} />
-            {(displayRouteLength || displayWalkingTime) && (
-              <>
-                <DetailRow
-                  label="Transect distance"
-                  value={displayRouteLength}
-                />
-                <DetailRow
-                  label="Walking time"
-                  value={displayWalkingTime}
-                />
-              </>
-            )}
-            {linkedRoute ? (
-              <>
-                <DetailRow
-                  label="Route upload"
-                  value={routeSyncLabel(linkedRoute.syncStatus)}
-                />
-                {linkedRoute.syncStatus === 'failed' ? (
-                  <View style={styles.routeProblemRow}>
-                    <Text style={styles.routeProblemText}>
-                      {linkedRoute.syncError || 'The route could not be uploaded.'}
-                    </Text>
-                    <TouchableOpacity
-                      onPress={() => void retryRouteUpload()}
-                      disabled={retryingRoute}
-                      hitSlop={8}
-                      accessibilityRole="button"
-                      accessibilityLabel="Retry route upload"
-                    >
-                      {retryingRoute ? (
-                        <ActivityIndicator size="small" color="#9B1C1C" />
-                      ) : (
-                        <Text style={styles.routeRetry}>Retry</Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
-              </>
-            ) : null}
           </View>
 
           {/* Photos Upload Status */}
@@ -777,8 +716,8 @@ export default function PlantDetailScreen() {
               style={styles.actionBtn}
               onPress={() =>
                 router.push({
-                  pathname: '/offline-map',
-                  params: { id: matched.id },
+                  pathname: '/navigate-plant',
+                  params: { plantId: matched.id },
                 } as any)
               }
             >
