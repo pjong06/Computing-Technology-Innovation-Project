@@ -132,7 +132,7 @@ test('Plants screen: plants only, Filter sheet, pills, banner, Register at the e
     "'plants needs' : 'plants need'",
     'Show the plants that need your action',
     '+ Register plant',
-    'fetchOtherApprovedPlants',
+    'usePlantListStore',
   ]) {
     assert.ok(screen.includes(needed), needed);
   }

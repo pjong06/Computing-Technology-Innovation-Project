@@ -16,6 +16,8 @@ const { TAG_PATTERN } = require("./qrService");
 
 const PUBLIC_PHOTO_BUCKET = "public-plant-photos";
 const PUBLIC_PHOTO_MAX_SIDE = 1200;
+// List thumbnails (GET /p/:tag/photo?size=thumb): small, to keep storage egress down.
+const PUBLIC_THUMBNAIL_MAX_SIDE = 300;
 const MAX_PUBLIC_PHOTO_BYTES = 5 * 1024 * 1024;
 
 // "<tag>.jpg" for a real plant tag, or null (plants without a physical tag are never public).
@@ -92,16 +94,17 @@ async function refreshPublicPlantPhoto(supabase, plantId) {
 
 // The public photo for a tag, ready to send: re-encoded again (at most 1200 px, no
 // metadata) so whatever is in the bucket, visitors only ever get clean pixels. null when
-// there is none. The caller must have checked the plant is public.
-async function readPublicPlantPhoto(database, tag) {
+// there is none. The caller must have checked the plant is public. maxSide: a smaller size
+// for list thumbnails (PUBLIC_THUMBNAIL_MAX_SIDE).
+async function readPublicPlantPhoto(database, tag, { maxSide = PUBLIC_PHOTO_MAX_SIDE } = {}) {
     const path = publicPhotoPath(tag);
     if (!path) return null;
     const { data: file, error } = await database.storage.from(PUBLIC_PHOTO_BUCKET).download(path);
     if (error || !file || file.size > MAX_PUBLIC_PHOTO_BYTES) return null;
     try {
         return await stripPhotoMetadata(Buffer.from(await file.arrayBuffer()), {
-            maxSide: PUBLIC_PHOTO_MAX_SIDE,
-            quality: 82,
+            maxSide: Math.min(maxSide, PUBLIC_PHOTO_MAX_SIDE),
+            quality: maxSide < PUBLIC_PHOTO_MAX_SIDE ? 78 : 82,
         });
     } catch {
         return null;
@@ -168,6 +171,7 @@ function publicPhotoUrl(tag) {
 module.exports = {
     PUBLIC_PHOTO_BUCKET,
     PUBLIC_PHOTO_MAX_SIDE,
+    PUBLIC_THUMBNAIL_MAX_SIDE,
     publicPhotoPath,
     publicPhotoUrl,
     refreshPublicPlantPhoto,

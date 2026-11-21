@@ -125,13 +125,13 @@ test('tag report script: classifies odd tags and says why lookup fails; --apply 
 
 test('app: public photos for others\' plants in the Plants tab, plant detail and Recent activity', () => {
   const records = read('niah-biotrack/app/(tabs)/records.tsx');
-  assert.match(records, /photoUri: publicPhotoUri\(BASE_URL, plant\.photoUrl\),/);
-  assert.match(records, /: record\.otherBotanist\s*\? publicPhotoUri\(BASE_URL, record\.publicPhotoUrl\)/);
-  assert.match(records, /<RemotePhoto\s+uri=\{item\.photoUri\}/);
+  assert.match(records, /photo: thumbnailSources\(\{ publicPath: plant\.photoUrl, baseUrl: BASE_URL \}\),/);
+  assert.match(records, /publicPath: record\.otherBotanist \? record\.publicPhotoUrl : null,/);
+  assert.match(records, /<PlantThumbnail\s+sources=\{item\.photo\}/);
   const detail = read('niah-biotrack/app/plant-detail.tsx');
-  assert.match(detail, /uri=\{matched\.otherBotanist \? publicPhotoUri\(BASE_URL, matched\.publicPhotoUrl\) : null\}/);
+  assert.match(detail, /publicPath: matched\.otherBotanist \? matched\.publicPhotoUrl : null,/);
   const activity = read('niah-biotrack/src/components/RecentActivity.tsx');
-  assert.match(activity, /: record\.otherBotanist\s*\? publicPhotoUri\(BASE_URL, record\.publicPhotoUrl\)/);
+  assert.match(activity, /const publicPath = record\.otherBotanist \? record\.publicPhotoUrl : null;/);
   assert.match(read('niah-biotrack/src/services/tagLookup.ts'), /publicPhotoUrl: !data\.registered_by && typeof data\.photo_url === 'string' \? data\.photo_url : null,/);
   assert.match(read('niah-biotrack/src/services/approvedPlants.ts'), /photoUrl: typeof row\.photo_url === 'string' \? row\.photo_url : null,/);
 });

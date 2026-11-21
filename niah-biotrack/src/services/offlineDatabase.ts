@@ -547,6 +547,37 @@ export async function removeUploadedLocalEntity(
   return removed;
 }
 
+// A plant the server says was deleted: removes it, its observations and anything of theirs
+// still waiting to upload (which can never upload now), whatever their sync status.
+export async function removeServerDeletedPlant(
+  plantClientId: string,
+  observationIds: string[]
+): Promise<void> {
+  await initializeOfflineDatabase();
+  const db = await getDatabase();
+  const visits = JSON.stringify(observationIds);
+  await db.withExclusiveTransactionAsync(async (transaction) => {
+    await transaction.runAsync(
+      `
+        DELETE FROM sync_outbox
+        WHERE (entity_type = 'plant' AND client_record_id = ?)
+           OR (entity_type = 'observation' AND client_record_id IN (SELECT value FROM json_each(?)))
+      `,
+      plantClientId,
+      visits
+    );
+    await transaction.runAsync(
+      `
+        DELETE FROM local_entities
+        WHERE (entity_type = 'plant' AND client_record_id = ?)
+           OR (entity_type = 'observation' AND client_record_id IN (SELECT value FROM json_each(?)))
+      `,
+      plantClientId,
+      visits
+    );
+  });
+}
+
 export async function getReadyOutboxOperations(
   limit = 50,
   queue: 'records' | 'proposals' = 'records',

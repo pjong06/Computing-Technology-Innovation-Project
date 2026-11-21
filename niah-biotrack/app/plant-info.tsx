@@ -17,7 +17,8 @@ import { conservationStatusColors, plainConservationStatus } from '../src/utils/
 import { plantPhotoCaption } from '../src/utils/plantPhotoCaption';
 import { publicPhotoUri } from '../src/utils/publicPhoto';
 import { BASE_URL } from '../src/api/client';
-import RemotePhoto from '../src/components/RemotePhoto';
+import PlantThumbnail from '../src/components/PlantThumbnail';
+import { thumbnailSources } from '../src/utils/thumbnailSources';
 
 // What the page shows, from either source. Never any location or coordinates.
 interface PlantFacts {
@@ -123,8 +124,9 @@ export default function PlantInfoScreen() {
         <ScrollView contentContainerStyle={styles.content}>
           {photoUri ? (
             <View style={styles.photoBox}>
-              <RemotePhoto
-                uri={photoUri}
+              <PlantThumbnail
+                // Full size first, then the small copy the list showed (kept on the phone).
+                sources={thumbnailSources({ publicPath: photo?.url, baseUrl: BASE_URL, size: 'full' })}
                 style={[styles.photo, styles.photoInBox]}
                 caption={tag ? null : <Text style={styles.photoCaption}>{plantPhotoCaption(photo?.tag)}</Text>}
                 placeholder={
