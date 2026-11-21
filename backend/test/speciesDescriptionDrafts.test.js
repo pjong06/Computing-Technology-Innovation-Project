@@ -69,11 +69,39 @@ test('family: a new classification keeps the current ranks and takes the genus f
 
 // ---- the drafts ----
 
-test('drafts: every species name has one; conservative text, no numbers; genus and family records say so', async () => {
+// A small committed sample of names (one of each kind of record). Tests never depend on
+// git-ignored files such as scripts/species-photos/*.csv, which CI doesn't have.
+const FIXTURE = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'species-description-names.json'), 'utf8'));
+
+test('drafts: the sample names (species, genus, family, tribe, broad group) all have a draft of the right kind', async () => {
+  const { DRAFTS } = await load('scripts/species-descriptions/drafts.mjs');
+  const { findDraft } = await load('scripts/species-descriptions/lib.mjs');
+  for (const kind of ['species', 'genus', 'family', 'below_family', 'broad']) {
+    assert.ok(FIXTURE[kind].length > 0, kind);
+    for (const name of FIXTURE[kind]) assert.ok(findDraft(DRAFTS, name), `${kind}: no draft for ${name}`);
+  }
+  for (const name of FIXTURE.genus) assert.match(DRAFTS[name].description, /^Identified to genus level; /, name);
+  for (const name of FIXTURE.family) assert.match(DRAFTS[name].description, /^Identified to family level; /, name);
+  for (const name of FIXTURE.broad) assert.match(DRAFTS[name].description, /^Identified only to a broad group/, name);
+  // Names are matched ignoring case and extra spaces, as they may be typed in the database.
+  assert.equal(findDraft(DRAFTS, '  begonia   NIAHENSIS '), DRAFTS['Begonia niahensis']);
+  assert.equal(findDraft(DRAFTS, 'Not a plant'), null);
+});
+
+// The full species list is a local, git-ignored file: checked only where it exists.
+const SPECIES_LIST = path.join(repoRoot, 'scripts', 'species-photos', 'species-photo-list.csv');
+test('drafts: every name in the local species list has one (optional file)', {
+  skip: fs.existsSync(SPECIES_LIST) ? false : 'scripts/species-photos/species-photo-list.csv is not present (git-ignored)',
+}, async () => {
+  const { DRAFTS } = await load('scripts/species-descriptions/drafts.mjs');
+  const names = fs.readFileSync(SPECIES_LIST, 'utf8').replace(/\r\n/g, '\n').trim().split('\n').slice(1).map((line) => line.split(',')[1]);
+  assert.ok(names.length > 0);
+  for (const name of new Set(names)) assert.ok(DRAFTS[name], `no draft entry for ${name}`);
+});
+
+test('drafts: conservative text, no numbers; genus and family records say so', async () => {
   const { DRAFTS } = await load('scripts/species-descriptions/drafts.mjs');
   const { genusOf } = await load('scripts/species-descriptions/lib.mjs');
-  const names = read('scripts/species-photos/species-photo-list.csv').trim().split('\n').slice(1).map((line) => line.split(',')[1]);
-  for (const name of new Set(names)) assert.ok(DRAFTS[name], `no draft entry for ${name}`);
 
   for (const [name, draft] of Object.entries(DRAFTS)) {
     assert.deepEqual(Object.keys(draft).sort(), ['common_name', 'description', 'family', 'habitat'], name);
