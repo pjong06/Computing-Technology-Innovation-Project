@@ -56,6 +56,9 @@ const TAG_PROBLEM_TEXT: Record<'in_use' | 'locked', string> = {
 const TAG_NOT_ON_SERVER_TEXT =
   "The new tag hasn't reached the server yet. Use Sync now on Home, then try again.";
 
+// A plant without a real NIAH-PLT tag has no QR to show.
+const NO_TAG_TEXT = 'No tag attached yet';
+
 const NOT_RECORDED = 'Not recorded';
 
 // Plain words for the record's upload state (never the raw enum value).
@@ -278,6 +281,12 @@ export default function PlantDetailScreen() {
       return;
     }
 
+    // A plant's QR is its printed tag; without a real NIAH-PLT tag there is none to show.
+    if (!isPhysicalTag(matched.tagCode)) {
+      Alert.alert(NO_TAG_TEXT, 'A QR code is made once a NIAH-PLT tag is attached to this plant.');
+      return;
+    }
+
     setQrVisible(true);
 
     if (qr && qr.qrValue === matched.tagCode) {
@@ -300,7 +309,9 @@ export default function PlantDetailScreen() {
     } catch (error) {
       setQrError(
         error instanceof ApiError
-          ? error.message
+          ? error.code === 'no_tag'
+            ? NO_TAG_TEXT // the server has no real tag for it (e.g. only a placeholder)
+            : error.message
           : 'Could not load the QR code. Please try again.'
       );
     } finally {
@@ -309,7 +320,8 @@ export default function PlantDetailScreen() {
   };
 
   // Save image / Share: the plant's QR label as a PNG (QR with the tag underneath), from
-  // GET /api/plants/:id/qr/image (own plants only), the same label as in My QR tags.
+  // GET /api/plants/:id/qr/image (own plants, or any approved plant), the same label as in
+  // My QR tags.
   const exportQr = async (action: 'save' | 'share') => {
     if (!qr || !matched?.serverId) return;
     setQrExporting(true);
@@ -770,13 +782,18 @@ export default function PlantDetailScreen() {
               <Text style={styles.actionBtnText}>🧭 Find plant</Text>
             </TouchableOpacity>
 
-            {/* A real tag: its QR. No tag yet (or only the "plant:<id>" placeholder) on
-                this botanist's own plant: Attach tag. */}
+            {/* A real tag: its QR (own plants, and other botanists' or imported approved
+                plants). No tag yet (or only the "plant:<id>" placeholder): Attach tag on this
+                botanist's own plant; on someone else's plant, just say so. */}
             {isPhysicalTag(matched.tagCode) ? (
               <TouchableOpacity style={styles.actionBtn} onPress={() => void openQr()}>
                 <Text style={styles.actionBtnText}>🔳 Show QR</Text>
               </TouchableOpacity>
-            ) : matched.otherBotanist ? null : (
+            ) : matched.otherBotanist ? (
+              <View style={[styles.actionBtn, styles.actionBtnMuted]} accessible accessibilityLabel={NO_TAG_TEXT}>
+                <Text style={styles.actionBtnMutedText}>{NO_TAG_TEXT}</Text>
+              </View>
+            ) : (
               <TouchableOpacity
                 style={styles.actionBtn}
                 onPress={() =>
@@ -1273,6 +1290,15 @@ const styles = StyleSheet.create({
     color: '#213B2A',
     fontWeight: '700',
     fontSize: 13.5,
+  },
+  actionBtnMuted: {
+    backgroundColor: '#F1F4F2',
+    borderStyle: 'dashed',
+  },
+  actionBtnMutedText: {
+    color: '#68776D',
+    fontWeight: '600',
+    fontSize: 13,
   },
   obsHeaderRow: {
     flexDirection: 'row',

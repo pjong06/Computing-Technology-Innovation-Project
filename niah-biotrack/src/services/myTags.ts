@@ -19,7 +19,7 @@ import {
 //   POST /api/tag-reservations/reserve-and-print  -> reserves N new tags, returns the PDF
 //   POST /api/tag-reservations/print              -> PDF of chosen own tags
 //   GET  /api/tag-reservations/:tag/image         -> PNG label of an own unused tag
-//   GET  /api/plants/:id/qr/image                 -> PNG label of an own plant's tag
+//   GET  /api/plants/:id/qr/image                 -> PNG label of a plant's tag (own, or any approved plant)
 // The list is also kept on the phone, so a tag scanned offline can still be checked.
 
 const CACHE_KEY = 'niah-my-qr-tags';
@@ -154,7 +154,7 @@ export async function printTagsPdf(
 }
 
 // One tag's PNG label (QR with the tag underneath), saved in the cache folder as <tag>.png.
-// `path` is from tagImagePath (own unused tag) or a plant's /qr/image (own plant).
+// `path` is from tagImagePath (own unused tag) or a plant's /qr/image (own or approved plant).
 export async function downloadTagImage(
   tag: string,
   path: string

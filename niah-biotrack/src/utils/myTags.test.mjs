@@ -95,9 +95,22 @@ test('Scan tag accepts only your own tags; "No physical tag yet" stays; no tag n
 test('plant detail: own plants with a placeholder show Attach tag; Show QR only for a real tag', () => {
   const detail = read('../../app/plant-detail.tsx');
   assert.match(detail, /\{isPhysicalTag\(matched\.tagCode\) \? \(\s*<TouchableOpacity style=\{styles\.actionBtn\} onPress=\{\(\) => void openQr\(\)\}>/);
-  assert.match(detail, /\) : matched\.otherBotanist \? null : \(/);
   assert.match(detail, /🏷️ Attach tag/);
   assert.match(detail, /value=\{isPhysicalTag\(matched\.tagCode\) \? matched\.tagCode : 'No tag attached'\}/);
+});
+
+test("plant detail: Show QR, Save image and Share for other botanists' and imported plants; no tag says so", () => {
+  const detail = read('../../app/plant-detail.tsx');
+  // Show QR is not limited to own plants: any plant with a real tag (the server allows approved ones).
+  assert.doesNotMatch(detail, /otherBotanist && isPhysicalTag|!matched\.otherBotanist && isPhysicalTag/);
+  // Someone else's plant without a real tag: "No tag attached yet", never "Plant not found".
+  assert.match(detail, /const NO_TAG_TEXT = 'No tag attached yet';/);
+  assert.match(detail, /\) : matched\.otherBotanist \? \(\s*<View style=\{\[styles\.actionBtn, styles\.actionBtnMuted\]\}/);
+  assert.match(detail, /if \(!isPhysicalTag\(matched\.tagCode\)\) \{\s*Alert\.alert\(NO_TAG_TEXT,/);
+  assert.match(detail, /error\.code === 'no_tag'\s*\? NO_TAG_TEXT/);
+  // Save image and Share use the same plant QR image route for every plant.
+  assert.match(detail, /downloadTagImage\(qr\.qrValue, `\/api\/plants\/\$\{encodeURIComponent\(matched\.serverId\)\}\/qr\/image`\)/);
+  assert.match(read('../api/plantQr.ts'), /`\/api\/plants\/\$\{encodeURIComponent\(serverId\)\}\/qr`/);
 });
 
 test('PDF layouts: "Sheet of labels" (the default) or "One label per page"', () => {

@@ -884,7 +884,14 @@ router.post(
 );
 
 // Find the signed-in botanist's plant and its physical QR tag.
-async function findOwnedPlantQrTag(req, res) {
+// The tag of a plant whose QR the signed-in staff member may see, or null after answering.
+// A plant's QR only encodes its public tag URL (/p/<tag>), which is printed on the plant, so:
+//   - the botanist who registered it: any review status (as before);
+//   - any other active botanist or officer: only an APPROVED plant.
+// Deleted plants, other botanists' pending or rejected plants and plants without a real
+// NIAH-PLT tag (none yet, or the "plant:<id>" placeholder) all answer 404, so the response
+// never reveals more than the tag lookup would.
+async function findQrTagForStaff(req, res) {
     const plantId = req.params.id;
     const uuidPattern =
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -896,9 +903,8 @@ async function findOwnedPlantQrTag(req, res) {
 
     const { data, error } = await req.supabase
         .from("plants")
-        .select("id, qr_code_value")
+        .select("id, qr_code_value, registered_by, plant_status, deleted_at")
         .eq("id", plantId)
-        .eq("registered_by", req.user.id)
         .maybeSingle();
 
     if (error) {
@@ -907,24 +913,25 @@ async function findOwnedPlantQrTag(req, res) {
         return null;
     }
 
-    if (!data) {
+    const own = Boolean(data) && data.registered_by === req.user.id;
+    const readable = Boolean(data) && data.deleted_at == null &&
+        (own || data.plant_status === "approved");
+    if (!readable) {
         res.status(404).json({ message: "Plant not found" });
         return null;
     }
 
-    if (!/^NIAH-PLT-\d{5}$/.test(data.qr_code_value)) {
-        res.status(409).json({
-            message: "Attach a NIAH-PLT tag before generating its QR code"
-        });
+    if (!TAG_PATTERN.test(data.qr_code_value || "")) {
+        res.status(404).json({ message: "No tag attached yet", code: "no_tag" });
         return null;
     }
 
     return data.qr_code_value;
 }
 
-// Generate QR data for a plant owned by the signed-in botanist.
-router.get("/:id/qr", requireRole("botanist"), async (req, res) => {
-    const qrValue = await findOwnedPlantQrTag(req, res);
+// QR data for a plant: the botanist's own plants, or any approved plant (findQrTagForStaff).
+router.get("/:id/qr", requireRole("botanist", "officer"), async (req, res) => {
+    const qrValue = await findQrTagForStaff(req, res);
     if (!qrValue) return;
 
     try {
@@ -943,10 +950,11 @@ router.get("/:id/qr", requireRole("botanist"), async (req, res) => {
     }
 });
 
-// The QR label (QR code with the tag written underneath, 1000 px wide) as a PNG, for a
-// plant owned by the signed-in botanist. The same label as GET /api/tag-reservations/:tag/image.
-router.get("/:id/qr/image", requireRole("botanist"), async (req, res) => {
-    const qrValue = await findOwnedPlantQrTag(req, res);
+// The QR label (QR code with the tag written underneath, 1000 px wide) as a PNG, for the
+// botanist's own plants or any approved plant (findQrTagForStaff). The same label as
+// GET /api/tag-reservations/:tag/image.
+router.get("/:id/qr/image", requireRole("botanist", "officer"), async (req, res) => {
+    const qrValue = await findQrTagForStaff(req, res);
     if (!qrValue) return;
 
     try {
