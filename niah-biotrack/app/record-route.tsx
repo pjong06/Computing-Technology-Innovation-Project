@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,6 @@ import {
   ActivityIndicator,
   Alert,
   TextInput,
-  useWindowDimensions,
 } from 'react-native';
 
 import { useRouter } from 'expo-router';
@@ -29,12 +28,13 @@ import {
   formatCoordinates,
   describeAccuracy,
 } from '../src/utils/formatCoordinates';
+import TransectMapView from '../src/components/TransectMapView';
 
 const INITIAL_FIX_TIMEOUT_MS = 8_000;
-const MAX_CANOPY_ACCURACY_M = 50;
-const MIN_STEP_DISTANCE_M = 2;
-const CANVAS_HEIGHT = 170;
-const CANVAS_PADDING = 24;
+const MAX_TRACKING_ACCURACY_M = 30;
+const MAX_INITIAL_ACCURACY_M = 50;
+const BASE_MIN_STEP_M = 4;
+const MAX_WALKING_SPEED_MPS = 8;
 
 function haversineMeters(
   lat1: number,
@@ -61,7 +61,7 @@ function formatDurationClock(totalSeconds: number): string {
   const mins = Math.floor((totalSeconds % 3600) / 60);
   const secs = totalSeconds % 60;
   const pad = (n: number) => String(n).padStart(2, '0');
-  return hrs > 0 ? `${hrs}:${pad(mins)}:${pad(secs)}` : `${pad(mins)}:${pad(secs)}`;
+  return hrs > 0 ? `${hrs}:${pad(mins)}:${pad(secs)}` : `${mins}:${pad(secs)}`;
 }
 
 function formatDistanceDisplay(meters: number): string {
@@ -71,22 +71,10 @@ function formatDistanceDisplay(meters: number): string {
   return `${Math.round(meters)} m`;
 }
 
-function downsamplePoints(points: RoutePoint[], maxPoints: number): RoutePoint[] {
-  if (points.length <= maxPoints) return points;
-  const step = (points.length - 1) / (maxPoints - 1);
-  const sampled: RoutePoint[] = [];
-  for (let i = 0; i < maxPoints; i++) {
-    sampled.push(points[Math.round(i * step)]);
-  }
-  return sampled;
-}
-
 export default function RecordRouteScreen() {
   const router = useRouter();
   const blocked = useStaffOnly();
   const saveRoute = useRecordStore((state) => state.saveRoute);
-  const { width: screenWidth } = useWindowDimensions();
-  const canvasWidth = Math.max(240, screenWidth - 40);
 
   const [isTracking, setIsTracking] = useState(true);
   const [isPaused, setIsPaused] = useState(false);
@@ -98,61 +86,133 @@ export default function RecordRouteScreen() {
   const [currentPoint, setCurrentPoint] = useState<RoutePoint | null>(null);
   const [breadcrumbs, setBreadcrumbs] = useState<RoutePoint[]>([]);
   const [waypoints, setWaypoints] = useState<RouteWaypoint[]>([]);
-  const [waypointNote, setWaypointNote] = useState('');
+
+  const [startDescription, setStartDescription] = useState('');
+  const [endDescription, setEndDescription] = useState('');
+  const [waypointTitle, setWaypointTitle] = useState('');
+  const [waypointDesc, setWaypointDesc] = useState('');
 
   const subscriptionRef = useRef<Location.LocationSubscription | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isPausedRef = useRef(isPaused);
   isPausedRef.current = isPaused;
+
   const lastAcceptedPointRef = useRef<RoutePoint | null>(null);
+  const lastVerifiedPointRef = useRef<RoutePoint | null>(null);
+  const breadcrumbsRef = useRef<RoutePoint[]>([]);
+  const waypointsRef = useRef<RouteWaypoint[]>([]);
+  const distanceMetersRef = useRef(0);
+  const durationSecondsRef = useRef(0);
+
+  breadcrumbsRef.current = breadcrumbs;
+  waypointsRef.current = waypoints;
+  distanceMetersRef.current = distanceMeters;
+  durationSecondsRef.current = durationSeconds;
 
   const appendLocationFix = (
     coords: Location.LocationObjectCoords,
-    timestamp: number
+    timestamp: number,
+    allowCoarseInitial = false
   ) => {
     const accuracy = coords.accuracy ?? null;
-    const point: RoutePoint = {
+    const maxAllowedAccuracy = allowCoarseInitial
+      ? MAX_INITIAL_ACCURACY_M
+      : MAX_TRACKING_ACCURACY_M;
+
+    if (accuracy === null || accuracy > maxAllowedAccuracy) {
+      setAcquiringFix(false);
+      setGpsWarning(
+        accuracy !== null
+          ? `Weak canopy signal (±${Math.round(accuracy)} m). Holding position until GPS locks under ${MAX_TRACKING_ACCURACY_M} m.`
+          : 'Waiting for GPS accuracy reading...'
+      );
+      return;
+    }
+
+    const rawPoint: RoutePoint = {
       latitude: coords.latitude,
       longitude: coords.longitude,
       timestamp,
       accuracy,
     };
 
-    setCurrentPoint(point);
     setAcquiringFix(false);
-
-    if (accuracy !== null && accuracy > MAX_CANOPY_ACCURACY_M) {
-      setGpsWarning(
-        `Weak canopy signal (±${Math.round(accuracy)} m). Waiting for a sharper fix.`
-      );
-      return;
-    }
-
     setGpsWarning('');
 
     if (isPausedRef.current) {
+      lastVerifiedPointRef.current = rawPoint;
+      setCurrentPoint(rawPoint);
       return;
     }
 
     const prev = lastAcceptedPointRef.current;
     if (!prev) {
-      lastAcceptedPointRef.current = point;
-      setBreadcrumbs([point]);
+      lastAcceptedPointRef.current = rawPoint;
+      lastVerifiedPointRef.current = rawPoint;
+      setCurrentPoint(rawPoint);
+      breadcrumbsRef.current = [rawPoint];
+      setBreadcrumbs([rawPoint]);
       return;
     }
 
-    const stepMeters = haversineMeters(
+    const dtSeconds = (timestamp - prev.timestamp) / 1000;
+    if (dtSeconds <= 0) {
+      return;
+    }
+
+    const rawStepMeters = haversineMeters(
       prev.latitude,
       prev.longitude,
-      point.latitude,
-      point.longitude
+      rawPoint.latitude,
+      rawPoint.longitude
     );
 
-    if (stepMeters >= MIN_STEP_DISTANCE_M) {
-      lastAcceptedPointRef.current = point;
-      setDistanceMeters((d) => d + stepMeters);
-      setBreadcrumbs((list) => [...list, point]);
+    if (rawStepMeters / dtSeconds > MAX_WALKING_SPEED_MPS) {
+      setGpsWarning('Filtered sudden canopy GPS jump.');
+      return;
     }
+
+    const requiredStepMeters = Math.max(
+      BASE_MIN_STEP_M,
+      Math.min(accuracy * 0.6, 15)
+    );
+
+    if (rawStepMeters < requiredStepMeters) {
+      const updatedCurrent: RoutePoint = {
+        ...prev,
+        timestamp,
+        accuracy,
+      };
+      lastVerifiedPointRef.current = updatedCurrent;
+      setCurrentPoint(updatedCurrent);
+      return;
+    }
+
+    const alpha = Math.max(0.4, Math.min(0.85, 6 / Math.max(accuracy, 6)));
+    const smoothedPoint: RoutePoint = {
+      latitude: prev.latitude + alpha * (rawPoint.latitude - prev.latitude),
+      longitude: prev.longitude + alpha * (rawPoint.longitude - prev.longitude),
+      timestamp,
+      accuracy,
+    };
+
+    const acceptedStepMeters = haversineMeters(
+      prev.latitude,
+      prev.longitude,
+      smoothedPoint.latitude,
+      smoothedPoint.longitude
+    );
+
+    lastAcceptedPointRef.current = smoothedPoint;
+    lastVerifiedPointRef.current = smoothedPoint;
+    setCurrentPoint(smoothedPoint);
+
+    distanceMetersRef.current += acceptedStepMeters;
+    setDistanceMeters(distanceMetersRef.current);
+
+    const nextBreadcrumbs = [...breadcrumbsRef.current, smoothedPoint];
+    breadcrumbsRef.current = nextBreadcrumbs;
+    setBreadcrumbs(nextBreadcrumbs);
   };
 
   useEffect(() => {
@@ -189,22 +249,22 @@ export default function RecordRouteScreen() {
             ),
           ]);
           if (active) {
-            appendLocationFix(liveFix.coords, liveFix.timestamp);
+            appendLocationFix(liveFix.coords, liveFix.timestamp, true);
           }
         } catch {
           const cached = await Location.getLastKnownPositionAsync({
-            maxAge: 60_000,
-            requiredAccuracy: 100,
+            maxAge: 30_000,
+            requiredAccuracy: MAX_INITIAL_ACCURACY_M,
           });
           if (active && cached) {
-            appendLocationFix(cached.coords, cached.timestamp);
+            appendLocationFix(cached.coords, cached.timestamp, true);
             setGpsWarning(
               'Using recent cached GPS fix while canopy lock stabilizes.'
             );
           } else if (active) {
             setAcquiringFix(false);
             setGpsWarning(
-              'Acquiring canopy GPS fix — keep moving slowly along the trail.'
+              'Acquiring canopy GPS fix — move into a clear spot briefly.'
             );
           }
         }
@@ -215,11 +275,11 @@ export default function RecordRouteScreen() {
           {
             accuracy: Location.Accuracy.BestForNavigation,
             timeInterval: 2_000,
-            distanceInterval: 2,
+            distanceInterval: 3,
           },
           (location) => {
             if (!active) return;
-            appendLocationFix(location.coords, location.timestamp);
+            appendLocationFix(location.coords, location.timestamp, false);
           }
         );
 
@@ -267,95 +327,13 @@ export default function RecordRouteScreen() {
     };
   }, [isTracking, isPaused]);
 
-  const trailProjection = useMemo(() => {
-    const sourcePoints =
-      breadcrumbs.length > 0
-        ? downsamplePoints(breadcrumbs, 120)
-        : currentPoint
-        ? [currentPoint]
-        : [];
-
-    if (sourcePoints.length === 0) {
-      return null;
-    }
-
-    const allLats = [
-      ...sourcePoints.map((p) => p.latitude),
-      ...waypoints.map((w) => w.latitude),
-    ];
-    const allLngs = [
-      ...sourcePoints.map((p) => p.longitude),
-      ...waypoints.map((w) => w.longitude),
-    ];
-
-    const minLat = Math.min(...allLats);
-    const maxLat = Math.max(...allLats);
-    const minLng = Math.min(...allLngs);
-    const maxLng = Math.max(...allLngs);
-
-    const rawLatSpan = maxLat - minLat;
-    const rawLngSpan = maxLng - minLng;
-    const isStationary = rawLatSpan < 0.00005 && rawLngSpan < 0.00005;
-
-    const innerW = canvasWidth - CANVAS_PADDING * 2;
-    const innerH = CANVAS_HEIGHT - CANVAS_PADDING * 2;
-    const latSpan = Math.max(rawLatSpan, 0.0001);
-    const lngSpan = Math.max(rawLngSpan, 0.0001);
-
-    const project = (lat: number, lng: number) => {
-      if (isStationary) {
-        return { x: canvasWidth / 2, y: CANVAS_HEIGHT / 2 };
-      }
-      return {
-        x: CANVAS_PADDING + ((lng - minLng) / lngSpan) * innerW,
-        y: CANVAS_PADDING + (1 - (lat - minLat) / latSpan) * innerH,
-      };
-    };
-
-    const projectedPoints = sourcePoints.map((pt) => project(pt.latitude, pt.longitude));
-    const segments: {
-      key: string;
-      cx: number;
-      cy: number;
-      length: number;
-      angleRad: number;
-    }[] = [];
-
-    for (let i = 0; i < projectedPoints.length - 1; i++) {
-      const p1 = projectedPoints[i];
-      const p2 = projectedPoints[i + 1];
-      const dx = p2.x - p1.x;
-      const dy = p2.y - p1.y;
-      const length = Math.hypot(dx, dy);
-      if (length < 0.5) continue;
-      segments.push({
-        key: `seg-${i}`,
-        cx: (p1.x + p2.x) / 2,
-        cy: (p1.y + p2.y) / 2,
-        length,
-        angleRad: Math.atan2(dy, dx),
-      });
-    }
-
-    const projectedWaypoints = waypoints.map((wp) => ({
-      ...wp,
-      ...project(wp.latitude, wp.longitude),
-    }));
-
-    return {
-      start: projectedPoints[0],
-      end: projectedPoints[projectedPoints.length - 1],
-      segments,
-      waypoints: projectedWaypoints,
-    };
-  }, [breadcrumbs, currentPoint, waypoints, canvasWidth]);
-
   const handlePinWaypoint = () => {
-    if (!currentPoint) {
+    const verifiedPoint = lastVerifiedPointRef.current ?? currentPoint;
+    if (!verifiedPoint) {
       Toast.show({
         type: 'info',
-        text1: 'Waiting for GPS',
-        text2: 'Cannot pin a waypoint until a GPS coordinate is available.',
+        text1: 'Waiting for accurate GPS',
+        text2: 'Cannot pin a waypoint until a sharp GPS coordinate locks.',
       });
       return;
     }
@@ -369,43 +347,51 @@ export default function RecordRouteScreen() {
 
     setWaypoints((prev) => {
       const nextNumber = prev.length + 1;
-      const trimmedLabel = waypointNote.trim();
+      const trimmedTitle = waypointTitle.trim();
+      const trimmedDesc = waypointDesc.trim();
       const newWaypoint: RouteWaypoint = {
         id: `wp-${Date.now()}-${nextNumber}`,
         number: nextNumber,
-        label: trimmedLabel || `Specimen Waypoint #${nextNumber}`,
-        latitude: currentPoint.latitude,
-        longitude: currentPoint.longitude,
+        label: trimmedTitle || `Waypoint #${nextNumber}`,
+        description: trimmedDesc || undefined,
+        latitude: verifiedPoint.latitude,
+        longitude: verifiedPoint.longitude,
         timeString,
       };
-      return [...prev, newWaypoint];
+      const updated = [...prev, newWaypoint];
+      waypointsRef.current = updated;
+      return updated;
     });
 
-    setWaypointNote('');
+    setWaypointTitle('');
+    setWaypointDesc('');
     Toast.show({
       type: 'success',
       text1: 'Waypoint pinned',
-      text2: 'Saved coordinate along the current transect.',
+      text2: 'Tap its marker on the map anytime to view its description.',
     });
   };
 
   const handleRemoveWaypoint = (waypointId: string) => {
-    setWaypoints((prev) =>
-      prev
+    setWaypoints((prev) => {
+      const updated = prev
         .filter((wp) => wp.id !== waypointId)
         .map((wp, idx) => ({
           ...wp,
           number: idx + 1,
-        }))
-    );
+        }));
+      waypointsRef.current = updated;
+      return updated;
+    });
   };
 
   const handleLogTree = () => {
-    if (!currentPoint) {
+    const verifiedPoint = lastVerifiedPointRef.current ?? currentPoint;
+    if (!verifiedPoint) {
       Toast.show({
         type: 'info',
-        text1: 'Waiting for GPS',
-        text2: 'Hold briefly until a GPS coordinate locks before logging a tree.',
+        text1: 'Waiting for accurate GPS',
+        text2: 'Hold briefly until a sharp GPS coordinate locks before logging a tree.',
       });
       return;
     }
@@ -413,27 +399,30 @@ export default function RecordRouteScreen() {
     router.push({
       pathname: '/new-record',
       params: {
-        latitude: String(currentPoint.latitude),
-        longitude: String(currentPoint.longitude),
+        latitude: String(verifiedPoint.latitude),
+        longitude: String(verifiedPoint.longitude),
         accuracy:
-          currentPoint.accuracy !== null && currentPoint.accuracy !== undefined
-            ? String(currentPoint.accuracy)
+          verifiedPoint.accuracy !== null && verifiedPoint.accuracy !== undefined
+            ? String(verifiedPoint.accuracy)
             : '',
-        distanceMeters: String(Math.round(distanceMeters)),
-        durationSeconds: String(durationSeconds),
+        distanceMeters: String(Math.round(distanceMetersRef.current)),
+        durationSeconds: String(durationSecondsRef.current),
       },
     } as any);
   };
 
   const finalizeAndLinkRoute = () => {
+    const latestBreadcrumbs = breadcrumbsRef.current;
     const endPoint =
-      currentPoint ?? breadcrumbs[breadcrumbs.length - 1] ?? null;
+      lastVerifiedPointRef.current ??
+      latestBreadcrumbs[latestBreadcrumbs.length - 1] ??
+      currentPoint;
 
     if (!endPoint) {
       Toast.show({
         type: 'error',
         text1: 'No GPS coordinates recorded',
-        text2: 'Wait for a GPS fix before finishing this transect.',
+        text2: 'Wait for an accurate GPS fix before finishing this transect.',
       });
       return;
     }
@@ -449,14 +438,16 @@ export default function RecordRouteScreen() {
     );
 
     const saved = saveRoute({
-      distanceMeters: Math.round(distanceMeters),
-      durationSeconds,
+      distanceMeters: Math.round(distanceMetersRef.current),
+      durationSeconds: durationSecondsRef.current,
+      startDescription: startDescription.trim() || undefined,
+      endDescription: endDescription.trim() || undefined,
       endGps,
       endLatitude: endPoint.latitude,
       endLongitude: endPoint.longitude,
       endAccuracyM: endPoint.accuracy,
-      breadcrumbs: breadcrumbs.length > 0 ? breadcrumbs : [endPoint],
-      waypoints,
+      breadcrumbs: latestBreadcrumbs.length > 0 ? latestBreadcrumbs : [endPoint],
+      waypoints: waypointsRef.current,
     });
 
     router.replace({
@@ -519,6 +510,8 @@ export default function RecordRouteScreen() {
 
   if (blocked) return null;
 
+  const startPoint = breadcrumbs[0] ?? currentPoint;
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" />
@@ -557,93 +550,37 @@ export default function RecordRouteScreen() {
           <Text style={styles.pointsBadge}>{breadcrumbs.length} pts</Text>
         </View>
 
-        {/* Live Transect Breadcrumb Canvas */}
+        {/* Interactive Map View (Map / Satellite + Markers) */}
         <View style={styles.trailCard}>
           <View style={styles.trailHeader}>
-            <Text style={styles.trailTitle}>TRANSECT PATH PREVIEW</Text>
+            <Text style={styles.trailTitle}>LIVE TRANSECT MAP</Text>
             <View style={styles.legendRow}>
               <View style={styles.legendItem}>
-                <View style={[styles.legendDot, { backgroundColor: '#52B788' }]} />
+                <View style={[styles.legendDot, { backgroundColor: '#16A34A' }]} />
                 <Text style={styles.legendText}>Start</Text>
               </View>
               <View style={styles.legendItem}>
-                <View style={[styles.legendDot, { backgroundColor: '#213B2A' }]} />
-                <Text style={styles.legendText}>Current</Text>
+                <View style={[styles.legendDot, { backgroundColor: '#D97706' }]} />
+                <Text style={styles.legendText}>Point</Text>
+              </View>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, { backgroundColor: '#2563EB' }]} />
+                <Text style={styles.legendText}>Now</Text>
               </View>
             </View>
           </View>
 
-          <View style={[styles.trailCanvas, { width: canvasWidth, height: CANVAS_HEIGHT }]}>
-            {/* Subtle Topo Grid Lines */}
-            <View style={[styles.gridLineH, { top: CANVAS_HEIGHT * 0.33 }]} />
-            <View style={[styles.gridLineH, { top: CANVAS_HEIGHT * 0.66 }]} />
-            <View style={[styles.gridLineV, { left: canvasWidth * 0.33 }]} />
-            <View style={[styles.gridLineV, { left: canvasWidth * 0.66 }]} />
-
-            {!trailProjection ? (
-              <View style={styles.trailEmptyOverlay}>
-                <ActivityIndicator size="small" color="#213B2A" />
-                <Text style={styles.trailEmptyText}>Waiting for first GPS breadcrumb...</Text>
-              </View>
-            ) : (
-              <>
-                {trailProjection.segments.map((seg) => (
-                  <View
-                    key={seg.key}
-                    style={[
-                      styles.trailSegment,
-                      {
-                        width: seg.length,
-                        left: seg.cx - seg.length / 2,
-                        top: seg.cy - 1.5,
-                        transform: [{ rotate: `${seg.angleRad}rad` }],
-                      },
-                    ]}
-                  />
-                ))}
-
-                {/* Start Marker */}
-                <View
-                  style={[
-                    styles.startMarker,
-                    {
-                      left: trailProjection.start.x - 6,
-                      top: trailProjection.start.y - 6,
-                    },
-                  ]}
-                />
-
-                {/* Pinned Waypoint Pins */}
-                {trailProjection.waypoints.map((wp) => (
-                  <View
-                    key={wp.id}
-                    style={[
-                      styles.canvasWpPin,
-                      {
-                        left: wp.x - 10,
-                        top: wp.y - 10,
-                      },
-                    ]}
-                  >
-                    <Text style={styles.canvasWpText}>{wp.number}</Text>
-                  </View>
-                ))}
-
-                {/* Current Position Marker */}
-                <View
-                  style={[
-                    styles.currentMarkerOuter,
-                    {
-                      left: trailProjection.end.x - 11,
-                      top: trailProjection.end.y - 11,
-                    },
-                  ]}
-                >
-                  <View style={styles.currentMarkerInner} />
-                </View>
-              </>
-            )}
-          </View>
+          <TransectMapView
+            breadcrumbs={breadcrumbs}
+            currentPoint={currentPoint}
+            waypoints={waypoints}
+            startDescription={startDescription}
+            endDescription={endDescription}
+            height={250}
+          />
+          <Text style={styles.mapHint}>
+            Tap any marker on the map to read its description.
+          </Text>
         </View>
 
         {/* Primary Telemetry Card */}
@@ -703,7 +640,7 @@ export default function RecordRouteScreen() {
               </Text>
             </>
           ) : (
-            <Text style={styles.gpsSubText}>No GPS fix yet.</Text>
+            <Text style={styles.gpsSubText}>No accurate GPS fix yet.</Text>
           )}
 
           {gpsWarning !== '' && (
@@ -711,15 +648,71 @@ export default function RecordRouteScreen() {
           )}
         </View>
 
+        {/* Start & End Point Descriptions */}
+        <Text style={styles.sectionLabel}>START & END POINT NOTES</Text>
+        <View style={styles.pointCard}>
+          <View style={styles.pointHeaderRow}>
+            <View style={[styles.endpointBadge, { backgroundColor: '#16A34A' }]}>
+              <Text style={styles.endpointBadgeText}>S</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.pointTitle}>Starting point</Text>
+              <Text style={styles.pointCoords}>
+                {startPoint
+                  ? formatCoordinates(startPoint.latitude, startPoint.longitude, null)
+                  : 'Waiting for first GPS fix...'}
+              </Text>
+            </View>
+          </View>
+          <TextInput
+            style={styles.input}
+            placeholder="Add start point description (e.g. Plankwalk Trailhead Gate A)"
+            placeholderTextColor="#8C9A91"
+            value={startDescription}
+            onChangeText={setStartDescription}
+            returnKeyType="done"
+          />
+
+          <View style={[styles.pointHeaderRow, { marginTop: 6 }]}>
+            <View style={[styles.endpointBadge, { backgroundColor: '#DC2626' }]}>
+              <Text style={styles.endpointBadgeText}>E</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.pointTitle}>Ending point (updates as you walk)</Text>
+              <Text style={styles.pointCoords}>
+                {currentPoint
+                  ? formatCoordinates(currentPoint.latitude, currentPoint.longitude, null)
+                  : 'Waiting for GPS fix...'}
+              </Text>
+            </View>
+          </View>
+          <TextInput
+            style={[styles.input, { marginBottom: 0 }]}
+            placeholder="Add end point description (e.g. Limestone cliff base / target tree)"
+            placeholderTextColor="#8C9A91"
+            value={endDescription}
+            onChangeText={setEndDescription}
+            returnKeyType="done"
+          />
+        </View>
+
         {/* Pin Specimen Waypoint */}
-        <Text style={styles.sectionLabel}>SPECIMEN WAYPOINTS</Text>
+        <Text style={styles.sectionLabel}>PIN POINT ALONG ROUTE</Text>
         <View style={styles.waypointInputCard}>
           <TextInput
             style={styles.input}
-            placeholder="Optional note (e.g. Nepenthes cluster by stream)"
+            placeholder="Point name (e.g. Stream Crossing / Orchid Cluster)"
             placeholderTextColor="#8C9A91"
-            value={waypointNote}
-            onChangeText={setWaypointNote}
+            value={waypointTitle}
+            onChangeText={setWaypointTitle}
+            returnKeyType="next"
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Description (e.g. 3 mature specimens on mossy boulder)"
+            placeholderTextColor="#8C9A91"
+            value={waypointDesc}
+            onChangeText={setWaypointDesc}
             returnKeyType="done"
           />
           <TouchableOpacity
@@ -728,7 +721,7 @@ export default function RecordRouteScreen() {
             activeOpacity={0.85}
           >
             <Ionicons name="pin-outline" size={18} color="#213B2A" />
-            <Text style={styles.pinBtnText}>Pin waypoint at current GPS</Text>
+            <Text style={styles.pinBtnText}>Pin point at current GPS</Text>
           </TouchableOpacity>
         </View>
 
@@ -741,6 +734,9 @@ export default function RecordRouteScreen() {
                 </View>
                 <View style={styles.waypointBody}>
                   <Text style={styles.waypointTitle}>{wp.label}</Text>
+                  {wp.description ? (
+                    <Text style={styles.waypointDesc}>{wp.description}</Text>
+                  ) : null}
                   <Text style={styles.waypointMeta}>
                     {formatCoordinates(wp.latitude, wp.longitude, null)} ·{' '}
                     {wp.timeString}
@@ -886,7 +882,7 @@ const styles = StyleSheet.create({
   legendRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   },
   legendItem: {
     flexDirection: 'row',
@@ -903,84 +899,14 @@ const styles = StyleSheet.create({
     color: '#68776D',
     fontWeight: '600',
   },
-  trailCanvas: {
-    backgroundColor: '#EEF5F0',
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  gridLineH: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    height: 1,
-    backgroundColor: 'rgba(33, 59, 42, 0.06)',
-  },
-  gridLineV: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: 1,
-    backgroundColor: 'rgba(33, 59, 42, 0.06)',
-  },
-  trailEmptyOverlay: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  trailEmptyText: {
-    fontSize: 12.5,
-    color: '#526659',
-    fontWeight: '600',
-  },
-  trailSegment: {
-    position: 'absolute',
-    height: 3,
-    backgroundColor: '#2D6A4F',
-    borderRadius: 1.5,
-  },
-  startMarker: {
-    position: 'absolute',
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#52B788',
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-  },
-  canvasWpPin: {
-    position: 'absolute',
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#D97706',
-    borderWidth: 1.5,
-    borderColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  canvasWpText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  currentMarkerOuter: {
-    position: 'absolute',
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: 'rgba(33, 59, 42, 0.22)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  currentMarkerInner: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#213B2A',
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
+  mapHint: {
+    fontSize: 11,
+    color: '#68776D',
+    textAlign: 'center',
+    paddingVertical: 7,
+    backgroundColor: '#F9FBF9',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E6ECE8',
   },
   metricsCard: {
     flexDirection: 'row',
@@ -1072,6 +998,41 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     marginBottom: 8,
   },
+  pointCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    borderWidth: 1.2,
+    borderColor: '#E6ECE8',
+    padding: 14,
+    marginBottom: 14,
+  },
+  pointHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+  },
+  endpointBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  endpointBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11.5,
+    fontWeight: '800',
+  },
+  pointTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E2B22',
+  },
+  pointCoords: {
+    fontSize: 11,
+    color: '#68776D',
+  },
   waypointInputCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 18,
@@ -1125,7 +1086,7 @@ const styles = StyleSheet.create({
     width: 26,
     height: 26,
     borderRadius: 13,
-    backgroundColor: '#213B2A',
+    backgroundColor: '#D97706',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1142,8 +1103,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1E2B22',
   },
+  waypointDesc: {
+    fontSize: 12.5,
+    color: '#374151',
+    marginTop: 2,
+  },
   waypointMeta: {
-    fontSize: 11.5,
+    fontSize: 11,
     color: '#68776D',
     marginTop: 2,
   },
