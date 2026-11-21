@@ -979,7 +979,8 @@ const styles = StyleSheet.create({
   },
   photoBadgeText: { color: '#FFF', fontSize: 9, fontWeight: '700' },
   pillUploadBtn: {
-    height: 48,
+    minHeight: 48,
+    paddingVertical: 8,
     borderRadius: 24,
     borderWidth: 1.2,
     borderColor: '#213B2A',
@@ -990,7 +991,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   pillUploadContent: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  pillUploadBtnText: { fontSize: 14, fontWeight: '700', color: '#213B2A' },
+  pillUploadBtnText: { fontSize: 14, fontWeight: '700', color: '#213B2A', flexShrink: 1, textAlign: 'center' },
   measurementRow: { flexDirection: 'row', gap: 12 },
   halfCol: { flex: 1 },
   chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 },

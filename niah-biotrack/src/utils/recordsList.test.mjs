@@ -162,7 +162,44 @@ test('Home: one "Recent activity" list (new plants, observations, species reques
   }
   const detail = read('../../app/plant-detail.tsx');
   assert.match(detail, /visitStatus\(observation, matched\.syncError\)/);
-  assert.match(detail, /\+ Add plant of this species/);
+  // Now in the "⋯" menu.
+  assert.match(detail, />Add plant of this species</);
+});
+
+test('Plant detail layout: title chips, actions, measurement tiles, location, field notes, observations, menu', () => {
+  const detail = read('../../app/plant-detail.tsx');
+  // Header: "1 of 2" counter, back button, "⋯" menu; placeholder when there is no photo.
+  assert.match(detail, /\{Math\.min\(photoIndex \+ 1, photoCount\)\} of \{photoCount\}/);
+  assert.match(detail, /accessibilityLabel="More actions"/);
+  assert.match(detail, /No photos yet/);
+  // Title: italic scientific name, "common name · family", status / tag / sync chips.
+  assert.match(detail, /styles\.titleItalic/);
+  assert.match(detail, /\[matched\.commonName\?\.trim\(\), matched\.family\?\.trim\(\)\]\.filter\(Boolean\)\.join\(' · '\)/);
+  assert.match(detail, /label: 'Synced'/);
+  assert.match(detail, /label: 'Not uploaded'/);
+  // Actions: Record observation (primary), Find plant, Show QR / Attach tag.
+  assert.match(detail, />Record observation</);
+  assert.match(detail, />Find plant</);
+  assert.match(detail, />Show QR</);
+  // MEASUREMENTS tiles show "—" when empty; LOCATION has the mini map and the coordinates as
+  // plain text (no Copy button).
+  assert.match(detail, /<MeasureTile label="Height \(m\)"/);
+  assert.match(detail, /\{text \|\| '—'\}/);
+  assert.match(detail, /<MiniPlantMap latitude=/);
+  assert.match(detail, /<DetailRow label="Coordinates" value=\{hasCoordinates \? coordinates : null\} \/>/);
+  assert.doesNotMatch(detail, /Clipboard|'Copy'|>Copy</);
+  // FIELD NOTES hidden when both are empty.
+  assert.match(detail, /\{shown\.morphology \|\| shown\.notes \? \(/);
+  // OBSERVATIONS: newest first, empty state, never "visit" in what the botanist reads.
+  assert.match(detail, />No observations yet</);
+  assert.match(detail, /Record an observation each time you check this plant\./);
+  assert.match(detail, />\+ Record first observation</);
+  // No "About the species" card at the bottom.
+  assert.doesNotMatch(detail, /ABOUT THE SPECIES|About the species|species-reference/);
+  // Delete only for own, never-submitted plants.
+  assert.match(detail, /!matched\.otherBotanist &&\s*\(matched\.reviewStatus === ReviewStatus\.DRAFT \|\| !matched\.reviewStatus\)/);
+  const visibleText = detail.match(/>[^<>{}]*</g) ?? [];
+  assert.ok(!visibleText.some((text) => /\bvisits?\b/i.test(text)), 'no "visit" in on-screen text');
 });
 
 test('other botanists\' plants: approved only, never coordinates', () => {

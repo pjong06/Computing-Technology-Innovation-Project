@@ -457,7 +457,8 @@ const styles = StyleSheet.create({
   },
   primaryBtn: {
     backgroundColor: '#213B2A',
-    height: 50,
+    minHeight: 50,
+    paddingVertical: 8,
     borderRadius: 25,
     justifyContent: 'center',
     alignItems: 'center',
@@ -472,6 +473,8 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '700',
+    flexShrink: 1,
+    textAlign: 'center',
   },
   backLinkBtn: {
     alignSelf: 'center',

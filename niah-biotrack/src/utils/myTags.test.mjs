@@ -95,8 +95,12 @@ test('Scan tag accepts only your own tags; "No physical tag yet" stays; no tag n
 test('plant detail: own plants with a placeholder show Attach tag; Show QR only for a real tag', () => {
   const detail = read('../../app/plant-detail.tsx');
   assert.match(detail, /\{isPhysicalTag\(matched\.tagCode\) \? \(\s*<TouchableOpacity style=\{styles\.actionBtn\} onPress=\{\(\) => void openQr\(\)\}>/);
-  assert.match(detail, /🏷️ Attach tag/);
-  assert.match(detail, /value=\{isPhysicalTag\(matched\.tagCode\) \? matched\.tagCode : 'No tag attached'\}/);
+  assert.match(detail, />Attach tag</);
+  // The title block's tag chip: the real tag, or "No tag yet".
+  assert.match(detail, /\{isPhysicalTag\(matched\.tagCode\) \? matched\.tagCode : 'No tag yet'\}/);
+  // The "⋯" menu offers Attach/Change tag on the botanist's own plants only.
+  assert.match(detail, /\{!matched\.otherBotanist \? \(\s*<TouchableOpacity\s+style=\{styles\.menuItem\}/);
+  assert.match(detail, /isPhysicalTag\(matched\.tagCode\) \? 'Change tag' : 'Attach tag'/);
 });
 
 test("plant detail: Show QR, Save image and Share for other botanists' and imported plants; no tag says so", () => {
