@@ -267,6 +267,13 @@ export interface PlantRecord {
   plantName?: string;
   rowVersion?: number;
 
+  /*
+   * Another botanist's approved plant, kept on the phone after a tag scan
+   * (src/services/tagLookup.ts). Not counted as "My plants" unless this
+   * botanist has added visits to it.
+   */
+  otherBotanist?: boolean;
+
   tagCode:
     | string
     | null;
@@ -2009,7 +2016,7 @@ export const useRecordStore =
               ) {
                 /*
                  * Tell the botanist on each affected visit
-                 * (My submissions and Home show it), so the
+                 * (Records and Home show it), so the
                  * skipped submit is never silent.
                  */
                 const oversizedByVisit =

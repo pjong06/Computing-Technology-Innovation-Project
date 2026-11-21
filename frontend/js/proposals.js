@@ -4,22 +4,14 @@ drawMenu('proposals.html');
 
 const byId = id => document.getElementById(id);
 let proposals = [];
+let proposalSort = SORT_NEWEST; // newest proposal first; the select switches it
 let taxonomyRows = null;
 let proposalBusy = false;
 let rejectingProposal = null;
 
+// The portal's one date format: "21 Nov 2026, 11:30" (shared.js formatWhen).
 function displayDate(value) {
-  if (!value) return 'Date not recorded';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? String(value)
-    : date.toLocaleString('en-GB', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+  return formatWhen(value, 'Date not recorded');
 }
 
 function addProposalInfo(card, label, value) {
@@ -80,8 +72,12 @@ function makeProposalCard(proposal) {
 }
 
 function drawProposals() {
+  addListSortSelect('proposals-count', 'proposals-sort', function (order) {
+    proposalSort = order;
+    drawProposals();
+  });
   const list = byId('proposals-list');
-  list.replaceChildren(...proposals.map(makeProposalCard));
+  list.replaceChildren(...sortByDate(proposals, proposal => proposal.created_at, proposalSort).map(makeProposalCard));
   byId('proposals-count').textContent =
     `${proposals.length} pending species proposal${proposals.length === 1 ? '' : 's'}.`;
   byId('proposals-empty').hidden = proposals.length > 0;

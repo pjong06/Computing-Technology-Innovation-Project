@@ -10,6 +10,7 @@ let pending = [];      // the observations waiting for review, as the backend se
 let selectedId = null;
 let photosById = {};   // short-lived photo links for each observation, once loaded
 let busy = false;      // a decision is being saved
+let sortOrder = SORT_NEWEST; // newest field record first; the select switches it
 
 // Makes one small card for the list on the left, with the first photo once it is loaded.
 function visitKind(observation) {
@@ -26,7 +27,11 @@ function visitKindBadge(observation) {
 
 function makeListCard(observation) {
   const photos = photosById[observation.id];
-  const firstPhoto = photos && photos.length > 0 && photos[0].url ? photos[0].url : PICTURE_BLANK;
+  // The list thumbnail comes with the list (signed in one batch), so no click is needed;
+  // once the photos are opened, the first one is used.
+  const firstPhoto = photos && photos.length > 0 && photos[0].url
+    ? photos[0].url
+    : observation.thumbnail_url || PICTURE_BLANK;
   const card = makeObservationListCard(observation, observation.id === selectedId, firstPhoto, function () {
     selectedId = observation.id;
     drawQueue();
@@ -133,17 +138,23 @@ function drawQueue() {
   document.getElementById('queue-count').textContent =
     pending.length + ' field ' + word + ' waiting for review.';
 
-  let selected = findObservation(pending, selectedId);
+  addListSortSelect('queue-count', 'queue-sort', function (order) {
+    sortOrder = order;
+    drawQueue();
+  });
+  const ordered = sortByDate(pending, item => item.observed_at, sortOrder);
+
+  let selected = findObservation(ordered, selectedId);
   if (selected === null) {
-    selected = pending[0];
+    selected = ordered[0];
     selectedId = selected.id;
   }
   loadPhotos(selected.id).catch(showUnexpectedError);
 
   const listBox = document.getElementById('queue-list');
   listBox.innerHTML = '';
-  for (let i = 0; i < pending.length; i++) {
-    listBox.appendChild(makeListCard(pending[i]));
+  for (let i = 0; i < ordered.length; i++) {
+    listBox.appendChild(makeListCard(ordered[i]));
   }
 
   const detailBox = document.getElementById('queue-detail');

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Photo credits - Niah Biotrack</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="images/logo.png">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app">
+
+<nav id="menu"></nav>
+
+<main>
+<section class="page on">
+  <a class="back-link" href="species.html">‹ Species catalogue</a>
+  <h1>Photo <span>credits</span></h1>
+  <p class="lead">Every species reference photo from iNaturalist that needs attribution, for officers and botanists: species, photographer and licence. CC0 photos and SFC's own photos need no credit and are not listed.</p>
+  <p class="muted" id="credits-count">Loading photo credits...</p>
+  <div class="card tw" id="credits-area" hidden>
+    <table class="credits-table">
+      <thead><tr><th scope="col">Species</th><th scope="col">Photographer</th><th scope="col">Licence</th></tr></thead>
+      <tbody id="credits-body"></tbody>
+    </table>
+  </div>
+</section>
+</main>
+</div>
+
+<div id="toast" role="status"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R" crossorigin="anonymous"></script>
+<script src="js/shared.js"></script>
+<script src="js/credits.js"></script>
+</body>
+</html>

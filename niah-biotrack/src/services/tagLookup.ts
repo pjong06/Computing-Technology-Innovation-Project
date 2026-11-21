@@ -32,6 +32,8 @@ interface TagLookupResponse {
     morphology?: string | null;
     description?: string | null;
     plant_status?: string | null;
+    // Sent only for the botanist's own plants (visiblePlant in backend/src/routes/plants.js).
+    registered_by?: string | null;
     registered_at?: string | null;
     row_version?: number | null;
     gps_accuracy_m?: number | null;
@@ -76,6 +78,7 @@ export async function lookupTag(rawTag: string): Promise<TagLookupResult> {
     const cachedRecord: PlantRecord = {
       id: data.client_record_id || serverId,
       serverId,
+      otherBotanist: !data.registered_by,
       rowVersion: data.row_version ?? undefined,
       tagCode: data.tag_code || data.qr_code_value || tagCode,
       scientificName:

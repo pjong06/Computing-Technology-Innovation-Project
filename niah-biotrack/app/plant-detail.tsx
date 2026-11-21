@@ -29,7 +29,7 @@ import {
   type ObservationVisit,
 } from '../src/store/useRecordStore';
 
-import { REVIEW_BADGE } from '../src/utils/reviewStatus';
+import { REVIEW_BADGE, visitStatus } from '../src/utils/reviewStatus';
 import PlantNotFound from '../src/components/PlantNotFound';
 import { resolveStoredPhotoUri } from '../src/utils/photoStorage';
 import { formatCoordinates } from '../src/utils/formatCoordinates';
@@ -37,7 +37,7 @@ import { fetchPlantQr, saveQrImage, type PlantQr } from '../src/api/plantQr';
 import { ApiError } from '../src/api/client';
 import { formatDiameterCm, formatHeightFromCm, parseMeasurement } from '../src/utils/units';
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
-import SpeciesPhotoCredit from '../src/components/SpeciesPhotoCredit';
+import PhotoCreditInfo from '../src/components/PhotoCreditInfo';
 import { preferredSpeciesPhoto } from '../src/utils/speciesPhoto';
 import { routeSyncLabel, routesUploadedText } from '../src/utils/routeSync';
 
@@ -524,13 +524,10 @@ export default function PlantDetailScreen() {
               </Text>
             </View>
           )}
-        </View>
 
-        {speciesFallbackUri && speciesPhotoCredit?.source === 'inaturalist' ? (
-          <View style={styles.speciesPhotoCredit}>
-            <SpeciesPhotoCredit photo={speciesPhotoCredit} />
-          </View>
-        ) : null}
+          {/* Species reference photo: its credit behind a small "i" (only when the licence needs one). */}
+          {speciesFallbackUri ? <PhotoCreditInfo photo={speciesPhotoCredit} /> : null}
+        </View>
 
         <View style={styles.sheet}>
           <Text style={styles.title}>
@@ -823,22 +820,23 @@ export default function PlantDetailScreen() {
               <View style={styles.timelineLine} />
               <View style={styles.timelineDot} />
               <View style={styles.obsCard}>
-                <View style={styles.obsCardTop}>
-                  <Text style={styles.obsDate}>{observation.date}</Text>
-                  <Text
-                    style={[
-                      styles.obsStatus,
-                      observation.syncStatus === SyncStatus.NOT_UPLOADED && {
-                        color: '#8C5E03',
-                      },
-                      observation.syncStatus === SyncStatus.FAILED && {
-                        color: '#B42318',
-                      },
-                    ]}
-                  >
-                    • {observation.syncStatus}
-                  </Text>
-                </View>
+                {/* Each visit's status and reason (visits are no longer rows on the Plants tab). */}
+                {(() => {
+                  const status = visitStatus(observation, matched.syncError);
+                  return (
+                    <>
+                      <View style={styles.obsCardTop}>
+                        <Text style={styles.obsDate}>{observation.date}</Text>
+                        <View style={[styles.visitBadge, { backgroundColor: status.badge.bg }]}>
+                          <Text style={[styles.visitBadgeText, { color: status.badge.text }]} numberOfLines={1}>
+                            {status.badge.label}
+                          </Text>
+                        </View>
+                      </View>
+                      {status.reason ? <Text style={styles.visitReason}>{status.reason}</Text> : null}
+                    </>
+                  );
+                })()}
 
                 <Text style={styles.obsAuthor}>{observation.recordedBy}</Text>
 
@@ -884,6 +882,22 @@ export default function PlantDetailScreen() {
           >
             <Text style={styles.addObsBtnText}>+ Add observation</Text>
           </TouchableOpacity>
+
+          {/* From the old Plants tab: register another plant of the same species. */}
+          {matched.speciesId ? (
+            <TouchableOpacity
+              style={styles.addSameSpeciesBtn}
+              onPress={() =>
+                router.push({
+                  pathname: '/new-record',
+                  params: { speciesId: matched.speciesId },
+                } as any)
+              }
+              accessibilityRole="button"
+            >
+              <Text style={styles.addSameSpeciesText}>+ Add plant of this species</Text>
+            </TouchableOpacity>
+          ) : null}
 
           {/* Delete Record */}
           {canDelete && (
@@ -1068,11 +1082,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 11,
     fontWeight: '700',
-  },
-  speciesPhotoCredit: {
-    paddingHorizontal: 22,
-    paddingTop: 4,
-    backgroundColor: '#F6F8F6',
   },
   sheet: {
     padding: 22,
@@ -1328,6 +1337,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#215A36',
   },
+  visitBadge: { flexShrink: 1, marginLeft: 8, paddingVertical: 3, paddingHorizontal: 9, borderRadius: 12 },
+  visitBadgeText: { fontSize: 11, fontWeight: '700' },
+  visitReason: { fontSize: 12, fontWeight: '600', color: '#9B1C1C', marginTop: 4 },
   obsAuthor: {
     fontSize: 11.5,
     color: '#7E8F83',
@@ -1376,6 +1388,22 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontWeight: '700',
     fontSize: 14.5,
+  },
+  addSameSpeciesBtn: {
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 1.2,
+    borderColor: '#213B2A',
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: -6,
+    marginBottom: 16,
+  },
+  addSameSpeciesText: {
+    color: '#213B2A',
+    fontWeight: '700',
+    fontSize: 14,
   },
   deleteBtn: {
     height: 50,

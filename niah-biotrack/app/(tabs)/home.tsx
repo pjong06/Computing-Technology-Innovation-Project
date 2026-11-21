@@ -26,11 +26,10 @@ import { pullServerRecords, serverPullError } from '../../src/services/serverPul
 import { useProposalStore } from '../../src/store/useProposalStore';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
-import SpeciesPhotoCredit from '../../src/components/SpeciesPhotoCredit';
-import { preferredSpeciesPhoto } from '../../src/utils/speciesPhoto';
 import { plantReviewBadge } from '../../src/utils/reviewStatus';
 import { recordSubmitProblem } from '../../src/utils/submissionState';
 import { routesUploadedText } from '../../src/utils/routeSync';
+import MyProposals from '../../src/components/MyProposals';
 
 const FEATURED_COUNT = 4;
 
@@ -159,7 +158,7 @@ export default function HomeScreen() {
   };
 
   // Before upload: the upload status. After upload: the officer's decision, with the same
-  // logic as My submissions (so a record never shows "Uploaded" here and "Pending" there).
+  // logic as Records (so a record never shows "Uploaded" here and "Pending" there).
   // An approved plant with a newer visit waiting reads "Approved" plus a small waiting line.
   const getStatusBadge = (record: PlantRecord): { bg: string; text: string; label: string; waitingNote?: string | null } => {
     switch (record.syncStatus) {
@@ -352,18 +351,20 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
 
-            {records.length === 0 ? (
-              <View style={styles.emptyContainer}>
-                <Text style={styles.emptyTitle}>No records logged yet</Text>
-                <Text style={styles.emptySub}>
-                  Field observations recorded on patrols will appear here automatically.
-                </Text>
-              </View>
-            ) : (
-              <FlatList
+            {/* Recent records, then the botanist's species proposals, in one scrolling list. */}
+            <FlatList
                 data={records.slice(0, 5)}
                 keyExtractor={(item) => item.id}
                 showsVerticalScrollIndicator={false}
+                ListEmptyComponent={
+                  <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyTitle}>No records logged yet</Text>
+                    <Text style={styles.emptySub}>
+                      Field observations recorded on patrols will appear here automatically.
+                    </Text>
+                  </View>
+                }
+                ListFooterComponent={<MyProposals />}
                 renderItem={({ item }) => {
                   const badge = getStatusBadge(item);
                   const notSentReason =
@@ -429,7 +430,6 @@ export default function HomeScreen() {
                   );
                 }}
               />
-            )}
           </>
         ) : (
           <View style={styles.visitorSection}>
@@ -462,7 +462,6 @@ export default function HomeScreen() {
                     const status = plainConservationStatus(item.conservation_status);
                     const colors = conservationStatusColors(status.code);
                     const photo = imageUrisBySpeciesId[item.id];
-                    const photoCredit = preferredSpeciesPhoto(item.species_media);
                     return (
                       <TouchableOpacity
                         key={item.id}
@@ -477,7 +476,6 @@ export default function HomeScreen() {
                             <Ionicons name="leaf-outline" size={26} color="#46654F" />
                           </View>
                         )}
-                        <SpeciesPhotoCredit photo={photoCredit} compact />
                         <Text style={styles.featuredName} numberOfLines={1}>
                           {item.common_name || item.scientific_name}
                         </Text>
