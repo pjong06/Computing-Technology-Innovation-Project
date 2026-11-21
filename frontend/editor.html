@@ -11,6 +11,7 @@
 <style>
 .back-link { display: inline-block; margin-bottom: 14px; color: var(--pri); font-weight: 600; text-decoration: none; }
 .editor-section { margin-bottom: 16px; }
+.draft-note { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 0 12px; padding: 10px 12px; border-radius: 10px; background: var(--mint); color: var(--ink); font-weight: 600; }
 .editor-section h2 { margin: 0 0 4px; font-size: 16px; }
 .editor-section .section-note { margin: 0 0 14px; }
 .editor-section[hidden] { display: none; }
@@ -93,6 +94,10 @@
 
   <div class="card editor-section" id="about-section">
     <h2>About this species</h2>
+    <div class="draft-note" id="draft-note" role="status" hidden>
+      <span>Draft description: please review</span>
+      <button class="btn ghost small" id="mark-reviewed-button" type="button" onclick="markReviewed().catch(showUnexpectedError)">Mark as reviewed</button>
+    </div>
     <div class="form">
       <label class="full">Habitat<input id="f-habitat" placeholder="e.g. Peat swamp forest edges"></label>
       <label class="full">Description<textarea id="f-desc"></textarea></label>

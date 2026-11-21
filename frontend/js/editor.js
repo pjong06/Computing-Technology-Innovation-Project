@@ -252,6 +252,7 @@ async function startEditor() {
   document.getElementById('f-local').value = editing.local_name || '';
   document.getElementById('f-habitat').value = editing.habitat || '';
   document.getElementById('f-desc').value = editing.description || '';
+  loadDraftNote().catch(showUnexpectedError);
 
   // Archive only an approved species (archived ones are already hidden from the app).
   document.getElementById('archive-button').hidden = editing.verification_status !== 'approved';
@@ -260,6 +261,32 @@ async function startEditor() {
   renderPlantPhotos(editing.plant_photos);
   document.getElementById('distribution-section').hidden = false;
   loadDistribution().catch(showUnexpectedError);
+}
+
+// ---- Draft text (filled in by scripts/species-descriptions/fill.mjs) ----
+
+// Officers see "Draft description: please review" on a species whose description, habitat or
+// common name was drafted and not yet reviewed. Visitors and the app show the text as usual.
+async function loadDraftNote() {
+  const note = document.getElementById('draft-note');
+  note.hidden = true;
+  if (isBotanistUser || !editingId) return;
+  const result = await api('/knowledge/species/' + editingId + '/draft-status');
+  note.hidden = !(result && result.data && result.data.description_is_draft === true);
+}
+
+async function markReviewed() {
+  const button = document.getElementById('mark-reviewed-button');
+  button.disabled = true;
+  try {
+    await api('/knowledge/species/' + editingId + '/mark-reviewed', { method: 'POST' });
+    document.getElementById('draft-note').hidden = true;
+    showToast('Marked as reviewed.');
+  } catch (error) {
+    showToast('Could not mark it as reviewed. ' + error.message);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 // ---- Saving ----

@@ -12,3 +12,4 @@ species-photo-review-by-species-REVIEWED.csv
 scripts/photo-metadata/*.csv
 # Plant tag report
 scripts/plant-tags/*.csv
+scripts/species-descriptions/*.csv
