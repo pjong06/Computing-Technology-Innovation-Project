@@ -66,7 +66,7 @@ app.use('/api/identify', identifyRoutes);
 // Camera router distinguishes shared photo reads from Officer-only operations.
 app.use('/api/iot', requireAuth, require('./routes/iotCamera').createCameraRouter());
 app.use('/api/iot', requireAuth, iotRoutes);
-// Separate workspace; the original /portal/alerts.html remains available.
+// Unified IoT monitoring and alert-handling workspace.
 app.use('/api/iot-workspace', requireAuth, require('./routes/iotWorkspace').createWorkspaceRouter());
 
 app.use('/api/knowledge', knowledgeRoutes);

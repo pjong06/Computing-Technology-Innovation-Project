@@ -595,9 +595,6 @@ test('user admin shows a plain message when an account cannot be created', () =>
 test('pre-freeze clean-ups: no dead login code, "Live data" chip, matching index link, quiet MQTT log', () => {
   const login = read('frontend/js/login.js');
   assert.doesNotMatch(login, /OFFICER_CONTACT_EMAIL|showSuspended/);
-  const alerts = read('frontend/js/alerts.js');
-  assert.match(alerts, /setDashboardStatus\(\s*'live',\s*'Live data'\s*\)/);
-  assert.doesNotMatch(alerts, /Supabase synced/);
   const index = read('frontend/index.html');
   assert.match(index, /url=species\.html/);
   assert.match(index, /<a href="species\.html">Species catalogue<\/a>/);
@@ -652,7 +649,7 @@ test('officers see five menu sections, in order; the Review entry carries the re
     ['Review', 'queue.html'],
     ['Species', 'species.html'],
     ['Plants', 'plants.html'],
-    ['IoT alerts', 'alerts.html'],
+    ['IoT alerts', 'iot-workspace.html'],
     ['Admin', 'reports.html'],
   ]);
   assert.equal(view.sections[0].countId, 'review-menu-count');
@@ -691,8 +688,7 @@ test('tab bars per section for officers, with the current page marked', () => {
   for (const page of ['species.html', 'editor.html']) {
     assert.deepEqual(tabs(page), [], page);
   }
-  assert.deepEqual(tabs('alerts.html').map(t=>[t.href,t.active]),[['alerts.html',true],['iot-workspace.html',false]]);
-  assert.deepEqual(tabs('iot-workspace.html').map(t=>[t.href,t.active]),[['alerts.html',false],['iot-workspace.html',true]]);
+  assert.deepEqual(tabs('iot-workspace.html'), []);
   const editor = plain(nav.navFor(OFFICER, 'editor.html', ''));
   assert.deepEqual(editor.sections.filter(s => s.active).map(s => s.label), ['Species']);
 });
@@ -768,7 +764,7 @@ test('review page headings, and a one-sentence description under every page head
   assert.match(read('frontend/queue.html'), /<h1>Field records <span>to review<\/span><\/h1>/);
   assert.match(read('frontend/proposals.html'), /<h1>Species <span>proposals<\/span><\/h1>/);
   assert.match(read('frontend/rejected.html'), /<h1>Rejected <span>history<\/span><\/h1>/);
-  for (const page of ['species', 'editor', 'proposals', 'queue', 'rejected', 'plants', 'plant', 'map', 'alerts', 'reports', 'users']) {
+  for (const page of ['species', 'editor', 'proposals', 'queue', 'rejected', 'plants', 'plant', 'map', 'reports', 'users']) {
     const html = read(`frontend/${page}.html`);
     const lead = html.match(/<p class="lead"[^>]*>([\s\S]*?)<\/p>/);
     assert.ok(lead && lead[1].replace(/<[^>]+>/g, '').trim().length > 20, `${page}.html has a description`);
@@ -801,12 +797,9 @@ test('one review status scheme: Waiting for review blue, Approved green, Needs c
   // Blue and grey exist in the light theme and both dark themes.
   assert.equal((css.match(/--info: /g) || []).length, 3);
   assert.equal((css.match(/--neutral: /g) || []).length, 3);
-  // No page keeps its own copy of the status colours, and each IoT status is defined once.
+  // No page keeps its own copy of the status colours.
   for (const page of ['plants.html', 'plant.html']) {
     assert.doesNotMatch(read(`frontend/${page}`), /\.plant-status\.(pending|approved|rejected)/, page);
-  }
-  for (const state of ['live', 'loading', 'error']) {
-    assert.equal((css.match(new RegExp(`\\.iot-status-${state} \\{`, 'g')) || []).length, 1, `.iot-status-${state}`);
   }
 });
 
@@ -840,7 +833,6 @@ test('one date format: "21 Nov 2026, 11:30" and "21 Nov 2026", with a fallback w
     ['frontend/js/plants.js', /formatDay\(/],
     ['frontend/js/proposals.js', /formatWhen\(/],
     ['frontend/js/map.js', /formatDay\(/],
-    ['frontend/js/alerts.js', /formatWhen\(/],
     ['frontend/js/reports.js', /formatDay\(/]
   ]) {
     assert.match(read(file), call, file + ' uses the shared date format');
@@ -867,10 +859,8 @@ test('every list has a Newest first / Oldest first sort, newest by default', () 
   assert.match(read('frontend/js/proposals.js'), /addListSortSelect\('proposals-count', 'proposals-sort'/);
   assert.match(read('frontend/js/plant.js'), /addListSortSelect\('observations-count', 'observations-sort'/);
   assert.match(read('frontend/js/users.js'), /addListSortSelect\('users-count', 'users-sort'/);
-  assert.match(read('frontend/js/alerts.js'), /sortByDate\(/);
   for (const [page, id] of [
     ['frontend/plants.html', 'plant-sort'],
-    ['frontend/alerts.html', 'alert-sort'],
     ['frontend/reports.html', 'report-sort']
   ]) {
     const html = read(page);
