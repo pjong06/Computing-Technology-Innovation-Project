@@ -68,6 +68,10 @@ const telemetryBody =
 const alertFilter =
   document.getElementById('alert-filter');
 
+// Newest alert first unless the officer picks Oldest first.
+const alertSort =
+  document.getElementById('alert-sort');
+
 const alertMessage =
   document.getElementById('alert-message');
 
@@ -159,29 +163,9 @@ function formatNumber(
 }
 
 
+// The portal's one date format: "21 Nov 2026, 11:30" (shared.js formatWhen).
 function formatTime(value) {
-  if (!value) {
-    return 'Not available';
-  }
-
-  const date =
-    new Date(value);
-
-  if (
-    Number.isNaN(
-      date.getTime()
-    )
-  ) {
-    return 'Not available';
-  }
-
-  return date.toLocaleString(
-    'en-MY',
-    {
-      dateStyle: 'medium',
-      timeStyle: 'medium',
-    }
-  );
+  return formatWhen(value, 'Not available');
 }
 
 
@@ -4197,6 +4181,14 @@ function renderCompactAlertGroup(
 /* Alert list */
 
 function getFilteredPersistentAlerts() {
+  return sortByDate(
+    filterPersistentAlerts(),
+    (alert) => alert.triggered_at,
+    alertSort ? alertSort.value : SORT_NEWEST
+  );
+}
+
+function filterPersistentAlerts() {
   const filter =
     alertFilter.value;
 
@@ -4693,6 +4685,12 @@ alertFilter.addEventListener(
     renderAlerts();
   }
 );
+
+if (alertSort) {
+  alertSort.addEventListener('change', () => {
+    renderAlerts();
+  });
+}
 
 
 /* Auto refresh */

@@ -14,6 +14,14 @@ export interface PhotoCreditFields {
   photographer?: string | null;
   attribution?: string | null;
   licence_code?: string | null;
+  source?: string | null;
+}
+
+// A credit is needed only for iNaturalist photos under CC BY / CC BY-SA (and any licence we
+// can't confirm). CC0 photos and SFC's own photos never show one. Same rule as
+// needsPhotoCredit in frontend/js/shared.js.
+export function needsPhotoCredit(photo: PhotoCreditFields | null | undefined): boolean {
+  return !!photo && photo.source === 'inaturalist' && photo.licence_code !== 'cc0';
 }
 
 // The photographer's name from iNaturalist's credit sentence, or '' when it has none.
@@ -44,7 +52,46 @@ export function photoCreditName(photo: PhotoCreditFields): string {
   return fromPhotographer || nameFromAttribution(photo.attribution) || 'Unknown photographer';
 }
 
+export function photoLicenceLabel(code: string | null | undefined): string {
+  return (code && LICENCE_LABELS[code]) || 'Unknown licence';
+}
+
 export function photoCreditText(photo: PhotoCreditFields): string {
-  const licence = (photo.licence_code && LICENCE_LABELS[photo.licence_code]) || 'Unknown licence';
-  return `Photo: ${photoCreditName(photo)}, ${licence} via iNaturalist`;
+  return `Photo: ${photoCreditName(photo)}, ${photoLicenceLabel(photo.licence_code)} via iNaturalist`;
+}
+
+export interface PhotoCreditRow {
+  key: string;
+  species: string;
+  commonName: string;
+  photographer: string;
+  licence: string;
+}
+
+// Every credited photo for the Photo credits screen: species, photographer and licence,
+// sorted by species then photographer. CC0 and SFC's own photos are left out.
+export function photoCreditRows(
+  speciesList: {
+    id: string;
+    scientific_name: string;
+    common_name?: string | null;
+    species_media?: (PhotoCreditFields & { id?: string })[] | null;
+  }[]
+): PhotoCreditRow[] {
+  const rows: PhotoCreditRow[] = [];
+  for (const species of speciesList) {
+    (species.species_media ?? []).forEach((photo, index) => {
+      if (!needsPhotoCredit(photo)) return;
+      rows.push({
+        key: `${species.id}:${photo.id ?? index}`,
+        species: species.scientific_name || 'Unnamed species',
+        commonName: species.common_name ?? '',
+        photographer: photoCreditName(photo),
+        licence: photoLicenceLabel(photo.licence_code),
+      });
+    });
+  }
+  return rows.sort(
+    (a, b) => a.species.localeCompare(b.species) || a.photographer.localeCompare(b.photographer)
+  );
 }

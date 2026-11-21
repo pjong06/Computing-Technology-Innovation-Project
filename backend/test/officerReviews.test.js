@@ -169,8 +169,11 @@ test('pending observations come with plant, species and botanist details', async
         id: PLANT, tag_code: 'NIAH-PLT-00001', location_description: 'Left of boardwalk',
         plant_status: 'pending', scientific_name: 'Nepenthes ampullaria', common_name: 'Pitcher plant',
       },
+      thumbnail_url: null, // no photos on this observation
     }]);
   });
+  // Newest first.
+  assert.ok(db.calls.some(c => c[0] === 'observations' && c[1] === 'order' && c[2] === 'observed_at' && c[3].ascending === false));
   assert.ok(db.calls.some(c => c[0] === 'observations' && c[1] === 'eq' && c[2] === 'review_status' && c[3] === 'pending'));
   assert.ok(db.calls.some(c => c[0] === 'observations' && c[1] === 'is' && c[2] === 'deleted_at' && c[3] === null));
   assert.ok(db.calls.some(c => c[0] === 'plants' && c[1] === 'select' &&
@@ -332,4 +335,55 @@ test('an unexpected database error stays generic', async () => {
   }, { decision: 'rejected', comments: 'Blurry' });
   assert.equal(result.status, 500);
   assert.equal(result.body.message, 'Could not save observation review');
+});
+
+test('review lists come with thumbnails signed in one batch (primary photo first)', async () => {
+  const OTHER_OBS = '66666666-6666-4666-8666-666666666666';
+  const signCalls = [];
+  for (const path of ['/pending', '/rejected']) {
+    signCalls.length = 0;
+    db = fakeDb({
+      observations: [observation, { ...observation, id: OTHER_OBS }],
+      ...details,
+      observation_reviews: [],
+      observation_media: [
+        { observation_id: OBS, file_path: 'u/obs/first.jpg', is_primary: false },
+        { observation_id: OBS, file_path: 'u/obs/primary.jpg', is_primary: true },
+      ],
+    });
+    db.storage = {
+      from(bucket) {
+        assert.equal(bucket, 'observation-media');
+        return {
+          async createSignedUrls(paths, expiresIn) {
+            signCalls.push([paths, expiresIn]);
+            return { data: paths.map(p => ({ path: p, signedUrl: `https://signed/${p}` })), error: null };
+          },
+        };
+      },
+    };
+    await withApp(async base => {
+      const result = await call(`${base}${path}`);
+      assert.equal(result.status, 200, path);
+      const byId = Object.fromEntries(result.body.data.map(row => [row.id, row.thumbnail_url]));
+      assert.equal(byId[OBS], 'https://signed/u/obs/primary.jpg', path);
+      assert.equal(byId[OTHER_OBS], null, `${path}: no photo, no thumbnail`);
+    });
+    assert.equal(signCalls.length, 1, `${path}: one batch request, not one per photo`);
+    assert.deepEqual(signCalls[0], [['u/obs/primary.jpg'], 600]);
+  }
+});
+
+test('if thumbnails cannot be signed, the review list still loads without them', async () => {
+  db = fakeDb({
+    observations: [observation],
+    ...details,
+    observation_media: [{ observation_id: OBS, file_path: 'u/obs/primary.jpg', is_primary: true }],
+  });
+  db.storage = { from: () => ({ async createSignedUrls() { return { data: null, error: { message: 'storage down' } }; } }) };
+  await withApp(async base => {
+    const result = await call(`${base}/pending`);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.data[0].thumbnail_url, null);
+  });
 });

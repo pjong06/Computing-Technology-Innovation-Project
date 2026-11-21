@@ -21,7 +21,8 @@ function showPhoto(picture, photo) {
   const preview = document.getElementById('photo-preview');
   preview.innerHTML = '';
   preview.appendChild(makeThumb(picture || PICTURE_BLANK, 'Species photo'));
-  const credit = makeSpeciesPhotoCredit(photo, false);
+  // Photo credit behind a small "i" on the photo (only when the licence needs one).
+  const credit = makePhotoCreditInfo(photo);
   if (credit) preview.appendChild(credit);
 }
 

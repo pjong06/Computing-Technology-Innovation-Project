@@ -225,19 +225,50 @@ function photoCreditText(photo) {
   const licence = (photo.licence_code && SPECIES_PHOTO_LICENSES[photo.licence_code]) || 'Unknown licence';
   return `Photo: ${photoCreditName(photo)}, ${licence} via iNaturalist`;
 }
+// A credit is needed only for iNaturalist photos under CC BY / CC BY-SA (and any licence we
+// can't confirm). CC0 photos and SFC's own photos never show one.
+function needsPhotoCredit(photo) {
+  return !!photo && photo.source === 'inaturalist' && photo.licence_code !== 'cc0';
+}
+
 // ---- end photo credit ----
 
-function makeSpeciesPhotoCredit(photo, compact) {
-  if (!photo || photo.source !== 'inaturalist') return null;
+// A small "i" button for the corner of a photo on a detail view. Hover (or tap) shows the
+// plain-text credit "Photo: <name>, <licence> via iNaturalist". No links. null when the photo
+// needs no credit. The photo's box must be position: relative.
+let photoCreditInfoCount = 0;
+function makePhotoCreditInfo(photo) {
+  if (!needsPhotoCredit(photo)) return null;
+  const text = photoCreditText(photo);
 
-  // Plain text, never the whole attribution sentence.
-  const fullCredit = photoCreditText(photo);
-  const credit = document.createElement('div');
-  credit.className = 'species-photo-credit' + (compact ? ' compact' : '');
-  credit.title = fullCredit;
-  credit.setAttribute('aria-label', fullCredit);
-  credit.textContent = fullCredit;
-  return credit;
+  const wrap = document.createElement('span');
+  wrap.className = 'photo-credit-info';
+
+  const tip = document.createElement('span');
+  tip.className = 'photo-credit-tip';
+  tip.id = 'photo-credit-' + (++photoCreditInfoCount);
+  tip.setAttribute('role', 'tooltip');
+  tip.textContent = text;
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'photo-credit-button';
+  button.textContent = 'i';
+  button.title = text;
+  button.setAttribute('aria-label', 'Photo credit');
+  button.setAttribute('aria-describedby', tip.id);
+  button.setAttribute('aria-expanded', 'false');
+  button.onclick = function (event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const open = !wrap.classList.contains('open');
+    wrap.classList.toggle('open', open);
+    button.setAttribute('aria-expanded', String(open));
+  };
+
+  wrap.appendChild(button);
+  wrap.appendChild(tip);
+  return wrap;
 }
 
 // Opens the species editor for this species id, or for a new species when id is ''.
@@ -599,22 +630,76 @@ function isoDate(d) {
   return d.getFullYear() + '-' + twoDigits(d.getMonth() + 1) + '-' + twoDigits(d.getDate());
 }
 
-// Turns a Date into text with the date and the time, like "14 Sep 2026, 3:42 PM".
+// ---- One date format for every page ----
+// Date and time: "21 Nov 2026, 11:30" (24-hour). Date only: "21 Nov 2026".
 function whenText(d) {
-  let hour = d.getHours();
-  let ampm = 'AM';
-  if (hour >= 12) {
-    ampm = 'PM';
-  }
-  hour = hour % 12;
-  if (hour === 0) {
-    hour = 12;
-  }
   return d.getDate() + ' ' + MONTHS[d.getMonth()] + ' ' + d.getFullYear() + ', ' +
-    hour + ':' + twoDigits(d.getMinutes()) + ' ' + ampm;
+    twoDigits(d.getHours()) + ':' + twoDigits(d.getMinutes());
+}
+
+function dayText(d) {
+  return d.getDate() + ' ' + MONTHS[d.getMonth()] + ' ' + d.getFullYear();
+}
+
+// For a stored date (ISO text or a Date): "21 Nov 2026, 11:30", or fallback when missing.
+function formatWhen(value, fallback) {
+  if (!value) return fallback === undefined ? 'Not recorded' : fallback;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : whenText(date);
+}
+
+// For a stored date: "21 Nov 2026", or fallback when missing.
+function formatDay(value, fallback) {
+  if (!value) return fallback === undefined ? 'Not recorded' : fallback;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : dayText(date);
+}
+
+// ---- Newest first / Oldest first, for every list ----
+const SORT_NEWEST = 'newest';
+const SORT_OLDEST = 'oldest';
+
+// A small select: "Newest first" (default) / "Oldest first". onChange gets 'newest' or 'oldest'.
+function makeSortSelect(id, onChange) {
+  const select = document.createElement('select');
+  select.id = id;
+  select.className = 'sort-select';
+  select.setAttribute('aria-label', 'Sort order');
+  select.add(new Option('Newest first', SORT_NEWEST));
+  select.add(new Option('Oldest first', SORT_OLDEST));
+  select.value = SORT_NEWEST;
+  select.addEventListener('change', () => onChange(select.value));
+  return select;
+}
+
+// A copy of the list sorted by the date dateOf(item) returns; items without a date go last.
+function sortByDate(list, dateOf, order) {
+  const time = item => {
+    const value = Date.parse(dateOf(item) || '');
+    return Number.isNaN(value) ? null : value;
+  };
+  return [...list].sort((a, b) => {
+    const ta = time(a);
+    const tb = time(b);
+    if (ta === null && tb === null) return 0;
+    if (ta === null) return 1;
+    if (tb === null) return -1;
+    return order === SORT_OLDEST ? ta - tb : tb - ta;
+  });
 }
 
 // ---- Shared by the approval queue and the rejected list ----
+
+// Puts a Newest first / Oldest first select right after the list's count line (once).
+function addListSortSelect(afterId, selectId, onChange) {
+  if (document.getElementById(selectId) !== null) return;
+  const after = document.getElementById(afterId);
+  if (after === null) return;
+  const bar = document.createElement('div');
+  bar.className = 'list-sort-bar';
+  bar.appendChild(makeSortSelect(selectId, onChange));
+  after.insertAdjacentElement('afterend', bar);
+}
 
 // Returns the observation with this id from the list, or null if there is none.
 function findObservation(list, id) {
@@ -932,7 +1017,8 @@ const OPEN_PAGES = [
 const BOTANIST_PAGES = [
   'species.html',
   'editor.html',
-  'iot-workspace.html'
+  'iot-workspace.html',
+  'credits.html'
 ];
 
 const OFFICER_ONLY_PAGE_MESSAGE = 'That page is for conservation officers only.';
@@ -1005,7 +1091,7 @@ const NAV_SECTIONS = [
   },
   {
     label: 'Species',
-    alsoActiveOn: ['editor.html'],
+    alsoActiveOn: ['editor.html', 'credits.html'],
     pages: [
       { file: 'species.html', label: 'Species catalogue' }
     ]
@@ -1439,6 +1525,9 @@ function makeThumb(photo, altText, sizeClass) {
     box.classList.add(sizeClass);
   }
   const img = document.createElement('img');
+  // Lists: only images in view are fetched.
+  img.loading = 'lazy';
+  img.decoding = 'async';
   img.src = photo;
   img.alt = altText;
   img.onerror = function () {

@@ -4,18 +4,9 @@ drawMenu('plant.html');
 
 const byId = id => document.getElementById(id);
 
+// The portal's one date format: "21 Nov 2026, 11:30" (shared.js formatWhen).
 function displayDate(value) {
-  if (!value) return 'None recorded';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? String(value)
-    : date.toLocaleString('en-GB', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+  return formatWhen(value, 'None recorded');
 }
 
 // Waiting for review / Approved / Needs changes / Draft, with its colour class (shared.js).
@@ -70,7 +61,8 @@ function renderPhotos(photos, speciesPhoto) {
     image.loading = 'lazy';
     const caption = document.createElement('figcaption');
     caption.textContent = 'Species photo';
-    const credit = makeSpeciesPhotoCredit(speciesFallback, false);
+    // Photo credit behind a small "i" on the photo (only when the licence needs one).
+    const credit = makePhotoCreditInfo(speciesFallback);
     image.onerror = function () {
       image.onerror = null;
       image.src = PICTURE_BLANK;
@@ -84,13 +76,22 @@ function renderPhotos(photos, speciesPhoto) {
   }
 }
 
+// Visit history: newest first; the select switches to oldest first.
+let historySort = SORT_NEWEST;
+let historyRows = [];
+
 function renderObservations(observations) {
+  historyRows = observations;
+  addListSortSelect('observations-count', 'observations-sort', function (order) {
+    historySort = order;
+    renderObservations(historyRows);
+  });
   const body = byId('observations-body');
   body.replaceChildren();
   byId('observations-count').textContent =
     `${observations.length} observation${observations.length === 1 ? '' : 's'}`;
   byId('observations-empty').hidden = observations.length > 0;
-  observations.forEach(observation => {
+  sortByDate(observations, observation => observation.observed_at, historySort).forEach(observation => {
     const row = document.createElement('tr');
     cell(row, displayDate(observation.observed_at));
     cell(row, observation.observer_name);

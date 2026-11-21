@@ -34,9 +34,8 @@ function makePlantPhoto(species) {
   if (species.verification_status === 'approved' || viewerIsOfficer === false) {
     speciesPhoto(species).then(function (photo) {
       if (photo?.url) {
+        // No credit on catalogue cards: it is on the editor and the Photo credits page.
         img.src = photo.url;
-        const credit = makeSpeciesPhotoCredit(photo, true);
-        if (credit) photoArea.appendChild(credit);
       }
     }).catch(function () {
       // No photo link: the blank leaf stays.

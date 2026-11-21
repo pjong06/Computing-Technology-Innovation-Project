@@ -206,31 +206,65 @@ test('approval queue labels pending first plant records and revisits', () => {
   assert.match(reviews, /plant_status: plant\.plant_status/);
 });
 
-test('the species catalogue and editor render iNaturalist photo credits', () => {
+test('photo credits are unobtrusive: an "i" on detail photos, none in lists, a credits page', () => {
   const shared = read('frontend/js/shared.js');
-  assert.match(shared, /function makeSpeciesPhotoCredit\(photo, compact\)/);
-  assert.match(shared, /photo\.source !== 'inaturalist'/);
-  assert.match(read('frontend/js/species.js'), /makeSpeciesPhotoCredit\(photo, true\)/);
-  assert.match(read('frontend/js/editor.js'), /makeSpeciesPhotoCredit\(photo, false\)/);
-
-  const creditStart = shared.indexOf('function makeSpeciesPhotoCredit(');
-  const creditEnd = shared.indexOf('\n}', creditStart);
-  const creditRenderer = shared.slice(creditStart, creditEnd);
-  assert.match(creditRenderer, /credit\.textContent = fullCredit/);
+  // The rule: iNaturalist photos that are not CC0; SFC's own photos never.
+  assert.match(shared, /function needsPhotoCredit\(photo\) \{\s*return !!photo && photo\.source === 'inaturalist' && photo\.licence_code !== 'cc0';/);
+  assert.doesNotMatch(shared, /function makeSpeciesPhotoCredit\(/);
+  assert.match(shared, /function makePhotoCreditInfo\(photo\) \{\s*if \(!needsPhotoCredit\(photo\)\) return null;/);
+  // Plain text only: no links in the credit.
+  const infoStart = shared.indexOf('function makePhotoCreditInfo(');
+  const info = shared.slice(infoStart, shared.indexOf('\n}', infoStart));
+  assert.match(info, /tip\.textContent = text;/);
+  assert.doesNotMatch(info, /createElement\(['"]a['"]\)|\.href\s*=|source_url/);
   assert.match(shared, /'cc-by': 'CC BY'/);
   assert.match(shared, /'cc-by-sa': 'CC BY-SA'/);
   assert.match(shared, /cc0: 'CC0'/);
-  assert.doesNotMatch(creditRenderer, /createElement\(['"]a['"]\)|\.href\s*=|source_url/);
 
-  // The app builds the same plain-text credit in src/utils/photoCredit.ts
-  // (photoCredit.test.js checks web and app give the same text).
-  const mobileCredit = read('niah-biotrack/src/components/SpeciesPhotoCredit.tsx');
-  const mobileCreditText = read('niah-biotrack/src/utils/photoCredit.ts');
-  assert.match(mobileCredit, /\{photoCreditText\(photo\)\}/);
-  assert.match(mobileCreditText, /Photo: \$\{photoCreditName\(photo\)\}, \$\{licence\} via iNaturalist/);
-  for (const source of [mobileCredit, mobileCreditText]) {
-    assert.doesNotMatch(source, /Linking|onPress|accessibilityRole|source_url|creativecommons\.org/);
+  // Detail views: the "i" on the photo. Cards and lists: no credit text.
+  assert.match(read('frontend/js/editor.js'), /const credit = makePhotoCreditInfo\(photo\);/);
+  assert.match(read('frontend/js/plant.js'), /const credit = makePhotoCreditInfo\(speciesFallback\);/);
+  for (const file of ['species.js', 'plants.js', 'map.js', 'queue.js', 'rejected.js', 'proposals.js']) {
+    assert.doesNotMatch(read(`frontend/js/${file}`), /makeSpeciesPhotoCredit|makePhotoCreditInfo|photoCreditText/, file);
   }
+  const css = read('frontend/css/style.css');
+  assert.match(css, /\.photo-credit-info:hover \.photo-credit-tip,\s*\.photo-credit-info:focus-within \.photo-credit-tip,\s*\.photo-credit-info\.open \.photo-credit-tip \{\s*display: block;/);
+  assert.doesNotMatch(css + read('frontend/species.html'), /\.species-photo-credit/);
+
+  // The Photo credits page: linked from the Species page footer, open to officers and botanists.
+  assert.match(read('frontend/species.html'), /<p class="page-footer">[^<]*<a href="credits\.html">Photo credits<\/a><\/p>/);
+  const botanistPages = shared.slice(shared.indexOf('const BOTANIST_PAGES'), shared.indexOf('];', shared.indexOf('const BOTANIST_PAGES')));
+  assert.match(botanistPages, /'credits\.html'/);
+  assert.match(shared, /alsoActiveOn: \['editor\.html', 'credits\.html'\]/);
+  const credits = read('frontend/js/credits.js');
+  assert.match(credits, /if \(!needsPhotoCredit\(photo\)\) continue;/);
+  assert.match(credits, /photographer: photoCreditName\(photo\)/);
+  assert.match(credits, /SPECIES_PHOTO_LICENSES\[photo\.licence_code\]/);
+  assert.match(credits, /if \(pageAllowed !== false\)/);
+  assert.doesNotMatch(credits, /\.href\s*=|source_url/);
+  const creditsHtml = read('frontend/credits.html');
+  assert.match(creditsHtml, /<script src="js\/shared\.js"><\/script>\s*<script src="js\/credits\.js"><\/script>/);
+  for (const id of Array.from(credits.matchAll(/getElementById\('([^']+)'\)/g), m => m[1])) {
+    assert.match(creditsHtml, new RegExp(`id="${id}"`), `credits.html has #${id}`);
+  }
+
+  // The app: the same rule and text in src/utils/photoCredit.ts (photoCredit.test.js checks
+  // web and app agree); an "i" on detail photos; no credit in lists; a Photo credits screen.
+  const appCredit = read('niah-biotrack/src/utils/photoCredit.ts');
+  assert.match(appCredit, /export function needsPhotoCredit\([^)]*\): boolean \{\s*return !!photo && photo\.source === 'inaturalist' && photo\.licence_code !== 'cc0';/);
+  assert.match(appCredit, /return `Photo: \$\{photoCreditName\(photo\)\}, \$\{photoLicenceLabel\(photo\.licence_code\)\} via iNaturalist`;/);
+  const info2 = read('niah-biotrack/src/components/PhotoCreditInfo.tsx');
+  assert.match(info2, /if \(!needsPhotoCredit\(photo\)\) return null;/);
+  assert.doesNotMatch(info2, /Linking|source_url|creativecommons\.org/);
+  for (const screen of ['app/plant-detail.tsx', 'app/plant-info.tsx', 'app/species-reference/[id].tsx']) {
+    assert.match(read(`niah-biotrack/${screen}`), /<PhotoCreditInfo photo=\{/, screen);
+  }
+  for (const screen of ['app/(tabs)/home.tsx', 'app/(tabs)/plants.tsx']) {
+    assert.doesNotMatch(read(`niah-biotrack/${screen}`), /SpeciesPhotoCredit|PhotoCreditInfo|photoCreditText/, screen);
+  }
+  assert.equal(fs.existsSync(path.join(repoRoot, 'niah-biotrack/src/components/SpeciesPhotoCredit.tsx')), false);
+  assert.match(read('niah-biotrack/app/photo-credits.tsx'), /photoCreditRows\(species\)/);
+  assert.match(read('niah-biotrack/app/(tabs)/profile.tsx'), /router\.push\('\/photo-credits' as never\)/);
 });
 
 test('web and mobile species screens do not use legacy reference-photo fields', () => {
@@ -303,11 +337,12 @@ test('the plant catalogue is officer-only, linked from the menu and its page con
   assert.match(detail, /api\('\/officer\/plants\//);
   assert.match(catalogue, /Imported from iNaturalist · Observer:/);
   assert.match(catalogue, /plant\.species_photo/);
-  assert.match(catalogue, /makeSpeciesPhotoCredit/);
+  // No photo credit in the plant list (it is on plant detail and the Photo credits page).
+  assert.doesNotMatch(catalogue, /makeSpeciesPhotoCredit|makePhotoCreditInfo|photoCreditText/);
   assert.match(catalogue, /speciesPhotoLabel\.textContent = 'Species photo'/);
   assert.match(detail, /Imported from iNaturalist · Observer:/);
   assert.match(detail, /plant\.species_photo/);
-  assert.match(detail, /makeSpeciesPhotoCredit/);
+  assert.match(detail, /makePhotoCreditInfo\(speciesFallback\)/);
   assert.match(detail, /Species reference photo/);
 
   for (const [htmlPath, scriptPath] of [
@@ -385,7 +420,13 @@ test('route popups escape every value (botanist, plant tag, scientific name)', (
     shared.indexOf('// ---- Display helpers for plant tags and coordinates ----'),
     shared.indexOf('// Starts the big detail card')
   );
+  // The portal's one date format (MONTHS, twoDigits, whenText, dayText, formatWhen, formatDay).
+  const dateHelpers = shared.slice(
+    shared.indexOf('const MONTHS = ['),
+    shared.indexOf('// ---- Newest first / Oldest first, for every list ----')
+  );
   const code = [
+    dateHelpers,
     sharedHelpers,
     piece('function escapePopupText(', 'function makePopup('),
     piece('function displayRouteDistance(', '// [lat, lng, time, accuracy]'),
@@ -767,4 +808,101 @@ test('one review status scheme: Waiting for review blue, Approved green, Needs c
   for (const state of ['live', 'loading', 'error']) {
     assert.equal((css.match(new RegExp(`\\.iot-status-${state} \\{`, 'g')) || []).length, 1, `.iot-status-${state}`);
   }
+});
+
+// ---- Usability pass: thumbnails, newest first, one date format ----
+
+const vm = require('node:vm');
+
+// Runs the real date and sort helpers from shared.js in a sandbox.
+function loadDateAndSortHelpers() {
+  const shared = read('frontend/js/shared.js');
+  const code = shared.slice(
+    shared.indexOf('const MONTHS = ['),
+    shared.indexOf('// ---- Shared by the approval queue and the rejected list ----')
+  );
+  const sandbox = {};
+  vm.runInNewContext(code + '\nthis.out = { whenText, dayText, formatWhen, formatDay, sortByDate, SORT_NEWEST, SORT_OLDEST };', sandbox);
+  return sandbox.out;
+}
+
+test('one date format: "21 Nov 2026, 11:30" and "21 Nov 2026", with a fallback when missing', () => {
+  const h = loadDateAndSortHelpers();
+  const d = new Date(2026, 10, 21, 9, 5);
+  assert.equal(h.whenText(d), '21 Nov 2026, 09:05');
+  assert.equal(h.dayText(d), '21 Nov 2026');
+  assert.equal(h.formatWhen(null, 'None recorded'), 'None recorded');
+  assert.equal(h.formatDay('', 'None'), 'None');
+  assert.equal(h.formatDay('not a date'), 'not a date');
+  // Pages use the shared format instead of their own.
+  for (const [file, call] of [
+    ['frontend/js/plant.js', /formatWhen\(/],
+    ['frontend/js/plants.js', /formatDay\(/],
+    ['frontend/js/proposals.js', /formatWhen\(/],
+    ['frontend/js/map.js', /formatDay\(/],
+    ['frontend/js/alerts.js', /formatWhen\(/],
+    ['frontend/js/reports.js', /formatDay\(/]
+  ]) {
+    assert.match(read(file), call, file + ' uses the shared date format');
+  }
+});
+
+test('newest first: sortByDate puts the latest first by default and undated items last', () => {
+  const h = loadDateAndSortHelpers();
+  const list = [{ at: '2026-01-02' }, { at: null }, { at: '2026-03-04' }, { at: '2025-12-31' }];
+  const newest = Array.from(h.sortByDate(list, x => x.at, h.SORT_NEWEST), x => x.at);
+  assert.deepEqual(newest, ['2026-03-04', '2026-01-02', '2025-12-31', null]);
+  const oldest = Array.from(h.sortByDate(list, x => x.at, h.SORT_OLDEST), x => x.at);
+  assert.deepEqual(oldest, ['2025-12-31', '2026-01-02', '2026-03-04', null]);
+  assert.equal(list[0].at, '2026-01-02', 'the original list is not changed');
+});
+
+test('every list has a Newest first / Oldest first sort, newest by default', () => {
+  const shared = read('frontend/js/shared.js');
+  assert.match(shared, /new Option\('Newest first', SORT_NEWEST\)/);
+  assert.match(shared, /new Option\('Oldest first', SORT_OLDEST\)/);
+  assert.match(read('frontend/js/queue.js'), /addListSortSelect\('queue-count', 'queue-sort'/);
+  assert.match(read('frontend/js/queue.js'), /sortByDate\(pending, item => item\.observed_at/);
+  assert.match(read('frontend/js/rejected.js'), /addListSortSelect\('rejected-count', 'rejected-sort'/);
+  assert.match(read('frontend/js/proposals.js'), /addListSortSelect\('proposals-count', 'proposals-sort'/);
+  assert.match(read('frontend/js/plant.js'), /addListSortSelect\('observations-count', 'observations-sort'/);
+  assert.match(read('frontend/js/users.js'), /addListSortSelect\('users-count', 'users-sort'/);
+  assert.match(read('frontend/js/alerts.js'), /sortByDate\(/);
+  for (const [page, id] of [
+    ['frontend/plants.html', 'plant-sort'],
+    ['frontend/alerts.html', 'alert-sort'],
+    ['frontend/reports.html', 'report-sort']
+  ]) {
+    const html = read(page);
+    const select = html.slice(html.indexOf('id="' + id + '"'));
+    const firstOption = select.slice(select.indexOf('<option'), select.indexOf('</option>'));
+    assert.match(firstOption, /Newest first/, page + ': Newest first is the default');
+  }
+  // The plant catalogue asks the server for the order (paged), which only accepts newest/oldest.
+  assert.match(read('frontend/js/plants.js'), /params\.set\('sort', 'oldest'\)/);
+  const plantsRoute = read('backend/src/routes/officerPlants.js');
+  assert.match(plantsRoute, /\["", "newest", "oldest"\]\.includes\(sort\)/);
+});
+
+test('review lists show real thumbnails, lazily loaded', () => {
+  const shared = read('frontend/js/shared.js');
+  assert.match(shared, /img\.loading = 'lazy';/);
+  assert.match(read('frontend/js/queue.js'), /observation\.thumbnail_url \|\| PICTURE_BLANK/);
+  assert.match(read('frontend/js/rejected.js'), /observation\.thumbnail_url \|\| PICTURE_BLANK/);
+  const reviews = read('backend/src/routes/officerReviews.js');
+  assert.match(reviews, /async function withThumbnails\(/);
+  assert.match(reviews, /createSignedUrls\(/);
+});
+
+test('small usability fixes: clear empty states, reasons on rejected cards, success toasts, no sideways scroll', () => {
+  assert.match(read('frontend/queue.html'), /id="queue-empty"[^>]*>Nothing waiting for review\./);
+  assert.match(read('frontend/proposals.html'), /id="proposals-empty"[^>]*>Nothing waiting for review\./);
+  assert.match(read('frontend/js/rejected.js'), /reason\.className = 'list-note';/);
+  assert.match(read('frontend/users.html'), /id="users-count"/);
+  assert.match(read('frontend/js/users.js'), /' is now active\.' : ' is now suspended\.'/);
+  const css = read('frontend/css/style.css');
+  const tail = css.slice(css.indexOf('.list-sort-bar {'));
+  assert.match(tail, /body \{\s*overflow-wrap: break-word;/);
+  assert.match(tail, /\.app \{\s*grid-template-columns: 230px minmax\(0, 1fr\);/);
+  assert.match(tail, /main \{\s*min-width: 0;/);
 });
