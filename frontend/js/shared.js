@@ -166,112 +166,6 @@ async function taxonomyIdFor(taxonomy, family, scientificName) {
   }
 }
 
-const SPECIES_PHOTO_LICENSES = {
-  'cc-by': 'CC BY',
-  'cc-by-sa': 'CC BY-SA',
-  'cc-by-nc': 'CC BY-NC',
-  cc0: 'CC0'
-};
-
-function preferredSpeciesPhoto(photos) {
-  if (!Array.isArray(photos) || photos.length === 0) return null;
-  return photos.find(photo => photo.source === 'sfc' && photo.is_primary) ||
-    photos.find(photo => photo.source === 'sfc') ||
-    photos.find(photo => photo.is_primary) ||
-    photos[0];
-}
-
-// A one-minute signed link and safe attribution details for the species' preferred photo.
-async function speciesPhoto(species) {
-  const chosen = preferredSpeciesPhoto(species.species_media);
-  if (!chosen) return null;
-  const result = await api('/knowledge/species/' + species.id + '/photos/' + chosen.id);
-  return { ...chosen, ...result };
-}
-
-// ---- photo credit (same logic as niah-biotrack/src/utils/photoCredit.ts) ----
-// The plain-text credit under an iNaturalist reference photo:
-//   "Photo: <name>, <licence> via iNaturalist"
-// backend/test/photoCredit.test.js runs this code and the app's copy on the same examples.
-
-// The photographer's name from iNaturalist's credit sentence, or '' when it has none.
-//   "(c) Samuel Frankel, some rights reserved (CC BY), uploaded by Samuel Frankel" -> "Samuel Frankel"
-//   "no rights reserved, uploaded by Meng-Ying Tsai" (CC0) -> "Meng-Ying Tsai"
-//   "Jane Doe" -> "Jane Doe";  "no rights reserved" -> ""
-function nameFromAttribution(text) {
-  const value = String(text ?? '').trim();
-  if (!value) return '';
-
-  const copyright = /^(?:\(c\)|©)\s*/i.exec(value);
-  if (copyright) return value.slice(copyright[0].length).split(',')[0].trim();
-
-  const uploadedAt = value.toLowerCase().indexOf('uploaded by ');
-  if (uploadedAt !== -1) return value.slice(uploadedAt + 'uploaded by '.length).split(',')[0].trim();
-
-  const first = value.split(',')[0].trim();
-  return first.toLowerCase().includes('rights reserved') ? '' : first;
-}
-
-// The name to show: the photographer field, otherwise the name inside the attribution.
-// A photographer field that holds a whole credit sentence is cleaned the same way.
-function photoCreditName(photo) {
-  const photographer = String(photo.photographer ?? '').trim();
-  const fromPhotographer = /^(?:\(c\)|©)/i.test(photographer)
-    ? nameFromAttribution(photographer)
-    : photographer;
-  return fromPhotographer || nameFromAttribution(photo.attribution) || 'Unknown photographer';
-}
-
-function photoCreditText(photo) {
-  const licence = (photo.licence_code && SPECIES_PHOTO_LICENSES[photo.licence_code]) || 'Unknown licence';
-  return `Photo: ${photoCreditName(photo)}, ${licence} via iNaturalist`;
-}
-// A credit is needed only for iNaturalist photos under CC BY / CC BY-SA (and any licence we
-// can't confirm). CC0 photos and SFC's own photos never show one.
-function needsPhotoCredit(photo) {
-  return !!photo && photo.source === 'inaturalist' && photo.licence_code !== 'cc0';
-}
-
-// ---- end photo credit ----
-
-// A small "i" button for the corner of a photo on a detail view. Hover (or tap) shows the
-// plain-text credit "Photo: <name>, <licence> via iNaturalist". No links. null when the photo
-// needs no credit. The photo's box must be position: relative.
-let photoCreditInfoCount = 0;
-function makePhotoCreditInfo(photo) {
-  if (!needsPhotoCredit(photo)) return null;
-  const text = photoCreditText(photo);
-
-  const wrap = document.createElement('span');
-  wrap.className = 'photo-credit-info';
-
-  const tip = document.createElement('span');
-  tip.className = 'photo-credit-tip';
-  tip.id = 'photo-credit-' + (++photoCreditInfoCount);
-  tip.setAttribute('role', 'tooltip');
-  tip.textContent = text;
-
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'photo-credit-button';
-  button.textContent = 'i';
-  button.title = text;
-  button.setAttribute('aria-label', 'Photo credit');
-  button.setAttribute('aria-describedby', tip.id);
-  button.setAttribute('aria-expanded', 'false');
-  button.onclick = function (event) {
-    event.preventDefault();
-    event.stopPropagation();
-    const open = !wrap.classList.contains('open');
-    wrap.classList.toggle('open', open);
-    button.setAttribute('aria-expanded', String(open));
-  };
-
-  wrap.appendChild(button);
-  wrap.appendChild(tip);
-  return wrap;
-}
-
 // Opens the species editor for this species id, or for a new species when id is ''.
 function openSpeciesEditor(id) {
   writeStorage(EDIT_KEY, id || '');
@@ -1018,8 +912,7 @@ const OPEN_PAGES = [
 const BOTANIST_PAGES = [
   'species.html',
   'editor.html',
-  'iot-workspace.html',
-  'credits.html'
+  'iot-workspace.html'
 ];
 
 const OFFICER_ONLY_PAGE_MESSAGE = 'That page is for conservation officers only.';
@@ -1086,13 +979,13 @@ const NAV_SECTIONS = [
     countId: 'review-menu-count',
     pages: [
       { file: 'queue.html', label: 'Field records', countId: 'field-records-count' },
-      { file: 'proposals.html', label: 'Species proposals', countId: 'species-proposals-count' },
+      { file: 'proposals.html', label: 'Species requests', countId: 'species-proposals-count' },
       { file: 'rejected.html', label: 'Rejected history' }
     ]
   },
   {
     label: 'Species',
-    alsoActiveOn: ['editor.html', 'credits.html'],
+    alsoActiveOn: ['editor.html'],
     pages: [
       { file: 'species.html', label: 'Species catalogue' }
     ]
@@ -1185,7 +1078,7 @@ async function fetchFieldRecordsCount() {
 
 async function fetchSpeciesProposalCount() {
   const result = await api('/knowledge/species/proposals/pending?page=1&page_size=1');
-  return validCount(result?.pagination?.total, 'pending proposal');
+  return validCount(result?.pagination?.total, 'pending species request');
 }
 
 // ---- Landing page after login ----
@@ -1347,7 +1240,7 @@ function drawMenu(activeFile) {
   if (user !== null && isBotanist(user) === false) {
     if (thisPageName() !== 'proposals.html') {
       refreshSpeciesProposalMenuCount().catch(error => {
-        showToast('Pending proposal count could not be loaded. ' + error.message);
+        showToast('Species request count could not be loaded. ' + error.message);
       });
     }
     if (thisPageName() !== 'queue.html') {
@@ -1405,8 +1298,8 @@ function updateReviewMenuCount() {
 }
 
 function updateSpeciesProposalMenuCount(count) {
-  reviewCounts.proposals = validCount(count, 'pending proposal');
-  setCountBadge('species-proposals-count', count, 'pending species proposal');
+  reviewCounts.proposals = validCount(count, 'pending species request');
+  setCountBadge('species-proposals-count', count, 'pending species request');
   updateReviewMenuCount();
 }
 

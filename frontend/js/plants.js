@@ -52,13 +52,6 @@ function makePlantRow(plant) {
   speciesName.textContent = plant.species?.common_name || 'No common name recorded';
   info.appendChild(speciesName);
 
-  if (plant.data_source === 'inaturalist') {
-    const sourceBadge = document.createElement('span');
-    sourceBadge.className = 'source-badge';
-    sourceBadge.textContent = 'iNaturalist';
-    info.appendChild(sourceBadge);
-  }
-
   const meta = document.createElement('div');
   meta.className = 'plant-meta';
   meta.textContent = 'Tag: ' + displayTag(plant.tag_code, 'No tag') +
@@ -67,12 +60,9 @@ function makePlantRow(plant) {
 
   const registered = document.createElement('div');
   registered.className = 'plant-meta';
-  registered.textContent = (plant.data_source === 'inaturalist'
-    ? 'Imported from iNaturalist · Observer: ' + (plant.source_observer || 'Unknown')
-    : 'Registered by: ' + (plant.registered_by || 'Unknown')) +
-    ' · Last visit: ' + displayDate(plant.last_observation_at);
+  registered.textContent = 'Registered by: ' + (plant.registered_by || 'Not recorded') +
+    ' · Last observation: ' + displayDate(plant.last_observation_at);
   info.appendChild(registered);
-  // No photo credit in the list: it is on plant detail and the Photo credits page.
   link.appendChild(info);
 
   const status = formattedStatus(plant.plant_status);
@@ -110,13 +100,11 @@ async function loadPlants() {
   const status = byId('plant-status-filter').value;
   const conservation = byId('conservation-filter').value;
   const registeredBy = byId('registered-by-filter').value;
-  const source = byId('source-filter').value;
   if (search) params.set('search', search);
   if (species) params.set('species_id', species);
   if (status) params.set('plant_status', status);
   if (conservation) params.set('conservation_status', conservation);
   if (registeredBy) params.set('registered_by', registeredBy);
-  if (source) params.set('source', source);
   // Newest registered first unless the officer picks Oldest first.
   if (byId('plant-sort').value === 'oldest') params.set('sort', 'oldest');
 
@@ -187,14 +175,6 @@ async function loadFilterOptions() {
       item => item.name,
       ''
     );
-    replaceOptions(
-      byId('source-filter'),
-      'Source: All',
-      facets.data.data_sources || [],
-      value => value,
-      value => value === 'inaturalist' ? 'iNaturalist' : 'Field',
-      ''
-    );
   } catch (error) {
     showToast('Some plant filters could not be loaded. ' + (error.message || 'Please refresh.'));
   }
@@ -208,7 +188,7 @@ if (pageAllowed === false) {
     currentPage = 1;
     void loadPlants();
   });
-  ['plant-species', 'plant-status-filter', 'conservation-filter', 'registered-by-filter', 'source-filter', 'plant-sort']
+  ['plant-species', 'plant-status-filter', 'conservation-filter', 'registered-by-filter', 'plant-sort']
     .forEach(id => byId(id).addEventListener('change', () => {
       currentPage = 1;
       void loadPlants();
