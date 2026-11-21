@@ -128,10 +128,10 @@ test('PNG label: another botanist\'s tag 404, a used tag 409 (use the plant imag
   assert.equal(officer.calls.length, 0);
 });
 
-test('the owned-plant QR image endpoint returns the same label', () => {
+test('the plant QR image endpoint returns the same label', () => {
   const plants = fs.readFileSync(path.join(__dirname, '../src/routes/plants.js'), 'utf8');
   const route = plants.slice(plants.indexOf('router.get("/:id/qr/image"'));
-  assert.match(route.slice(0, 600), /const qrValue = await findOwnedPlantQrTag\(req, res\);/);
+  assert.match(route.slice(0, 600), /const qrValue = await findQrTagForStaff\(req, res\);/);
   assert.match(route.slice(0, 600), /await generateQrLabelPng\(qrValue\)/);
 });
 

@@ -1,7 +1,8 @@
 import { File, Paths } from 'expo-file-system';
 import { apiFetch } from './client';
 
-// GET /api/plants/:id/qr (botanist who registered the plant). qr_code is a PNG data URI.
+// GET /api/plants/:id/qr: the botanist's own plants (any status), or any approved plant with
+// a real NIAH-PLT tag (other botanists' and imported ones). qr_code is a PNG data URI.
 export interface PlantQr {
   qrValue: string; // the tag code, e.g. NIAH-PLT-00001
   publicUrl: string; // the public page the QR opens
@@ -15,7 +16,8 @@ interface PlantQrResponse {
 }
 
 // serverId is the plant's id on the server (only uploaded plants have one).
-// Errors are ApiError, e.g. 409 "Attach a NIAH-PLT tag before generating its QR code".
+// Errors are ApiError, e.g. 404 with code "no_tag" ("No tag attached yet") for a plant without
+// a real tag, or 404 "Plant not found" (deleted, or someone else's plant not approved).
 export async function fetchPlantQr(serverId: string): Promise<PlantQr> {
   const response = await apiFetch<PlantQrResponse>(`/api/plants/${encodeURIComponent(serverId)}/qr`);
   return { qrValue: response.qr_value, publicUrl: response.public_url, imageDataUri: response.qr_code };
