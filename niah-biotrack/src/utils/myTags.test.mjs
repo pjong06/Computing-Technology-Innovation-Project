@@ -12,8 +12,12 @@ import {
   fromServer,
   groupBatches,
   isPhysicalTag,
+  MAX_PRINT_TAGS,
+  PDF_LAYOUTS,
   tagCountsText,
+  tagImagePath,
   tagOwnershipProblem,
+  toggleSelected,
 } from './myTags.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -62,7 +66,7 @@ test('the PDF bytes are written as base64 correctly', () => {
 test('My QR tags screen: botanists only, existing endpoints, offline message, retry with the same request', () => {
   const service = read('../services/myTags.ts');
   assert.match(service, /apiFetch<[\s\S]*?>\(\s*`\/api\/tag-reservations\?page=\$\{page\}&page_size=100`/);
-  assert.match(service, /apiDownload\('\/api\/tag-reservations\/reserve-and-print', \{ count, request_id: requestId \}\)/);
+  assert.match(service, /apiDownload\('\/api\/tag-reservations\/reserve-and-print', \{ count, request_id: requestId, layout \}\)/);
   assert.match(service, /const OFFLINE_MESSAGE = 'You are offline\. Getting tags needs the internet\.';/);
   assert.match(service, /if \(await isSyncOffline\(\)\) return \{ ok: false, reason: OFFLINE_MESSAGE, requestId \};/);
   assert.match(service, /Share\.share\(\{ url: file\.uri/);
@@ -94,4 +98,46 @@ test('plant detail: own plants with a placeholder show Attach tag; Show QR only 
   assert.match(detail, /\) : matched\.otherBotanist \? null : \(/);
   assert.match(detail, /🏷️ Attach tag/);
   assert.match(detail, /value=\{isPhysicalTag\(matched\.tagCode\) \? matched\.tagCode : 'No tag attached'\}/);
+});
+
+test('PDF layouts: "Sheet of labels" (the default) or "One label per page"', () => {
+  assert.deepEqual(PDF_LAYOUTS.map((option) => option.value), ['sheet', 'single']);
+  assert.deepEqual(PDF_LAYOUTS.map((option) => option.label), ['Sheet of labels', 'One label per page']);
+  const service = read('../services/myTags.ts');
+  assert.match(service, /layout: PdfLayout = 'sheet'/);
+  assert.match(service, /apiDownload\('\/api\/tag-reservations\/print', \{ tags, layout \}\)/);
+});
+
+test('tag image: an unused tag through its reservation, a used one through its plant', () => {
+  assert.equal(tagImagePath({ tag: 'NIAH-PLT-00031', boundPlantId: null }), '/api/tag-reservations/NIAH-PLT-00031/image');
+  assert.equal(
+    tagImagePath({ tag: 'NIAH-PLT-00032', boundPlantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }),
+    '/api/plants/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/qr/image'
+  );
+});
+
+test('choosing tags to print adds and removes them; at most 100', () => {
+  let chosen = [];
+  chosen = toggleSelected(chosen, 'NIAH-PLT-00031');
+  chosen = toggleSelected(chosen, 'NIAH-PLT-00033');
+  assert.deepEqual(chosen, ['NIAH-PLT-00031', 'NIAH-PLT-00033']);
+  assert.deepEqual(toggleSelected(chosen, 'NIAH-PLT-00031'), ['NIAH-PLT-00033']);
+  assert.equal(MAX_PRINT_TAGS, 100);
+});
+
+test('My QR tags and plant detail: Save image, Share, layout choice and Print selected', () => {
+  const screen = read('../../app/my-tags.tsx');
+  for (const needed of ['Save image', 'Share', 'PDF layout', 'Select', 'Print selected']) assert.ok(screen.includes(needed), needed);
+  assert.match(screen, /downloadTagImage\(tag\.tag, tagImagePath\(tag\)\)/);
+  assert.match(screen, /reserveTagsPdf\(howMany, requestId, layout\)/);
+  assert.match(screen, /printTagsPdf\(selected, layout\)/);
+  const detail = read('../../app/plant-detail.tsx');
+  assert.match(detail, /downloadTagImage\(qr\.qrValue, `\/api\/plants\/\$\{encodeURIComponent\(matched\.serverId\)\}\/qr\/image`\)/);
+  assert.ok(detail.includes('>Save image<') && detail.includes('>Share<'));
+  // No new packages: saving uses the folder picker / share sheet already used for the PDF.
+  const service = read('../services/myTags.ts');
+  assert.match(service, /folder\.createFile\(file\.name, mimeType\)/);
+  const pkg = JSON.parse(read('../../package.json'));
+  assert.equal(pkg.dependencies['expo-sharing'], undefined);
+  assert.equal(pkg.dependencies['expo-media-library'], undefined);
 });

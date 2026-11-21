@@ -1,6 +1,6 @@
 const express = require("express");
 const { requireAuth, requireRole } = require("../middleware/auth");
-const { generateQRBatchPDF } = require("../services/qrPdfService");
+const { generateQRBatchPDF, PDF_LAYOUTS } = require("../services/qrPdfService");
 const { TAG_PATTERN, QrConfigurationError } = require("../services/qrService");
 
 function createQrBatchRouter({ authenticate = requireAuth, authorize = requireRole,
@@ -14,6 +14,10 @@ function createQrBatchRouter({ authenticate = requireAuth, authorize = requireRo
             new Set(tags).size !== tags.length) {
             return res.status(400).json({ message: "Invalid or duplicate QR tags" });
         }
+        const layout = req.body?.layout ?? "sheet";
+        if (!PDF_LAYOUTS.includes(layout)) {
+            return res.status(400).json({ message: 'layout must be "sheet" or "single"' });
+        }
         try {
             const { data: plants, error } = await req.supabase.from("plants")
                 .select("qr_code_value, registered_by").in("qr_code_value", tags);
@@ -24,7 +28,7 @@ function createQrBatchRouter({ authenticate = requireAuth, authorize = requireRo
             if (tags.some(tag => !allowedTags.has(tag))) {
                 return res.status(403).json({ message: "One or more QR tags are unavailable" });
             }
-            const pdf = await generatePDF(tags);
+            const pdf = await generatePDF(tags, { layout });
             res.set({ "Content-Type": "application/pdf", "Cache-Control": "no-store",
                 "Content-Disposition": 'attachment; filename="plant-qr-tags.pdf"' });
             return res.send(pdf);

@@ -1,6 +1,7 @@
 const express = require('express');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { generateQRBatchPDF } = require('../services/qrPdfService');
+const { generateQRBatchPDF, PDF_LAYOUTS } = require('../services/qrPdfService');
+const { generateQrLabelPng } = require('../services/qrLabelService');
 const { TAG_PATTERN, buildPublicPlantUrl, QrConfigurationError } = require('../services/qrService');
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -14,7 +15,8 @@ function databaseError(res, error) {
 }
 
 function createTagReservationsRouter({ authenticate = requireAuth, authorize = requireRole,
-    generatePDF = generateQRBatchPDF, checkDestination = buildPublicPlantUrl } = {}) {
+    generatePDF = generateQRBatchPDF, generatePNG = generateQrLabelPng,
+    checkDestination = buildPublicPlantUrl } = {}) {
     const router = express.Router();
     router.use(authenticate, authorize('botanist'));
     router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
@@ -44,10 +46,14 @@ function createTagReservationsRouter({ authenticate = requireAuth, authorize = r
     });
     // Retrying the same request_id and quantity returns the same tags, including after PDF failure.
     router.post('/reserve-and-print', async (req, res) => {
-        const { count, request_id: requestId } = req.body || {};
+        const { count, request_id: requestId, layout = 'sheet' } = req.body || {};
         if (!Number.isInteger(count) || count < 1 || count > 100 ||
             typeof requestId !== 'string' || !UUID_PATTERN.test(requestId)) {
             return res.status(400).json({ message: 'count must be 1-100 and request_id must be a UUID' });
+        }
+        // The layout only changes the PDF, never which tags are reserved.
+        if (!PDF_LAYOUTS.includes(layout)) {
+            return res.status(400).json({ message: 'layout must be "sheet" or "single"' });
         }
         try {
             checkDestination('NIAH-PLT-00001');
@@ -60,7 +66,7 @@ function createTagReservationsRouter({ authenticate = requireAuth, authorize = r
                 tags.some(tag => typeof tag !== 'string' || !TAG_PATTERN.test(tag))) {
                 return res.status(503).json({ message: 'Invalid reservation result; retry using the same request_id' });
             }
-            const pdf = await generatePDF(tags);
+            const pdf = await generatePDF(tags, { layout });
             res.set({ 'Content-Type': 'application/pdf',
                 'Content-Disposition': 'attachment; filename="reserved-plant-tags.pdf"',
                 'X-Reservation-Request-Id': requestId });
@@ -70,6 +76,61 @@ function createTagReservationsRouter({ authenticate = requireAuth, authorize = r
                 return res.status(503).json({ message: 'Public QR URL is not configured' });
             }
             return res.status(503).json({ message: 'Could not print reservation; retry using the same request_id' });
+        }
+    });
+    // Prints chosen tags again: only tags this botanist reserved (unused or on a plant).
+    router.post('/print', async (req, res) => {
+        const { tags, layout = 'sheet' } = req.body || {};
+        if (!Array.isArray(tags) || tags.length === 0 || tags.length > 100 ||
+            tags.some(tag => typeof tag !== 'string' || !TAG_PATTERN.test(tag)) ||
+            new Set(tags).size !== tags.length) {
+            return res.status(400).json({ message: 'Choose 1-100 different NIAH-PLT tags' });
+        }
+        if (!PDF_LAYOUTS.includes(layout)) {
+            return res.status(400).json({ message: 'layout must be "sheet" or "single"' });
+        }
+        try {
+            const { data, error } = await req.supabase.from('tag_reservations')
+                .select('qr_code_value').eq('reserved_by', req.user.id).in('qr_code_value', tags);
+            if (error) return databaseError(res, error);
+            const mine = new Set((data || []).map(row => row.qr_code_value));
+            if (tags.some(tag => !mine.has(tag))) {
+                return res.status(403).json({ message: 'One or more tags are not yours' });
+            }
+            const pdf = await generatePDF([...tags].sort(), { layout });
+            res.set({ 'Content-Type': 'application/pdf',
+                'Content-Disposition': 'attachment; filename="plant-qr-tags.pdf"' });
+            return res.send(pdf);
+        } catch (error) {
+            if (error instanceof QrConfigurationError) {
+                return res.status(503).json({ message: 'Public QR URL is not configured' });
+            }
+            return res.status(503).json({ message: 'Could not print the tags; please try again' });
+        }
+    });
+    // One unused tag of this botanist as a PNG label (QR + tag text). A tag that is already on
+    // a plant uses the plant's own image: GET /api/plants/:id/qr/image.
+    router.get('/:tag/image', async (req, res) => {
+        const tag = req.params.tag;
+        if (!TAG_PATTERN.test(tag)) return res.status(400).json({ message: 'Tag must follow NIAH-PLT-00001 format' });
+        try {
+            const { data, error } = await req.supabase.from('tag_reservations')
+                .select('qr_code_value, bound_plant_id').eq('reserved_by', req.user.id)
+                .eq('qr_code_value', tag).maybeSingle();
+            if (error) return databaseError(res, error);
+            if (!data) return res.status(404).json({ message: 'Tag not found' });
+            if (data.bound_plant_id) {
+                return res.status(409).json({ message: "This tag is on a plant; use the plant's QR image" });
+            }
+            const png = await generatePNG(tag);
+            res.set({ 'Content-Type': 'image/png',
+                'Content-Disposition': `attachment; filename="${tag}.png"` });
+            return res.send(png);
+        } catch (error) {
+            if (error instanceof QrConfigurationError) {
+                return res.status(503).json({ message: 'Public QR URL is not configured' });
+            }
+            return res.status(503).json({ message: 'Could not make the tag image; please try again' });
         }
     });
     router.post('/:plantId/attach', async (req, res) => {

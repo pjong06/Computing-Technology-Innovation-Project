@@ -16,14 +16,35 @@ import Toast from 'react-native-toast-message';
 import type { File } from 'expo-file-system';
 import { useAuthRole } from '../src/context/AuthRoleContext';
 import { useRecordStore } from '../src/store/useRecordStore';
-import { cachedMyTags, fetchMyTags, reserveTagsPdf, shareTagsPdf } from '../src/services/myTags';
+import {
+  cachedMyTags,
+  downloadTagImage,
+  fetchMyTags,
+  printTagsPdf,
+  reserveTagsPdf,
+  saveFile,
+  shareFile,
+  shareTagsPdf,
+} from '../src/services/myTags';
 import { isSyncOffline } from '../src/services/syncRetry';
-import { NEW_TAG_COUNTS, groupBatches, tagCountsText, type MyTag } from '../src/utils/myTags';
+import {
+  MAX_PRINT_TAGS,
+  NEW_TAG_COUNTS,
+  PDF_LAYOUTS,
+  groupBatches,
+  tagCountsText,
+  tagImagePath,
+  toggleSelected,
+  type MyTag,
+  type PdfLayout,
+} from '../src/utils/myTags';
 
 // "My QR tags" (botanists, from Profile): the QR tags reserved by this botanist, unused or
 // used (with the plant each is attached to), and "Get new tags": reserve 10 / 20 / 50 and get
-// the PDF of QR labels to print. Uses the existing endpoints, which only let a botanist reserve
-// and see their own tags. Needs the internet; offline it shows the list saved on this phone.
+// the PDF of QR labels to print (a sheet of labels, or one label per page). Each tag can be
+// saved or shared as a PNG label, and several can be chosen and printed together. The
+// endpoints only let a botanist reserve, see and print their own tags. Needs the internet;
+// offline it shows the list saved on this phone.
 
 function dayText(value: string | null | undefined): string {
   const time = value ? Date.parse(value) : Number.NaN;
@@ -46,6 +67,12 @@ export default function MyTagsScreen() {
   const [pdf, setPdf] = useState<File | null>(null);
   const [retry, setRetry] = useState<{ count: number; requestId: string } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const [layout, setLayout] = useState<PdfLayout>('sheet');
+  // "Print selected": choosing tags, and the tags chosen.
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+  // The tag whose image is being fetched.
+  const [busyTag, setBusyTag] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -94,7 +121,7 @@ export default function MyTagsScreen() {
   const getTags = async (howMany: number, requestId?: string) => {
     setWorking(true);
     setProblem(null);
-    const result = await reserveTagsPdf(howMany, requestId);
+    const result = await reserveTagsPdf(howMany, requestId, layout);
     setWorking(false);
     if (!result.ok) {
       setProblem(result.reason);
@@ -107,6 +134,46 @@ export default function MyTagsScreen() {
     Toast.show({ type: 'success', text1: `${howMany} tags reserved`, text2: 'Share or save the PDF to print the labels.', position: 'bottom' });
     void load();
     await share(result.file);
+  };
+
+  // One tag as a PNG label: save it (Android: pick a folder; iOS: share sheet) or share it.
+  const exportImage = async (tag: MyTag, action: 'save' | 'share') => {
+    setBusyTag(tag.tag);
+    const image = await downloadTagImage(tag.tag, tagImagePath(tag));
+    setBusyTag(null);
+    if (!image.ok) {
+      Toast.show({ type: 'error', text1: 'No image', text2: image.reason, position: 'bottom' });
+      return;
+    }
+    const result = action === 'save' ? await saveFile(image.file, 'image/png') : await shareFile(image.file, tag.tag);
+    Toast.show(
+      result.ok
+        ? { type: 'success', text1: action === 'save' ? 'Tag image ready' : 'Tag shared', text2: result.message, position: 'bottom' }
+        : { type: 'error', text1: action === 'save' ? 'Not saved' : 'Not shared', text2: result.reason, position: 'bottom' }
+    );
+  };
+
+  const printSelected = async () => {
+    if (selected.length === 0) return;
+    setWorking(true);
+    const result = await printTagsPdf(selected, layout);
+    setWorking(false);
+    if (!result.ok) {
+      Toast.show({ type: 'error', text1: 'Not printed', text2: result.reason, position: 'bottom' });
+      return;
+    }
+    setPdf(result.file);
+    setSelecting(false);
+    setSelected([]);
+    await share(result.file);
+  };
+
+  const choose = (tag: string) => {
+    if (!selected.includes(tag) && selected.length >= MAX_PRINT_TAGS) {
+      Toast.show({ type: 'info', text1: `Up to ${MAX_PRINT_TAGS} tags at a time`, position: 'bottom' });
+      return;
+    }
+    setSelected((current) => toggleSelected(current, tag));
   };
 
   if (role !== 'botanist') {
@@ -152,6 +219,20 @@ export default function MyTagsScreen() {
               </TouchableOpacity>
             ))}
           </View>
+          <Text style={styles.label}>PDF layout</Text>
+          <View style={styles.countRow}>
+            {PDF_LAYOUTS.map((option) => (
+              <TouchableOpacity
+                key={option.value}
+                style={[styles.layoutChip, layout === option.value && styles.countChipOn]}
+                onPress={() => setLayout(option.value)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: layout === option.value }}
+              >
+                <Text style={[styles.layoutText, layout === option.value && styles.countTextOn]}>{option.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
           <TouchableOpacity
             style={[styles.primaryBtn, working && styles.disabled]}
             onPress={() => void getTags(count)}
@@ -162,7 +243,8 @@ export default function MyTagsScreen() {
           </TouchableOpacity>
           <Text style={styles.hint}>
             Needs the internet. You get a PDF of QR labels to{' '}
-            {Platform.OS === 'ios' ? 'print or send from the share sheet' : 'save, then open to print or send'}.
+            {Platform.OS === 'ios' ? 'print or send from the share sheet' : 'save, then open to print or send'}. The
+            layout is also used for "Print again" and "Print selected".
           </Text>
           {problem ? <Text style={styles.problem}>{problem}</Text> : null}
           {retry ? (
@@ -182,7 +264,19 @@ export default function MyTagsScreen() {
         <View style={styles.sectionRow}>
           <Text style={styles.sectionTitle}>Your tags</Text>
           {tags && tags.length > 0 ? <Text style={styles.counts}>{tagCountsText(tags)}</Text> : null}
+          {tags && tags.length > 0 ? (
+            <TouchableOpacity
+              onPress={() => {
+                setSelecting(!selecting);
+                setSelected([]);
+              }}
+              accessibilityRole="button"
+            >
+              <Text style={styles.selectLink}>{selecting ? 'Cancel' : 'Select'}</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
+        {selecting ? <Text style={styles.selectHint}>Tap the tags to print, then "Print selected".</Text> : null}
 
         {loading && tags === null ? <ActivityIndicator color="#213B2A" /> : null}
         {tags !== null && tags.length === 0 && !loading ? (
@@ -208,29 +302,82 @@ export default function MyTagsScreen() {
             </View>
             {batch.tags.map((tag) => {
               const plant = plantFor(tag.boundPlantId);
+              const isChosen = selected.includes(tag.tag);
               return (
-                <TouchableOpacity
-                  key={tag.tag}
-                  style={styles.tagRow}
-                  disabled={!plant}
-                  onPress={() => plant && router.push({ pathname: '/plant-detail', params: { id: plant.id } })}
-                  accessibilityRole={plant ? 'button' : undefined}
-                >
-                  <Text style={styles.tagCode}>{tag.tag}</Text>
-                  {tag.boundPlantId ? (
-                    <Text style={styles.tagUsed} numberOfLines={1}>
-                      Used{plant ? ` · ${plant.scientificName || 'Identification pending'}` : ' · on a plant'}
-                    </Text>
-                  ) : (
-                    <Text style={styles.tagUnused}>Unused</Text>
-                  )}
-                  {plant ? <Ionicons name="chevron-forward" size={16} color="#76877B" /> : null}
-                </TouchableOpacity>
+                <View key={tag.tag} style={styles.tagBlock}>
+                  <TouchableOpacity
+                    style={styles.tagRow}
+                    disabled={!selecting && !plant}
+                    onPress={() => {
+                      if (selecting) choose(tag.tag);
+                      else if (plant) router.push({ pathname: '/plant-detail', params: { id: plant.id } });
+                    }}
+                    accessibilityRole={selecting ? 'checkbox' : plant ? 'button' : undefined}
+                    accessibilityState={selecting ? { checked: isChosen } : undefined}
+                  >
+                    {selecting ? (
+                      <Ionicons name={isChosen ? 'checkbox' : 'square-outline'} size={20} color="#213B2A" />
+                    ) : null}
+                    <Text style={styles.tagCode}>{tag.tag}</Text>
+                    {tag.boundPlantId ? (
+                      <Text style={styles.tagUsed} numberOfLines={1}>
+                        Used{plant ? ` · ${plant.scientificName || 'Identification pending'}` : ' · on a plant'}
+                      </Text>
+                    ) : (
+                      <Text style={styles.tagUnused}>Unused</Text>
+                    )}
+                    {plant && !selecting ? <Ionicons name="chevron-forward" size={16} color="#76877B" /> : null}
+                  </TouchableOpacity>
+                  {!selecting ? (
+                    <View style={styles.tagActions}>
+                      {busyTag === tag.tag ? <ActivityIndicator size="small" color="#213B2A" /> : null}
+                      <TouchableOpacity
+                        onPress={() => void exportImage(tag, 'save')}
+                        disabled={busyTag !== null}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Save image of ${tag.tag}`}
+                        style={styles.tagAction}
+                      >
+                        <Ionicons name="download-outline" size={15} color="#213B2A" />
+                        <Text style={styles.tagActionText}>Save image</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => void exportImage(tag, 'share')}
+                        disabled={busyTag !== null}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Share ${tag.tag}`}
+                        style={styles.tagAction}
+                      >
+                        <Ionicons name="share-outline" size={15} color="#213B2A" />
+                        <Text style={styles.tagActionText}>Share</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+                </View>
               );
             })}
           </View>
         ))}
       </ScrollView>
+
+      {selecting ? (
+        <View style={styles.printBar}>
+          <TouchableOpacity
+            style={[styles.primaryBtn, (working || selected.length === 0) && styles.disabled]}
+            onPress={() => void printSelected()}
+            disabled={working || selected.length === 0}
+            accessibilityRole="button"
+          >
+            {working ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.primaryText}>
+                Print selected ({selected.length}) · {layout === 'sheet' ? 'sheet' : 'one per page'}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -264,7 +411,17 @@ const styles = StyleSheet.create({
   counts: { fontSize: 12.5, color: '#68776D' },
   batchHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 },
   batchTitle: { fontSize: 13.5, fontWeight: '700', color: '#1E2B22', flexShrink: 1 },
-  tagRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#EEF2EF', marginTop: 6 },
+  label: { fontSize: 12.5, fontWeight: '700', color: '#526158', marginBottom: 6 },
+  layoutChip: { flex: 1, minHeight: 42, borderRadius: 21, borderWidth: 1.2, borderColor: '#213B2A', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 8 },
+  layoutText: { fontSize: 13, fontWeight: '800', color: '#213B2A', textAlign: 'center' },
+  selectLink: { fontSize: 13.5, fontWeight: '800', color: '#213B2A', textDecorationLine: 'underline' },
+  selectHint: { fontSize: 12, color: '#68776D', marginBottom: 10 },
+  tagBlock: { borderTopWidth: 1, borderTopColor: '#EEF2EF', marginTop: 6, paddingTop: 2 },
+  tagRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
+  tagActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 16, paddingBottom: 6 },
+  tagAction: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4 },
+  tagActionText: { fontSize: 12.5, fontWeight: '700', color: '#213B2A' },
+  printBar: { paddingHorizontal: 20, paddingVertical: 12, borderTopWidth: 1, borderTopColor: '#E6ECE8', backgroundColor: '#FFFFFF' },
   tagCode: { fontSize: 13.5, fontWeight: '700', color: '#1E2B22', fontVariant: ['tabular-nums'] },
   tagUsed: { flex: 1, fontSize: 12.5, color: '#68776D' },
   tagUnused: { flex: 1, fontSize: 12.5, fontWeight: '700', color: '#215A36' },

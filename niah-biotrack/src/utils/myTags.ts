@@ -85,6 +85,29 @@ export function tagOwnershipProblem(
   return null;
 }
 
+// How the PDF of labels is laid out (the `layout` the server takes).
+export type PdfLayout = 'sheet' | 'single';
+export const PDF_LAYOUTS: { value: PdfLayout; label: string }[] = [
+  { value: 'sheet', label: 'Sheet of labels' },
+  { value: 'single', label: 'One label per page' },
+];
+
+// Where one tag's PNG label comes from: a used tag through its plant (the plant's QR image),
+// an unused one through the reservation. Both are the botanist's own only.
+export function tagImagePath(tag: Pick<MyTag, 'tag' | 'boundPlantId'>): string {
+  return tag.boundPlantId
+    ? `/api/plants/${encodeURIComponent(tag.boundPlantId)}/qr/image`
+    : `/api/tag-reservations/${encodeURIComponent(tag.tag)}/image`;
+}
+
+// Adds or removes one tag from the selection (for "Print selected").
+export function toggleSelected(selected: string[], tag: string): string[] {
+  return selected.includes(tag) ? selected.filter((item) => item !== tag) : [...selected, tag];
+}
+
+// "Print selected" sends at most 100 tags (the server's limit).
+export const MAX_PRINT_TAGS = 100;
+
 // "12 unused · 8 used"
 export function tagCountsText(tags: MyTag[]): string {
   const unused = tags.filter((tag) => !tag.boundPlantId).length;

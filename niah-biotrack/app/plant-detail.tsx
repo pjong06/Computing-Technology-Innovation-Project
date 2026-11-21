@@ -10,7 +10,6 @@ import {
   FlatList,
   Image,
   Modal,
-  Share,
   Platform,
   ActivityIndicator,
   useWindowDimensions,
@@ -19,6 +18,7 @@ import {
 } from 'react-native';
 
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import Toast from 'react-native-toast-message';
 
 import {
   IdentificationStatus,
@@ -33,7 +33,8 @@ import { REVIEW_BADGE, visitStatus } from '../src/utils/reviewStatus';
 import PlantNotFound from '../src/components/PlantNotFound';
 import { resolveStoredPhotoUri } from '../src/utils/photoStorage';
 import { formatCoordinates } from '../src/utils/formatCoordinates';
-import { fetchPlantQr, saveQrImage, type PlantQr } from '../src/api/plantQr';
+import { fetchPlantQr, type PlantQr } from '../src/api/plantQr';
+import { downloadTagImage, saveFile, shareFile } from '../src/services/myTags';
 import { ApiError, BASE_URL } from '../src/api/client';
 import RemotePhoto from '../src/components/RemotePhoto';
 import { isPhysicalTag } from '../src/utils/myTags';
@@ -169,6 +170,7 @@ export default function PlantDetailScreen() {
   const [qr, setQr] = useState<PlantQr | null>(null);
   const [qrLoading, setQrLoading] = useState(false);
   const [qrError, setQrError] = useState('');
+  const [qrExporting, setQrExporting] = useState(false);
 
   const matched = records.find((record) => record.id === id);
   // "About this species": the species saved on this phone (its details once loaded).
@@ -270,27 +272,24 @@ export default function PlantDetailScreen() {
     }
   };
 
-  const shareQr = async () => {
-    if (!qr) return;
-
-    try {
-      if (Platform.OS === 'ios') {
-        const fileUri = await saveQrImage(qr);
-        await Share.share({
-          url: fileUri,
-          message: qr.qrValue,
-        });
-      } else {
-        await Share.share({
-          title: qr.qrValue,
-          message: `${qr.qrValue}\n${qr.publicUrl}`,
-        });
-      }
-    } catch {
-      Alert.alert(
-        'Could not share',
-        'The QR code could not be shared. Please try again.'
-      );
+  // Save image / Share: the plant's QR label as a PNG (QR with the tag underneath), from
+  // GET /api/plants/:id/qr/image (own plants only), the same label as in My QR tags.
+  const exportQr = async (action: 'save' | 'share') => {
+    if (!qr || !matched?.serverId) return;
+    setQrExporting(true);
+    const image = await downloadTagImage(qr.qrValue, `/api/plants/${encodeURIComponent(matched.serverId)}/qr/image`);
+    setQrExporting(false);
+    if (!image.ok) {
+      Alert.alert('No image', image.reason);
+      return;
+    }
+    const result = action === 'save'
+      ? await saveFile(image.file, 'image/png')
+      : await shareFile(image.file, `${qr.qrValue}\n${qr.publicUrl}`);
+    if (!result.ok) {
+      Alert.alert(action === 'save' ? 'Not saved' : 'Not shared', result.reason);
+    } else if (action === 'save') {
+      Toast.show({ type: 'success', text1: 'QR image ready', text2: result.message, position: 'bottom' });
     }
   };
 
@@ -891,9 +890,24 @@ export default function PlantDetailScreen() {
                 <Text style={styles.qrHint}>
                   Scanning it opens the plant's public visitor page.
                 </Text>
-                <TouchableOpacity style={styles.qrPrimary} onPress={() => void shareQr()}>
-                  <Text style={styles.qrPrimaryText}>Share</Text>
-                </TouchableOpacity>
+                <View style={styles.qrActions}>
+                  <TouchableOpacity
+                    style={[styles.qrPrimary, styles.qrAction, qrExporting && { opacity: 0.6 }]}
+                    onPress={() => void exportQr('save')}
+                    disabled={qrExporting}
+                    accessibilityRole="button"
+                  >
+                    {qrExporting ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.qrPrimaryText}>Save image</Text>}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.qrPrimary, styles.qrAction, qrExporting && { opacity: 0.6 }]}
+                    onPress={() => void exportQr('share')}
+                    disabled={qrExporting}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.qrPrimaryText}>Share</Text>
+                  </TouchableOpacity>
+                </View>
               </>
             ) : (
               <Text style={styles.qrError}>
@@ -1391,6 +1405,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 18,
+  },
+  qrActions: {
+    flexDirection: 'row',
+    alignSelf: 'stretch',
+    gap: 10,
+  },
+  qrAction: {
+    flex: 1,
+    alignSelf: 'auto',
   },
   qrPrimaryText: {
     color: '#FFFFFF',

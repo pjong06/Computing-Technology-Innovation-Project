@@ -2,6 +2,7 @@ const express = require("express");
 const { randomUUID } = require("node:crypto");
 const upload = require("../services/storageService");
 const { generatePlantQR, buildPublicPlantUrl, normalizePlantTag, TAG_PATTERN, QrConfigurationError } = require("../services/qrService");
+const { generateQrLabelPng } = require("../services/qrLabelService");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { stripPhotoMetadata, InvalidPhotoError } = require("../services/photoSanitizer");
 const { publicPhotoUrlsFor, removePublicPlantPhotoByTag } = require("../services/publicPlantPhotos");
@@ -913,17 +914,18 @@ router.get("/:id/qr", requireRole("botanist"), async (req, res) => {
     }
 });
 
-// Return a QR image for a plant owned by the signed-in botanist.
+// The QR label (QR code with the tag written underneath, 1000 px wide) as a PNG, for a
+// plant owned by the signed-in botanist. The same label as GET /api/tag-reservations/:tag/image.
 router.get("/:id/qr/image", requireRole("botanist"), async (req, res) => {
     const qrValue = await findOwnedPlantQrTag(req, res);
     if (!qrValue) return;
 
     try {
-        const qr = await generatePlantQR(qrValue);
-        const base64Data = qr.qrCode.replace(/^data:image\/png;base64,/, "");
-        const imageBuffer = Buffer.from(base64Data, "base64");
+        const imageBuffer = await generateQrLabelPng(qrValue);
 
         res.setHeader("Content-Type", "image/png");
+        res.setHeader("Cache-Control", "no-store");
+        res.setHeader("Content-Disposition", `attachment; filename="${qrValue}.png"`);
         return res.send(imageBuffer);
     } catch (error) {
         if (error instanceof QrConfigurationError) return res.status(503).json({ message: "Public QR URL is not configured" });
