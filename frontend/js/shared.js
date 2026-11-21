@@ -90,6 +90,36 @@ async function api(path, options) {
   return body;
 }
 
+// Downloads a file (a CSV or PDF export) from the backend with the officer's login token,
+// renewing the login once on a 401 like api(). Returns { blob, name } (the server's file name).
+async function apiFile(path) {
+  async function send(token) {
+    const headers = token ? { Authorization: 'Bearer ' + token } : {};
+    try {
+      return await fetch('/api' + path, { headers: headers });
+    } catch (error) {
+      console.error('Request to /api' + path + ' failed:', error);
+      throw new Error(SERVER_UNREACHABLE_MESSAGE);
+    }
+  }
+  let response = await send(await window.getOfficerAccessToken());
+  if (response.status === 401) {
+    const renewed = await sb.auth.refreshSession();
+    if (!renewed.error && renewed.data.session) response = await send(renewed.data.session.access_token);
+    if (response.status === 401) {
+      await sendToLoginExpired();
+      throw new Error(SESSION_EXPIRED_MESSAGE);
+    }
+  }
+  if (response.ok === false) {
+    const body = await response.json().catch(function () { return {}; });
+    throw new Error(body.message || 'Something went wrong on the server. Please try again.');
+  }
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const match = /filename="([^"]+)"/.exec(disposition);
+  return { blob: await response.blob(), name: match ? match[1] : 'niah-report' };
+}
+
 // ---------- The real species catalogue (/api/knowledge) ----------
 // The same species table the mobile app reads. Officers manage it; botanists propose.
 
@@ -1022,9 +1052,9 @@ const NAV_SECTIONS = [
     ]
   },
   {
+    // Reports moved into Overview (its Report card); reports.html redirects there.
     label: 'Admin',
     pages: [
-      { file: 'reports.html', label: 'Reports' },
       { file: 'users.html', label: 'Users' }
     ]
   }

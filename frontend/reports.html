@@ -2,58 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Reports & export - Niah Biotrack</title>
-<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="icon" href="images/logo.png">
-<link rel="stylesheet" href="css/style.css">
+<meta http-equiv="refresh" content="0; url=overview.html#report">
+<title>Overview - Niah Biotrack</title>
 </head>
 <body>
-<div class="app">
-
-<nav id="menu"></nav>
-
-<main>
-<section class="page on">
-  <h1>Reports <span>& export</span></h1>
-  <p class="lead">Summaries of species, plants and field records, for conservation officers to export as CSV or PDF for research and planning.</p>
-  <div class="stats">
-    <div class="card"><b id="stat-species">—</b>Approved species</div>
-    <div class="card"><b id="stat-endangered">—</b>Critically endangered or endangered</div>
-    <div class="card"><b id="stat-pending">—</b>Field records waiting for review</div>
-    <div class="card"><b id="stat-plants">—</b>Plants</div>
-  </div>
-  <div class="bar">
-    <select id="report-type" aria-label="Report type" onchange="renderReport()">
-      <option value="inventory">Species inventory</option>
-      <option value="botanist">Field observations</option>
-      <option value="locations">Plant locations</option>
-    </select>
-    <input id="report-from" type="date" aria-label="From date" onchange="renderReport()">
-    <input id="report-to" type="date" aria-label="To date" onchange="renderReport()">
-    <select id="report-sort" aria-label="Sort order" onchange="redrawReport()">
-      <option value="newest">Newest first</option>
-      <option value="oldest">Oldest first</option>
-    </select>
-    <button class="btn" onclick="exportCsv()">Export CSV</button>
-    <button class="btn ghost" onclick="exportPdf()">Export PDF</button>
-  </div>
-  <p class="muted" id="report-note"></p>
-  <div class="card tw">
-   <table id="report-table">
-     <thead><tr><th scope="col">Report</th></tr></thead>
-     <tbody></tbody>
-   </table>
-    <p class="muted" id="report-empty" hidden>No records match this report and date range.</p>
-  </div>
-</section>
-</main>
-</div>
-
-<div id="toast" role="status"></div>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R" crossorigin="anonymous"></script>
-<script src="js/shared.js"></script>
-<script src="js/reports.js"></script>
-<script src="js/pdf.js"></script>
+<p>Reports are now on the <a href="overview.html#report">Overview</a> page.</p>
 </body>
 </html>
