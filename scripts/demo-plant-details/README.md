@@ -30,9 +30,10 @@ approved observation. Typical reasons: the plant has no botanist (see below), or
 only on an observation that isn't approved yet.
 
 **Mosses and liverworts** have no stem, so their diameter is the width of the clump or cushion
-(2-5 cm when young, up to 15 cm when established). A plant that already has a demo observation
-from an earlier run gets the missing fields added to that observation (still `is_demo = true`),
-so `remove.mjs` takes them out with it.
+(2-5 cm when young, up to 15 cm when established). Approved observations are never changed, so a plant
+that already has a demo observation from an earlier run gets **one new** demo observation
+(`is_demo = true`) dated a day after it (and before today), repeating its height, health and life
+stage plus the missing fields, so it is the newest. `remove.mjs` deletes both.
 
 Apply `supabase/migrations/20261121200000_demo_plant_details.sql` and
 `20261121220000_demo_plant_coordinates.sql` first. They add both flags and let the service role

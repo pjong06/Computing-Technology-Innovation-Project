@@ -6,8 +6,9 @@
 //   - height, diameter, health, life stage: one approved observation per plant
 //     (observations.is_demo = true), dated before today, only with the fields that none of the
 //     plant's observations has. Approved, so it never enters the Review queue. A plant that
-//     already has a demo observation from an earlier run gets the missing fields added to it
-//     (e.g. the clump width of a moss or liverwort, recorded as its diameter);
+//     already has a demo observation from an earlier run (approved, so never changed) gets one
+//     new demo observation a day later with the missing fields (e.g. the clump width of a moss
+//     or liverwort, as its diameter), repeating the earlier one's height, health and life stage;
 //   - coordinates (plants.location, read by the officer map and plant details) for plants that
 //     have none: a demo point inside Niah National Park, in the zone the plant's location note
 //     names, at least 20 m from every other plant, with a GPS accuracy of 8-15 m. Recorded in
@@ -78,7 +79,7 @@ async function run(options) {
     longitude: pointById.get(plant.id)?.longitude ?? null,
   }));
   const observations = await readAll('observations',
-    `id,plant_id,observed_at,review_status,is_demo,${OBSERVATION_FIELDS.join(',')}`, { deleted_at: 'is.null' });
+    `id,plant_id,observer_id,observed_at,review_status,is_demo,${OBSERVATION_FIELDS.join(',')}`, { deleted_at: 'is.null' });
   const species = await readAll('species', 'id,scientific_name,taxonomy(family)', {});
   const observationsByPlant = new Map();
   for (const visit of observations) {
@@ -105,15 +106,6 @@ async function run(options) {
             method: 'PATCH',
             body,
             prefer: 'return=representation',
-          });
-          if (!updated.length) action = 'skipped: changed since the report';
-        }
-        if (plan.observationUpdate) {
-          // Only the demo observation, and only while each of these fields is still empty.
-          const { id, values } = plan.observationUpdate;
-          const stillEmpty = Object.keys(values).map((field) => `${field}=is.null`).join('&');
-          const updated = await rest(`observations?id=eq.${id}&is_demo=is.true&${stillEmpty}&select=id`, {
-            method: 'PATCH', body: values, prefer: 'return=representation',
           });
           if (!updated.length) action = 'skipped: changed since the report';
         }
