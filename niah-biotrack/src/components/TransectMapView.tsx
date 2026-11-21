@@ -29,6 +29,8 @@ interface TransectMapViewProps {
   offline?: boolean;
   // Drawn instead of the map while offline or while the map tiles fail to load.
   offlineView?: React.ReactNode;
+  // The path walked so far during navigation, drawn as a thin line.
+  trail?: { latitude: number; longitude: number }[];
 }
 
 // While the tiles are failing, try loading the map again this often (signal can come back
@@ -41,6 +43,7 @@ export default function TransectMapView({
   height = 270,
   offline = false,
   offlineView = null,
+  trail = [],
 }: TransectMapViewProps) {
   const webViewRef = useRef<WebView | null>(null);
   const [mapStyle, setMapStyle] = useState<'street' | 'satellite'>('street');
@@ -66,8 +69,9 @@ export default function TransectMapView({
           }
         : null,
       mapStyle,
+      trail: trail.map((point) => [point.latitude, point.longitude]),
     }),
-    [currentPoint, targetPoint, mapStyle]
+    [currentPoint, targetPoint, mapStyle, trail]
   );
 
   const html = useMemo(
@@ -156,6 +160,12 @@ export default function TransectMapView({
       dashArray: '8, 8',
       opacity: 0.9
     }).addTo(map);
+    // The walked path during navigation: a thin solid line under the markers.
+    var trailLine = L.polyline([], {
+      color: '#1D4ED8',
+      weight: 2.5,
+      opacity: 0.7
+    }).addTo(map);
     var markersLayer = L.layerGroup().addTo(map);
     var userInteracted = false;
 
@@ -194,6 +204,7 @@ export default function TransectMapView({
       }
 
       markersLayer.clearLayers();
+      trailLine.setLatLngs(data.trail || []);
       var allCoords = [];
 
       if (data.user && data.target) {

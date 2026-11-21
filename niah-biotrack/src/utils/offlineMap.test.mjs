@@ -162,8 +162,8 @@ test('Find plant: offline or without tiles, the phone-drawn map replaces the bla
   const screen = read('../../app/navigate-plant.tsx');
   assert.match(screen, /offline=\{offline\}/);
   assert.match(screen, /<OfflinePlantMap\s+here=\{currentPoint\}\s+headingDegrees=\{headingDegrees\}/);
-  // Distance, compass and Arrived are unchanged.
-  assert.match(screen, /const hasArrived =\s+distanceToPlant !== null && distanceToPlant <= ARRIVAL_THRESHOLD_M;/);
+  // Distance and compass unchanged; arrival now allows for GPS accuracy (plantGuidance.ts).
+  assert.match(screen, /const hasArrived = isWithinArrival\(distanceToPlant, currentPoint\?\.accuracy \?\? null\);/);
   assert.match(screen, /DISTANCE TO PLANT/);
 
   const offlineView = read('../components/OfflinePlantMap.tsx');

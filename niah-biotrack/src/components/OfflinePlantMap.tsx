@@ -31,12 +31,14 @@ interface OfflinePlantMapProps {
   target: OfflineMapPlant;
   others: OfflineMapPlant[];
   onSelect: (key: string) => void;
+  // The path walked so far during navigation, drawn as a thin line.
+  trail?: LatLng[];
 }
 
 const OTHERS_RADIUS_M = 1000;
 const MAX_OTHER_DOTS = 60;
 
-export default function OfflinePlantMap({ here, headingDegrees, target, others, onSelect }: OfflinePlantMapProps) {
+export default function OfflinePlantMap({ here, headingDegrees, target, others, onSelect, trail = [] }: OfflinePlantMapProps) {
   const [view, setView] = useState({ width: 0, height: 0 });
   const onLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
@@ -73,6 +75,19 @@ export default function OfflinePlantMap({ here, headingDegrees, target, others, 
   const dashes = dashSegments(centre, targetPoint);
   const accuracyRadius = here.accuracy ? Math.min(here.accuracy / metresPerPixel, view.width) : 0;
 
+  // The walked trail: one thin segment between each pair of kept points.
+  const trailPoints = trail.map((point) => toScreen(offsetMeters(here, point), view, metresPerPixel));
+  const trailSegments = trailPoints.slice(1).map((to, index) => {
+    const from = trailPoints[index];
+    const length = Math.hypot(to.x - from.x, to.y - from.y);
+    return {
+      x: (from.x + to.x) / 2,
+      y: (from.y + to.y) / 2,
+      length,
+      angle: (Math.atan2(to.y - from.y, to.x - from.x) * 180) / Math.PI,
+    };
+  }).filter((segment) => segment.length >= 0.5);
+
   const dots = plantsWithin(here, others.filter((plant) => plant.key !== target.key), OTHERS_RADIUS_M)
     .slice(0, MAX_OTHER_DOTS)
     .map((plant) => ({ plant, point: toScreen(offsetMeters(here, plant), view, metresPerPixel) }))
@@ -86,6 +101,18 @@ export default function OfflinePlantMap({ here, headingDegrees, target, others, 
       ))}
       {grid.ys.map((y) => (
         <View key={`y${y}`} style={[styles.gridLine, { top: y, left: 0, right: 0, height: StyleSheet.hairlineWidth }]} />
+      ))}
+
+      {/* The path walked so far. */}
+      {trailSegments.map((segment, index) => (
+        <View
+          key={`t${index}`}
+          pointerEvents="none"
+          style={[
+            styles.trail,
+            { left: segment.x - segment.length / 2, top: segment.y - 1, width: segment.length, transform: [{ rotate: `${segment.angle}deg` }] },
+          ]}
+        />
       ))}
 
       {/* Dashed line from the phone to the plant. */}
@@ -152,6 +179,7 @@ export default function OfflinePlantMap({ here, headingDegrees, target, others, 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F2F6F1', overflow: 'hidden' },
   gridLine: { position: 'absolute', backgroundColor: '#C9D6CC' },
+  trail: { position: 'absolute', height: 2, borderRadius: 1, backgroundColor: '#1D4ED8', opacity: 0.6 },
   dash: { position: 'absolute', height: 3, borderRadius: 1.5, backgroundColor: '#2563EB', opacity: 0.9 },
   otherDot: {
     position: 'absolute',
