@@ -652,7 +652,8 @@ test('officers see five menu sections, in order; the Review entry carries the re
     ['Review', 'queue.html'],
     ['Species', 'species.html'],
     ['Plants', 'plants.html'],
-    ['IoT alerts', 'alerts.html'],
+    // The standalone alerts page left the menu in 63385ac; the section opens the workspace.
+    ['IoT alerts', 'iot-workspace.html'],
     ['Admin', 'reports.html'],
   ]);
   assert.equal(view.sections[0].countId, 'review-menu-count');
@@ -691,8 +692,9 @@ test('tab bars per section for officers, with the current page marked', () => {
   for (const page of ['species.html', 'editor.html']) {
     assert.deepEqual(tabs(page), [], page);
   }
-  assert.deepEqual(tabs('alerts.html').map(t=>[t.href,t.active]),[['alerts.html',true],['iot-workspace.html',false]]);
-  assert.deepEqual(tabs('iot-workspace.html').map(t=>[t.href,t.active]),[['alerts.html',false],['iot-workspace.html',true]]);
+  // IoT alerts has one page (the workspace) since 63385ac, so no tab bar either.
+  assert.deepEqual(tabs('iot-workspace.html'), []);
+  assert.deepEqual(tabs('alerts.html'), []);
   const editor = plain(nav.navFor(OFFICER, 'editor.html', ''));
   assert.deepEqual(editor.sections.filter(s => s.active).map(s => s.label), ['Species']);
 });
