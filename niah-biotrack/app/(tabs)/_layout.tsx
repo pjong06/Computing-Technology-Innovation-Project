@@ -6,7 +6,7 @@ import { useAuthRole } from '../../src/context/AuthRoleContext';
 import AwaitingApproval from '../../src/components/AwaitingApproval';
 
 export default function TabLayout() {
-  const { isVisitor, isPending } = useAuthRole();
+  const { isVisitor, isPending, role } = useAuthRole();
 
   if (isPending) return <AwaitingApproval />;
 
@@ -65,6 +65,16 @@ export default function TabLayout() {
           href: isVisitor ? null : undefined,
           tabBarIcon: ({ color }) => (
             <Ionicons name="document-text-outline" size={22} color={color as string} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="tasks"
+        options={{
+          title: 'Tasks',
+          href: role === 'botanist' ? undefined : null,
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="alert-circle-outline" size={22} color={color as string} />
           ),
         }}
       />

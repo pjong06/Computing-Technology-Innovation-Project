@@ -3825,6 +3825,14 @@ function renderCompactAlertRow(
     );
   }
 
+  const action =
+    document.createElement(
+      'div'
+    );
+
+  action.style.flex =
+    '0 0 auto';
+
   if (
       canDeleteAlerts()
     ) {
@@ -3914,14 +3922,6 @@ function renderCompactAlertRow(
       reading
     );
   }
-
-  const action =
-    document.createElement(
-      'div'
-    );
-
-  action.style.flex =
-    '0 0 auto';
 
   if (
     status ===

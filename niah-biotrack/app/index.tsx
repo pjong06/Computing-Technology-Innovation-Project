@@ -41,8 +41,8 @@ export default function LoginScreen() {
         if (result.downloaded > 0) {
           Toast.show({
             type: 'success',
-            text1: 'Plants updated',
-            text2: `${result.downloaded} server ${result.downloaded === 1 ? 'change' : 'changes'} downloaded.`,
+            text1: 'App updated',
+            text2: `${result.downloaded} record ${result.downloaded === 1 ? 'change' : 'changes'} and ${result.assignedTasks} assigned ${result.assignedTasks === 1 ? 'task' : 'tasks'} downloaded.`,
             position: 'bottom',
           });
         }

@@ -12,6 +12,7 @@ import {
   type PlantRecord,
 } from '../store/useRecordStore';
 import { useSpeciesStore } from '../store/useSpeciesStore';
+import { useIotTaskStore } from '../store/useIotTaskStore';
 import {
   getLocalEntities,
   getSyncCursor,
@@ -44,6 +45,7 @@ export interface ServerPullResult {
   plants: number;
   observations: number;
   keptLocal: number;
+  assignedTasks: number;
 }
 
 const PAGE_SIZE = 200;
@@ -372,11 +374,22 @@ async function runPull(): Promise<ServerPullResult> {
   useRecordStore.setState({ records: refreshed });
   await setSyncCursor(cursor);
 
+  // Officer assignments use the protected IoT workspace endpoint rather than
+  // the plant change log. Keep the cached task list when this optional refresh
+  // is unavailable so field records can still finish their normal sync.
+  let assignedTasks = useIotTaskStore.getState().tasks.length;
+  try {
+    assignedTasks = await useIotTaskStore.getState().refreshAssignedTasks();
+  } catch {
+    // The Tasks screen shows the refresh error and the last saved assignments.
+  }
+
   return {
     downloaded: plants + observations,
     plants,
     observations,
     keptLocal,
+    assignedTasks,
   };
 }
 
