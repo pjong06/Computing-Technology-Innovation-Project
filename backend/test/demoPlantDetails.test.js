@@ -124,33 +124,47 @@ test('fill: plausible values for each growth form; no credit or source text', as
   assert.ok(GROWTH_FORMS.tree.diameter[0] > GROWTH_FORMS.climber.diameter[1]);
 });
 
-test('mosses and liverworts: a clump width is added to an existing demo observation, and removal takes it out', async () => {
-  const { planFill, plantUpdate, reportRows, missingAfterFill, planRemoval } = await load('scripts/demo-plant-details/lib.mjs');
+test('mosses and liverworts: a clump width comes in ONE new demo observation a day after the earlier one; existing ones are never changed', async () => {
+  const { planFill, plantUpdate, reportRows, missingAfterFill, planRemoval, followUpObservedAt } = await load('scripts/demo-plant-details/lib.mjs');
   // A moss filled by an earlier run: its demo observation has everything except the diameter.
-  const earlier = { id: 'demo-1', plant_id: 'm1', is_demo: true, review_status: 'approved', observed_at: '2026-11-12T00:00:00Z',
-    height_cm: 3, diameter_cm: null, health_status: 'healthy', life_stage: 'mature' };
-  const real = { id: 'real-1', plant_id: 'm1', is_demo: false, review_status: 'approved', observed_at: '2026-11-01T00:00:00Z',
+  const earlier = { id: 'demo-1', plant_id: 'm1', observer_id: 'u-earlier', is_demo: true, review_status: 'approved',
+    observed_at: '2026-11-12T10:00:00Z', height_cm: 3, diameter_cm: null, health_status: 'stressed', life_stage: 'mature' };
+  const real = { id: 'real-1', plant_id: 'm1', observer_id: 'u1', is_demo: false, review_status: 'approved', observed_at: '2026-11-01T00:00:00Z',
     height_cm: null, diameter_cm: null, health_status: null, life_stage: null };
   const [plan] = planFill([plant('m1', { species_id: 's-moss', latitude: 3.81, longitude: 113.78,
     location_description: 'x', morphology: 'x', description: 'x' })], new Map([['m1', [earlier, real]]]), SPECIES, { now: NOW });
-  // Added to the existing demo observation, not a second one; only the missing field.
-  assert.equal(plan.observation, null);
-  assert.equal(plan.observationUpdate.id, 'demo-1');
-  assert.deepEqual(Object.keys(plan.observationUpdate.values), ['diameter_cm']);
-  assert.ok(plan.observationUpdate.values.diameter_cm >= 2 && plan.observationUpdate.values.diameter_cm <= 15);
-  assert.equal(plantUpdate(plan, null), null, 'the plant row is not touched');
-  assert.ok(reportRows([plan], 'x').some((row) => row.field === 'diameter_cm' && row.where === 'existing demo observation'));
+  // One new approved demo observation: the earlier one's height, health and life stage, plus the clump width.
+  const { observation } = plan;
+  assert.equal(observation.is_demo, true);
+  assert.equal(observation.review_status, 'approved');
+  assert.equal(observation.height_cm, 3);
+  assert.equal(observation.health_status, 'stressed');
+  assert.equal(observation.life_stage, 'mature');
+  assert.ok(observation.diameter_cm >= 2 && observation.diameter_cm <= 15, `clump width ${observation.diameter_cm}`);
+  assert.equal(observation.observer_id, 'u-earlier', 'recorded under the same observer as the earlier demo observation');
+  // Dated one day after the earlier demo observation, so it is the newest, and before today.
+  assert.equal(observation.observed_at, '2026-11-13T10:00:00.000Z');
+  assert.ok(Date.parse(observation.observed_at) < Date.parse('2026-11-21T00:00:00Z'));
+  // Earlier demo observation from yesterday: one day later would be today, so it lands halfway instead.
+  const late = followUpObservedAt('2026-11-20T12:00:00Z', NOW);
+  assert.ok(late > '2026-11-20T12:00:00Z' && late < '2026-11-21T00:00:00Z', late);
+  // Nothing on the plant row; the report says which values are repeated and which are new.
+  assert.equal(plantUpdate(plan, null), null);
+  const rows = reportRows([plan], 'x');
+  assert.equal(rows.find((row) => row.field === 'diameter_cm').where, 'demo observation');
+  assert.equal(rows.find((row) => row.field === 'health_status').where, 'demo observation (repeated from the earlier demo observation)');
   assert.deepEqual(missingAfterFill(plan, [earlier, real]), []);
-  // No botanist needed: the observation already exists.
+  // No botanist needed: the earlier demo observation's observer is used.
   const [orphanMoss] = planFill([plant('m1', { species_id: 's-moss', registered_by: null })], new Map([['m1', [earlier]]]), SPECIES, { now: NOW });
   assert.equal(orphanMoss.skippedObservation, null);
-  assert.equal(orphanMoss.observationUpdate.id, 'demo-1');
-  // The write only touches that demo observation, and only while the field is still empty.
+  assert.equal(orphanMoss.observation.observer_id, 'u-earlier');
+  // Existing observations are never updated or deleted by fill.mjs (approved ones are officer-only).
   const fill = read('scripts/demo-plant-details/fill.mjs');
-  assert.match(fill, /`observations\?id=eq\.\$\{id\}&is_demo=is\.true&\$\{stillEmpty\}&select=id`/);
-  assert.match(fill, /review_status,is_demo,/);
-  // Undo: remove.mjs deletes the whole demo observation, diameter included; the real one stays.
-  assert.deepEqual(planRemoval([], [{ ...earlier, diameter_cm: 7.5 }, real]).observationIds, ['demo-1']);
+  assert.doesNotMatch(fill, /rest\(`observations\?[^`]*`, \{\s*method: '(PATCH|DELETE)'/);
+  assert.match(fill, /observer_id,observed_at,review_status,is_demo,/);
+  assert.doesNotMatch(read('supabase/migrations/20261121220000_demo_plant_coordinates.sql'), /ON TABLE public\.observations/);
+  // Undo: remove.mjs deletes every demo observation, the earlier and the new one; the real one stays.
+  assert.deepEqual(planRemoval([], [earlier, { ...observation, id: 'demo-2' }, real]).observationIds, ['demo-1', 'demo-2']);
 });
 
 test('removal: exactly the generated values and demo observations, nothing else', async () => {
@@ -318,7 +332,6 @@ test('scripts and migration: dry run by default, key from the environment only, 
   assert.doesNotMatch(sql, /POLICY|ROW LEVEL SECURITY|TO (anon|authenticated|public)\b/i);
   const coordinatesSql = read('supabase/migrations/20261121220000_demo_plant_coordinates.sql');
   assert.match(coordinatesSql, /GRANT UPDATE \(location, gps_accuracy_m\)\s+ON TABLE public\.plants TO service_role;/);
-  assert.match(coordinatesSql, /GRANT UPDATE \(height_cm, diameter_cm, health_status, life_stage\)\s+ON TABLE public\.observations TO service_role;/);
   assert.doesNotMatch(coordinatesSql, /POLICY|ROW LEVEL SECURITY|TO (anon|authenticated|public)\b/i);
   // The flags are never sent to the screens.
   for (const file of ['backend/src/routes/plants.js', 'backend/src/routes/officerPlants.js', 'backend/src/routes/officerReviews.js',

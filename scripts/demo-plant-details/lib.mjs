@@ -317,6 +317,18 @@ export function demoObservedAt(plant, observations, now, random) {
   return new Date(Math.min(time, yesterday)).toISOString();
 }
 
+// When a follow-up demo observation is dated: one day after the plant's earlier demo
+// observation, so it is the newest; but always before today (if one day later would be today
+// or later, halfway between the earlier one and the start of today).
+export function followUpObservedAt(earlierObservedAt, now) {
+  const today = new Date(now);
+  today.setUTCHours(0, 0, 0, 0);
+  const earlier = Date.parse(earlierObservedAt);
+  const oneDayLater = earlier + 24 * 3600 * 1000;
+  const time = oneDayLater < today.getTime() ? oneDayLater : earlier + (today.getTime() - earlier) / 2;
+  return new Date(time).toISOString();
+}
+
 // What fill.mjs does for each active plant: the EMPTY plant columns get demo values; a plant
 // with no coordinates gets a demo point; the observation fields that none of its active
 // observations has get one demo observation.
@@ -367,29 +379,44 @@ export function planFill(plants, observationsByPlant, speciesById, { now = Date.
     const observer = plant.registered_by ?? observerId;
     const needsObservation = Object.keys(observationValues).length > 0;
     // A plant that already has a demo observation from an earlier run (e.g. a moss filled before
-    // mosses got a clump width) gets the missing fields added to THAT observation, so it keeps
-    // one demo visit and remove.mjs still takes everything out by deleting it.
-    const demoVisit = visits.find((visit) => visit.is_demo === true) ?? null;
+    // mosses got a clump width). Approved observations can't be changed (only officers may), so
+    // it gets ONE new demo observation instead: dated one day after the earlier one so it is the
+    // newest, repeating that observation's height, health and life stage, plus the missing
+    // fields. remove.mjs deletes every demo observation, so both go.
+    const demoVisit = [...visits]
+      .filter((visit) => visit.is_demo === true)
+      .sort((a, b) => String(b.observed_at ?? '').localeCompare(String(a.observed_at ?? '')))[0] ?? null;
+    const carried = {};
+    if (demoVisit) {
+      for (const field of ['height_cm', 'health_status', 'life_stage']) {
+        if (!isEmpty(demoVisit[field])) carried[field] = demoVisit[field];
+      }
+    }
+    const recordedBy = demoVisit?.observer_id ?? observer;
     plans.push({
       plant,
       species: species?.scientific_name ?? '',
       form: values.form,
       plantValues,
       coordinates,
-      observation: needsObservation && !demoVisit && observer
+      observation: needsObservation && recordedBy
         ? {
+            ...carried,
             ...observationValues,
             plant_id: plant.id,
-            observer_id: observer,
-            observed_at: demoObservedAt(plant, visits, now, seededRandom(`${plant.id}:date`)),
+            observer_id: recordedBy,
+            observed_at: demoVisit
+              ? followUpObservedAt(demoVisit.observed_at, now)
+              : demoObservedAt(plant, visits, now, seededRandom(`${plant.id}:date`)),
             review_status: 'approved',
             notes: 'Routine monitoring visit.',
             is_demo: true,
           }
         : null,
-      observationUpdate: needsObservation && demoVisit ? { id: demoVisit.id, values: observationValues } : null,
+      // The fields the new observation repeats from the earlier demo observation (not new values).
+      carriedFields: needsObservation && recordedBy ? Object.keys(carried) : [],
       // Observation fields left empty because the plant has no botanist to record them under.
-      skippedObservation: needsObservation && !demoVisit && !observer ? observationValues : null,
+      skippedObservation: needsObservation && !recordedBy ? observationValues : null,
     });
   }
   return plans;
@@ -436,13 +463,9 @@ export function reportRows(plans, action) {
     if (plan.observation) {
       for (const field of OBSERVATION_FIELDS) {
         if (plan.observation[field] !== undefined) {
-          rows.push({ ...base, field, old: '', new: plan.observation[field], where: 'demo observation', action });
+          const where = plan.carriedFields.includes(field) ? 'demo observation (repeated from the earlier demo observation)' : 'demo observation';
+          rows.push({ ...base, field, old: '', new: plan.observation[field], where, action });
         }
-      }
-    }
-    if (plan.observationUpdate) {
-      for (const [field, value] of Object.entries(plan.observationUpdate.values)) {
-        rows.push({ ...base, field, old: '', new: value, where: 'existing demo observation', action });
       }
     }
     if (plan.skippedObservation) {
@@ -473,9 +496,7 @@ export const REQUIRED_DETAILS = [
 // approved one that has the field, the demo observation included), the record an officer has
 // accepted.
 export function missingAfterFill(plan, visits) {
-  const update = plan.observationUpdate;
   const approved = [...visits, ...(plan.observation ? [plan.observation] : [])]
-    .map((visit) => (update && visit.id === update.id ? { ...visit, ...update.values } : visit))
     .filter((visit) => visit.review_status === 'approved');
   const gaps = [];
   for (const { field, label } of REQUIRED_DETAILS) {
