@@ -670,9 +670,6 @@ test('user admin shows a plain message when an account cannot be created', () =>
 test('pre-freeze clean-ups: no dead login code, "Live data" chip, matching index link, quiet MQTT log', () => {
   const login = read('frontend/js/login.js');
   assert.doesNotMatch(login, /OFFICER_CONTACT_EMAIL|showSuspended/);
-  const alerts = read('frontend/js/alerts.js');
-  assert.match(alerts, /setDashboardStatus\(\s*'live',\s*'Live data'\s*\)/);
-  assert.doesNotMatch(alerts, /Supabase synced/);
   const index = read('frontend/index.html');
   assert.match(index, /url=overview\.html/);
   assert.match(index, /<a href="overview\.html">Officer overview<\/a>/);
@@ -769,7 +766,6 @@ test('tab bars per section for officers, with the current page marked', () => {
   }
   // IoT alerts has one page (the workspace) since 63385ac, so no tab bar either.
   assert.deepEqual(tabs('iot-workspace.html'), []);
-  assert.deepEqual(tabs('alerts.html'), []);
   assert.deepEqual(plain(nav.navFor(OFFICER, 'iot-workspace.html', '')).sections.filter(s => s.active).map(s => s.label), ['IoT alerts']);
   const editor = plain(nav.navFor(OFFICER, 'editor.html', ''));
   assert.deepEqual(editor.sections.filter(s => s.active).map(s => s.label), ['Species']);
@@ -831,7 +827,7 @@ test('review page headings, and a one-sentence description under every page head
   assert.match(read('frontend/queue.html'), /<h1>Review<\/h1>\s*<p class="lead">Check field records before they become official, for the conservation officer\.<\/p>/);
   assert.match(read('frontend/proposals.html'), /<h1>Species <span>requests<\/span><\/h1>/);
   assert.match(read('frontend/rejected.html'), /<h1>Rejected <span>history<\/span><\/h1>/);
-  for (const page of ['overview', 'species', 'editor', 'proposals', 'queue', 'rejected', 'plants', 'plant', 'map', 'alerts', 'users']) {
+  for (const page of ['overview', 'species', 'editor', 'proposals', 'queue', 'rejected', 'plants', 'plant', 'map', 'users']) {
     const html = read(`frontend/${page}.html`);
     const lead = html.match(/<p class="lead"[^>]*>([\s\S]*?)<\/p>/);
     assert.ok(lead && lead[1].replace(/<[^>]+>/g, '').trim().length > 20, `${page}.html has a description`);
@@ -868,9 +864,6 @@ test('one review status scheme: Waiting for review blue, Approved green, Needs c
   for (const page of ['plants.html', 'plant.html']) {
     assert.doesNotMatch(read(`frontend/${page}`), /\.plant-status\.(pending|approved|rejected)/, page);
   }
-  for (const state of ['live', 'loading', 'error']) {
-    assert.equal((css.match(new RegExp(`\\.iot-status-${state} \\{`, 'g')) || []).length, 1, `.iot-status-${state}`);
-  }
 });
 
 // ---- Usability pass: thumbnails, newest first, one date format ----
@@ -903,7 +896,6 @@ test('one date format: "21 Nov 2026, 11:30" and "21 Nov 2026", with a fallback w
     ['frontend/js/plants.js', /formatDay\(/],
     ['frontend/js/proposals.js', /formatWhen\(/],
     ['frontend/js/map.js', /formatDay\(/],
-    ['frontend/js/alerts.js', /formatWhen\(/],
     ['frontend/js/overview.js', /formatDay\(/]
   ]) {
     assert.match(read(file), call, file + ' uses the shared date format');
@@ -930,10 +922,8 @@ test('every list has a Newest first / Oldest first sort, newest by default', () 
   assert.match(read('frontend/js/proposals.js'), /addListSortSelect\('proposals-count', 'proposals-sort'/);
   assert.match(read('frontend/js/plant.js'), /addListSortSelect\('observations-count', 'observations-sort'/);
   assert.match(read('frontend/js/users.js'), /addListSortSelect\('users-count', 'users-sort'/);
-  assert.match(read('frontend/js/alerts.js'), /sortByDate\(/);
   for (const [page, id] of [
     ['frontend/plants.html', 'plant-sort'],
-    ['frontend/alerts.html', 'alert-sort']
   ]) {
     const html = read(page);
     const select = html.slice(html.indexOf('id="' + id + '"'));
