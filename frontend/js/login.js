@@ -34,7 +34,7 @@ async function doLogin() {
   // 2. The username saved on the account must match what was typed.
   const savedName = result.data.user.user_metadata.username;
   if (savedName && sameText(savedName, username) === false) {
-    await sb.auth.signOut();
+    await sb.auth.signOut({ scope: 'local' });
     showAuthError('Wrong username, email or password.');
     return;
   }
@@ -44,7 +44,7 @@ async function doLogin() {
   try {
     me = await api('/me');
   } catch (error) {
-    await sb.auth.signOut();
+    await sb.auth.signOut({ scope: 'local' });
     localStorage.removeItem(SESSION_KEY);
     if (/active staff profile required|active account required/i.test(error.message)) {
       showAuthError('This account is waiting for an officer to activate it, or has been suspended. Contact the officer.');
@@ -57,7 +57,7 @@ async function doLogin() {
   // Visitor accounts (from the mobile app) can sign in, but the portal is for staff only:
   // every page's data is staff-only on the server, so don't let them in here.
   if (['botanist', 'officer', 'researcher', 'admin'].indexOf(me.role) === -1) {
-    await sb.auth.signOut();
+    await sb.auth.signOut({ scope: 'local' });
     localStorage.removeItem(SESSION_KEY);
     showAuthError('This account is for the Niah mobile app. The web portal is for Sarawak Forestry staff.');
     return;

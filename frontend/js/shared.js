@@ -915,7 +915,7 @@ function startSession(me, username) {
 
 // Logs out of Supabase, forgets the saved user and goes back to the login page.
 async function logout() {
-  await sb.auth.signOut();
+  await sb.auth.signOut({ scope: 'local' });
   localStorage.removeItem(SESSION_KEY);
   location.href = 'login.html';
 }
