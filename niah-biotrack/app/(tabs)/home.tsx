@@ -115,7 +115,7 @@ export default function HomeScreen() {
       const problem = proposalsResult.reasons[0] ?? downloadError;
       Toast.show({
         type: failed > 0 || downloadError ? 'error' : 'success',
-        text1: failed > 0 ? 'Some records did not upload' : downloadError ? 'Upload complete; download pending' : 'Sync complete',
+        text1: failed > 0 ? 'Some records did not upload' : downloadError ? 'Uploaded, but couldn\'t download updates' : 'Sync complete',
         text2: problem ? `${parts.join(' · ')}. ${problem}` : parts.join(' · '),
         position: 'bottom',
       });
@@ -220,10 +220,10 @@ export default function HomeScreen() {
                       ]
                         .filter(Boolean)
                         .join(' and ')}{' '}
-                      pending sync
+                      waiting to upload
                     </Text>
                     <Text style={styles.syncSub}>
-                      {pendingCount} queued{failedCount > 0 ? ` · ${failedCount} failed` : ''} · local storage safe
+                      {pendingCount} queued{failedCount > 0 ? ` · ${failedCount} failed` : ''} · saved on this phone
                     </Text>
                     <TouchableOpacity
                       style={[styles.syncBtn, syncingAll && styles.syncBtnDisabled]}

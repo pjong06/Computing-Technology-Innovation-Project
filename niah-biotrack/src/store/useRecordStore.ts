@@ -1533,7 +1533,7 @@ export const useRecordStore =
                   ok: false,
 
                   reason:
-                    'Record not found after synchronization',
+                    'Record not found after syncing',
                 };
               }
 
@@ -1626,7 +1626,7 @@ export const useRecordStore =
                   ok: false,
 
                   reason:
-                    refreshed.syncError ?? run.error ?? 'Some metadata operations are still waiting to upload.',
+                    refreshed.syncError ?? run.error ?? 'Some changes are still waiting to upload.',
                   retryable: run.remaining,
 
                   photosUploaded,
@@ -2291,7 +2291,7 @@ export const useRecordStore =
                   ok: false,
 
                   reason:
-                    'Record not found after final synchronization.',
+                    'Record not found after the final sync.',
 
                   photosUploaded,
 
@@ -3202,7 +3202,7 @@ export const useRecordStore =
                 ok: false,
 
                 reason:
-                  'This record is currently synchronizing. Try deleting it again after the upload finishes.',
+                  'This record is currently syncing. Try deleting it again after the upload finishes.',
               };
             }
 
@@ -3346,7 +3346,7 @@ export const useRecordStore =
                 reason:
                   `This tag is already attached to ${
                     existing.scientificName ||
-                    'an identification-pending record'
+                    'a plant whose species isn\'t confirmed yet'
                   }`,
               };
             }

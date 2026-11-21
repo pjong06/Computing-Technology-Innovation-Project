@@ -571,7 +571,7 @@ export default function AttachTagScreen() {
             styles.headerTitle
           }
         >
-          Attach Plant Tag
+          Attach plant tag
         </Text>
 
         <View
@@ -607,7 +607,7 @@ export default function AttachTagScreen() {
             }
           >
             {record.scientificName ||
-              'this identification-pending plant'}
+              'this plant (species not confirmed yet)'}
           </Text>
           .
         </Text>
@@ -646,7 +646,7 @@ export default function AttachTagScreen() {
               A server-generated
               tag and public QR are
               available after this
-              plant is synchronized.
+              plant is synced.
               You can still attach a
               pre-printed tag
               offline below.
@@ -700,7 +700,7 @@ export default function AttachTagScreen() {
                   styles.successBadgeText
                 }
               >
-                ✓ Plaque Assigned
+                ✓ Tag attached
               </Text>
             </View>
 

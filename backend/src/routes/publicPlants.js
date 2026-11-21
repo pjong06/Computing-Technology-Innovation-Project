@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('node:path');
 const { TAG_PATTERN } = require('../services/qrService');
 const { publicPlantPhotoExists, publicPhotoUrl, readPublicPlantPhoto, PUBLIC_THUMBNAIL_MAX_SIDE } = require('../services/publicPlantPhotos');
-const { removeLegacyObservationSource } = require('../utils/speciesDescription');
+const { cleanSpeciesText, SPECIES_TEXT_FIELDS } = require('../utils/speciesDescription');
 
 const STYLES = `
 :root{color-scheme:light;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#20392d;background:#f3f4ec}
@@ -20,7 +20,7 @@ section{margin-top:34px;max-width:68ch}section section{margin-top:22px}h2{font-s
 const PUBLIC_FIELDS = ['scientific_name', 'common_name', 'local_name', 'description',
     'morphology', 'habitat', 'conservation_status', 'cultural_significance'];
 const STATUS_NAMES = { LC: 'Least Concern', NT: 'Near Threatened', VU: 'Vulnerable',
-    EN: 'Endangered', CR: 'Critically Endangered', NE: 'Not Evaluated' };
+    EN: 'Endangered', CR: 'Critically Endangered', DD: 'Data Deficient', NE: 'Not Evaluated' };
 
 function escapeHtml(value) {
     return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
@@ -44,11 +44,11 @@ function publicPlantHtml(tag, row, hasPhoto = false) {
     // Explicit allowlist: never serialize the RPC result, staff identity or coordinates into HTML.
     const plant = Object.fromEntries(PUBLIC_FIELDS.map(key => [key,
         typeof row[key] === 'string'
-            ? (key === 'description' ? removeLegacyObservationSource(row[key]) : row[key]).slice(0, 10000)
+            ? (SPECIES_TEXT_FIELDS.includes(key) ? cleanSpeciesText(row[key]) : row[key]).slice(0, 10000)
             : '']));
     const isDemo = Object.values(plant).some(value => /\bDEMO\b/i.test(value));
     const status = plant.conservation_status.trim();
-    const statusLabel = STATUS_NAMES[status] || status || 'Not recorded';
+    const statusLabel = STATUS_NAMES[status] || status || 'Not assessed';
     // "About this species": true of every plant of this species.
     const speciesSections = [['Description', plant.description], ['Appearance', plant.morphology],
         ['Habitat', plant.habitat], ['Cultural significance', plant.cultural_significance]];
@@ -58,10 +58,11 @@ function publicPlantHtml(tag, row, hasPhoto = false) {
         `<h1>${escapeHtml(plant.scientific_name || 'Plant information')}</h1>` +
         (plant.common_name ? `<p class="common">${escapeHtml(plant.common_name)}</p>` : '') +
         (plant.local_name ? `<p class="local">Local name: ${escapeHtml(plant.local_name)}</p>` : '') +
-        // This plant: the one in front of the visitor (its tag and photo).
-        `<section class="part"><h2>This plant</h2><p>Tag: ${escapeHtml(tag)}</p>` +
-        (hasPhoto ? `<figure class="plant-photo"><img src="/p/${escapeHtml(tag)}/photo" alt="${escapeHtml(plant.scientific_name || 'Plant')}, plant ${escapeHtml(tag)}"></figure>` : '') +
-        '</section>' +
+        // This plant: the one in front of the visitor, shown only when it has a photo (its tag
+        // is already at the top of the page).
+        (hasPhoto ? '<section class="part"><h2>This plant</h2>' +
+            `<figure class="plant-photo"><img src="/p/${escapeHtml(tag)}/photo" alt="${escapeHtml(plant.scientific_name || 'Plant')}, plant ${escapeHtml(tag)}"></figure>` +
+            '</section>' : '') +
         // About this species.
         '<section class="part"><h2>About this species</h2>' +
         `<div class="status">Conservation status: ${escapeHtml(statusLabel)}</div>` +
@@ -147,7 +148,7 @@ function createPublicPlantsRouter({ client } = {}) {
         const tag = req.params.tag;
         const errorPage = (status, title, message) => res.status(status).type('html')
             .send(documentHtml(title, `<h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p>`));
-        if (!TAG_PATTERN.test(tag)) return errorPage(400, 'Invalid plant tag', 'Use a valid Niah plant QR tag.');
+        if (!TAG_PATTERN.test(tag)) return errorPage(400, 'Plant tag not recognised', "This QR code isn't a Niah plant tag.");
         const wait = visitorLimit(req);
         if (wait !== null) {
             if (wait > 0) res.set('Retry-After', String(wait));
@@ -157,7 +158,7 @@ function createPublicPlantsRouter({ client } = {}) {
             const result = await lookupPublicPlant(database(), tag);
             if (result.status === 'pending') return errorPage(404, 'Being verified', PENDING_MESSAGE);
             if (result.status === 'not-found') {
-                return errorPage(404, 'Plant information unavailable', 'This tag has no approved public record yet.');
+                return errorPage(404, 'Plant information unavailable', "Information about this plant isn't available yet.");
             }
             const hasPhoto = await publicPlantPhotoExists(database(), tag);
             return res.type('html').send(publicPlantHtml(tag, result.plant, hasPhoto));

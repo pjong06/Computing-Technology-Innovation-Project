@@ -141,7 +141,7 @@ test('"This plant" and "About this species": plant detail, app visitor page and 
   assert.ok(detail.indexOf('>THIS PLANT<') > 0 && detail.indexOf('>THIS PLANT<') < detail.indexOf('>ABOUT THIS SPECIES<'));
   assert.doesNotMatch(detail, /SPECIES DETAILS|>LOCATION</);
   const plantPart = detail.slice(detail.indexOf('>THIS PLANT<'), detail.indexOf('MORPHOLOGICAL CHARACTERISTICS'));
-  for (const label of ['Plant tag', 'Location note', 'Height (m)', 'Diameter (cm)', 'Health', 'Life stage', 'Observations']) {
+  for (const label of ['Plant tag', 'Location note', 'Height (m)', 'Diameter (cm)', 'Health', 'Life stage']) {
     assert.ok(plantPart.includes(`label="${label}"`), label);
   }
   const speciesPart = detail.slice(detail.indexOf('>ABOUT THIS SPECIES<'));

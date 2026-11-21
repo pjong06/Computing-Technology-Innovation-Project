@@ -221,7 +221,7 @@ async function locationsReport(client, from, to) {
         columns: [
             { key: "scientific_name", label: "Species" },
             { key: "plant_tag", label: "Plant tag" },
-            { key: "landmark", label: "Landmark" },
+            { key: "landmark", label: "Location note" },
             { key: "latitude", label: "Latitude" },
             { key: "longitude", label: "Longitude" },
             { key: "plant_status", label: "Status" },

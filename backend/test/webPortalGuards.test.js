@@ -162,7 +162,7 @@ test('species.js and editor.js use /api/knowledge, not the old website copy', ()
   assert.match(read('frontend/proposals.html'), /id="reject-reason"/);
   assert.doesNotMatch(proposals, /prompt\(/);
   assert.match(proposals, /Habitat \/ location note/);
-  assert.match(proposals, /No reference photo provided/);
+  assert.doesNotMatch(proposals, /No reference photo provided/);
   // Botanists only propose.
   assert.match(read('frontend/js/editor.js'), /'\/knowledge\/species\/proposals'/);
 });
@@ -619,8 +619,8 @@ test('pre-freeze clean-ups: no dead login code, "Live data" chip, matching index
   assert.match(alerts, /setDashboardStatus\(\s*'live',\s*'Live data'\s*\)/);
   assert.doesNotMatch(alerts, /Supabase synced/);
   const index = read('frontend/index.html');
-  assert.match(index, /url=species\.html/);
-  assert.match(index, /<a href="species\.html">Species catalogue<\/a>/);
+  assert.match(index, /url=overview\.html/);
+  assert.match(index, /<a href="overview\.html">Officer overview<\/a>/);
   const mqtt = read('backend/src/services/mqttIngestionService.js');
   assert.match(mqtt, /if \(process\.env\.IOT_DEBUG === 'true'\) \{\s*console\.log\(\s*persisted/);
 });
@@ -655,7 +655,7 @@ function loadNavigation({ apiAnswers = {}, apiError = null, apiNeverAnswers = fa
     between('function isBotanist(', '\n}') + '\n}',
     between('function canOpen(', '\n}') + '\n}',
     between('// ---- Navigation: menu sections', '// ---- end of navigation ----'),
-    'this.navFor = navFor; this.homePageFor = homePageFor; this.HOME_COUNT_TIMEOUT_MS = HOME_COUNT_TIMEOUT_MS;',
+    'this.navFor = navFor; this.homePageFor = homePageFor;',
   ].join('\n');
   vm.runInNewContext(code, context);
   return { nav: context, calls };
@@ -665,10 +665,11 @@ const OFFICER = { role: 'Conservation Officer' };
 const BOTANIST_USER = { role: 'Botanist' };
 const plain = value => JSON.parse(JSON.stringify(value));
 
-test('officers see five menu sections, in order; the Review entry carries the review count', () => {
+test('officers see Overview first, followed by the existing menu sections', () => {
   const { nav } = loadNavigation();
-  const view = plain(nav.navFor(OFFICER, 'map.html', ''));
+  const view = plain(nav.navFor(OFFICER, 'overview.html', ''));
   assert.deepEqual(view.sections.map(s => [s.label, s.href]), [
+    ['Overview', 'overview.html'],
     ['Review', 'queue.html'],
     ['Species', 'species.html'],
     ['Plants', 'plants.html'],
@@ -676,8 +677,8 @@ test('officers see five menu sections, in order; the Review entry carries the re
     ['IoT alerts', 'iot-workspace.html'],
     ['Admin', 'reports.html'],
   ]);
-  assert.equal(view.sections[0].countId, 'review-menu-count');
-  assert.deepEqual(view.sections.filter(s => s.active).map(s => s.label), ['Plants']);
+  assert.equal(view.sections[1].countId, 'review-menu-count');
+  assert.deepEqual(view.sections.filter(s => s.active).map(s => s.label), ['Overview']);
 });
 
 test('botanists see Species and their workspace; the editor highlights Species', () => {
@@ -685,6 +686,7 @@ test('botanists see Species and their workspace; the editor highlights Species',
   for (const page of ['species.html', 'editor.html']) {
     const view = plain(nav.navFor(BOTANIST_USER, page, ''));
     assert.deepEqual(view.sections.map(s => s.label), ['Species','IoT alerts'], page);
+    assert.equal(view.sections.some(s => s.href === 'overview.html'), false);
     assert.equal(view.sections[1].href,'iot-workspace.html');
     assert.equal(view.sections[0].active, true, page);
     assert.deepEqual(view.tabs, [], page);
@@ -731,33 +733,15 @@ test('switching Plants List <-> Map keeps ?species= (and only there)', () => {
     ['queue.html', 'proposals.html', 'rejected.html']);
 });
 
-test('landing page: officers go to Review when anything waits, otherwise the map; botanists the catalogue', async () => {
-  const answers = (records, proposals) => ({
-    '/reports/summary': { data: { pending_observation_count: records } },
-    '/knowledge/species/proposals/pending?page=1&page_size=1': { pagination: { total: proposals } },
-  });
-  assert.equal(await loadNavigation({ apiAnswers: answers(3, 0) }).nav.homePageFor(OFFICER), 'queue.html');
-  assert.equal(await loadNavigation({ apiAnswers: answers(0, 2) }).nav.homePageFor(OFFICER), 'queue.html');
-  assert.equal(await loadNavigation({ apiAnswers: answers(0, 0) }).nav.homePageFor(OFFICER), 'map.html');
+test('landing page: officers open Overview and botanists the Species catalogue', async () => {
+  const officer = loadNavigation();
+  assert.equal(await officer.nav.homePageFor(OFFICER), 'overview.html');
+  assert.deepEqual(officer.calls, [], 'login does not wait on overview data');
 
-  const botanist = loadNavigation({ apiAnswers: answers(5, 5) });
+  const botanist = loadNavigation();
   assert.equal(await botanist.nav.homePageFor(BOTANIST_USER), 'species.html');
   assert.deepEqual(botanist.calls, [], 'no officer-only count is requested for a botanist');
   assert.equal(await botanist.nav.homePageFor(null), 'species.html');
-});
-
-test('landing page: if the counts fail or are slow, officers go to the species catalogue', async () => {
-  const failed = loadNavigation({ apiError: new Error('Could not reach the server.') });
-  assert.equal(await failed.nav.homePageFor(OFFICER), 'species.html');
-
-  const invalid = loadNavigation({ apiAnswers: { '/reports/summary': { data: {} } } });
-  assert.equal(await invalid.nav.homePageFor(OFFICER), 'species.html');
-
-  const slow = loadNavigation({ apiNeverAnswers: true });
-  assert.ok(slow.nav.HOME_COUNT_TIMEOUT_MS <= 3000, 'login is never held up for long');
-  const started = Date.now();
-  assert.equal(await slow.nav.homePageFor(OFFICER), 'species.html');
-  assert.ok(Date.now() - started < slow.nav.HOME_COUNT_TIMEOUT_MS + 1000);
 });
 
 test('review counts: field records from the officer-only summary, the Review entry shows the sum', () => {
@@ -769,9 +753,11 @@ test('review counts: field records from the officer-only summary, the Review ent
   assert.match(shared, /if \(user !== null && isBotanist\(user\) === false\) \{\s*if \(thisPageName\(\) !== 'proposals\.html'\)/);
   assert.match(shared, /if \(thisPageName\(\) !== 'queue\.html'\) \{\s*refreshFieldRecordsCount\(\)/);
   assert.match(read('frontend/js/queue.js'), /drawQueue\(\);\s*\/\/[^\n]*\n\s*refreshFieldRecordsCount\(\)/);
-  // Login waits for the landing page choice; the page guard still falls back to the catalogue.
+  // Login routes directly to the role's landing page.
   assert.match(read('frontend/js/login.js'), /await goToHome\(\);/);
   assert.match(shared, /async function goToHome\(\) \{\s*location\.href = await homePageFor\(getCurrentUser\(\)\);/);
+  assert.match(shared, /return 'overview\.html';/);
+  assert.match(read('backend/src/server.js'), /app\.use\('\/api\/officer\/overview', officerOverviewRoutes\);/);
 });
 
 test('tab bars are drawn by shared.js as a div (not a <nav>, which has the menu styles)', () => {
@@ -779,7 +765,7 @@ test('tab bars are drawn by shared.js as a div (not a <nav>, which has the menu 
   assert.match(shared, /function drawSectionTabs\(tabs\) \{/);
   assert.match(shared, /const bar = document\.createElement\('div'\);\s*bar\.id = 'section-tabs';\s*bar\.className = 'section-tabs';\s*bar\.setAttribute\('role', 'navigation'\);/);
   assert.match(shared, /main\.insertBefore\(bar, main\.firstChild\);/);
-  for (const page of ['queue.html', 'proposals.html', 'rejected.html', 'plants.html', 'plant.html', 'map.html', 'reports.html', 'users.html']) {
+  for (const page of ['overview.html', 'queue.html', 'proposals.html', 'rejected.html', 'plants.html', 'plant.html', 'map.html', 'reports.html', 'users.html']) {
     assert.doesNotMatch(read(`frontend/${page}`), /section-tabs|class="tabs"/, `${page} has no tab bar of its own`);
   }
   const css = read('frontend/css/style.css');
@@ -792,7 +778,7 @@ test('review page headings, and a one-sentence description under every page head
   assert.match(read('frontend/queue.html'), /<h1>Review<\/h1>\s*<p class="lead">Check field records before they become official, for the conservation officer\.<\/p>/);
   assert.match(read('frontend/proposals.html'), /<h1>Species <span>requests<\/span><\/h1>/);
   assert.match(read('frontend/rejected.html'), /<h1>Rejected <span>history<\/span><\/h1>/);
-  for (const page of ['species', 'editor', 'proposals', 'queue', 'rejected', 'plants', 'plant', 'map', 'alerts', 'reports', 'users']) {
+  for (const page of ['overview', 'species', 'editor', 'proposals', 'queue', 'rejected', 'plants', 'plant', 'map', 'alerts', 'reports', 'users']) {
     const html = read(`frontend/${page}.html`);
     const lead = html.match(/<p class="lead"[^>]*>([\s\S]*?)<\/p>/);
     assert.ok(lead && lead[1].replace(/<[^>]+>/g, '').trim().length > 20, `${page}.html has a description`);
@@ -813,7 +799,7 @@ test('one review status scheme: Waiting for review blue, Approved green, Needs c
   assert.deepEqual(show('APPROVED'), { label: 'Approved', css: 'approved' });
   assert.deepEqual(show('rejected'), { label: 'Needs changes', css: 'rejected' });
   assert.deepEqual(show('draft'), { label: 'Draft', css: 'draft' });
-  assert.deepEqual(show('in_review'), { label: 'in review', css: '' });
+  assert.deepEqual(show('in_review'), { label: 'In review', css: '' });
   assert.match(read('frontend/js/plants.js'), /function formattedStatus\(value\) \{\s*return reviewStatusDisplay\(value\);/);
   assert.match(read('frontend/js/plant.js'), /function plantStatus\(value\) \{\s*return reviewStatusDisplay\(value\);/);
 

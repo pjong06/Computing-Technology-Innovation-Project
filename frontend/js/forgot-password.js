@@ -1,4 +1,4 @@
-// Send 6 digit verification code
+// Send 6-digit verification code
 function isValidResetEmail(email) {
     const atIndex = email.indexOf('@');
     if (
@@ -101,7 +101,7 @@ async function verifyResetCode() {
 
     // Check code
     if (!/^\d{6}$/.test(code)) {
-        showMessage('Please enter a valid 6 digit code.', 'error');
+        showMessage('Please enter a valid 6-digit code.', 'error');
         return;
     }
 

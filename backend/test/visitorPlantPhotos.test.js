@@ -155,6 +155,8 @@ function officerClient({ visible = true, primary = 'u/p1/a.jpg', original } = {}
       calls.push(['from', table]);
       if (table === 'plants') return chain({ data: { id: 'p1', qr_code_value: TAG }, error: null });
       if (table === 'plant_media') return chain({ data: primary ? [{ id: 'm1', file_path: primary }] : [], error: null });
+      // No approved observation photo either (publicPhotoSource's fallback).
+      if (table === 'observations' || table === 'observation_media') return chain({ data: [], error: null });
       throw new Error(table);
     },
     async rpc(name, args) {

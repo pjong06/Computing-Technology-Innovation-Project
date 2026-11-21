@@ -313,13 +313,13 @@ test('rejecting needs a reason', async () => {
   }
 });
 
-test('a rule raised by the database is shown as it is, not as a generic error', async () => {
+test('a rule raised by the database is shown in plain words, not as a generic error', async () => {
   const result = await decide({
     ...pendingObservation,
     'observation_reviews:insert': { data: null, error: { code: 'P0001', message: 'Observation must be Pending; approval requires an approved species' } },
   }, { decision: 'rejected', comments: 'Blurry' });
   assert.equal(result.status, 409);
-  assert.equal(result.body.message, 'Observation must be Pending; approval requires an approved species');
+  assert.equal(result.body.message, "This field record can't be approved until its species is approved.");
 });
 
 test('a permission refusal from the database says so in plain words', async () => {

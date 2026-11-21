@@ -70,7 +70,7 @@ export default function SaveConfirmScreen() {
             <Text style={styles.plantLoc}>📍 {matched.locationName}</Text>
             <Text style={styles.plantGps}>{matched.gpsCoordination}</Text>
             <Text style={styles.metaRow}>
-              🕒 {matched.createdAt} · {matched.photoUris?.length || 0} photos
+              🕒 {matched.createdAt} · {matched.photoUris?.length || 0} {(matched.photoUris?.length || 0) === 1 ? 'photo' : 'photos'}
             </Text>
             <Text style={styles.recordIdTag}>Tag: {isPhysicalTag(matched.tagCode) ? matched.tagCode : 'No physical tag yet'}</Text>
           </View>

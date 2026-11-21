@@ -111,7 +111,7 @@ async function loadPlants() {
   try {
     const result = await api('/officer/plants?' + params.toString());
     if (!result || !Array.isArray(result.data) || !result.pagination) {
-      throw new Error('The plant catalogue response was invalid.');
+      throw new Error('The data could not be read. Please reload the page.');
     }
     plantCount = result.pagination.total;
     totalPages = result.pagination.total_pages;
@@ -123,8 +123,8 @@ async function loadPlants() {
   } catch (error) {
     errorBox.textContent = 'Plants could not be loaded. ' + (error.message || 'Please try again.');
     errorBox.hidden = false;
-    byId('plants-count').textContent = 'Plant catalogue unavailable';
-    showUnexpectedError(error);
+    byId('plants-count').textContent = 'Plants unavailable';
+    console.error('Plants failed to load:', error);
   } finally {
     loading.hidden = true;
   }
@@ -169,7 +169,7 @@ async function loadFilterOptions() {
     );
     replaceOptions(
       byId('registered-by-filter'),
-      'All registered by',
+      'All botanists',
       facets.data.registered_by || [],
       item => item.id,
       item => item.name,

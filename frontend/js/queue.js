@@ -611,7 +611,8 @@ async function reviewObservation(id, decision, comments) {
   drawQueue();
   // Keep the Field records and Review badges in step after every decision.
   refreshFieldRecordsCount().catch(error => {
-    showToast('Field record count could not be loaded. ' + error.message);
+    console.error('Field record count failed:', error);
+    showToast('Field record count could not be loaded.');
   });
 }
 
@@ -625,13 +626,14 @@ async function loadQueue() {
     pending = [];
     document.getElementById('queue-area').hidden = true;
     document.getElementById('queue-empty').hidden = true;
-    document.getElementById('queue-count').textContent = 'Could not load the field records: ' + error.message;
+    document.getElementById('queue-count').textContent = error.message || 'Could not load field records.';
     return;
   }
   drawQueue();
   // Keep the Field records and Review badges in step after every load.
   refreshFieldRecordsCount().catch(error => {
-    showToast('Field record count could not be loaded. ' + error.message);
+    console.error('Field record count failed:', error);
+    showToast('Field record count could not be loaded.');
   });
 }
 

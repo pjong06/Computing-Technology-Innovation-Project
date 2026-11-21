@@ -133,7 +133,7 @@ export default function SpeciesReferenceDetailScreen() {
             <Text style={styles.back}>‹</Text>
           </TouchableOpacity>
           <Text style={styles.headerTitle} numberOfLines={1}>
-            {title ?? 'Species Reference'}
+            {title ?? 'Species reference'}
           </Text>
           <View style={styles.headerSide} />
         </View>
@@ -162,7 +162,7 @@ export default function SpeciesReferenceDetailScreen() {
         <TouchableOpacity onPress={() => router.back()} hitSlop={10}>
           <Text style={styles.back}>‹</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Species Reference</Text>
+        <Text style={styles.headerTitle}>Species reference</Text>
         <TouchableOpacity
           style={styles.headerSide}
           onPress={() => void loadSpeciesDetail(id, true)}

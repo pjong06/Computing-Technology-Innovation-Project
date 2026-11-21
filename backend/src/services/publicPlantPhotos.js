@@ -40,6 +40,48 @@ async function removePublicPlantPhotoByTag(supabase, tag) {
     return "removed";
 }
 
+// Which photo becomes the public copy: the plant's main photo (plant_media); otherwise, for a
+// field plant whose photo was only taken with its first record, the main photo of its first
+// APPROVED observation (observation_media, the main one first). Never a photo of an
+// observation that isn't approved. { bucket, filePath } or null.
+async function publicPhotoSource(supabase, plantId) {
+    const { data: media, error: mediaError } = await supabase
+        .from("plant_media")
+        .select("id, file_path")
+        .eq("plant_id", plantId)
+        .eq("is_primary", true)
+        .is("deleted_at", null)
+        .order("id")
+        .limit(1);
+    if (mediaError) throw mediaError;
+    const plantPath = Array.isArray(media) && media[0]?.file_path;
+    if (plantPath) return { bucket: "plant-media", filePath: plantPath };
+
+    const { data: visits, error: visitError } = await supabase
+        .from("observations")
+        .select("id, observed_at")
+        .eq("plant_id", plantId)
+        .eq("review_status", "approved")
+        .is("deleted_at", null)
+        .order("observed_at", { ascending: true })
+        .order("id")
+        .limit(1);
+    if (visitError) throw visitError;
+    const firstApproved = Array.isArray(visits) && visits[0];
+    if (!firstApproved) return null;
+
+    const { data: visitMedia, error: visitMediaError } = await supabase
+        .from("observation_media")
+        .select("id, file_path, is_primary")
+        .eq("observation_id", firstApproved.id)
+        .order("is_primary", { ascending: false })
+        .order("id")
+        .limit(1);
+    if (visitMediaError) throw visitMediaError;
+    const visitPath = Array.isArray(visitMedia) && visitMedia[0]?.file_path;
+    return visitPath ? { bucket: "observation-media", filePath: visitPath } : null;
+}
+
 // Brings the public copy of one plant's main photo in line with the plant, using the
 // signed-in officer's client (officers may read plant photos and manage the public copies).
 // Returns "published", "removed" or "skipped". Never throws: a failure is logged, and the
@@ -59,21 +101,12 @@ async function refreshPublicPlantPhoto(supabase, plantId) {
             return await removePublicPlantPhotoByTag(supabase, plant.qr_code_value);
         }
 
-        const { data: media, error: mediaError } = await supabase
-            .from("plant_media")
-            .select("id, file_path")
-            .eq("plant_id", plantId)
-            .eq("is_primary", true)
-            .is("deleted_at", null)
-            .order("id")
-            .limit(1);
-        if (mediaError) throw mediaError;
-        const filePath = Array.isArray(media) && media[0]?.file_path;
-        if (!filePath) return await removePublicPlantPhotoByTag(supabase, plant.qr_code_value);
+        const source = await publicPhotoSource(supabase, plantId);
+        if (!source) return await removePublicPlantPhotoByTag(supabase, plant.qr_code_value);
 
         const { data: file, error: downloadError } = await supabase.storage
-            .from("plant-media")
-            .download(filePath);
+            .from(source.bucket)
+            .download(source.filePath);
         if (downloadError || !file) throw downloadError || new Error("Plant photo could not be read");
         if (file.size > 25 * 1024 * 1024) throw new Error("Plant photo is too large");
 
@@ -174,6 +207,7 @@ module.exports = {
     PUBLIC_THUMBNAIL_MAX_SIDE,
     publicPhotoPath,
     publicPhotoUrl,
+    publicPhotoSource,
     refreshPublicPlantPhoto,
     removePublicPlantPhotoByTag,
     readPublicPlantPhoto,

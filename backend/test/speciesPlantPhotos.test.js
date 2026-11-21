@@ -199,7 +199,7 @@ test('"Identified to" is checked, saved, and skipped (not failed) before the mig
   assert.equal(updated.body.taxon_rank_saved, false);
   const onlyRank = await request(`/species/${S1}`, { token: 's', method: 'PATCH', body: { taxon_rank: 'family' } });
   assert.equal(onlyRank.status, 400);
-  assert.match(onlyRank.body.message, /migration/);
+  assert.match(onlyRank.body.message, /can't be saved yet/);
 
   // After the migration the rank is written.
   const db2 = fakeDb({ species: { data: { id: S1, scientific_name: 'Shorea a', taxon_rank: 'genus' }, error: null } });

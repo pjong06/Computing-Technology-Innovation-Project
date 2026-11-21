@@ -212,13 +212,13 @@ async function startEditor() {
   document.getElementById('f-fam').onchange = showOtherFamily;
 
   if (isBotanistUser) {
-    document.getElementById('editor-title').innerHTML = 'Propose <span>a species</span>';
+    document.getElementById('editor-title').innerHTML = 'Request <span>a species</span>';
     document.getElementById('officer-note').hidden = true;
     document.getElementById('approval-note').hidden = false;
     // The officer sets the conservation status and how far it was identified when approving.
     document.getElementById('status-label').hidden = true;
     document.getElementById('rank-label').hidden = true;
-    document.getElementById('save-button').textContent = 'Send proposal';
+    document.getElementById('save-button').textContent = 'Send species request';
   }
   try {
     taxonomyRows = await loadTaxonomy();
@@ -311,7 +311,7 @@ async function sendProposal(sci) {
     description: textOrNull('f-desc')
   };
   await api('/knowledge/species/proposals', { method: 'POST', body: JSON.stringify(proposal) });
-  rememberToast('Proposal sent. The officer will review it.');
+  rememberToast('Species request sent. The officer will review it.');
   location.href = 'species.html';
 }
 
@@ -340,8 +340,8 @@ async function saveAsOfficer(sci) {
   }
 
   rememberToast(saved && saved.taxon_rank_saved === false
-    ? 'Species saved. "Identified to" was not saved: the database needs an update first.'
-    : 'Species saved');
+    ? "Species saved. \"Identified to\" can't be saved yet. Please contact the system administrator."
+    : 'Species saved.');
   location.href = 'species.html';
 }
 

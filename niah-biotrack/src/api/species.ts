@@ -128,11 +128,11 @@ async function fetchJson<T>(path: string): Promise<T> {
     try {
       response = await fetch(`${baseUrl}${path}`, { headers, signal: controller.signal });
     } catch {
-      throw new Error(`Could not reach the server at ${baseUrl}`);
+      throw new Error("Couldn't reach the server. Check your connection and try again.");
     }
 
     if (!response.ok) {
-      throw new Error(`Server returned ${response.status}`);
+      throw new Error('The server had a problem. Please try again.');
     }
 
     return (await response.json()) as T;

@@ -114,7 +114,7 @@ async function uploadPlantPhoto(
       );
     } catch {
       throw new ApiError(
-        `Could not reach the server at ${BASE_URL}`,
+        'Couldn\'t reach the server. Check your connection and try again.',
         0
       );
     }

@@ -165,7 +165,7 @@ test('the visitor page uses the same rule: imported approved plant shown, pendin
   const page = await fetch(`${url}/p/NIAH-PLT-00101`);
   assert.equal(page.status, 200, 'imported approved plant');
   const html = await page.text();
-  assert.match(html, /<h2>This plant<\/h2>/);
+  assert.match(html, /<h2>About this species<\/h2>/);
   assert.doesNotMatch(html, /latitude|longitude|113\.|Source|naturalist/i);
   for (const [tag, why] of [['NIAH-PLT-00104', 'pending field plant'], ['NIAH-PLT-00103', 'deleted imported plant'],
     ['NIAH-PLT-00107', 'deleted field plant'], ['NIAH-PLT-00106', 'field plant without an approved record']]) {
