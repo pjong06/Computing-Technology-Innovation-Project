@@ -111,10 +111,13 @@ test('species inventory includes family, conservation words, and active plant to
   assert.equal(result.body.data.total, 1);
   assert.deepEqual(result.body.data.rows[0], {
     scientific_name: 'Nepenthes ampullaria',
+    rank: 'Species',
     common_name: 'Pitcher plant',
     family: 'Nepenthaceae',
     conservation_status: 'Critically Endangered',
+    status_code: 'CR',
     plant_count: 2,
+    first_recorded: '',
   });
   assert.ok(db.calls.some(call => call[0] === 'species' && call[1] === 'eq' &&
     call[2] === 'verification_status' && call[3] === 'approved'));
@@ -155,13 +158,16 @@ test('field observations include species, plant, botanist, health and review det
   assert.deepEqual(result.body.data.rows[0], {
     observed_at: '2026-11-02',
     scientific_name: 'Nepenthes ampullaria',
-    plant_tag: 'NIAH-PLT-1',
+    // A tag that isn't NIAH-PLT-<5 digits> is not a physical tag. Words, not stored values,
+    // so the table, CSV and PDF read the same.
+    plant_tag: 'No physical tag yet',
     botanist: 'Aina Rahman',
-    health_status: 'healthy',
-    life_stage: 'flowering',
+    health_status: 'Healthy',
+    life_stage: 'Flowering',
     height_m: 2.5,
     diameter_cm: 12.5,
-    review_status: 'pending',
+    review_status: 'Waiting for review',
+    status_code: 'pending',
   });
   // Column headings (also used for CSV and PDF) state the units.
   const labels = result.body.data.columns.map(column => column.label);
@@ -306,7 +312,7 @@ test('report database errors return a generic message', async () => {
     db = fakeDb({ species: { error: { message: 'SECRET_DATABASE_DETAILS' } } });
     const result = await get('/inventory');
     assert.equal(result.status, 500);
-    assert.deepEqual(result.body, { message: 'Could not load species report' });
+    assert.deepEqual(result.body, { message: 'Could not load the species inventory report' });
     assert.ok(!JSON.stringify(result.body).includes('SECRET_DATABASE_DETAILS'));
   } finally {
     console.error = originalError;

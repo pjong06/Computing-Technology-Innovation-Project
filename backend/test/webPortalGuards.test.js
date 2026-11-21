@@ -49,9 +49,17 @@ test('the distribution map loads real plants from the officer map API', () => {
   assert.doesNotMatch(map, /web-data|website_species|getSpecies\(/);
 });
 
-test('reports.js does not load the old portal copy', () => {
-  const reports = read('frontend/js/reports.js');
-  assert.doesNotMatch(reports, /web-data|website_species|getSpecies\(|getObservations\(/);
+test('reports moved into Overview: reports.html redirects there and is not in the menu', () => {
+  const redirect = read('frontend/reports.html');
+  assert.match(redirect, /<meta http-equiv="refresh" content="0; url=overview\.html#report">/);
+  assert.match(redirect, /<a href="overview\.html#report">Overview<\/a>/);
+  assert.equal(fs.existsSync(path.join(repoRoot, 'frontend/js/reports.js')), false);
+  assert.equal(fs.existsSync(path.join(repoRoot, 'frontend/js/pdf.js')), false);
+  assert.doesNotMatch(read('frontend/js/shared.js'), /file: 'reports\.html'/);
+  // The report card reads the real report endpoints only (no old portal copy).
+  const overview = read('frontend/js/overview.js');
+  assert.match(overview, /return '\/reports\/' \+ report\.type \+ \(query \? '\?' \+ query : ''\);/);
+  assert.doesNotMatch(overview, /web-data|website_species|getSpecies\(|getObservations\(/);
 });
 
 // ---- User admin changes real permissions ----
@@ -134,10 +142,16 @@ test('api() renews an expiring login and sends the officer to log in when it can
   assert.match(shared, /const SESSION_EXPIRED_MESSAGE = 'Your session expired, please log in again\.';/);
   const getToken = shared.slice(shared.indexOf('window.getOfficerAccessToken'), shared.indexOf('async function sendToLoginExpired'));
   assert.match(getToken, /sb\.auth\.refreshSession\(\)/);
-  const api = shared.slice(shared.indexOf('async function api('));
-  const apiBody = api.slice(0, api.indexOf('\n}\n'));
-  assert.match(apiBody, /response\.status === 401/);
-  assert.match(apiBody, /sendToLoginExpired\(\)/);
+  // api() (JSON) and apiFile() (exports) both send through fetchWithLogin, which renews the
+  // login once on a 401 and otherwise sends the officer to log in.
+  const send = shared.slice(shared.indexOf('async function fetchWithLogin('));
+  const sendBody = send.slice(0, send.indexOf('\n}\n'));
+  assert.match(sendBody, /response\.status === 401/);
+  assert.match(sendBody, /sendToLoginExpired\(\)/);
+  for (const name of ['api', 'apiFile']) {
+    const fn = shared.slice(shared.indexOf(`async function ${name}(`));
+    assert.match(fn.slice(0, fn.indexOf('\n}\n')), /await fetchWithLogin\(path, /, name);
+  }
   assert.match(shared, /location\.replace\('login\.html'\)/);
 });
 
@@ -368,19 +382,59 @@ test('the plant catalogue is officer-only, linked from the menu and its page con
   assert.match(read('frontend/js/species.js'), /View plants \(/);
 });
 
-test('every element reports.js reads exists in reports.html, and the table has a head and body', () => {
-  const html = read('frontend/reports.html');
-  const script = read('frontend/js/reports.js');
+test('every element overview.js reads exists in overview.html, and the report table has a head and body', () => {
+  const html = read('frontend/overview.html');
+  const script = read('frontend/js/overview.js');
   const htmlIds = new Set(Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]));
-  const scriptIds = Array.from(script.matchAll(/getElementById\(['"]([^'"]+)['"]\)/g), match => match[1]);
+  const scriptIds = Array.from(script.matchAll(/(?:getElementById|setOverviewText|setMonthLine)\(['"]([^'"]+)['"]/g), match => match[1]);
   assert.ok(scriptIds.length > 0);
   for (const id of scriptIds) {
-    assert.ok(htmlIds.has(id), `reports.js reads #${id}, which is missing from reports.html`);
+    assert.ok(htmlIds.has(id), `overview.js reads #${id}, which is missing from overview.html`);
   }
-  // reports.js fills the table's <thead> and first <tbody>, so both must be inside #report-table.
-  assert.match(html, /<table id="report-table">\s*<thead>[\s\S]*<\/thead>\s*<tbody>[\s\S]*<\/tbody>\s*<\/table>/);
-  // A missing table shows a message instead of throwing.
-  assert.match(script, /if \(parts === null\) \{\s*document\.getElementById\('report-note'\)\.textContent = REPORT_TABLE_MISSING;/);
+  // overview.js fills the table's <thead> and first <tbody>, so both must be inside #report-table.
+  assert.match(html, /<table id="report-table">\s*(?:<caption[^>]*>[^<]*<\/caption>\s*)?<thead>[\s\S]*<\/thead>\s*<tbody>[\s\S]*<\/tbody>\s*<\/table>/);
+  // The table has a header row from the start (replaced when a report loads).
+  assert.match(html, /<thead><tr><th scope="col">Report<\/th><\/tr><\/thead>/);
+});
+
+test('Overview layout: four cards, three panels, the Report card with tabs, filters and exports', () => {
+  const html = read('frontend/overview.html');
+  assert.match(html, /<h1>Overview<\/h1>\s*<p class="lead">See the numbers at a glance, then export the data you need, for the conservation officer\.<\/p>/);
+  for (const card of ['Approved species', 'Threatened (CR + EN)', 'Waiting for review', 'Plant records']) {
+    assert.ok(html.includes(`<span>${card}</span>`), card);
+  }
+  assert.match(html, /<a href="species\.html\?status=threatened">View these species<\/a>/);
+  assert.match(html, /<a href="queue\.html">Go to Review<\/a>/);
+  for (const panel of ['Species by conservation status', 'Field observations per month', 'IoT protection']) {
+    assert.ok(html.includes(`<h2>${panel}</h2>`), panel);
+  }
+  assert.doesNotMatch(html, /Data completeness/);
+  assert.match(html, /<a href="iot-workspace\.html">/);
+  // Tabs, exports, toolbar.
+  for (const tab of ['Species inventory', 'Plant records', 'Field observations', 'IoT alerts']) {
+    assert.match(html, new RegExp(`role="tab"[^>]*>${tab}</button>`), tab);
+  }
+  assert.match(html, />CSV<\/button>/);
+  assert.match(html, />PDF<\/button>/);
+  assert.match(html, /placeholder="Search in this report"/);
+  for (const chip of ['Last 30 days', 'This year', 'All time', 'Custom…']) assert.ok(html.includes(`>${chip}</button>`), chip);
+  assert.match(html, /<label for="report-from">From <input type="date" id="report-from"><\/label>/);
+  assert.match(html, /<label for="report-to">To <input type="date" id="report-to"><\/label>/);
+  assert.match(html, /The date filter applies to this table and the export\./);
+  const script = read('frontend/js/overview.js');
+  // "+N this month" only from counts the server made from real dates.
+  assert.match(script, /const ok = Number\.isInteger\(value\) && value > 0;/);
+  // The current month dashed and labelled "so far"; the one-line summary.
+  assert.match(script, /class: 'dashed'/);
+  assert.match(script, /'so far'/);
+  assert.match(script, /'Busiest month: '/);
+  // Table details: rank tags, Missing family, status dots, plant bars, "No plants yet", paging.
+  for (const needed of ["'rank-tag'", "'Missing'", "'status-dot '", "'plant-bar'", "'No plants yet'", "' · counts include all active plants'", 'REPORT_PAGE_SIZE = 10']) {
+    assert.ok(script.includes(needed), needed);
+  }
+  // Exports use exactly the same request as the table.
+  assert.match(script, /const file = await apiFile\(reportQuery\(format\)\);/);
+  assert.match(script, /const result = await api\(reportQuery\(\)\);/);
 });
 
 
@@ -560,7 +614,8 @@ test('placeholder "plant:" tags show as "No physical tag yet" on every web page'
   assert.match(read('frontend/js/plant.js'), /byId\('plant-tag'\)\.textContent = displayTag\(plant\.tag_code, 'No tag code'\)/);
   assert.match(read('frontend/js/map.js'), /'<div>Tag: ' \+ escapePopupText\(displayTag\(plant\.tag, 'No tag'\)\)/);
   assert.match(read('frontend/js/shared.js'), /'Tag ' \+ displayTag\(plant\.tag_code\)/);
-  assert.match(read('frontend/js/reports.js'), /column\.key === 'plant_tag' && text\) \{\s*text = displayTag\(text, text\);/);
+  // Reports (Overview's Report card and its exports): placeholder tags read "No physical tag yet".
+  assert.match(read('backend/src/services/reportService.js'), /: "No physical tag yet";/);
   // No page prints a stored tag directly any more.
   for (const file of ['plants.js', 'plant.js', 'map.js']) {
     assert.doesNotMatch(read(`frontend/js/${file}`), /\(plant\.(tag|tag_code) \|\|/, file);
@@ -675,7 +730,7 @@ test('officers see Overview first, followed by the existing menu sections', () =
     ['Plants', 'plants.html'],
     // The standalone alerts page left the menu in 63385ac; the section opens the workspace.
     ['IoT alerts', 'iot-workspace.html'],
-    ['Admin', 'reports.html'],
+    ['Admin', 'users.html'],
   ]);
   assert.equal(view.sections[1].countId, 'review-menu-count');
   assert.deepEqual(view.sections.filter(s => s.active).map(s => s.label), ['Overview']);
@@ -708,10 +763,8 @@ test('tab bars per section for officers, with the current page marked', () => {
   // Plant detail belongs to the Plants list.
   assert.deepEqual(tabs('plant.html', '?id=1').map(t => [t.label, t.active]), [['List', true], ['Map', false]]);
   assert.deepEqual(tabs('map.html').map(t => [t.label, t.active]), [['List', false], ['Map', true]]);
-  assert.deepEqual(tabs('reports.html').map(t => [t.label, t.href, t.active]), [['Reports', 'reports.html', true], ['Users', 'users.html', false]]);
-  assert.deepEqual(tabs('users.html').map(t => t.active), [false, true]);
-  // One-page sections have no tab bar; the editor highlights Species.
-  for (const page of ['species.html', 'editor.html']) {
+  // One-page sections have no tab bar (Admin is Users only now); the editor highlights Species.
+  for (const page of ['species.html', 'editor.html', 'users.html', 'overview.html']) {
     assert.deepEqual(tabs(page), [], page);
   }
   // IoT alerts has one page (the workspace) since 63385ac, so no tab bar either.
@@ -778,7 +831,7 @@ test('review page headings, and a one-sentence description under every page head
   assert.match(read('frontend/queue.html'), /<h1>Review<\/h1>\s*<p class="lead">Check field records before they become official, for the conservation officer\.<\/p>/);
   assert.match(read('frontend/proposals.html'), /<h1>Species <span>requests<\/span><\/h1>/);
   assert.match(read('frontend/rejected.html'), /<h1>Rejected <span>history<\/span><\/h1>/);
-  for (const page of ['overview', 'species', 'editor', 'proposals', 'queue', 'rejected', 'plants', 'plant', 'map', 'alerts', 'reports', 'users']) {
+  for (const page of ['overview', 'species', 'editor', 'proposals', 'queue', 'rejected', 'plants', 'plant', 'map', 'alerts', 'users']) {
     const html = read(`frontend/${page}.html`);
     const lead = html.match(/<p class="lead"[^>]*>([\s\S]*?)<\/p>/);
     assert.ok(lead && lead[1].replace(/<[^>]+>/g, '').trim().length > 20, `${page}.html has a description`);
@@ -851,7 +904,7 @@ test('one date format: "21 Nov 2026, 11:30" and "21 Nov 2026", with a fallback w
     ['frontend/js/proposals.js', /formatWhen\(/],
     ['frontend/js/map.js', /formatDay\(/],
     ['frontend/js/alerts.js', /formatWhen\(/],
-    ['frontend/js/reports.js', /formatDay\(/]
+    ['frontend/js/overview.js', /formatDay\(/]
   ]) {
     assert.match(read(file), call, file + ' uses the shared date format');
   }
@@ -880,8 +933,7 @@ test('every list has a Newest first / Oldest first sort, newest by default', () 
   assert.match(read('frontend/js/alerts.js'), /sortByDate\(/);
   for (const [page, id] of [
     ['frontend/plants.html', 'plant-sort'],
-    ['frontend/alerts.html', 'alert-sort'],
-    ['frontend/reports.html', 'report-sort']
+    ['frontend/alerts.html', 'alert-sort']
   ]) {
     const html = read(page);
     const select = html.slice(html.indexOf('id="' + id + '"'));

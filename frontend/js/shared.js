@@ -48,16 +48,15 @@ async function sendToLoginExpired() {
 
 const SERVER_UNREACHABLE_MESSAGE = 'Could not reach the server. Check your connection and try again.';
 
-// Calls the backend with the officer's login token. If the backend says the token is no
-// longer valid (401), the login is renewed once and the request sent again; if that
-// fails too, the person is sent to the login page.
-async function api(path, options) {
-  options = options || {};
+const SERVER_PROBLEM_MESSAGE = 'Something went wrong on the server. Please try again.';
 
+// Sends a request to the backend with the officer's login token. If the backend says the
+// token is no longer valid (401), the login is renewed once and the request sent again; if
+// that fails too, the person is sent to the login page. baseHeaders: the request's own
+// headers (without the token). Returns the response.
+async function fetchWithLogin(path, options, baseHeaders) {
   async function send(token) {
-    // A photo upload (FormData) sets its own content type; everything else is JSON.
-    const isForm = typeof FormData !== 'undefined' && options.body instanceof FormData;
-    const headers = Object.assign(isForm ? {} : { 'Content-Type': 'application/json' }, options.headers);
+    const headers = Object.assign({}, baseHeaders);
     if (token) {
       headers.Authorization = 'Bearer ' + token;
     }
@@ -82,12 +81,35 @@ async function api(path, options) {
       throw new Error(SESSION_EXPIRED_MESSAGE);
     }
   }
+  return response;
+}
+
+// Calls the backend (JSON) with the officer's login token (see fetchWithLogin).
+async function api(path, options) {
+  options = options || {};
+  // A photo upload (FormData) sets its own content type; everything else is JSON.
+  const isForm = typeof FormData !== 'undefined' && options.body instanceof FormData;
+  const headers = Object.assign(isForm ? {} : { 'Content-Type': 'application/json' }, options.headers);
+  const response = await fetchWithLogin(path, options, headers);
 
   const body = await response.json().catch(function () { return {}; });
   if (response.ok === false) {
-    throw new Error(body.message || 'Something went wrong on the server. Please try again.');
+    throw new Error(body.message || SERVER_PROBLEM_MESSAGE);
   }
   return body;
+}
+
+// Downloads a file (a CSV or PDF export) from the backend with the officer's login token
+// (see fetchWithLogin). Returns { blob, name } (the server's file name).
+async function apiFile(path) {
+  const response = await fetchWithLogin(path, {}, {});
+  if (response.ok === false) {
+    const body = await response.json().catch(function () { return {}; });
+    throw new Error(body.message || SERVER_PROBLEM_MESSAGE);
+  }
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const match = /filename="([^"]+)"/.exec(disposition);
+  return { blob: await response.blob(), name: match ? match[1] : 'niah-report' };
 }
 
 // ---------- The real species catalogue (/api/knowledge) ----------
@@ -1022,9 +1044,9 @@ const NAV_SECTIONS = [
     ]
   },
   {
+    // Reports moved into Overview (its Report card); reports.html redirects there.
     label: 'Admin',
     pages: [
-      { file: 'reports.html', label: 'Reports' },
       { file: 'users.html', label: 'Users' }
     ]
   }
