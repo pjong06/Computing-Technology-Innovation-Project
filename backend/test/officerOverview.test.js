@@ -77,16 +77,16 @@ function fakeDb(tables = {}, failTable = null) {
 function fixture() {
     return {
         species: [
-            { id: "sp-cr", verification_status: "approved", conservation_status: "CR" },
-            { id: "sp-en", verification_status: "approved", conservation_status: "EN" },
-            { id: "sp-vu", verification_status: "approved", conservation_status: "VU" },
+            { id: "sp-cr", verification_status: "approved", conservation_status: "CR", created_at: "2026-11-05T00:00:00Z" },
+            { id: "sp-en", verification_status: "approved", conservation_status: "EN", created_at: "2026-10-05T00:00:00Z" },
+            { id: "sp-vu", verification_status: "approved", conservation_status: "VU", created_at: "2026-11-20T00:00:00Z" },
             { id: "sp-na", verification_status: "approved", conservation_status: null },
-            { id: "sp-pending", verification_status: "pending", conservation_status: "CR" },
+            { id: "sp-pending", verification_status: "pending", conservation_status: "CR", created_at: "2026-11-20T00:00:00Z" },
         ],
         plants: [
-            { id: "p1", deleted_at: null },
-            { id: "p2", deleted_at: null },
-            { id: "p3", deleted_at: "2026-11-01T00:00:00Z" },
+            { id: "p1", deleted_at: null, registered_at: "2026-11-02T00:00:00Z" },
+            { id: "p2", deleted_at: null, registered_at: "2026-09-02T00:00:00Z" },
+            { id: "p3", deleted_at: "2026-11-01T00:00:00Z", registered_at: "2026-11-01T00:00:00Z" },
         ],
         observations: [
             { id: "o1", deleted_at: null, review_status: "pending", observed_at: "2026-11-03T10:00:00Z" },
@@ -95,9 +95,9 @@ function fixture() {
             { id: "o4", deleted_at: null, review_status: "approved", observed_at: "2026-06-03T10:00:00Z" },
         ],
         sensor_stations: [
-            { id: "s1", station_status: "active" },
-            { id: "s2", station_status: "active" },
-            { id: "s3", station_status: "inactive" },
+            { id: "s1", station_status: "active", station_code: "NIAH-ST-01" },
+            { id: "s2", station_status: "active", station_code: "NIAH-ST-02" },
+            { id: "s3", station_status: "inactive", station_code: "NIAH-ST-03" },
         ],
         sensor_readings: [
             { station_id: "s1", received_at: "2026-11-21T11:59:30.000Z" },
@@ -138,6 +138,9 @@ test("overview returns real counts, six active-observation months, and database 
         waiting: result.body.data.waiting_review_count,
         plants: result.body.data.active_plant_count,
     }, { approved: 4, threatened: 2, fieldRecords: 1, speciesRequests: 1, waiting: 2, plants: 2 });
+    // "+N this month" from real dates: approved species created, active plants registered.
+    assert.equal(result.body.data.approved_species_this_month, 2);
+    assert.equal(result.body.data.active_plants_this_month, 1);
     assert.deepEqual(result.body.data.species_by_status.map(status => status.count), [1, 1, 1, 0, 0, 0, 1]);
     assert.deepEqual(result.body.data.monthly_observations, [
         { month: "2026-06", count: 1 },
@@ -157,6 +160,7 @@ test("overview returns real counts, six active-observation months, and database 
             station_id: "s3",
             alert_message: "Latest alert",
             severity: "critical",
+            station_code: "NIAH-ST-03",
             alert_status: "resolved",
             triggered_at: "2026-11-21T10:00:00Z",
         },

@@ -122,14 +122,29 @@ test('three-hop ingress preserves per-client recovery throttling without contact
     } finally { await new Promise(resolve => server.close(resolve)); }
 });
 
-test('location is LC-only, unknown is closed, unapproved nested fields are excluded', () => {
-    for (const status of ['EN','VU','NT','CR','DD',null,undefined]) {
-        const data = publicQrData({ conservation_status: status, latitude: 1, longitude: 2,
-            location_description: 'synthetic', private: { gps: 1 } });
-        assert.equal(data.latitude, null); assert.equal(data.longitude, null);
-        assert.equal(data.location_description, null); assert.equal(data.private, undefined);
+test('no coordinates for any conservation status; the location note is LC-only; nested fields are excluded', () => {
+    for (const status of ['LC', 'EN', 'VU', 'NT', 'CR', 'DD', null, undefined]) {
+        const data = publicQrData({ conservation_status: status, latitude: 1, longitude: 2, gps_accuracy_m: 5,
+            location: { type: 'Point', coordinates: [2, 1] }, location_description: 'synthetic', private: { gps: 1 } });
+        for (const key of ['latitude', 'longitude', 'gps_accuracy_m', 'location', 'private']) {
+            assert.equal(key in data, false, `${status}: ${key}`);
+        }
+        assert.equal(data.location_description, status === 'LC' ? 'synthetic' : null, String(status));
     }
-    assert.equal(publicQrData({ conservation_status: 'LC', latitude: 0 }).latitude, 0);
+});
+
+test('the public QR function returns no coordinates (migration)', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const sql = fs.readFileSync(path.join(__dirname, '..', '..', 'supabase', 'migrations',
+        '20261121210000_public_qr_no_coordinates.sql'), 'utf8');
+    const created = sql.slice(sql.indexOf('CREATE FUNCTION public.public_plant_by_qr_v2'));
+    assert.ok(created.length > 0);
+    assert.doesNotMatch(created, /latitude|longitude|gps_accuracy|st_x|st_y|::extensions\.geometry/i);
+    assert.match(sql, /DROP FUNCTION IF EXISTS public\.public_plant_by_qr_v2\(text\);/);
+    assert.match(sql, /GRANT EXECUTE ON FUNCTION public\.public_plant_by_qr_v2\(text\)\s+TO anon, authenticated;/);
+    // Same visibility rule as before.
+    assert.match(created, /p\.plant_status = 'approved'[\s\S]*p\.deleted_at IS NULL[\s\S]*s\.verification_status = 'approved'[\s\S]*p\.data_source = 'inaturalist'/);
 });
 
 test('public QR data strips legacy observation notes and excludes legacy photo and source fields', () => {

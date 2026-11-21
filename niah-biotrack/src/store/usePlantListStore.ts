@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { fetchPlantList, type OtherApprovedPlant } from '../services/approvedPlants';
 import { useRecordStore } from './useRecordStore';
 import type { SignedThumbnail } from '../utils/thumbnailSources';
+import type { ServerPlantDetails } from '../utils/plantDetails';
 
 // The server plant list shared by the Plants tab, Home's Recent activity and plant detail:
 // other botanists' approved plants and the signed thumbnails of the botanist's own plants.
@@ -10,6 +11,8 @@ import type { SignedThumbnail } from '../utils/thumbnailSources';
 interface PlantListState {
   others: OtherApprovedPlant[];
   ownThumbnails: Record<string, SignedThumbnail>;
+  // "This plant" server details of approved plants, by server id.
+  detailsById: Record<string, ServerPlantDetails>;
   state: 'idle' | 'loading' | 'ok' | 'offline';
   loadedAt: number | null;
   // Set when the list was reloaded because a signed thumbnail had expired, so that happens
@@ -26,6 +29,7 @@ let running: Promise<void> | null = null;
 export const usePlantListStore = create<PlantListState>((set, get) => ({
   others: [],
   ownThumbnails: {},
+  detailsById: {},
   state: 'idle',
   loadedAt: null,
   refreshedForExpiry: false,
@@ -44,7 +48,7 @@ export const usePlantListStore = create<PlantListState>((set, get) => ({
       set({ state: 'loading' });
       try {
         const list = await fetchPlantList(own);
-        set({ others: list.others, ownThumbnails: list.ownThumbnails, state: 'ok', loadedAt: Date.now() });
+        set({ others: list.others, ownThumbnails: list.ownThumbnails, detailsById: list.detailsById, state: 'ok', loadedAt: Date.now() });
       } catch {
         set({ state: 'offline' });
       } finally {

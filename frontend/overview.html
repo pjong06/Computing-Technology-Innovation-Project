@@ -12,23 +12,52 @@
 .overview-card { display: flex; flex-direction: column; gap: 5px; min-height: 132px; }
 .overview-card b { font-size: 30px; line-height: 1.2; }
 .overview-card a { margin-top: auto; color: var(--pri); font-weight: 600; }
-.overview-panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.overview-panel h2 { margin: 0 0 16px; font-size: 18px; }
-.overview-status-row { display: grid; grid-template-columns: minmax(130px, 1fr) 2fr auto; align-items: center; gap: 12px; margin: 10px 0; }
-.overview-status-name { color: var(--ink); }
+.overview-month-line { color: var(--mute); font-size: 13px; }
+.overview-panels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
+.overview-panel h2, .report-card h2 { margin: 0 0 14px; font-size: 18px; }
+.overview-status-row { display: grid; grid-template-columns: minmax(118px, 1fr) 1.4fr auto; align-items: center; gap: 10px; margin: 9px 0; }
+.overview-status-name { color: var(--ink); font-size: 14px; }
 .overview-track { height: 10px; overflow: hidden; border-radius: 999px; background: var(--mint); }
 .overview-fill { height: 100%; border-radius: inherit; background: var(--sage); }
-.overview-fill.critical { background: var(--er); }
-.overview-fill.warning { background: var(--wa); }
-.overview-chart { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; align-items: end; min-height: 190px; }
-.overview-month { display: grid; grid-template-rows: 1fr auto auto; justify-items: center; align-items: end; gap: 6px; height: 100%; color: var(--mute); font-size: 12px; text-align: center; }
-.overview-month-track { display: flex; align-items: end; width: 100%; height: 125px; border-bottom: 1px solid var(--line); }
-.overview-month-fill { width: 100%; min-height: 2px; border-radius: 6px 6px 0 0; background: var(--pri); }
-.overview-month-count { color: var(--ink); font-weight: 600; }
+.overview-fill.critical, .status-dot.critical { background: var(--ert); }
+.overview-fill.warning, .status-dot.warning { background: var(--wat); }
+.overview-fill.near, .status-dot.near { background: var(--wa); }
+.overview-fill.safe, .status-dot.safe { background: var(--sage); }
+.overview-fill.unknown, .status-dot.unknown { background: var(--line); }
+.overview-line { width: 100%; height: auto; display: block; }
+.overview-line text { fill: var(--mute); font-size: 11px; font-family: inherit; }
+.overview-line .count { fill: var(--ink); font-weight: 600; }
+.overview-line .grid { stroke: var(--line); stroke-width: 1; }
+.overview-line .solid { fill: none; stroke: var(--pri); stroke-width: 2.5; }
+.overview-line .dashed { fill: none; stroke: var(--pri); stroke-width: 2.5; stroke-dasharray: 5 4; }
+.overview-line circle { fill: var(--card); stroke: var(--pri); stroke-width: 2; }
 .overview-iot-number { margin: 0 0 14px; font-size: 26px; font-weight: 700; }
 .overview-iot-line { margin: 10px 0; }
 .overview-iot-line a { color: var(--pri); font-weight: 600; }
 .overview-error { margin: 12px 0; }
+.report-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.report-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px; border: 1px solid var(--line); border-radius: 14px; }
+.report-tabs button { border: 0; background: none; padding: 8px 14px; border-radius: 10px; color: var(--ink); font: inherit; font-weight: 600; cursor: pointer; }
+.report-tabs button[aria-selected="true"] { background: var(--mint); }
+.report-exports { display: flex; gap: 8px; }
+.report-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.report-toolbar input[type="search"] { flex: 1 1 220px; min-width: 0; }
+.report-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.report-chips span { color: var(--mute); font-size: 13px; }
+.report-chips button { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; color: var(--ink); cursor: pointer; }
+.report-chips button[aria-pressed="true"] { background: var(--pri); border-color: var(--pri); color: #fff; }
+.report-custom { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 10px; }
+.report-custom label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--mute); }
+.report-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin: 12px 0 8px; font-size: 13px; color: var(--mute); }
+.rank-tag { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: var(--neutral); color: var(--neutralt); font-size: 11px; font-weight: 700; font-style: normal; vertical-align: 1px; }
+.missing-badge { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--wa); color: var(--wat); font-size: 12px; font-weight: 700; }
+.status-dot { display: inline-block; width: 9px; height: 9px; margin-right: 7px; border-radius: 50%; vertical-align: 0; }
+.plant-bar { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+.plant-bar span { display: block; height: 8px; min-width: 2px; border-radius: 999px; background: var(--sage); }
+.no-plants { color: var(--mute); font-size: 13px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.report-pager { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 12px; }
+@media (max-width: 1100px) { .overview-panels { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .overview-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 650px) {
   .overview-panels { grid-template-columns: minmax(0, 1fr); }
@@ -43,23 +72,26 @@
 <main class="wide">
 <section class="page on">
   <h1>Overview</h1>
-  <p class="lead">Today's state of species, field work and protection, for the conservation officer.</p>
+  <p class="lead">See the numbers at a glance, then export the data you need, for the conservation officer.</p>
   <div id="overview-error" class="card overview-error" role="alert" hidden></div>
+
   <div class="stats overview-stats" aria-label="Summary counts">
-    <article class="card overview-card"><span>Approved species</span><b id="approved-species-count">—</b></article>
+    <article class="card overview-card"><span>Approved species</span><b id="approved-species-count">—</b><span class="overview-month-line" id="approved-species-month" hidden></span></article>
     <article class="card overview-card"><span>Threatened (CR + EN)</span><b id="threatened-species-count">—</b><a href="species.html?status=threatened">View these species</a></article>
     <article class="card overview-card"><span>Waiting for review</span><b id="waiting-review-count">—</b><a href="queue.html">Go to Review</a></article>
-    <article class="card overview-card"><span>Plant records (active)</span><b id="active-plant-count">—</b></article>
+    <article class="card overview-card"><span>Plant records</span><b id="active-plant-count">—</b><span class="overview-month-line" id="active-plant-month" hidden></span></article>
   </div>
+
   <div class="overview-panels">
     <section class="card overview-panel">
       <h2>Species by conservation status</h2>
-      <p class="muted" id="no-status-note" hidden></p>
       <div id="species-status-chart" aria-label="Approved species counts by conservation status"></div>
+      <p class="muted" id="no-status-note" hidden></p>
     </section>
     <section class="card overview-panel">
       <h2>Field observations per month</h2>
-      <div id="observations-chart" class="overview-chart" aria-label="Field observations during the last six months"></div>
+      <div id="observations-chart" aria-label="Field observations during the last six months"></div>
+      <p class="muted" id="observations-summary"></p>
     </section>
     <section class="card overview-panel">
       <h2>IoT protection</h2>
@@ -68,6 +100,58 @@
       <p class="overview-iot-line" id="latest-alert">Latest alert: Loading…</p>
     </section>
   </div>
+
+  <section class="card report-card" id="report" aria-labelledby="report-title">
+    <div class="report-head">
+      <h2 id="report-title">Report</h2>
+      <div class="report-tabs" role="tablist" aria-label="Report">
+        <button type="button" role="tab" id="report-tab-inventory" data-type="inventory" aria-selected="true">Species inventory</button>
+        <button type="button" role="tab" id="report-tab-plants" data-type="plants" aria-selected="false">Plant records</button>
+        <button type="button" role="tab" id="report-tab-botanist" data-type="botanist" aria-selected="false">Field observations</button>
+        <button type="button" role="tab" id="report-tab-alerts" data-type="alerts" aria-selected="false">IoT alerts</button>
+      </div>
+      <div class="report-exports">
+        <button class="btn" type="button" id="report-csv">CSV</button>
+        <button class="btn ghost" type="button" id="report-pdf">PDF</button>
+      </div>
+    </div>
+
+    <div class="report-toolbar">
+      <input type="search" id="report-search" placeholder="Search in this report" aria-label="Search in this report">
+      <div class="report-chips" role="group" aria-label="First recorded">
+        <span>First recorded:</span>
+        <button type="button" data-range="30" aria-pressed="false">Last 30 days</button>
+        <button type="button" data-range="year" aria-pressed="false">This year</button>
+        <button type="button" data-range="all" aria-pressed="true">All time</button>
+        <button type="button" data-range="custom" aria-pressed="false">Custom…</button>
+      </div>
+      <select id="report-status" aria-label="Status"><option value="">All statuses</option></select>
+      <select id="report-sort" aria-label="Sort"></select>
+    </div>
+    <div class="report-custom" id="report-custom" hidden>
+      <label for="report-from">From <input type="date" id="report-from"></label>
+      <label for="report-to">To <input type="date" id="report-to"></label>
+    </div>
+    <p class="muted" id="report-date-note">The date filter applies to this table and the export.</p>
+
+    <div class="report-meta">
+      <span id="report-count" aria-live="polite">Loading…</span>
+      <span id="report-note"></span>
+    </div>
+    <div class="tw">
+      <table id="report-table">
+        <caption class="sr-only">Report rows for the chosen tab and filters</caption>
+        <thead><tr><th scope="col">Report</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="muted" id="report-empty" hidden>No records match this report and these filters.</p>
+    <div class="report-pager" id="report-pager" hidden>
+      <button class="btn ghost" type="button" id="report-previous">Previous</button>
+      <span id="report-page"></span>
+      <button class="btn ghost" type="button" id="report-next">Next</button>
+    </div>
+  </section>
 </section>
 </main>
 </div>

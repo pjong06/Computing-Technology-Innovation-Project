@@ -93,6 +93,12 @@ function createOfficerOverviewRouter({ now = () => new Date() } = {}) {
             ]);
 
             const months = monthRanges(now());
+            // "+N this month": counted from real dates (species created_at, plants registered_at).
+            const thisMonth = months[months.length - 1];
+            const [speciesThisMonth, plantsThisMonth] = await Promise.all([
+                countRows(client, "species", [...approvedSpecies, ["gte", "created_at", thisMonth.from]]),
+                countRows(client, "plants", [["is", "deleted_at", null], ["gte", "registered_at", thisMonth.from]]),
+            ]);
             const monthlyObservations = await Promise.all(months.map(async range => ({
                 month: range.month,
                 count: await countRows(client, "observations", [
@@ -103,7 +109,7 @@ function createOfficerOverviewRouter({ now = () => new Date() } = {}) {
             })));
 
             const [stations, recentReadings, openAlerts, latestAlert] = await Promise.all([
-                readAll(client, "sensor_stations", "id, station_status"),
+                readAll(client, "sensor_stations", "id, station_status, station_code"),
                 (async () => {
                     const cutoff = new Date(now().getTime() - 60_000).toISOString();
                     const { data, error } = await client
@@ -136,9 +142,17 @@ function createOfficerOverviewRouter({ now = () => new Date() } = {}) {
                     .map(reading => reading.station_id)
             );
 
+            // The latest alert with its station code (never the station's location).
+            const stationCode = new Map(stations.map(station => [station.id, station.station_code || null]));
+            const latest = latestAlert
+                ? { ...latestAlert, station_code: stationCode.get(latestAlert.station_id) ?? null }
+                : null;
+
             return res.json({
                 data: {
                     approved_species_count: approvedSpeciesCount,
+                    approved_species_this_month: speciesThisMonth,
+                    active_plants_this_month: plantsThisMonth,
                     threatened_species_count: threatenedSpeciesCount,
                     pending_field_record_count: pendingFieldRecords,
                     pending_species_request_count: pendingSpeciesRequests,
@@ -150,7 +164,7 @@ function createOfficerOverviewRouter({ now = () => new Date() } = {}) {
                         online_stations: onlineStationIds.size,
                         total_stations: stations.length,
                         open_alerts: openAlerts,
-                        latest_alert: latestAlert,
+                        latest_alert: latest,
                     },
                 },
             });
