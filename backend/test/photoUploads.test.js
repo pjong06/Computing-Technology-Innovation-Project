@@ -5,6 +5,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
+const { photoWithMetadata } = require('./helpers/testImages');
 
 const BOTANIST = '11111111-1111-4111-8111-111111111111';
 const OTHER = '99999999-9999-4999-8999-999999999999';
@@ -93,7 +94,7 @@ function fakeDb({
         calls.buckets.push(bucket);
         return {
           async upload(filePath, buffer, options) {
-            calls.uploads.push({ bucket, filePath, options });
+            calls.uploads.push({ bucket, filePath, options, buffer });
             if (uploadError && observationAfterRefusal) lookups.observations = observationAfterRefusal;
             return { error: uploadError };
           },
@@ -125,7 +126,7 @@ async function post(base, path, fields, withFile = true) {
   const form = new FormData();
   for (const [key, value] of Object.entries(fields)) form.set(key, value);
   if (withFile) {
-    form.set('photo', new Blob([Buffer.from([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' }), 'p.jpg');
+    form.set('photo', new Blob([await photoWithMetadata()], { type: 'image/jpeg' }), 'p.jpg');
   }
   const response = await fetch(`${base}${path}`, { method: 'POST', body: form });
   return { status: response.status, body: await response.json() };
@@ -323,5 +324,70 @@ test('a refused observation_media row on a draft visit is "refused" and the stor
     assert.equal(result.status, 403);
     assert.equal(result.body.code, 'photo_refused');
     assert.equal(db.calls.removes.length, 1, 'nothing unlinked is left in storage');
+  });
+});
+
+// ---- Metadata is stripped before storing ----
+
+const sharpForTests = require('sharp');
+const { metadataOf, hasMetadataBytes } = require('./helpers/testImages');
+
+async function postFile(base, path, fields, bytes, type, name) {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(fields)) form.set(key, value);
+  form.set('photo', new Blob([bytes], { type }), name);
+  const response = await fetch(`${base}${path}`, { method: 'POST', body: form });
+  return { status: response.status, body: await response.json() };
+}
+
+for (const [label, send, bucket] of [
+  ['plant photo', base => plantPhoto(base, { client_record_id: PHOTO }), 'plant-media'],
+  ['visit photo', base => visitPhoto(base, {}), 'observation-media'],
+]) {
+  test(`a ${label} is stored as a fresh JPEG without EXIF, GPS, XMP or ICC`, async () => {
+    db = fakeDb();
+    await withApp(async base => {
+      const result = await send(base);
+      assert.ok([200, 201].includes(result.status), JSON.stringify(result.body));
+      const upload = db.calls.uploads[0];
+      assert.equal(upload.bucket, bucket);
+      assert.equal(upload.options.contentType, 'image/jpeg');
+      assert.match(upload.filePath, /\.jpg$/);
+      const stored = await metadataOf(upload.buffer);
+      assert.equal(stored.format, 'jpeg');
+      assert.equal(stored.exif, undefined, 'no EXIF (and so no GPS)');
+      assert.equal(stored.xmp, undefined);
+      assert.equal(stored.icc, undefined);
+      assert.equal(hasMetadataBytes(upload.buffer), false, 'no secret EXIF text in the stored bytes');
+    });
+  });
+}
+
+test('a PNG photo is stored as JPEG, a large one is reduced to 2000 px', async () => {
+  db = fakeDb();
+  const png = await sharpForTests({ create: { width: 3000, height: 1000, channels: 3, background: 'green' } })
+    .withExif({ IFD0: { Copyright: 'SECRET_CAMERA_OWNER' } }).png().toBuffer();
+  await withApp(async base => {
+    const result = await postFile(base, `/api/plants/${PLANT}/photo`,
+      { photo_type: 'leaf', client_record_id: PHOTO }, png, 'image/png', 'p.png');
+    assert.ok([200, 201].includes(result.status), JSON.stringify(result.body));
+    const stored = await metadataOf(db.calls.uploads[0].buffer);
+    assert.equal(stored.format, 'jpeg');
+    assert.equal(stored.width, 2000);
+    assert.equal(stored.exif, undefined);
+    assert.equal(hasMetadataBytes(db.calls.uploads[0].buffer), false);
+  });
+});
+
+test('a file that is not really an image is refused and nothing is stored', async () => {
+  db = fakeDb();
+  await withApp(async base => {
+    for (const path of [`/api/plants/${PLANT}/photo`, `/api/observations/${OBSERVATION}/photo`]) {
+      const result = await postFile(base, path,
+        { photo_type: 'leaf', client_record_id: PHOTO, client_photo_id: PHOTO },
+        Buffer.from('not an image at all'), 'image/jpeg', 'x.jpg');
+      assert.equal(result.status, 400, path);
+    }
+    assert.equal(db.calls.uploads.length, 0);
   });
 });

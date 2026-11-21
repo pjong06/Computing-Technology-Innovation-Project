@@ -3,6 +3,7 @@ const express = require("express");
 const upload = require("../services/storageService");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { randomUUID } = require("node:crypto");
+const { stripPhotoMetadata, InvalidPhotoError } = require("../services/photoSanitizer");
 
 const router = express.Router();
 
@@ -449,14 +450,25 @@ router.post("/:id/photo", async (req, res, next) => {
         });
     }
 
+    // Stored as a fresh JPEG without metadata (no EXIF/GPS, XMP or ICC profile).
+    let photoBytes;
+    try {
+        photoBytes = await stripPhotoMetadata(req.file.buffer, { expectedMime: req.file.mimetype });
+    } catch (error) {
+        if (error instanceof InvalidPhotoError) {
+            return res.status(400).json({ message: error.message });
+        }
+        throw error;
+    }
+
     // Storage RLS: the first folder must be the signed-in user's id.
-    const filePath = `${req.user.id}/${observationId}/${randomUUID()}.${extension}`;
+    const filePath = `${req.user.id}/${observationId}/${randomUUID()}.jpg`;
 
     try {
         const { error: uploadError } = await req.supabase.storage
             .from("observation-media")
-            .upload(filePath, req.file.buffer, {
-                contentType: req.file.mimetype,
+            .upload(filePath, photoBytes, {
+                contentType: "image/jpeg",
                 upsert: false
             });
 

@@ -175,6 +175,8 @@ export type PublicTagLookupResult =
     dataSource: 'field' | 'inaturalist';
     sourceObserver: string | null;
     sourceLicence: string | null;
+    // The plant's own main photo (a path on the API server), or null when it has none.
+    photoUrl: string | null;
   }
   | { status: 'pending'; tagCode: string; message: string }
   | { status: 'not-found'; tagCode: string }
@@ -194,6 +196,7 @@ interface PublicPlantResponse {
     data_source: 'field' | 'inaturalist';
     source_observer: string | null;
     source_licence: string | null;
+    photo_url?: string | null;
   };
 }
 
@@ -221,6 +224,7 @@ export async function lookupPublicTag(rawTag: string): Promise<PublicTagLookupRe
       dataSource: response.data?.data_source === 'inaturalist' ? 'inaturalist' : 'field',
       sourceObserver: response.data?.source_observer || null,
       sourceLicence: response.data?.source_licence || null,
+      photoUrl: typeof response.data?.photo_url === 'string' ? response.data.photo_url : null,
     };
   } catch (error) {
     if (error instanceof ApiError) {

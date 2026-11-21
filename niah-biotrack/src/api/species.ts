@@ -46,6 +46,14 @@ export interface PlantPhoto {
   expires_in?: number;
 }
 
+// A plant photo visitors may see: the newest public plant of the species with a public
+// photo. url is a path on the API server ("/p/NIAH-PLT-00012/photo"), turned into an
+// address with publicPhotoUri(). Everyone gets it, signed in or not.
+export interface PublicPlantPhoto {
+  tag: string;
+  url: string;
+}
+
 export interface Species {
   id: string;
   scientific_name: string;
@@ -57,6 +65,7 @@ export interface Species {
   taxonomy: SpeciesTaxonomySummary | null;
   species_media: SpeciesMedia[];
   plant_photo?: PlantPhoto | null;
+  public_photo?: PublicPlantPhoto | null;
 }
 
 export interface SpeciesDetail extends Species {

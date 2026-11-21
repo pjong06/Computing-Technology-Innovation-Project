@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('node:path');
 const { TAG_PATTERN } = require('../services/qrService');
+const { publicPlantPhotoExists, publicPhotoUrl, readPublicPlantPhoto } = require('../services/publicPlantPhotos');
 const { removeLegacyObservationSource } = require('../utils/speciesDescription');
 
 const STYLES = `
@@ -12,6 +13,7 @@ main{padding-top:48px;padding-bottom:56px}.tag{font-size:14px;font-weight:650;co
 h1{font-family:Georgia,"Times New Roman",serif;font-weight:400;font-style:italic;font-size:clamp(36px,7vw,62px);line-height:1.08;margin:18px 0 14px;overflow-wrap:anywhere}
 .common{font-size:23px;margin:0 0 10px}.local{color:#516353;margin:0}.status{display:inline-block;margin:28px 0 12px;padding:9px 14px;background:#dfebcf;font-size:14px;font-weight:650}
 section{margin-top:34px;max-width:68ch}h2{font-size:18px;line-height:1.4;margin:0 0 10px}p{line-height:1.75;margin:0;white-space:pre-line;overflow-wrap:anywhere}
+.plant-photo{margin:24px 0 0;max-width:540px}.plant-photo img{display:block;width:100%;height:auto;border-radius:10px;background:#dfebcf}
 .demo{margin:20px 0;padding:16px 18px;background:#f5e8c9;color:#574421;font-size:15px;line-height:1.6}footer{color:#516353;font-size:13px;padding-bottom:38px}.notice{margin-top:20px;font-size:14px;color:#516353}
 @media(max-width:480px){header,main,footer{padding-left:22px;padding-right:22px}header{align-items:flex-start;flex-direction:column;gap:8px}main{padding-top:24px}.common{font-size:21px}}
 `;
@@ -35,9 +37,10 @@ function documentHtml(title, content) {
 <main>${content}</main><footer>Public plant information. Exact locations are not shown on this page.</footer></body></html>`;
 }
 
-// No photo: species reference photos are not shown, and a plant's own photos are staff-only
-// (plant photo rows and files can only be read with a staff login).
-function publicPlantHtml(tag, row) {
+// The plant's own main photo, when it has a public copy: served by GET /p/:tag/photo
+// (stripped, at most 1200 px). Never a storage path or signed link, and never a species
+// reference photo.
+function publicPlantHtml(tag, row, hasPhoto = false) {
     // Explicit allowlist: never serialize the RPC result, staff identity or coordinates into HTML.
     const plant = Object.fromEntries(PUBLIC_FIELDS.map(key => [key,
         typeof row[key] === 'string'
@@ -62,6 +65,7 @@ function publicPlantHtml(tag, row) {
         (plant.common_name ? `<p class="common">${escapeHtml(plant.common_name)}</p>` : '') +
         (plant.local_name ? `<p class="local">Local name: ${escapeHtml(plant.local_name)}</p>` : '') +
         sourceLine +
+        (hasPhoto ? `<figure class="plant-photo"><img src="/p/${escapeHtml(tag)}/photo" alt="${escapeHtml(plant.scientific_name || 'Plant')}, plant ${escapeHtml(tag)}"></figure>` : '') +
         `<div class="status">Conservation status: ${escapeHtml(statusLabel)}</div>` +
         sections.filter(([, value]) => value.trim()).map(([label, value]) =>
             `<section><h2>${label}</h2><p>${escapeHtml(value)}</p></section>`).join('') +
@@ -99,7 +103,11 @@ function createPublicQrHandler(database) {
             if (result.status === 'not-found') {
                 return res.status(404).json({ message: 'Approved plant not found' });
             }
-            return res.json({ data: publicQrData(result.plant) });
+            const data = publicQrData(result.plant);
+            // The plant's own photo, as the visitor endpoint's address (never a storage path).
+            const tagCode = result.plant.qr_code_value;
+            data.photo_url = await publicPlantPhotoExists(database, tagCode) ? publicPhotoUrl(tagCode) : null;
+            return res.json({ data });
         } catch (error) {
             console.error('Public QR lookup error:', error);
             return res.status(500).json({ message: 'Could not load plant information' });
@@ -120,33 +128,66 @@ function createPublicPlantsRouter({ client } = {}) {
     router.get('/public-assets/plant.css', (_req, res) => res.type('css').send(STYLES));
     router.get('/public-assets/logo.png', (_req, res) =>
         res.sendFile(path.join(__dirname, '../../../frontend/images/logo.png')));
+    // The visitor rate limit, shared by the plant page and its photo (60 a minute per address).
+    // Returns null when the request may go ahead, otherwise the seconds to wait (or 0 when
+    // too many visitors are being tracked).
+    function visitorLimit(req) {
+        const now = Date.now();
+        for (const [key, value] of requests) if (value.until <= now) requests.delete(key);
+        let bucket = requests.get(req.ip);
+        if (!bucket) {
+            if (requests.size >= 10000) return 0;
+            bucket = { count: 0, until: now + 60000 }; requests.set(req.ip, bucket);
+        }
+        bucket.count++;
+        return bucket.count > 60 ? Math.max(1, Math.ceil((bucket.until - now) / 1000)) : null;
+    }
+    const database = () => client || require('../config/supabase').publicClient;
+
     router.get('/p/:tag', async (req, res) => {
         const tag = req.params.tag;
         const errorPage = (status, title, message) => res.status(status).type('html')
             .send(documentHtml(title, `<h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p>`));
         if (!TAG_PATTERN.test(tag)) return errorPage(400, 'Invalid plant tag', 'Use a valid Niah plant QR tag.');
-        const now = Date.now();
-        for (const [key, value] of requests) if (value.until <= now) requests.delete(key);
-        let bucket = requests.get(req.ip);
-        if (!bucket) {
-            if (requests.size >= 10000) return errorPage(429, 'Please try again later', 'Too many requests.');
-            bucket = { count: 0, until: now + 60000 }; requests.set(req.ip, bucket);
-        }
-        bucket.count++;
-        if (bucket.count > 60) {
-            res.set('Retry-After', String(Math.max(1, Math.ceil((bucket.until - now) / 1000))));
+        const wait = visitorLimit(req);
+        if (wait !== null) {
+            if (wait > 0) res.set('Retry-After', String(wait));
             return errorPage(429, 'Please try again later', 'Too many requests.');
         }
         try {
-            const database = client || require('../config/supabase').publicClient;
-            const result = await lookupPublicPlant(database, tag);
+            const result = await lookupPublicPlant(database(), tag);
             if (result.status === 'pending') return errorPage(404, 'Being verified', PENDING_MESSAGE);
             if (result.status === 'not-found') {
                 return errorPage(404, 'Plant information unavailable', 'This tag has no approved public record yet.');
             }
-            return res.type('html').send(publicPlantHtml(tag, result.plant));
+            const hasPhoto = await publicPlantPhotoExists(database(), tag);
+            return res.type('html').send(publicPlantHtml(tag, result.plant, hasPhoto));
         } catch {
             return errorPage(503, 'Temporarily unavailable', 'Plant information could not be loaded. Please try again later.');
+        }
+    });
+
+    // The plant's own main photo for visitors: only while the plant is on the public QR page
+    // (approved, active, approved species and visit). A fresh JPEG (at most 1200 px) without
+    // any metadata. Anything else is 404, the same answer for every reason.
+    router.get('/p/:tag/photo', async (req, res) => {
+        const tag = req.params.tag;
+        const notFound = () => res.status(404).type('text/plain').send('Not found');
+        if (!TAG_PATTERN.test(tag)) return notFound();
+        const wait = visitorLimit(req);
+        if (wait !== null) {
+            if (wait > 0) res.set('Retry-After', String(wait));
+            return res.status(429).type('text/plain').send('Too many requests');
+        }
+        try {
+            const result = await lookupPublicPlant(database(), tag);
+            if (result.status !== 'found') return notFound();
+            const photo = await readPublicPlantPhoto(database(), tag);
+            if (!photo) return notFound();
+            res.set('Cache-Control', 'public, max-age=86400');
+            return res.type('image/jpeg').send(photo);
+        } catch {
+            return res.status(503).type('text/plain').send('Temporarily unavailable');
         }
     });
     return router;

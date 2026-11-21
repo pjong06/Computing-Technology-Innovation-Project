@@ -4,7 +4,6 @@ import {
   Text,
   TextInput,
   FlatList,
-  Image,
   TouchableOpacity,
   ScrollView,
   StyleSheet,
@@ -17,6 +16,9 @@ import { useRouter } from 'expo-router';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
 import { plantPhotoCaption } from '../../src/utils/plantPhotoCaption';
+import { publicPhotoUri } from '../../src/utils/publicPhoto';
+import { BASE_URL } from '../../src/api/client';
+import RemotePhoto from '../../src/components/RemotePhoto';
 
 // The visitor and guest "Plant guide": the approved species list (public data, cached on
 // the phone), in plain language. Botanists use the Species tab instead.
@@ -25,8 +27,6 @@ export default function PlantGuideScreen() {
   const species = useSpeciesStore((state) => state.species);
   const loading = useSpeciesStore((state) => state.loading);
   const error = useSpeciesStore((state) => state.error);
-  // A photo of one of the species' plants (staff only; visitors see the leaf).
-  const plantPhotosBySpeciesId = useSpeciesStore((state) => state.plantPhotosBySpeciesId);
   const loadSpecies = useSpeciesStore((state) => state.loadSpecies);
 
   const [search, setSearch] = useState('');
@@ -127,7 +127,9 @@ export default function PlantGuideScreen() {
           renderItem={({ item }) => {
             const status = plainConservationStatus(item.conservation_status);
             const colors = conservationStatusColors(status.code);
-            const photo = plantPhotosBySpeciesId[item.id];
+            // The species' public plant photo (served stripped by the backend), or the leaf.
+            const photo = item.public_photo ?? null;
+            const photoUri = publicPhotoUri(BASE_URL, photo?.url);
             return (
               <TouchableOpacity
                 style={styles.row}
@@ -135,18 +137,20 @@ export default function PlantGuideScreen() {
                 onPress={() => router.push({ pathname: '/plant-info', params: { speciesId: item.id } } as any)}
               >
                 <View style={styles.photoColumn}>
-                  {photo ? (
-                    <Image source={{ uri: photo.uri }} style={styles.thumb} />
-                  ) : (
-                    <View style={[styles.thumb, styles.thumbPlaceholder]}>
-                      <Text style={{ fontSize: 22 }}>🌿</Text>
-                    </View>
-                  )}
+                  <RemotePhoto
+                    uri={photoUri}
+                    style={styles.thumb}
+                    placeholder={
+                      <View style={[styles.thumb, styles.thumbPlaceholder]}>
+                        <Text style={{ fontSize: 22 }}>🌿</Text>
+                      </View>
+                    }
+                  />
                 </View>
                 <View style={{ flex: 1, marginLeft: 12 }}>
                   <Text style={styles.commonName}>{item.common_name || item.scientific_name}</Text>
                   {item.common_name ? <Text style={styles.scientific}>{item.scientific_name}</Text> : null}
-                  {photo ? <Text style={styles.photoCaption} numberOfLines={1}>{plantPhotoCaption(photo.tag)}</Text> : null}
+                  {photo && photoUri ? <Text style={styles.photoCaption} numberOfLines={1}>{plantPhotoCaption(photo.tag)}</Text> : null}
                   <View style={[styles.badge, { backgroundColor: colors.bg }]}>
                     <Text style={[styles.badgeText, { color: colors.text }]}>{status.label}</Text>
                   </View>

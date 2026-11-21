@@ -3,7 +3,6 @@ import {
   View,
   Text,
   ScrollView,
-  Image,
   TouchableOpacity,
   StyleSheet,
   SafeAreaView,
@@ -16,6 +15,9 @@ import { useSpeciesStore } from '../src/store/useSpeciesStore';
 import { lookupPublicTag, describePublicTagLookup, type PublicTagLookupResult } from '../src/services/tagLookup';
 import { conservationStatusColors, plainConservationStatus } from '../src/utils/conservationStatus';
 import { plantPhotoCaption } from '../src/utils/plantPhotoCaption';
+import { publicPhotoUri } from '../src/utils/publicPhoto';
+import { BASE_URL } from '../src/api/client';
+import RemotePhoto from '../src/components/RemotePhoto';
 
 // What the page shows, from either source. Never any location or coordinates.
 interface PlantFacts {
@@ -39,7 +41,6 @@ export default function PlantInfoScreen() {
 
   const species = useSpeciesStore((state) => state.species);
   const detailsById = useSpeciesStore((state) => state.detailsById);
-  const plantPhotosBySpeciesId = useSpeciesStore((state) => state.plantPhotosBySpeciesId);
   const loadSpeciesDetail = useSpeciesStore((state) => state.loadSpeciesDetail);
 
   const [scan, setScan] = useState<PublicTagLookupResult | null>(null);
@@ -74,10 +75,15 @@ export default function PlantInfoScreen() {
 
   const detail = speciesId ? detailsById[speciesId] : undefined;
   const listItem = speciesId ? species.find((s) => s.id === speciesId) : undefined;
-  // A species page shows a photo of one of its plants (staff only). A scanned plant shows
-  // its own photo only, which the public lookup never sends, so it shows the placeholder:
-  // never a species photo or another plant's photo, and never a credit.
-  const photo = speciesId && !tag ? plantPhotosBySpeciesId[speciesId] : undefined;
+  // A scanned plant shows its own main photo (from the public lookup); a species page shows
+  // the species' public plant photo. Both are served stripped by the backend. Never a species
+  // reference photo or another plant's photo for a scan, and never a credit.
+  const photo: { tag: string | null; url: string | null } | null = tag
+    ? scanned
+      ? { tag: scanned.tagCode, url: scanned.photoUrl }
+      : null
+    : (detail?.public_photo ?? listItem?.public_photo ?? null);
+  const photoUri = publicPhotoUri(BASE_URL, photo?.url);
 
   // The scanned plant's own public facts come first; the species fills any gaps.
   const facts: PlantFacts = {
@@ -115,10 +121,18 @@ export default function PlantInfoScreen() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
-          {photo ? (
+          {photoUri ? (
             <View style={styles.photoBox}>
-              <Image source={{ uri: photo.uri }} style={[styles.photo, styles.photoInBox]} resizeMode="cover" accessibilityIgnoresInvertColors />
-              <Text style={styles.photoCaption}>{plantPhotoCaption(photo.tag)}</Text>
+              <RemotePhoto
+                uri={photoUri}
+                style={[styles.photo, styles.photoInBox]}
+                caption={tag ? null : <Text style={styles.photoCaption}>{plantPhotoCaption(photo?.tag)}</Text>}
+                placeholder={
+                  <View style={[styles.photo, styles.photoInBox, styles.photoPlaceholder]}>
+                    <Text style={styles.placeholderIcon}>🌿</Text>
+                  </View>
+                }
+              />
             </View>
           ) : (
             <View style={[styles.photo, styles.photoPlaceholder]}>

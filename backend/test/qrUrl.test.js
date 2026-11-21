@@ -115,14 +115,17 @@ test('visitor page renders only allowed fields and escapes stored content', asyn
   assert.doesNotMatch(html, /reference-photo/);
 });
 
-test('visitor page shows no species reference photo and reads no photo storage', async t => {
-  // Species reference photos are no longer shown, and a plant's own photos are staff-only,
-  // so the visitor page has no photo: it only calls the public QR function.
+test('visitor page never shows a species reference photo; it only checks the public photo copies', async t => {
+  // Species reference photos are not shown. A plant's own photo appears only as a public
+  // copy (public-plant-photos), never read from the private plant-media bucket or tables.
   const touched = [];
   const client = {
     rpc: async () => ({ data: [{ scientific_name: 'Shorea albida' }] }),
     from(table) { touched.push(table); throw new Error('no table reads expected'); },
-    storage: { from(bucket) { touched.push(bucket); throw new Error('no storage reads expected'); } },
+    storage: { from(bucket) {
+      touched.push(bucket);
+      return { list: async () => ({ data: [], error: null }) };
+    } },
   };
   const url = await start(t, createPublicPlantsRouter({ client }));
   const response = await fetch(url + '/p/' + TAG);
@@ -130,10 +133,11 @@ test('visitor page shows no species reference photo and reads no photo storage',
   assert.equal(response.status, 200);
   assert.match(html, /Shorea albida/);
   assert.match(html, /Conservation status: Not recorded/);
+  // No copy for this plant: no photo at all.
   assert.doesNotMatch(html, /<figure|<img(?![^>]*class="brand")|data:image|reference photo|iNaturalist ·/i);
-  assert.deepEqual(touched, []);
+  assert.deepEqual(touched, ['public-plant-photos']);
   const source = fs.readFileSync(path.join(__dirname, '../src/routes/publicPlants.js'), 'utf8');
-  assert.doesNotMatch(source, /species_media|species-media|plant_media|plant-media|loadReferencePhoto/);
+  assert.doesNotMatch(source, /species_media|species-media|plant_media|loadReferencePhoto/);
 });
 
 test('iNaturalist source is escaped plain text on the visitor page and exposed by the QR API', async t => {

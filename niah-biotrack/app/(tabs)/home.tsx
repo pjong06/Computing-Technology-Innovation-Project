@@ -30,6 +30,9 @@ import { plantReviewBadge } from '../../src/utils/reviewStatus';
 import { recordSubmitProblem } from '../../src/utils/submissionState';
 import { routesUploadedText } from '../../src/utils/routeSync';
 import { plantPhotoCaption } from '../../src/utils/plantPhotoCaption';
+import { publicPhotoUri } from '../../src/utils/publicPhoto';
+import { BASE_URL } from '../../src/api/client';
+import RemotePhoto from '../../src/components/RemotePhoto';
 import MyProposals from '../../src/components/MyProposals';
 
 const FEATURED_COUNT = 4;
@@ -46,23 +49,13 @@ export default function HomeScreen() {
   );
 
   const species = useSpeciesStore((state) => state.species);
-  // A species is shown with a photo of one of its plants (staff only; visitors see the leaf).
-  const plantPhotosBySpeciesId = useSpeciesStore((state) => state.plantPhotosBySpeciesId);
   const loadSpecies = useSpeciesStore((state) => state.loadSpecies);
-  const loadSpeciesDetail = useSpeciesStore((state) => state.loadSpeciesDetail);
   const featured = species.slice(0, FEATURED_COUNT);
-  const featuredKey = featured.map((s) => s.id).join(',');
 
   useEffect(() => {
     if (isVisitor) void loadSpecies();
   }, [isVisitor, loadSpecies]);
 
-  useEffect(() => {
-    if (!isVisitor) return;
-    for (const item of featured) {
-      if (!plantPhotosBySpeciesId[item.id]) void loadSpeciesDetail(item.id);
-    }
-  }, [isVisitor, featuredKey]);
 
   const records = useRecordStore((state) => state.records);
   const syncAll = useRecordStore((state) => state.syncAll);
@@ -451,7 +444,8 @@ export default function HomeScreen() {
                   {featured.map((item) => {
                     const status = plainConservationStatus(item.conservation_status);
                     const colors = conservationStatusColors(status.code);
-                    const photo = plantPhotosBySpeciesId[item.id];
+                    // The species' public plant photo (served stripped by the backend), or the leaf.
+                    const photo = item.public_photo ?? null;
                     return (
                       <TouchableOpacity
                         key={item.id}
@@ -459,16 +453,20 @@ export default function HomeScreen() {
                         activeOpacity={0.8}
                         onPress={() => router.push({ pathname: '/plant-info', params: { speciesId: item.id } } as any)}
                       >
-                        {photo ? (
-                          <>
-                            <Image source={{ uri: photo.uri }} style={styles.featuredPhoto} resizeMode="cover" />
-                            <Text style={styles.featuredCaption} numberOfLines={1}>{plantPhotoCaption(photo.tag)}</Text>
-                          </>
-                        ) : (
-                          <View style={[styles.featuredPhoto, styles.featuredPlaceholder]}>
-                            <Ionicons name="leaf-outline" size={26} color="#46654F" />
-                          </View>
-                        )}
+                        <RemotePhoto
+                          uri={publicPhotoUri(BASE_URL, photo?.url)}
+                          style={styles.featuredPhoto}
+                          caption={
+                            photo ? (
+                              <Text style={styles.featuredCaption} numberOfLines={1}>{plantPhotoCaption(photo.tag)}</Text>
+                            ) : null
+                          }
+                          placeholder={
+                            <View style={[styles.featuredPhoto, styles.featuredPlaceholder]}>
+                              <Ionicons name="leaf-outline" size={26} color="#46654F" />
+                            </View>
+                          }
+                        />
                         <Text style={styles.featuredName} numberOfLines={1}>
                           {item.common_name || item.scientific_name}
                         </Text>

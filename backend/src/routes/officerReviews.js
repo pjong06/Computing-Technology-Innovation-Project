@@ -1,5 +1,6 @@
 const express = require("express");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { refreshPublicPlantPhoto } = require("../services/publicPlantPhotos");
 
 const router = express.Router();
 
@@ -472,6 +473,10 @@ router.post("/:observationId/decision", async (req, res) => {
         });
     }
 
+    // The decision may have made the plant public (or not): update the stripped copy of its
+    // main photo that visitors see. Never fails the decision.
+    await refreshPublicPlantPhoto(req.supabase, observation.plant_id);
+
     return res.status(201).json({ data });
 });
 
@@ -494,7 +499,7 @@ router.patch("/:observationId/visibility", async (req, res) => {
 
     const { data: observation, error: lookupError } = await req.supabase
         .from("observations")
-        .select("id, review_status, deleted_at")
+        .select("id, plant_id, review_status, deleted_at")
         .eq("id", observationId)
         .maybeSingle();
 
@@ -550,6 +555,10 @@ router.patch("/:observationId/visibility", async (req, res) => {
             message: "Observation changed; please try again"
         });
     }
+
+    // Hiding or restoring the approved visit can take the plant off (or back onto) the
+    // public QR page: update the public copy of its photo.
+    await refreshPublicPlantPhoto(req.supabase, observation.plant_id);
 
     return res.json({ data });
 });
