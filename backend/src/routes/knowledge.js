@@ -349,7 +349,8 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             .from("species")
             .select(`${PROPOSAL_COLUMNS}, proposed_by, created_at`, { count: "exact" })
             .eq("verification_status", "pending")
-            .order("scientific_name")
+            // Newest first (the page can switch to oldest first).
+            .order("created_at", { ascending: false })
             .order("id")
             .range(paging.start, paging.end);
 

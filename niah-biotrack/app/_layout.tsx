@@ -96,6 +96,7 @@ export default function RootLayout() {
         <Stack.Screen name="index" />
         <Stack.Screen name="forgot-password" />
         <Stack.Screen name="change-password" />
+        <Stack.Screen name="photo-credits" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="new-record" />
         <Stack.Screen name="save-confirm" />

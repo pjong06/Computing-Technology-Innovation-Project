@@ -15,7 +15,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
 import { lookupPublicTag, describePublicTagLookup, type PublicTagLookupResult } from '../src/services/tagLookup';
 import { conservationStatusColors, plainConservationStatus } from '../src/utils/conservationStatus';
-import SpeciesPhotoCredit from '../src/components/SpeciesPhotoCredit';
+import PhotoCreditInfo from '../src/components/PhotoCreditInfo';
 import { preferredSpeciesPhoto } from '../src/utils/speciesPhoto';
 
 // What the page shows, from either source. Never any location or coordinates.
@@ -116,9 +116,12 @@ export default function PlantInfoScreen() {
         <ScrollView contentContainerStyle={styles.content}>
           {photo ? (
             <>
-              <Image source={{ uri: photo }} style={styles.photo} resizeMode="cover" accessibilityIgnoresInvertColors />
+              {/* The credit sits behind a small "i" on the photo (only when the licence needs one). */}
+              <View style={styles.photoBox}>
+                <Image source={{ uri: photo }} style={[styles.photo, styles.photoInBox]} resizeMode="cover" accessibilityIgnoresInvertColors />
+                <PhotoCreditInfo photo={photoCredit} />
+              </View>
               <Text style={styles.speciesPhotoLabel}>Species photo</Text>
-              <SpeciesPhotoCredit photo={photoCredit} />
             </>
           ) : (
             <View style={[styles.photo, styles.photoPlaceholder]}>
@@ -177,6 +180,8 @@ const styles = StyleSheet.create({
   centerBox: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 28 },
   content: { paddingHorizontal: 20, paddingBottom: 40 },
   photo: { width: '100%', aspectRatio: 4 / 3, borderRadius: 20, marginBottom: 16, backgroundColor: '#E7EFEA' },
+  photoBox: { marginBottom: 16 },
+  photoInBox: { marginBottom: 0 },
   speciesPhotoLabel: { fontSize: 11, color: '#68776D', marginTop: -10, marginBottom: 2 },
   photoPlaceholder: { justifyContent: 'center', alignItems: 'center' },
   placeholderIcon: { fontSize: 48 },

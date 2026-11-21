@@ -1067,6 +1067,34 @@ export default function ProfileScreen() {
           </TouchableOpacity>
         )}
 
+        {/* Photo credits - everyone (the species photos are public) */}
+
+        <TouchableOpacity
+          style={[styles.actionRowCard, styles.actionRowSpaced]}
+          activeOpacity={0.8}
+          onPress={() => router.push('/photo-credits' as never)}
+          accessibilityRole="button"
+          accessibilityLabel="Photo credits"
+        >
+          <View style={styles.actionRowLeft}>
+            <View style={styles.actionIconBox}>
+              <Ionicons
+                name="images-outline"
+                size={18}
+                color="#213B2A"
+              />
+            </View>
+            <Text style={styles.actionRowTitle}>
+              Photo credits
+            </Text>
+          </View>
+          <Ionicons
+            name="chevron-forward"
+            size={18}
+            color="#76877B"
+          />
+        </TouchableOpacity>
+
         {/* Actions */}
 
         {isGuest && (
@@ -1426,6 +1454,10 @@ const styles =
       color: '#8A998E',
       textAlign: 'center',
       marginTop: 8,
+    },
+
+    actionRowSpaced: {
+      marginTop: 10,
     },
 
     actionRowCard: {

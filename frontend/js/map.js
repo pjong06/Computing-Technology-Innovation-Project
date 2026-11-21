@@ -76,12 +76,9 @@ function escapePopupText(value) {
   })[character]);
 }
 
+// The portal's one date format, date only here: "21 Nov 2026" (shared.js formatDay).
 function displayVisitDate(value) {
-  if (!value) {
-    return 'None';
-  }
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+  return formatDay(value, 'None');
 }
 
 function makePopup(plant) {

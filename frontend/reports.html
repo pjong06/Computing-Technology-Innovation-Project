@@ -31,6 +31,10 @@
     </select>
     <input id="report-from" type="date" aria-label="From date" onchange="renderReport()">
     <input id="report-to" type="date" aria-label="To date" onchange="renderReport()">
+    <select id="report-sort" aria-label="Sort order" onchange="redrawReport()">
+      <option value="newest">Newest first</option>
+      <option value="oldest">Oldest first</option>
+    </select>
     <button class="btn" onclick="exportCsv()">Export CSV</button>
     <button class="btn ghost" onclick="exportPdf()">Export PDF</button>
   </div>
