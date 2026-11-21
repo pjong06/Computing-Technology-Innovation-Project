@@ -206,7 +206,7 @@ test('approval queue labels pending first plant records and revisits', () => {
   assert.match(reviews, /plant_status: plant\.plant_status/);
 });
 
-test('photo credits are unobtrusive: an "i" on detail photos, none in lists, a credits page', () => {
+test('photo credits appear only on the credits page; no photo shows a credit', () => {
   const shared = read('frontend/js/shared.js');
   // The rule: iNaturalist photos that are not CC0; SFC's own photos never.
   assert.match(shared, /function needsPhotoCredit\(photo\) \{\s*return !!photo && photo\.source === 'inaturalist' && photo\.licence_code !== 'cc0';/);
@@ -221,10 +221,9 @@ test('photo credits are unobtrusive: an "i" on detail photos, none in lists, a c
   assert.match(shared, /'cc-by-sa': 'CC BY-SA'/);
   assert.match(shared, /cc0: 'CC0'/);
 
-  // Detail views: the "i" on the photo. Cards and lists: no credit text.
-  assert.match(read('frontend/js/editor.js'), /const credit = makePhotoCreditInfo\(photo\);/);
-  assert.match(read('frontend/js/plant.js'), /const credit = makePhotoCreditInfo\(speciesFallback\);/);
-  for (const file of ['species.js', 'plants.js', 'map.js', 'queue.js', 'rejected.js', 'proposals.js']) {
+  // Species reference photos are no longer shown, and plant photos never show a credit:
+  // no page puts a credit on a photo (the editor and plant page had one on the species photo).
+  for (const file of ['editor.js', 'plant.js', 'species.js', 'plants.js', 'map.js', 'queue.js', 'rejected.js', 'proposals.js']) {
     assert.doesNotMatch(read(`frontend/js/${file}`), /makeSpeciesPhotoCredit|makePhotoCreditInfo|photoCreditText/, file);
   }
   const css = read('frontend/css/style.css');
@@ -242,6 +241,9 @@ test('photo credits are unobtrusive: an "i" on detail photos, none in lists, a c
   assert.match(credits, /SPECIES_PHOTO_LICENSES\[photo\.licence_code\]/);
   assert.match(credits, /if \(pageAllowed !== false\)/);
   assert.doesNotMatch(credits, /\.href\s*=|source_url/);
+  // Only photos still shown: plant photos from iNaturalist sightings, not species photos.
+  assert.match(credits, /api\('\/plants\/photo-credits'\)/);
+  assert.doesNotMatch(credits, /\/knowledge\/species|species_media/);
   const creditsHtml = read('frontend/credits.html');
   assert.match(creditsHtml, /<script src="js\/shared\.js"><\/script>\s*<script src="js\/credits\.js"><\/script>/);
   for (const id of Array.from(credits.matchAll(/getElementById\('([^']+)'\)/g), m => m[1])) {
@@ -249,17 +251,15 @@ test('photo credits are unobtrusive: an "i" on detail photos, none in lists, a c
   }
 
   // The app: the same rule and text in src/utils/photoCredit.ts (photoCredit.test.js checks
-  // web and app agree); an "i" on detail photos; no credit in lists; a Photo credits screen.
+  // web and app agree); no photo shows a credit any more; the Photo credits screen stays.
   const appCredit = read('niah-biotrack/src/utils/photoCredit.ts');
   assert.match(appCredit, /export function needsPhotoCredit\([^)]*\): boolean \{\s*return !!photo && photo\.source === 'inaturalist' && photo\.licence_code !== 'cc0';/);
   assert.match(appCredit, /return `Photo: \$\{photoCreditName\(photo\)\}, \$\{photoLicenceLabel\(photo\.licence_code\)\} via iNaturalist`;/);
   const info2 = read('niah-biotrack/src/components/PhotoCreditInfo.tsx');
   assert.match(info2, /if \(!needsPhotoCredit\(photo\)\) return null;/);
   assert.doesNotMatch(info2, /Linking|source_url|creativecommons\.org/);
-  for (const screen of ['app/plant-detail.tsx', 'app/plant-info.tsx', 'app/species-reference/[id].tsx']) {
-    assert.match(read(`niah-biotrack/${screen}`), /<PhotoCreditInfo photo=\{/, screen);
-  }
-  for (const screen of ['app/(tabs)/home.tsx', 'app/(tabs)/plants.tsx']) {
+  for (const screen of ['app/plant-detail.tsx', 'app/plant-info.tsx', 'app/species-reference/[id].tsx',
+    'app/(tabs)/home.tsx', 'app/(tabs)/plants.tsx', 'app/(tabs)/records.tsx']) {
     assert.doesNotMatch(read(`niah-biotrack/${screen}`), /SpeciesPhotoCredit|PhotoCreditInfo|photoCreditText/, screen);
   }
   assert.equal(fs.existsSync(path.join(repoRoot, 'niah-biotrack/src/components/SpeciesPhotoCredit.tsx')), false);
@@ -336,14 +336,13 @@ test('the plant catalogue is officer-only, linked from the menu and its page con
   assert.match(catalogue, /api\('\/officer\/plants\?/);
   assert.match(detail, /api\('\/officer\/plants\//);
   assert.match(catalogue, /Imported from iNaturalist · Observer:/);
-  assert.match(catalogue, /plant\.species_photo/);
-  // No photo credit in the plant list (it is on plant detail and the Photo credits page).
-  assert.doesNotMatch(catalogue, /makeSpeciesPhotoCredit|makePhotoCreditInfo|photoCreditText/);
-  assert.match(catalogue, /speciesPhotoLabel\.textContent = 'Species photo'/);
+  // A plant without its own photo shows the placeholder: no species photo, no credit.
+  assert.match(catalogue, /image\.src = plant\.photo_thumbnail\?\.url \|\| PICTURE_BLANK;/);
+  assert.doesNotMatch(catalogue, /species_photo|Species photo|makeSpeciesPhotoCredit|makePhotoCreditInfo|photoCreditText/);
   assert.match(detail, /Imported from iNaturalist · Observer:/);
-  assert.match(detail, /plant\.species_photo/);
-  assert.match(detail, /makePhotoCreditInfo\(speciesFallback\)/);
-  assert.match(detail, /Species reference photo/);
+  assert.match(detail, /renderPhotos\(plant\.photos \|\| \[\]\);/);
+  assert.match(detail, /byId\('plant-no-photos'\)\.hidden = photos\.length > 0;/);
+  assert.doesNotMatch(detail, /species_photo|speciesFallback|makePhotoCreditInfo|Species reference photo/);
 
   for (const [htmlPath, scriptPath] of [
     ['frontend/plants.html', 'frontend/js/plants.js'],

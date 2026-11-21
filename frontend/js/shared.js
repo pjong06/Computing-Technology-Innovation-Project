@@ -169,6 +169,7 @@ async function taxonomyIdFor(taxonomy, family, scientificName) {
 const SPECIES_PHOTO_LICENSES = {
   'cc-by': 'CC BY',
   'cc-by-sa': 'CC BY-SA',
+  'cc-by-nc': 'CC BY-NC',
   cc0: 'CC0'
 };
 

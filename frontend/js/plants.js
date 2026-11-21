@@ -26,24 +26,18 @@ function makePlantRow(plant) {
   link.href = 'plant.html?id=' + encodeURIComponent(plant.id);
   link.setAttribute('aria-label', 'View plant ' + displayTag(plant.tag_code, 'without a tag code'));
 
-  const speciesPhoto = plant.photo_thumbnail?.url ? null : plant.species_photo;
+  // The plant's own photo, or the placeholder (species reference photos are not shown).
   const photoWrapper = document.createElement('div');
   photoWrapper.className = 'plant-photo-wrap';
   const image = document.createElement('img');
   image.className = 'plant-thumb';
-  image.alt = speciesPhoto?.url ? 'Species reference photo' : '';
+  image.alt = '';
   image.loading = 'lazy';
-  image.src = plant.photo_thumbnail?.url || speciesPhoto?.url || PICTURE_BLANK;
-  const speciesPhotoLabel = document.createElement('span');
-  speciesPhotoLabel.className = 'species-photo-label';
-  speciesPhotoLabel.textContent = 'Species photo';
-  speciesPhotoLabel.hidden = !speciesPhoto?.url;
+  image.src = plant.photo_thumbnail?.url || PICTURE_BLANK;
   photoWrapper.appendChild(image);
-  if (speciesPhoto?.url) photoWrapper.appendChild(speciesPhotoLabel);
   image.onerror = function () {
     image.onerror = null;
     image.src = PICTURE_BLANK;
-    speciesPhotoLabel.hidden = true;
   };
   link.appendChild(photoWrapper);
 

@@ -96,7 +96,9 @@ function dayText(value?: string | null): string | null {
     : new Date(time).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-function localItem(key: string, stored: PlantRecord, speciesPhoto: string | null): PlantItem {
+// The thumbnail is the plant's own photo, or the leaf placeholder (species reference photos
+// are not shown).
+function localItem(key: string, stored: PlantRecord): PlantItem {
   // Older or partly downloaded records may lack these lists; treat them as empty.
   const visits = (Array.isArray(stored.observations) ? stored.observations : []).filter(Boolean);
   const record: PlantRecord = { ...stored, observations: visits };
@@ -149,7 +151,7 @@ function localItem(key: string, stored: PlantRecord, speciesPhoto: string | null
     reason: pick.reason,
     tag: record.tagCode ?? null,
     speciesId: record.speciesId,
-    photoUri: ownPhoto ? resolveStoredPhotoUri(ownPhoto) : speciesPhoto,
+    photoUri: ownPhoto ? resolveStoredPhotoUri(ownPhoto) : null,
     place: [record.locationName, when].filter(Boolean).join(' · '),
     searchText: [name, record.commonName, record.plantName, record.tagCode].filter(Boolean).join(' '),
   };
@@ -158,8 +160,7 @@ function localItem(key: string, stored: PlantRecord, speciesPhoto: string | null
 function otherItem(
   key: string,
   plant: OtherApprovedPlant,
-  species: { scientific_name: string; common_name: string | null } | undefined,
-  speciesPhoto: string | null
+  species: { scientific_name: string; common_name: string | null } | undefined
 ): PlantItem {
   const name = species?.scientific_name || 'Species not recorded';
   const registered = dayText(plant.registeredAt);
@@ -175,7 +176,8 @@ function otherItem(
     reason: null,
     tag: plant.tagCode,
     speciesId: plant.speciesId,
-    photoUri: speciesPhoto,
+    // Other botanists' plants' photos aren't on this phone: the placeholder.
+    photoUri: null,
     place: registered ? `Registered ${registered}` : '',
     searchText: [name, species?.common_name, plant.tagCode].filter(Boolean).join(' '),
   };
@@ -197,7 +199,6 @@ export default function PlantsListScreen() {
     (state) => state.proposals.filter((proposal) => proposal.syncStatus !== SyncStatus.UPLOADED).length
   );
   const species = useSpeciesStore((state) => state.species);
-  const imageUrisBySpeciesId = useSpeciesStore((state) => state.imageUrisBySpeciesId);
   const loadSpecies = useSpeciesStore((state) => state.loadSpecies);
 
   const [filters, setFilters] = useState<PlantFilters>(DEFAULT_FILTERS);
@@ -247,7 +248,6 @@ export default function PlantsListScreen() {
   const speciesById = useMemo(() => new Map(species.map((item) => [item.id, item])), [species]);
 
   const items = useMemo<PlantItem[]>(() => {
-    const photoFor = (speciesId: string | null) => (speciesId ? imageUrisBySpeciesId[speciesId] ?? null : null);
     // One row per plant: the phone's copy wins over the same plant from the server, and
     // every row gets a unique "plant:<id>" key (src/utils/recordsList.ts mergePlants).
     const merged = mergePlants(
@@ -263,15 +263,14 @@ export default function PlantsListScreen() {
     );
     return merged.map((entry) =>
       entry.source === 'local'
-        ? localItem(entry.key, entry.plant, photoFor(entry.plant.speciesId))
+        ? localItem(entry.key, entry.plant)
         : otherItem(
             entry.key,
             entry.plant,
-            entry.plant.speciesId ? speciesById.get(entry.plant.speciesId) : undefined,
-            photoFor(entry.plant.speciesId)
+            entry.plant.speciesId ? speciesById.get(entry.plant.speciesId) : undefined
           )
     );
-  }, [records, otherPlants, speciesById, imageUrisBySpeciesId]);
+  }, [records, otherPlants, speciesById]);
 
   const visible = useMemo(() => filterAndSortPlants(items, filters, searchQuery), [items, filters, searchQuery]);
   const draftCount = useMemo(() => filterAndSortPlants(items, draft, searchQuery).length, [items, draft, searchQuery]);

@@ -174,6 +174,154 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         `${SPECIES_EDITOR_COLUMNS}, taxonomy(family, genus), species_media(${SPECIES_MEDIA_COLUMNS})`;
     const SPECIES_STATUSES = ["approved", "pending", "rejected", "archived"];
 
+    // "Identified to": how far the plant was identified. Needs the taxon_rank column
+    // (supabase/migrations/20261121140000_species_taxon_rank.sql). Until that migration is
+    // applied, species are read and saved without it instead of failing.
+    const TAXON_RANKS = ["species", "genus", "family", "other"];
+    function missingRankColumn(error) {
+        return Boolean(error) && ["42703", "PGRST204"].includes(error.code) &&
+            /taxon_rank/.test(String(error.message || ""));
+    }
+    // run(withRank) runs the query with or without taxon_rank; returns its result and
+    // whether the rank was included.
+    async function withRankFallback(run) {
+        const result = await run(true);
+        if (!missingRankColumn(result.error)) return { ...result, rankIncluded: true };
+        return { ...(await run(false)), rankIncluded: false };
+    }
+    const columnsWithRank = (columns, withRank) => withRank ? `${columns}, taxon_rank` : columns;
+
+    // ---- Photos from a species' plants ----
+    // Species reference photos (species_media) are no longer shown; a species is shown with
+    // the primary photo of one of its plants instead. Plant photos are staff-only (RLS on
+    // plant_media and the plant-media bucket), so they are only added when the request
+    // carries a staff login, and they are read through that user's client.
+    const PLANT_PHOTO_URL_TTL_SECONDS = 600;
+    const PLANT_PHOTO_GALLERY_SIZE = 12;
+
+    // Like authenticate, but a request without a login (or with a login that isn't an
+    // active staff account) carries on as a public request instead of being refused.
+    function optionalStaff(req, res, next) {
+        if (!req.get("authorization")) return next();
+        let finished = false;
+        const proceed = () => {
+            if (finished) return;
+            finished = true;
+            next();
+        };
+        const asPublic = {
+            status() { return asPublic; },
+            json() {
+                delete req.user;
+                delete req.profile;
+                delete req.supabase;
+                proceed();
+                return asPublic;
+            },
+            set() { return asPublic; },
+        };
+        Promise.resolve(authenticate(req, asPublic, proceed)).catch(() => asPublic.json());
+    }
+
+    // Approved, active plants of these species with a primary photo, newest first:
+    // [{ species_id, plant_id, tag, media_id, file_path }].
+    async function loadPlantPhotoRows(client, speciesIds) {
+        if (!client || speciesIds.length === 0) return [];
+        const { data: plants, error } = await client
+            .from("plants")
+            .select("id, qr_code_value, species_id, registered_at")
+            .in("species_id", speciesIds)
+            .eq("plant_status", "approved")
+            .is("deleted_at", null)
+            .order("registered_at", { ascending: false })
+            .order("id")
+            .range(0, 1999);
+        if (error) throw error;
+        if (!Array.isArray(plants) || plants.length === 0) return [];
+
+        const photoByPlant = new Map();
+        const plantIds = plants.map(plant => plant.id);
+        for (let start = 0; start < plantIds.length; start += 200) {
+            const { data: media, error: mediaError } = await client
+                .from("plant_media")
+                .select("id, plant_id, file_path")
+                .in("plant_id", plantIds.slice(start, start + 200))
+                .eq("is_primary", true)
+                .is("deleted_at", null)
+                .order("id");
+            if (mediaError) throw mediaError;
+            for (const row of media || []) {
+                if (row.file_path && !photoByPlant.has(row.plant_id)) photoByPlant.set(row.plant_id, row);
+            }
+        }
+        return plants
+            .filter(plant => photoByPlant.has(plant.id))
+            .map(plant => ({
+                species_id: plant.species_id,
+                plant_id: plant.id,
+                tag: plant.qr_code_value || null,
+                media_id: photoByPlant.get(plant.id).id,
+                file_path: photoByPlant.get(plant.id).file_path,
+            }));
+    }
+
+    // Signed links for these rows (one request), without the storage paths.
+    async function signPlantPhotos(client, rows) {
+        if (rows.length === 0) return [];
+        const { data, error } = await client.storage
+            .from("plant-media")
+            .createSignedUrls(rows.map(row => row.file_path), PLANT_PHOTO_URL_TTL_SECONDS);
+        if (error) throw error;
+        const urls = new Map((data || []).map(item => [item.path, item.signedUrl]));
+        return rows
+            .filter(row => urls.get(row.file_path))
+            .map(row => ({
+                species_id: row.species_id,
+                photo: {
+                    id: row.media_id,
+                    plant_id: row.plant_id,
+                    tag: row.tag,
+                    url: urls.get(row.file_path),
+                    expires_in: PLANT_PHOTO_URL_TTL_SECONDS,
+                },
+            }));
+    }
+
+    // Adds plant_photo (the newest approved plant's primary photo, or null) to each species,
+    // for one page of species at once. A failure only leaves the placeholder.
+    async function withPlantPhotos(client, species) {
+        const list = Array.isArray(species) ? species : [species];
+        const ids = list.filter(Boolean).map(item => item.id).filter(Boolean);
+        const photoBySpecies = new Map();
+        try {
+            const newestPerSpecies = new Map();
+            for (const row of await loadPlantPhotoRows(client, ids)) {
+                if (!newestPerSpecies.has(row.species_id)) newestPerSpecies.set(row.species_id, row);
+            }
+            for (const signed of await signPlantPhotos(client, [...newestPerSpecies.values()])) {
+                photoBySpecies.set(signed.species_id, signed.photo);
+            }
+        } catch (error) {
+            console.error("Species plant photo error:", error?.message || error);
+            photoBySpecies.clear();
+        }
+        const result = list.map(item => item && { ...item, plant_photo: photoBySpecies.get(item.id) || null });
+        return Array.isArray(species) ? result : result[0];
+    }
+
+    // The editor's "Photos from its plants": the newest approved active plants' primary
+    // photos (at most PLANT_PHOTO_GALLERY_SIZE) and how many there are in all.
+    async function plantPhotoGallery(client, speciesId) {
+        try {
+            const rows = await loadPlantPhotoRows(client, [speciesId]);
+            const signed = await signPlantPhotos(client, rows.slice(0, PLANT_PHOTO_GALLERY_SIZE));
+            return { items: signed.map(item => item.photo), total: rows.length };
+        } catch (error) {
+            console.error("Species plant photo gallery error:", error?.message || error);
+            return { items: [], total: 0, error: "Photos from its plants could not be loaded." };
+        }
+    }
+
     // Let officers find species in any state (approved, pending, rejected, archived).
     // Optional filters: status (one of SPECIES_STATUSES) and q (name search).
     router.get("/species/manage", authenticate, authorize("officer"), async (req, res) => {
@@ -203,7 +351,10 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             return res.status(500).json({ message: "Could not load species" });
         }
 
-        return res.json({ data: orderSpeciesMedia(data), pagination: paginationMetadata(paging, count) });
+        return res.json({
+            data: await withPlantPhotos(req.supabase, orderSpeciesMedia(data)),
+            pagination: paginationMetadata(paging, count),
+        });
     });
 
     // ---- Species proposals ----
@@ -440,7 +591,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
     });
 
     // GET /api/knowledge/species
-    router.get("/species", async (req, res) => {
+    router.get("/species", optionalStaff, async (req, res) => {
         const { q = "", family = "", conservation_status: status = "", category = "", page = "1", page_size: pageSize = "50" } = req.query;
         const textFields = [q, family, status, category];
         if (textFields.some(value => typeof value !== "string" || value.length > 100) ||
@@ -489,7 +640,8 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         }
 
         return res.json({
-            data: orderSpeciesMedia(data),
+            // Staff requests get the photo of one of each species' plants (plant_photo).
+            data: await withPlantPhotos(req.supabase, orderSpeciesMedia(data)),
             pagination: {
                 page: pageNumber,
                 page_size: size,
@@ -500,7 +652,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
     });
 
     // GET /api/knowledge/species/:id
-    router.get("/species/:id", async (req, res) => {
+    router.get("/species/:id", optionalStaff, async (req, res) => {
         const { id } = req.params;
 
         const uuidPattern =
@@ -558,7 +710,7 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             return res.status(404).json({ message: "Species not found" });
         }
 
-        res.json({ data: orderSpeciesMedia(data) });
+        res.json({ data: await withPlantPhotos(req.supabase, orderSpeciesMedia(data)) });
     });
 
     // Officers can inspect a species even after it has been archived.
@@ -575,11 +727,11 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
                 return res.status(400).json({ message: "Invalid species ID" });
             }
 
-            const { data, error } = await req.supabase
+            const { data, error } = await withRankFallback(withRank => req.supabase
                 .from("species")
-                .select(MANAGE_COLUMNS)
+                .select(columnsWithRank(MANAGE_COLUMNS, withRank))
                 .eq("id", id)
-                .maybeSingle();
+                .maybeSingle());
 
             if (error) {
                 console.error("Manage species lookup error:", error);
@@ -587,7 +739,13 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             }
             if (!data) return res.status(404).json({ message: "Species not found" });
 
-            return res.json({ data: orderSpeciesMedia(data) });
+            return res.json({
+                data: {
+                    ...orderSpeciesMedia(data),
+                    // The editor's "Photos from its plants" grid.
+                    plant_photos: await plantPhotoGallery(req.supabase, id),
+                },
+            });
         }
     );
 
@@ -646,11 +804,16 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             }
         }
 
-        const { data, error } = await req.supabase
+        if (Object.hasOwn(body, "taxon_rank") && !TAXON_RANKS.includes(body.taxon_rank)) {
+            return res.status(400).json({ message: "taxon_rank must be species, genus, family or other" });
+        }
+        const rank = Object.hasOwn(body, "taxon_rank") ? body.taxon_rank : undefined;
+
+        const { data, error, rankIncluded } = await withRankFallback(withRank => req.supabase
             .from("species")
-            .insert(species)
-            .select(SPECIES_EDITOR_COLUMNS)
-            .single();
+            .insert(withRank && rank !== undefined ? { ...species, taxon_rank: rank } : species)
+            .select(columnsWithRank(SPECIES_EDITOR_COLUMNS, withRank))
+            .single());
 
         if (error?.code === "23505") {
             return res.status(409).json({
@@ -669,7 +832,10 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             return res.status(500).json({ message: "Could not create species" });
         }
 
-        return res.status(201).json({ data: orderSpeciesMedia(data) });
+        return res.status(201).json({
+            data: orderSpeciesMedia(data),
+            ...(rank !== undefined && !rankIncluded ? { taxon_rank_saved: false } : {}),
+        });
     });
 
     router.patch("/species/:id", authenticate, authorize("officer"), async (req, res) => {
@@ -736,18 +902,38 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             changes.taxonomy_id = taxonomyId;
         }
 
-        if (Object.keys(changes).length === 0) {
+        let rank;
+        if (Object.hasOwn(req.body, "taxon_rank")) {
+            if (!TAXON_RANKS.includes(req.body.taxon_rank)) {
+                return res.status(400).json({ message: "taxon_rank must be species, genus, family or other" });
+            }
+            rank = req.body.taxon_rank;
+        }
+
+        if (Object.keys(changes).length === 0 && rank === undefined) {
             return res.status(400).json({
                 message: "Provide at least one editable species field",
             });
         }
 
-        const { data, error } = await req.supabase
-            .from("species")
-            .update(changes)
-            .eq("id", req.params.id)
-            .select(SPECIES_EDITOR_COLUMNS)
-            .maybeSingle();
+        const { data, error, rankIncluded } = await withRankFallback(withRank => {
+            const update = withRank && rank !== undefined ? { ...changes, taxon_rank: rank } : changes;
+            if (Object.keys(update).length === 0) {
+                // Only the rank was sent and the column doesn't exist yet: nothing to save.
+                return Promise.resolve({ data: null, error: { code: "PGRST204", message: "taxon_rank" } });
+            }
+            return req.supabase
+                .from("species")
+                .update(update)
+                .eq("id", req.params.id)
+                .select(columnsWithRank(SPECIES_EDITOR_COLUMNS, withRank))
+                .maybeSingle();
+        });
+        if (!rankIncluded && missingRankColumn(error)) {
+            return res.status(400).json({
+                message: "Identified to can't be saved until the species taxon_rank migration is applied.",
+            });
+        }
 
         if (error?.code === "23505") {
             return res.status(409).json({
@@ -768,7 +954,10 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
 
         if (!data) return res.status(404).json({ message: "Species not found" });
 
-        return res.json({ data: orderSpeciesMedia(data) });
+        return res.json({
+            data: orderSpeciesMedia(data),
+            ...(rank !== undefined && !rankIncluded ? { taxon_rank_saved: false } : {}),
+        });
     });
 
     router.delete("/species/:id", authenticate, authorize("officer"), async (req, res) => {

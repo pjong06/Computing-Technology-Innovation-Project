@@ -15,8 +15,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
 import { lookupPublicTag, describePublicTagLookup, type PublicTagLookupResult } from '../src/services/tagLookup';
 import { conservationStatusColors, plainConservationStatus } from '../src/utils/conservationStatus';
-import PhotoCreditInfo from '../src/components/PhotoCreditInfo';
-import { preferredSpeciesPhoto } from '../src/utils/speciesPhoto';
+import { plantPhotoCaption } from '../src/utils/plantPhotoCaption';
 
 // What the page shows, from either source. Never any location or coordinates.
 interface PlantFacts {
@@ -40,7 +39,7 @@ export default function PlantInfoScreen() {
 
   const species = useSpeciesStore((state) => state.species);
   const detailsById = useSpeciesStore((state) => state.detailsById);
-  const imageUrisBySpeciesId = useSpeciesStore((state) => state.imageUrisBySpeciesId);
+  const plantPhotosBySpeciesId = useSpeciesStore((state) => state.plantPhotosBySpeciesId);
   const loadSpeciesDetail = useSpeciesStore((state) => state.loadSpeciesDetail);
 
   const [scan, setScan] = useState<PublicTagLookupResult | null>(null);
@@ -75,8 +74,10 @@ export default function PlantInfoScreen() {
 
   const detail = speciesId ? detailsById[speciesId] : undefined;
   const listItem = speciesId ? species.find((s) => s.id === speciesId) : undefined;
-  const photo = speciesId ? imageUrisBySpeciesId[speciesId] : undefined;
-  const photoCredit = preferredSpeciesPhoto(detail?.species_media ?? listItem?.species_media);
+  // A species page shows a photo of one of its plants (staff only). A scanned plant shows
+  // its own photo only, which the public lookup never sends, so it shows the placeholder:
+  // never a species photo or another plant's photo, and never a credit.
+  const photo = speciesId && !tag ? plantPhotosBySpeciesId[speciesId] : undefined;
 
   // The scanned plant's own public facts come first; the species fills any gaps.
   const facts: PlantFacts = {
@@ -115,14 +116,10 @@ export default function PlantInfoScreen() {
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
           {photo ? (
-            <>
-              {/* The credit sits behind a small "i" on the photo (only when the licence needs one). */}
-              <View style={styles.photoBox}>
-                <Image source={{ uri: photo }} style={[styles.photo, styles.photoInBox]} resizeMode="cover" accessibilityIgnoresInvertColors />
-                <PhotoCreditInfo photo={photoCredit} />
-              </View>
-              <Text style={styles.speciesPhotoLabel}>Species photo</Text>
-            </>
+            <View style={styles.photoBox}>
+              <Image source={{ uri: photo.uri }} style={[styles.photo, styles.photoInBox]} resizeMode="cover" accessibilityIgnoresInvertColors />
+              <Text style={styles.photoCaption}>{plantPhotoCaption(photo.tag)}</Text>
+            </View>
           ) : (
             <View style={[styles.photo, styles.photoPlaceholder]}>
               <Text style={styles.placeholderIcon}>🌿</Text>
@@ -182,7 +179,7 @@ const styles = StyleSheet.create({
   photo: { width: '100%', aspectRatio: 4 / 3, borderRadius: 20, marginBottom: 16, backgroundColor: '#E7EFEA' },
   photoBox: { marginBottom: 16 },
   photoInBox: { marginBottom: 0 },
-  speciesPhotoLabel: { fontSize: 11, color: '#68776D', marginTop: -10, marginBottom: 2 },
+  photoCaption: { fontSize: 11, color: '#68776D', marginTop: 6 },
   photoPlaceholder: { justifyContent: 'center', alignItems: 'center' },
   placeholderIcon: { fontSize: 48 },
   title: { fontSize: 24, fontWeight: '800', color: '#1E2B22', textAlign: 'left' },

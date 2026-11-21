@@ -41,7 +41,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/utils/units.test.mjs src/utils/submissionState.test.mjs src/utils/routeSync.test.mjs src/utils/photoFormat.test.mjs src/utils/tagCode.test.mjs src/utils/photoCredit.test.mjs src/utils/recordsList.test.mjs"
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/utils/units.test.mjs src/utils/submissionState.test.mjs src/utils/routeSync.test.mjs src/utils/photoFormat.test.mjs src/utils/tagCode.test.mjs src/utils/photoCredit.test.mjs src/utils/recordsList.test.mjs src/utils/plantPhotoCaption.test.mjs"
   },
   "private": true
 }

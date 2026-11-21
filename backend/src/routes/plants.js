@@ -102,6 +102,74 @@ router.get("/", requireRole("botanist", "officer", "researcher"), async (req, re
     });
 });
 
+// Credits for plant photos taken from iNaturalist sightings, for the web Photo credits page
+// only (plant photos themselves never show a credit). Reads through the user's client, so
+// RLS decides which plants are listed. No file paths or links are sent.
+router.get("/photo-credits", requireRole("botanist", "officer", "researcher"), async (req, res) => {
+    const { data: photos, error } = await req.supabase
+        .from("plant_media")
+        .select("id, plant_id, source, licence_code, attribution, photographer")
+        .eq("source", "inaturalist")
+        .is("deleted_at", null)
+        .order("id")
+        .range(0, 1999);
+
+    if (error) {
+        // 42703: plant_media has no source columns yet (migration not applied), so there
+        // are no iNaturalist plant photos to credit.
+        if (error.code === "42703") return res.json({ data: [] });
+        console.error("Plant photo credits error:", error);
+        return res.status(500).json({ message: "Could not load plant photo credits" });
+    }
+
+    const plantIds = [...new Set((photos || []).map(photo => photo.plant_id))];
+    if (plantIds.length === 0) return res.json({ data: [] });
+
+    const { data: plants, error: plantsError } = await req.supabase
+        .from("plants")
+        .select("id, qr_code_value, species_id")
+        .in("id", plantIds)
+        .is("deleted_at", null);
+    if (plantsError) {
+        console.error("Plant photo credits plants error:", plantsError);
+        return res.status(500).json({ message: "Could not load plant photo credits" });
+    }
+
+    const speciesIds = [...new Set((plants || []).map(plant => plant.species_id).filter(Boolean))];
+    let species = [];
+    if (speciesIds.length) {
+        const { data, error: speciesError } = await req.supabase
+            .from("species")
+            .select("id, scientific_name, common_name")
+            .in("id", speciesIds);
+        if (speciesError) {
+            console.error("Plant photo credits species error:", speciesError);
+            return res.status(500).json({ message: "Could not load plant photo credits" });
+        }
+        species = data || [];
+    }
+
+    const plantById = new Map((plants || []).map(plant => [plant.id, plant]));
+    const speciesById = new Map(species.map(item => [item.id, item]));
+    return res.json({
+        data: (photos || [])
+            .filter(photo => plantById.has(photo.plant_id))
+            .map(photo => {
+                const plant = plantById.get(photo.plant_id);
+                const plantSpecies = speciesById.get(plant.species_id);
+                return {
+                    tag: plant.qr_code_value || null,
+                    scientific_name: plantSpecies?.scientific_name || null,
+                    common_name: plantSpecies?.common_name || null,
+                    source: photo.source,
+                    licence_code: photo.licence_code || null,
+                    attribution: photo.attribution || null,
+                    photographer: photo.photographer || null
+                };
+            })
+    });
+});
+
 // ── C10: LOOK UP PLANT BY TAG CODE ──────────────────────────────
 // Placed before /:id so Express does not treat "tag" as an :id parameter
 router.get("/tag/:tagCode", requireRole("botanist", "officer", "researcher"), async (req, res) => {

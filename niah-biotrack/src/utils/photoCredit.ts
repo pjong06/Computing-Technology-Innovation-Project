@@ -8,6 +8,7 @@ const LICENCE_LABELS: Record<string, string> = {
   cc0: 'CC0',
   'cc-by': 'CC BY',
   'cc-by-sa': 'CC BY-SA',
+  'cc-by-nc': 'CC BY-NC',
 };
 
 export interface PhotoCreditFields {
