@@ -1229,6 +1229,7 @@ const styles =
 
     userInfo: {
       flex: 1,
+      minWidth: 0,
     },
 
     userName: {
@@ -1290,6 +1291,7 @@ const styles =
 
     visitorDescText: {
       flex: 1,
+      minWidth: 0,
       fontSize: 12,
       color: '#0369A1',
       lineHeight: 17,
@@ -1315,6 +1317,7 @@ const styles =
 
     metaCol: {
       flex: 1,
+      minWidth: 0,
       alignItems: 'center',
     },
 
@@ -1385,6 +1388,7 @@ const styles =
 
     metricBox: {
       flex: 1,
+      minWidth: 0,
       alignItems: 'center',
     },
 

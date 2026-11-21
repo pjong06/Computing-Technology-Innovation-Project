@@ -616,7 +616,8 @@ const styles = StyleSheet.create({
   reasonText: { fontSize: 12, fontWeight: '600', color: '#9B1C1C', marginTop: 6 },
   hintText: { fontSize: 12, fontWeight: '600', color: '#8C5E03', marginTop: 6 },
   registerBtn: {
-    height: 46,
+    minHeight: 46,
+    paddingVertical: 8,
     borderRadius: 23,
     backgroundColor: '#213B2A',
     justifyContent: 'center',
@@ -624,12 +625,13 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     marginTop: 8,
   },
-  registerText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
+  registerText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14, flexShrink: 1, textAlign: 'center' },
   emptyContainer: { flex: 1, justifyContent: 'center', paddingHorizontal: 4, paddingVertical: 30 },
   emptyTitle: { fontSize: 18, fontWeight: '700', color: '#1E2B22', marginBottom: 6, textAlign: 'center' },
   emptySub: { fontSize: 13, color: '#68776D', textAlign: 'center', lineHeight: 18, marginBottom: 18 },
   secondaryPillBtn: {
-    height: 46,
+    minHeight: 46,
+    paddingVertical: 8,
     borderRadius: 23,
     justifyContent: 'center',
     alignItems: 'center',
@@ -637,5 +639,5 @@ const styles = StyleSheet.create({
     borderColor: '#213B2A',
     backgroundColor: '#FFF',
   },
-  secondaryPillText: { color: '#213B2A', fontWeight: '700', fontSize: 14 },
+  secondaryPillText: { color: '#213B2A', fontWeight: '700', fontSize: 14, flexShrink: 1, textAlign: 'center' },
 });

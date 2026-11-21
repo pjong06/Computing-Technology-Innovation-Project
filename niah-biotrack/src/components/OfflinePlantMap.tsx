@@ -14,11 +14,15 @@ import {
   toScreen,
   type LatLng,
 } from '../utils/offlineMap';
+import MapControls from './MapControls';
 
 // The "Find plant" map without internet (no tiles): drawn on the phone from GPS and compass
 // only. North is up; the phone is the centre; the target plant sits at its real bearing and
 // distance, auto-zoomed so both fit. Other plants within 1 km are small dots: tap one to make
-// it the target. Plain Views only (no map or SVG library). The maths is in offlineMap.ts.
+// it the target. + / − zoom in and out from that fit; recenter goes back to it (the phone
+// always stays in the centre, so the map follows the botanist anyway). The phone is a blue
+// arrow with a light cone turning with the compass. Plain Views only (no map or SVG library).
+// The maths is in offlineMap.ts.
 
 export interface OfflineMapPlant extends LatLng {
   key: string;
@@ -37,9 +41,15 @@ interface OfflinePlantMapProps {
 
 const OTHERS_RADIUS_M = 1000;
 const MAX_OTHER_DOTS = 60;
+// Each + / − step halves or doubles the scale, up to this many steps from the auto-fit.
+const MAX_ZOOM_STEPS = 4;
 
 export default function OfflinePlantMap({ here, headingDegrees, target, others, onSelect, trail = [] }: OfflinePlantMapProps) {
   const [view, setView] = useState({ width: 0, height: 0 });
+  // 0 = auto-fit (phone and plant both in view); positive = zoomed in, negative = out.
+  const [zoomSteps, setZoomSteps] = useState(0);
+  const zoomBy = (step: number) =>
+    setZoomSteps((current) => Math.max(-MAX_ZOOM_STEPS, Math.min(MAX_ZOOM_STEPS, current + step)));
   const onLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
     if (width !== view.width || height !== view.height) setView({ width, height });
@@ -64,7 +74,7 @@ export default function OfflinePlantMap({ here, headingDegrees, target, others, 
   }
 
   const targetOffset = offsetMeters(here, target);
-  const metresPerPixel = fitMetersPerPixel([targetOffset], view);
+  const metresPerPixel = fitMetersPerPixel([targetOffset], view) * 2 ** -zoomSteps;
   const centre = { x: view.width / 2, y: view.height / 2 };
   // Always on screen, even if the zoom could not quite fit it.
   const targetPoint = clampToView(toScreen(targetOffset, view, metresPerPixel), view, 18);
@@ -149,23 +159,38 @@ export default function OfflinePlantMap({ here, headingDegrees, target, others, 
           ]}
         />
       ) : null}
-      {headingDegrees !== null ? (
-        <View pointerEvents="none" style={[styles.headingWrap, { left: centre.x - 16, top: centre.y - 16, transform: [{ rotate: `${headingDegrees}deg` }] }]}>
-          <Ionicons name="caret-up" size={14} color="#2563EB" />
+      {/* The phone: a blue arrow turning with the compass, with a light cone the way it faces. */}
+      <View
+        pointerEvents="none"
+        style={[
+          styles.me,
+          { left: centre.x - 32, top: centre.y - 32 },
+          headingDegrees !== null && { transform: [{ rotate: `${headingDegrees}deg` }] },
+        ]}
+      >
+        {headingDegrees !== null ? <View style={styles.meCone} /> : null}
+        <View style={styles.phoneDot}>
+          {headingDegrees !== null ? <View style={styles.meArrow} /> : null}
         </View>
-      ) : null}
-      <View pointerEvents="none" style={[styles.phoneDot, { left: centre.x - 9, top: centre.y - 9 }]} />
+      </View>
 
       {/* The target plant. */}
       <View pointerEvents="none" style={[styles.targetPin, { left: targetPoint.x - 15, top: targetPoint.y - 15 }]}>
         <Text style={styles.targetPinText}>P</Text>
       </View>
 
-      {/* North arrow and scale bar. */}
-      <View style={styles.north} pointerEvents="none">
-        <Ionicons name="arrow-up" size={14} color="#213B2A" />
-        <Text style={styles.northText}>N</Text>
-      </View>
+      {/* North arrow above the zoom / recenter buttons; scale bar bottom left. */}
+      <MapControls
+        onZoomIn={() => zoomBy(1)}
+        onZoomOut={() => zoomBy(-1)}
+        onRecenter={() => setZoomSteps(0)}
+        paused={zoomSteps !== 0}
+      >
+        <View style={styles.north} pointerEvents="none">
+          <Ionicons name="arrow-up" size={14} color="#213B2A" />
+          <Text style={styles.northText}>N</Text>
+        </View>
+      </MapControls>
       <View style={styles.scale} pointerEvents="none">
         <View style={[styles.scaleBar, { width: bar.px }]} />
         <Text style={styles.scaleText}>{bar.label}</Text>
@@ -196,15 +221,39 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(37,99,235,0.35)',
   },
-  headingWrap: { position: 'absolute', width: 32, height: 32, alignItems: 'center' },
-  phoneDot: {
+  me: { position: 'absolute', width: 64, height: 64, alignItems: 'center', justifyContent: 'center' },
+  meCone: {
     position: 'absolute',
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    top: 0,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 18,
+    borderRightWidth: 18,
+    borderTopWidth: 32,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderTopColor: 'rgba(37,99,235,0.22)',
+  },
+  phoneDot: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     backgroundColor: '#2563EB',
     borderWidth: 2.5,
     borderColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  meArrow: {
+    width: 0,
+    height: 0,
+    marginTop: -2,
+    borderLeftWidth: 5,
+    borderRightWidth: 5,
+    borderBottomWidth: 9,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: '#FFFFFF',
   },
   targetPin: {
     position: 'absolute',
@@ -219,9 +268,6 @@ const styles = StyleSheet.create({
   },
   targetPinText: { color: '#FFFFFF', fontWeight: '800', fontSize: 12 },
   north: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
     width: 34,
     height: 34,
     borderRadius: 17,
@@ -235,10 +281,12 @@ const styles = StyleSheet.create({
   scale: { position: 'absolute', left: 12, bottom: 10 },
   scaleBar: { height: 4, borderWidth: 1.5, borderTopWidth: 0, borderColor: '#213B2A' },
   scaleText: { fontSize: 10.5, fontWeight: '700', color: '#213B2A', marginTop: 2 },
+  // Bottom right, clear of the guidance panel at the top and the scale bar on the left.
   label: {
     position: 'absolute',
-    top: 10,
-    left: 10,
+    bottom: 10,
+    right: 10,
+    maxWidth: '60%',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
@@ -249,7 +297,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#DCE4DF',
   },
-  labelText: { fontSize: 10.5, fontWeight: '700', color: '#526659' },
+  labelText: { fontSize: 10.5, fontWeight: '700', color: '#526659', flexShrink: 1 },
   waiting: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
   waitingText: { fontSize: 12.5, fontWeight: '600', color: '#526659', textAlign: 'center' },
 });

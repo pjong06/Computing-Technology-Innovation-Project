@@ -395,7 +395,7 @@ const styles = StyleSheet.create({
   card: { backgroundColor: '#FFFFFF', borderRadius: 18, borderWidth: 1.2, borderColor: '#E6ECE8', padding: 14, marginBottom: 12 },
   cardTitle: { fontSize: 15, fontWeight: '800', color: '#1E2B22', marginBottom: 10 },
   countRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
-  countChip: { flex: 1, height: 42, borderRadius: 21, borderWidth: 1.2, borderColor: '#213B2A', justifyContent: 'center', alignItems: 'center' },
+  countChip: { flex: 1, minWidth: 0, minHeight: 42, paddingVertical: 6, borderRadius: 21, borderWidth: 1.2, borderColor: '#213B2A', justifyContent: 'center', alignItems: 'center' },
   countChipOn: { backgroundColor: '#213B2A' },
   countText: { fontSize: 15, fontWeight: '800', color: '#213B2A' },
   countTextOn: { color: '#FFFFFF' },
@@ -423,6 +423,6 @@ const styles = StyleSheet.create({
   tagActionText: { fontSize: 12.5, fontWeight: '700', color: '#213B2A' },
   printBar: { paddingHorizontal: 20, paddingVertical: 12, borderTopWidth: 1, borderTopColor: '#E6ECE8', backgroundColor: '#FFFFFF' },
   tagCode: { fontSize: 13.5, fontWeight: '700', color: '#1E2B22', fontVariant: ['tabular-nums'] },
-  tagUsed: { flex: 1, fontSize: 12.5, color: '#68776D' },
-  tagUnused: { flex: 1, fontSize: 12.5, fontWeight: '700', color: '#215A36' },
+  tagUsed: { flex: 1, minWidth: 0, fontSize: 12.5, color: '#68776D' },
+  tagUnused: { flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: '700', color: '#215A36' },
 });

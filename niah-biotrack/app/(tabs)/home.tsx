@@ -424,7 +424,8 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     backgroundColor: '#213B2A',
     minWidth: 104,
-    height: 36,
+    minHeight: 36,
+    paddingVertical: 8,
     borderRadius: 18,
     paddingHorizontal: 18,
     justifyContent: 'center',
@@ -432,7 +433,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   syncBtnDisabled: { opacity: 0.6 },
-  syncBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+  syncBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700', flexShrink: 1, textAlign: 'center' },
   draftCard: {
     backgroundColor: '#FDF4D8',
     borderRadius: 18,
@@ -451,7 +452,8 @@ const styles = StyleSheet.create({
   },
   actionCard: {
     flex: 1,
-    height: 98,
+    minHeight: 98,
+    paddingVertical: 8,
     backgroundColor: '#DDEAE1',
     borderRadius: 20,
     paddingHorizontal: 10,
@@ -464,6 +466,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#284632',
     textAlign: 'center',
+    flexShrink: 1,
   },
   sectionRow: {
     flexDirection: 'row',
@@ -501,7 +504,7 @@ const styles = StyleSheet.create({
     padding: 18,
     marginBottom: 14,
   },
-  visitorHeroInfo: { flex: 1, paddingRight: 10 },
+  visitorHeroInfo: { flex: 1, minWidth: 0, paddingRight: 10 },
   visitorHeroTitle: { fontSize: 17, fontWeight: '800', color: '#FFFFFF' },
   visitorHeroSub: { fontSize: 12, color: '#CCFBF1', marginTop: 4, lineHeight: 16 },
   visitorHeroIconCircle: {

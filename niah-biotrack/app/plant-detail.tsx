@@ -12,6 +12,7 @@ import {
   Modal,
   Platform,
   ActivityIndicator,
+  Share,
   useWindowDimensions,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
@@ -19,6 +20,7 @@ import {
 
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import Toast from 'react-native-toast-message';
+import { Ionicons } from '@expo/vector-icons';
 
 import {
   IdentificationStatus,
@@ -37,12 +39,11 @@ import { fetchPlantQr, type PlantQr } from '../src/api/plantQr';
 import { downloadTagImage, saveFile, shareFile } from '../src/services/myTags';
 import { ApiError, BASE_URL } from '../src/api/client';
 import PlantThumbnail from '../src/components/PlantThumbnail';
+import MiniPlantMap from '../src/components/MiniPlantMap';
 import { thumbnailSources } from '../src/utils/thumbnailSources';
 import { usePlantListStore } from '../src/store/usePlantListStore';
 import { pickPlantDetails } from '../src/utils/plantDetails';
 import { isPhysicalTag } from '../src/utils/myTags';
-import { useSpeciesStore } from '../src/store/useSpeciesStore';
-import { plainConservationStatus } from '../src/utils/conservationStatus';
 import { formatDiameterCm, formatHeightFromCm, parseMeasurement } from '../src/utils/units';
 import { routeSyncLabel, routesUploadedText } from '../src/utils/routeSync';
 
@@ -61,18 +62,19 @@ const NO_TAG_TEXT = 'No tag attached yet';
 
 const NOT_RECORDED = 'Not recorded';
 
-// Plain words for the record's upload state (never the raw enum value).
-function syncStatusText(status: SyncStatus | string | undefined): string {
+// The upload state as a chip (never the raw enum value): "Synced", "Not uploaded", or
+// "Upload failed" (worth its own colour, the botanist needs to act on it).
+function syncChip(status: SyncStatus | string | undefined): { label: string; bg: string; text: string } {
   switch (String(status ?? '').toLowerCase()) {
     case 'uploaded':
-      return 'Uploaded';
+      return { label: 'Synced', bg: '#E4F2E7', text: '#215A36' };
     case 'failed':
     case 'upload failed':
-      return 'Upload failed';
+      return { label: 'Upload failed', bg: '#FDE2E2', text: '#9B1C1C' };
     case 'syncing':
-      return 'Uploading';
+      return { label: 'Uploading', bg: '#E3ECF8', text: '#1F4E8C' };
     default:
-      return 'Saved on this phone';
+      return { label: 'Not uploaded', bg: '#FDF4D8', text: '#8C5E03' };
   }
 }
 
@@ -91,7 +93,7 @@ function localDiameterCm(record: { diameter?: string; observations: ObservationV
   return parseMeasurement(record.diameter);
 }
 
-function visitChips(observation: ObservationVisit): string[] {
+function observationChips(observation: ObservationVisit): string[] {
   const chips: string[] = [];
 
   if (observation.health) {
@@ -139,6 +141,7 @@ function conditionText(value: string | null): string | null {
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : null;
 }
 
+// A label and its value (wrapping, never clipped).
 function DetailRow({
   label,
   value,
@@ -154,6 +157,17 @@ function DetailRow({
       <Text style={[styles.detailValue, !text && styles.detailEmpty]}>
         {text || NOT_RECORDED}
       </Text>
+    </View>
+  );
+}
+
+// One MEASUREMENTS tile: "—" when nothing is recorded.
+function MeasureTile({ label, value }: { label: string; value: string | null | undefined }) {
+  const text = value?.trim();
+  return (
+    <View style={styles.tile}>
+      <Text style={styles.tileLabel}>{label}</Text>
+      <Text style={[styles.tileValue, !text && styles.tileEmpty]}>{text || '—'}</Text>
     </View>
   );
 }
@@ -187,6 +201,7 @@ export default function PlantDetailScreen() {
   const [photoIndex, setPhotoIndex] = useState(0);
   const [brokenPhotos, setBrokenPhotos] = useState<Record<string, boolean>>({});
   const [deleting, setDeleting] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const [qrVisible, setQrVisible] = useState(false);
   const [qr, setQr] = useState<PlantQr | null>(null);
@@ -195,12 +210,6 @@ export default function PlantDetailScreen() {
   const [qrExporting, setQrExporting] = useState(false);
 
   const matched = records.find((record) => record.id === id);
-  // "About this species": the species saved on this phone (its details once loaded).
-  const speciesId = matched?.speciesId ?? null;
-  const speciesDetail = useSpeciesStore((state) => (speciesId ? state.detailsById[speciesId] ?? null : null));
-  const speciesListItem = useSpeciesStore((state) =>
-    speciesId ? state.species.find((item) => item.id === speciesId) ?? null : null
-  );
   // The signed server thumbnail of an own plant (from the shared plant list), used when the
   // phone has no photo of it: the same picture its list row shows.
   // The server's details of this plant from the Plants list (approved plants), when the
@@ -391,7 +400,10 @@ export default function PlantDetailScreen() {
     matched.reviewStatus === ReviewStatus.DRAFT ||
     matched.reviewStatus === ReviewStatus.REJECTED;
 
-  const canDelete = true;
+  // Delete (in the "⋯" menu): only the botanist's own plants that were never submitted.
+  const canDelete =
+    !matched.otherBotanist &&
+    (matched.reviewStatus === ReviewStatus.DRAFT || !matched.reviewStatus);
 
   const canSubmit =
     canEdit &&
@@ -472,12 +484,66 @@ export default function PlantDetailScreen() {
     );
   };
 
+  // Observations, newest first.
+  const observations = [...visitsHere].sort(
+    (a, b) => (Date.parse(b.observedAt || '') || 0) - (Date.parse(a.observedAt || '') || 0)
+  );
+
+  const recordObservation = () =>
+    router.push({
+      pathname: '/add-observation',
+      params: {
+        plantId: matched.id,
+        tagCode: matched.tagCode ?? '',
+        scientificName: matched.scientificName,
+      },
+    } as any);
+
+  const openFindPlant = () =>
+    router.push({
+      pathname: '/navigate-plant',
+      params: { plantId: matched.id },
+    } as any);
+
+  const openAttachTag = () =>
+    router.push({
+      pathname: '/attach-tag',
+      params: {
+        recordId: matched.id,
+        plantId: matched.serverId || matched.id,
+      },
+    } as any);
+
+  const hasCoordinates = shown.latitude !== null && shown.longitude !== null;
+  // Own plants show "Not recorded" when there is no GPS fix; for someone else's plant the
+  // coordinates appear only when the server lets this user see them (otherwise the row is hidden).
+  const showCoordinatesRow = hasCoordinates || !matched.otherBotanist;
+
+  const sharePlant = async () => {
+    setMenuOpen(false);
+    const lines = [
+      matched.scientificName || 'Plant',
+      matched.commonName?.trim() || null,
+      isPhysicalTag(matched.tagCode) ? `Tag ${matched.tagCode}` : null,
+      shown.locationNote ? `Location: ${shown.locationNote}` : null,
+    ].filter(Boolean);
+    try {
+      await Share.share({ message: lines.join('\n') });
+    } catch {
+      // Closing the share sheet is not an error worth showing.
+    }
+  };
+
+  const sync = syncChip(matched.syncStatus);
+  const commonLine = [matched.commonName?.trim(), matched.family?.trim()].filter(Boolean).join(' · ');
+  const photoCount = photos.length;
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
-        {/* Photos Carousel */}
+        {/* Header photos: swipe; "1 of 2". */}
         <View style={styles.heroBox}>
-          {photos.length > 0 ? (
+          {photoCount > 0 ? (
             <FlatList
               data={photos}
               keyExtractor={(uri, index) => `${index}-${uri}`}
@@ -487,16 +553,8 @@ export default function PlantDetailScreen() {
               onMomentumScrollEnd={handlePhotoScroll}
               renderItem={({ item }) =>
                 brokenPhotos[item] ? (
-                  <View
-                    style={[
-                      styles.heroPhoto,
-                      styles.heroEmpty,
-                      { width },
-                    ]}
-                  >
-                    <Text style={styles.heroEmptyText}>
-                      Photo file is no longer on this device
-                    </Text>
+                  <View style={[styles.heroPhoto, styles.heroEmpty, { width }]}>
+                    <Text style={styles.heroEmptyText}>Photo file is no longer on this device</Text>
                   </View>
                 ) : (
                   <Image
@@ -526,14 +584,9 @@ export default function PlantDetailScreen() {
               })}
               style={[styles.heroPhoto, { width }]}
               placeholder={
-                <View
-                  style={[
-                    styles.heroPhoto,
-                    styles.heroEmpty,
-                    { width },
-                  ]}
-                >
-                  <Text style={styles.heroEmptyText}>No photos recorded</Text>
+                <View style={[styles.heroPhoto, styles.heroEmpty, { width }]}>
+                  <Ionicons name="leaf-outline" size={34} color="#9FB4A6" />
+                  <Text style={styles.heroEmptyText}>No photos yet</Text>
                 </View>
               }
             />
@@ -541,46 +594,107 @@ export default function PlantDetailScreen() {
 
           <TouchableOpacity
             onPress={() => router.back()}
-            style={styles.backCircle}
+            style={[styles.heroButton, styles.heroButtonLeft]}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            hitSlop={8}
           >
-            <Text style={{ color: '#FFF', fontSize: 24 }}>‹</Text>
+            <Ionicons name="chevron-back" size={24} color="#FFFFFF" />
           </TouchableOpacity>
 
-          {photos.length > 0 && (
+          <TouchableOpacity
+            onPress={() => setMenuOpen(true)}
+            style={[styles.heroButton, styles.heroButtonRight]}
+            accessibilityRole="button"
+            accessibilityLabel="More actions"
+            hitSlop={8}
+          >
+            <Ionicons name="ellipsis-horizontal" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
+
+          {photoCount > 1 && (
             <View style={styles.photoCountBadge}>
               <Text style={styles.photoCountText}>
-                {Math.min(photoIndex + 1, photos.length)} / {photos.length}
+                {Math.min(photoIndex + 1, photoCount)} of {photoCount}
               </Text>
             </View>
           )}
         </View>
 
         <View style={styles.sheet}>
-          <Text style={styles.title}>
+          {/* Title block */}
+          <Text style={[styles.title, !needsIdentification && styles.titleItalic]}>
             {matched.scientificName || 'Identification pending'}
           </Text>
+          {commonLine ? <Text style={styles.subtitle}>{commonLine}</Text> : null}
 
-          {/* Record Status */}
-          <View style={styles.statusRow}>
-            <View
-              style={[
-                styles.statusPill,
-                { backgroundColor: review.bg },
-              ]}
-            >
-              <Text style={[styles.statusPillText, { color: review.text }]}>
-                {review.label}
+          <View style={styles.chipRow}>
+            <View style={[styles.chip, { backgroundColor: review.bg }]}>
+              <Text style={[styles.chipText, { color: review.text }]}>{review.label}</Text>
+            </View>
+            <View style={[styles.chip, styles.chipNeutral]}>
+              <Ionicons name="pricetag-outline" size={12} color="#4A5A50" />
+              <Text style={[styles.chipText, styles.chipNeutralText]}>
+                {isPhysicalTag(matched.tagCode) ? matched.tagCode : 'No tag yet'}
               </Text>
             </View>
-            <Text style={styles.syncText}>{syncStatusText(matched.syncStatus)}</Text>
+            <View style={[styles.chip, { backgroundColor: sync.bg }]}>
+              <Text style={[styles.chipText, { color: sync.text }]}>{sync.label}</Text>
+            </View>
           </View>
 
-          {/* Identification Pending Notice */}
+          {matched.tagProblem ? (
+            <View style={[styles.card, styles.tagProblemBox]}>
+              <Text style={styles.tagProblemText}>{TAG_PROBLEM_TEXT[matched.tagProblem]}</Text>
+              {matched.tagProblem === 'in_use' ? (
+                <TouchableOpacity onPress={openAttachTag} hitSlop={8}>
+                  <Text style={styles.tagProblemAction}>Attach a different tag</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ) : null}
+
+          {/* Main actions */}
+          <View style={styles.actionRow}>
+            <TouchableOpacity
+              style={[styles.actionBtn, styles.actionBtnPrimary]}
+              onPress={recordObservation}
+              accessibilityRole="button"
+            >
+              <Ionicons name="add-circle-outline" size={18} color="#FFFFFF" />
+              <Text style={[styles.actionBtnText, styles.actionBtnPrimaryText]}>Record observation</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.actionRow}>
+            <TouchableOpacity style={styles.actionBtn} onPress={openFindPlant} accessibilityRole="button">
+              <Ionicons name="navigate-outline" size={17} color="#213B2A" />
+              <Text style={styles.actionBtnText}>Find plant</Text>
+            </TouchableOpacity>
+
+            {/* A real tag: its QR (own plants, and other botanists' or imported approved
+                plants). No tag yet (or only the "plant:<id>" placeholder): Attach tag on this
+                botanist's own plant; on someone else's plant, just say so. */}
+            {isPhysicalTag(matched.tagCode) ? (
+              <TouchableOpacity style={styles.actionBtn} onPress={() => void openQr()}>
+                <Ionicons name="qr-code-outline" size={17} color="#213B2A" />
+                <Text style={styles.actionBtnText}>Show QR</Text>
+              </TouchableOpacity>
+            ) : matched.otherBotanist ? (
+              <View style={[styles.actionBtn, styles.actionBtnMuted]} accessible accessibilityLabel={NO_TAG_TEXT}>
+                <Text style={styles.actionBtnMutedText}>{NO_TAG_TEXT}</Text>
+              </View>
+            ) : (
+              <TouchableOpacity style={styles.actionBtn} onPress={openAttachTag} accessibilityRole="button">
+                <Ionicons name="pricetag-outline" size={17} color="#213B2A" />
+                <Text style={styles.actionBtnText}>Attach tag</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Identification pending */}
           {needsIdentification && (
             <View style={styles.identificationCard}>
-              <Text style={styles.identificationTitle}>
-                Identification pending
-              </Text>
+              <Text style={styles.identificationTitle}>Identification pending</Text>
               <Text style={styles.identificationText}>
                 Photos, GPS and field information are stored on this device.
                 Continue editing when you can confirm an approved species.
@@ -595,15 +709,13 @@ export default function PlantDetailScreen() {
                     } as any)
                   }
                 >
-                  <Text style={styles.continueBtnText}>
-                    Continue identification
-                  </Text>
+                  <Text style={styles.continueBtnText}>Continue identification</Text>
                 </TouchableOpacity>
               )}
             </View>
           )}
 
-          {/* Officer Rejection Comment */}
+          {/* Officer's reason */}
           {matched.reviewStatus === ReviewStatus.REJECTED && (
             <View style={styles.commentBox}>
               <Text style={styles.commentTitle}>Officer's reason</Text>
@@ -613,19 +725,16 @@ export default function PlantDetailScreen() {
             </View>
           )}
 
-          {/* Submit Review Action */}
+          {/* Submit for review */}
           {canSubmit ? (
             <TouchableOpacity style={styles.submitBtn} onPress={handleSubmit}>
               <Text style={styles.submitBtnText}>
-                {matched.reviewStatus === ReviewStatus.REJECTED
-                  ? 'Resubmit for review'
-                  : 'Submit for review'}
+                {matched.reviewStatus === ReviewStatus.REJECTED ? 'Resubmit for review' : 'Submit for review'}
               </Text>
             </TouchableOpacity>
           ) : needsIdentification ? (
             <Text style={styles.lockedNote}>
-              Confirm the species before submitting this record for officer
-              review.
+              Confirm the species before submitting this record for officer review.
             </Text>
           ) : matched.reviewStatus === ReviewStatus.PENDING ? (
             <Text style={styles.lockedNote}>
@@ -635,116 +744,73 @@ export default function PlantDetailScreen() {
             </Text>
           ) : null}
 
-          {/* This plant: its tag, place, measurements, condition and observations. */}
-          <Text style={styles.heading}>THIS PLANT</Text>
-
-          <View style={styles.detailCard}>
-            <DetailRow
-              label="Plant tag"
-              value={isPhysicalTag(matched.tagCode) ? matched.tagCode : 'No tag attached'}
-            />
-
-            {matched.tagProblem ? (
-              <View style={styles.tagProblemBox}>
-                <Text style={styles.tagProblemText}>
-                  {TAG_PROBLEM_TEXT[matched.tagProblem]}
-                </Text>
-                {matched.tagProblem === 'in_use' ? (
-                  <TouchableOpacity
-                    onPress={() =>
-                      router.push({
-                        pathname: '/attach-tag',
-                        params: {
-                          recordId: matched.id,
-                          plantId: matched.serverId || matched.id,
-                        },
-                      } as any)
-                    }
-                    hitSlop={8}
-                  >
-                    <Text style={styles.tagProblemAction}>
-                      Attach a different tag
-                    </Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-            ) : null}
-            <DetailRow label="Location note" value={shown.locationNote} />
-            <DetailRow label="Coordinates" value={coordinates} />
-            <DetailRow
-              label="Height (m)"
-              value={formatHeightFromCm(shown.heightCm) ?? NOT_RECORDED}
-            />
-            <DetailRow
-              label="Diameter (cm)"
-              value={formatDiameterCm(shown.diameterCm) ?? NOT_RECORDED}
-            />
-            <DetailRow label="Health" value={conditionText(shown.health)} />
-            <DetailRow label="Life stage" value={conditionText(shown.stage)} />
+          {/* MEASUREMENTS */}
+          <Text style={styles.heading}>MEASUREMENTS</Text>
+          <View style={styles.tileGrid}>
+            <MeasureTile label="Height (m)" value={formatHeightFromCm(shown.heightCm)} />
+            <MeasureTile label="Diameter (cm)" value={formatDiameterCm(shown.diameterCm)} />
+            <MeasureTile label="Health" value={conditionText(shown.health)} />
+            <MeasureTile label="Life stage" value={conditionText(shown.stage)} />
           </View>
 
-          {shown.morphology ? (
-            <>
-              <Text style={styles.heading}>MORPHOLOGICAL CHARACTERISTICS</Text>
-              <Text style={styles.body}>{shown.morphology}</Text>
-            </>
-          ) : null}
+          {/* LOCATION */}
+          <Text style={styles.heading}>LOCATION</Text>
+          <View style={styles.card}>
+            {hasCoordinates ? (
+              <TouchableOpacity
+                onPress={openFindPlant}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Open Find plant"
+                style={styles.miniMapWrap}
+              >
+                <MiniPlantMap latitude={shown.latitude as number} longitude={shown.longitude as number} />
+              </TouchableOpacity>
+            ) : null}
+            <DetailRow label="Location note" value={shown.locationNote} />
+            {showCoordinatesRow ? (
+              <DetailRow label="Coordinates" value={hasCoordinates ? coordinates : null} />
+            ) : null}
+          </View>
 
-          {shown.notes ? (
+          {/* FIELD NOTES (hidden when both are empty) */}
+          {shown.morphology || shown.notes ? (
             <>
-              <Text style={styles.heading}>NOTES</Text>
-              <Text style={styles.body}>{shown.notes}</Text>
-            </>
-          ) : null}
-
-          {/* About this species: what is known about the species in general. */}
-          {!needsIdentification && (
-            <>
-              <Text style={styles.heading}>ABOUT THIS SPECIES</Text>
-              <View style={styles.detailCard}>
-                <DetailRow
-                  label="Scientific name"
-                  value={speciesDetail?.scientific_name ?? speciesListItem?.scientific_name ?? matched.scientificName}
-                />
-                <DetailRow
-                  label="Common name"
-                  value={speciesDetail?.common_name ?? speciesListItem?.common_name ?? matched.commonName}
-                />
-                <DetailRow label="Local name" value={speciesDetail?.local_name ?? speciesListItem?.local_name} />
-                <DetailRow label="Family" value={speciesDetail?.taxonomy?.family ?? speciesListItem?.taxonomy?.family ?? matched.family} />
-                <DetailRow
-                  label="Conservation status"
-                  value={plainConservationStatus(speciesDetail?.conservation_status ?? speciesListItem?.conservation_status).label}
-                />
-                <DetailRow label="Habitat" value={speciesDetail?.habitat} />
-                <DetailRow label="Description" value={speciesDetail?.description ?? speciesListItem?.description} />
+              <Text style={styles.heading}>FIELD NOTES</Text>
+              <View style={styles.card}>
+                {shown.morphology ? (
+                  <View style={styles.noteBlock}>
+                    <Text style={styles.noteLabel}>Morphology</Text>
+                    <Text style={styles.body}>{shown.morphology}</Text>
+                  </View>
+                ) : null}
+                {shown.notes ? (
+                  <View style={styles.noteBlock}>
+                    <Text style={styles.noteLabel}>Notes</Text>
+                    <Text style={styles.body}>{shown.notes}</Text>
+                  </View>
+                ) : null}
               </View>
             </>
-          )}
+          ) : null}
 
-          {/* Photos Upload Status */}
-          {photoStates.length > 0 && (
+          {/* Photos that can't upload (too large, locked, missing): explain and offer Remove. */}
+          {photoProblems.length > 0 || untypedCount > 0 ? (
             <>
               <Text style={styles.heading}>PHOTOS</Text>
-              <View style={styles.detailCard}>
+              <View style={styles.card}>
                 <Text style={styles.photoSummary}>
                   {photoStates.length} on this phone · {uploadedPhotoCount} uploaded
                 </Text>
-
                 {untypedCount > 0 && (
                   <Text style={styles.photoNote}>
-                    {untypedCount} older{' '}
-                    {untypedCount === 1 ? 'photo stays' : 'photos stay'} on this
-                    phone only.
+                    {untypedCount} older {untypedCount === 1 ? 'photo stays' : 'photos stay'} on this phone only.
                   </Text>
                 )}
-
                 {photoProblems.map((photo) => (
                   <View key={photo.uri} style={styles.photoProblemRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.photoProblemLabel}>
-                        {photo.label}
-                      </Text>
+                    <View style={styles.flexText}>
+                      <Text style={styles.photoProblemLabel}>{photo.label}</Text>
                       <Text style={styles.photoProblemText}>
                         {photo.meta?.problem === 'too_large'
                           ? "Over 5 MB, so it can't be uploaded. Remove it so the rest can upload."
@@ -753,12 +819,8 @@ export default function PlantDetailScreen() {
                           : 'The photo file is no longer on this phone.'}
                       </Text>
                     </View>
-
                     {photo.meta?.problem !== 'locked' && (
-                      <TouchableOpacity
-                        onPress={() => confirmRemovePhoto(photo.uri, photo.obsId)}
-                        hitSlop={8}
-                      >
+                      <TouchableOpacity onPress={() => confirmRemovePhoto(photo.uri, photo.obsId)} hitSlop={8}>
                         <Text style={styles.photoRemove}>Remove</Text>
                       </TouchableOpacity>
                     )}
@@ -766,87 +828,44 @@ export default function PlantDetailScreen() {
                 ))}
               </View>
             </>
-          )}
+          ) : null}
 
-          {/* Navigation and QR Plaque Actions */}
-          <View style={styles.actionRow}>
-            <TouchableOpacity
-              style={styles.actionBtn}
-              onPress={() =>
-                router.push({
-                  pathname: '/navigate-plant',
-                  params: { plantId: matched.id },
-                } as any)
-              }
-            >
-              <Text style={styles.actionBtnText}>🧭 Find plant</Text>
-            </TouchableOpacity>
-
-            {/* A real tag: its QR (own plants, and other botanists' or imported approved
-                plants). No tag yet (or only the "plant:<id>" placeholder): Attach tag on this
-                botanist's own plant; on someone else's plant, just say so. */}
-            {isPhysicalTag(matched.tagCode) ? (
-              <TouchableOpacity style={styles.actionBtn} onPress={() => void openQr()}>
-                <Text style={styles.actionBtnText}>🔳 Show QR</Text>
-              </TouchableOpacity>
-            ) : matched.otherBotanist ? (
-              <View style={[styles.actionBtn, styles.actionBtnMuted]} accessible accessibilityLabel={NO_TAG_TEXT}>
-                <Text style={styles.actionBtnMutedText}>{NO_TAG_TEXT}</Text>
-              </View>
-            ) : (
-              <TouchableOpacity
-                style={styles.actionBtn}
-                onPress={() =>
-                  router.push({
-                    pathname: '/attach-tag',
-                    params: {
-                      recordId: matched.id,
-                      plantId: matched.serverId || matched.id,
-                    },
-                  } as any)
-                }
-              >
-                <Text style={styles.actionBtnText}>🏷️ Attach tag</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {/* Observations */}
+          {/* OBSERVATIONS, newest first */}
           <View style={styles.obsHeaderRow}>
-            <Text style={styles.heading}>OBSERVATIONS</Text>
-            <Text style={styles.obsCount}>
-              {(matched.observations ?? []).length} {(matched.observations ?? []).length === 1 ? 'observation' : 'observations'}
-            </Text>
+            <Text style={[styles.heading, styles.flexText]}>OBSERVATIONS</Text>
+            {observations.length > 0 ? (
+              <Text style={styles.obsCount}>
+                {observations.length} {observations.length === 1 ? 'observation' : 'observations'}
+              </Text>
+            ) : null}
           </View>
 
-          {(matched.observations ?? []).map((observation) => (
-            <View key={observation.id} style={styles.timelineItem}>
-              <View style={styles.timelineLine} />
-              <View style={styles.timelineDot} />
-              <View style={styles.obsCard}>
-                {/* Each visit's status and reason (visits are no longer rows on the Plants tab). */}
-                {(() => {
-                  const status = visitStatus(observation, matched.syncError);
-                  return (
-                    <>
-                      <View style={styles.obsCardTop}>
-                        <Text style={styles.obsDate}>{observation.date}</Text>
-                        <View style={[styles.visitBadge, { backgroundColor: status.badge.bg }]}>
-                          <Text style={[styles.visitBadgeText, { color: status.badge.text }]} numberOfLines={1}>
-                            {status.badge.label}
-                          </Text>
-                        </View>
-                      </View>
-                      {status.reason ? <Text style={styles.visitReason}>{status.reason}</Text> : null}
-                    </>
-                  );
-                })()}
-
-                <Text style={styles.obsAuthor}>{observation.recordedBy}</Text>
-
-                {(() => {
-                  const chips = visitChips(observation);
-                  return chips.length > 0 ? (
+          {observations.length === 0 ? (
+            <View style={[styles.card, styles.emptyObs]}>
+              <Text style={styles.emptyObsTitle}>No observations yet</Text>
+              <Text style={styles.emptyObsText}>Record an observation each time you check this plant.</Text>
+              <TouchableOpacity style={styles.emptyObsBtn} onPress={recordObservation} accessibilityRole="button">
+                <Text style={styles.emptyObsBtnText}>+ Record first observation</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            observations.map((observation) => {
+              // Each observation's review status and the officer's reason if it was sent back.
+              const status = visitStatus(observation, matched.syncError);
+              const chips = observationChips(observation);
+              return (
+                <View key={observation.id} style={[styles.card, styles.obsCard]}>
+                  <View style={styles.obsCardTop}>
+                    <Text style={[styles.obsDate, styles.flexText]}>{observation.date}</Text>
+                    <View style={[styles.statusBadge, { backgroundColor: status.badge.bg }]}>
+                      <Text style={[styles.statusBadgeText, { color: status.badge.text }]}>
+                        {status.badge.label}
+                      </Text>
+                    </View>
+                  </View>
+                  {observation.recordedBy ? <Text style={styles.obsAuthor}>{observation.recordedBy}</Text> : null}
+                  {status.reason ? <Text style={styles.obsReason}>{status.reason}</Text> : null}
+                  {chips.length > 0 ? (
                     <View style={styles.pillGroup}>
                       {chips.map((chip) => (
                         <View key={chip} style={styles.tagPill}>
@@ -854,78 +873,80 @@ export default function PlantDetailScreen() {
                         </View>
                       ))}
                     </View>
-                  ) : null;
-                })()}
-
-                {observation.notes ? (
-                  <Text style={styles.obsNotes}>{observation.notes}</Text>
-                ) : null}
-
-                {observation.photoUris && observation.photoUris.length > 0 ? (
-                  <Text style={styles.obsPhotos}>
-                    📷 {observation.photoUris.length}{' '}
-                    {observation.photoUris.length === 1 ? 'photo' : 'photos'}
-                  </Text>
-                ) : null}
-              </View>
-            </View>
-          ))}
-
-          {(matched.observations ?? []).length === 0 ? (
-            <Text style={styles.noObservations}>No observations recorded yet.</Text>
-          ) : null}
-
-          <TouchableOpacity
-            style={styles.addObsBtn}
-            onPress={() =>
-              router.push({
-                pathname: '/add-observation',
-                params: {
-                  plantId: matched.id,
-                  tagCode: matched.tagCode ?? '',
-                  scientificName: matched.scientificName,
-                },
-              } as any)
-            }
-          >
-            <Text style={styles.addObsBtnText}>+ Add observation</Text>
-          </TouchableOpacity>
-
-          {/* From the old Plants tab: register another plant of the same species. */}
-          {matched.speciesId ? (
-            <TouchableOpacity
-              style={styles.addSameSpeciesBtn}
-              onPress={() =>
-                router.push({
-                  pathname: '/new-record',
-                  params: { speciesId: matched.speciesId },
-                } as any)
-              }
-              accessibilityRole="button"
-            >
-              <Text style={styles.addSameSpeciesText}>+ Add plant of this species</Text>
-            </TouchableOpacity>
-          ) : null}
-
-          {/* Delete Record */}
-          {canDelete && (
-            <TouchableOpacity
-              style={[
-                styles.deleteBtn,
-                deleting && styles.deleteBtnDisabled,
-              ]}
-              disabled={deleting}
-              onPress={handleDelete}
-            >
-              {deleting ? (
-                <ActivityIndicator size="small" color="#B42318" />
-              ) : (
-                <Text style={styles.deleteBtnText}>Delete record</Text>
-              )}
-            </TouchableOpacity>
+                  ) : null}
+                  {observation.notes ? <Text style={styles.obsNotes}>{observation.notes}</Text> : null}
+                  {observation.photoUris && observation.photoUris.length > 0 ? (
+                    <Text style={styles.obsPhotos}>
+                      📷 {observation.photoUris.length} {observation.photoUris.length === 1 ? 'photo' : 'photos'}
+                    </Text>
+                  ) : null}
+                </View>
+              );
+            })
           )}
+
+          <View style={{ height: 32 }} />
         </View>
       </ScrollView>
+
+      {/* "⋯" menu: the rarer actions */}
+      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
+        <TouchableOpacity style={styles.menuBackdrop} activeOpacity={1} onPress={() => setMenuOpen(false)}>
+          <View style={styles.menuSheet}>
+            {matched.speciesId ? (
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => {
+                  setMenuOpen(false);
+                  router.push({ pathname: '/new-record', params: { speciesId: matched.speciesId } } as any);
+                }}
+                accessibilityRole="button"
+              >
+                <Ionicons name="add-outline" size={20} color="#213B2A" />
+                <Text style={styles.menuText}>Add plant of this species</Text>
+              </TouchableOpacity>
+            ) : null}
+            {!matched.otherBotanist ? (
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => {
+                  setMenuOpen(false);
+                  openAttachTag();
+                }}
+                accessibilityRole="button"
+              >
+                <Ionicons name="pricetag-outline" size={20} color="#213B2A" />
+                <Text style={styles.menuText}>{isPhysicalTag(matched.tagCode) ? 'Change tag' : 'Attach tag'}</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity style={styles.menuItem} onPress={() => void sharePlant()} accessibilityRole="button">
+              <Ionicons name="share-outline" size={20} color="#213B2A" />
+              <Text style={styles.menuText}>Share</Text>
+            </TouchableOpacity>
+            {canDelete ? (
+              <TouchableOpacity
+                style={styles.menuItem}
+                disabled={deleting}
+                onPress={() => {
+                  setMenuOpen(false);
+                  handleDelete();
+                }}
+                accessibilityRole="button"
+              >
+                {deleting ? (
+                  <ActivityIndicator size="small" color="#B42318" />
+                ) : (
+                  <Ionicons name="trash-outline" size={20} color="#B42318" />
+                )}
+                <Text style={[styles.menuText, styles.menuDanger]}>Delete record</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity style={[styles.menuItem, styles.menuCancel]} onPress={() => setMenuOpen(false)}>
+              <Text style={[styles.menuText, styles.menuCancelText]}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* QR Plaque Modal */}
       <Modal
@@ -937,11 +958,7 @@ export default function PlantDetailScreen() {
         <View style={styles.qrBackdrop}>
           <View style={styles.qrCard}>
             {qrLoading ? (
-              <ActivityIndicator
-                size="large"
-                color="#213B2A"
-                style={{ marginVertical: 80 }}
-              />
+              <ActivityIndicator size="large" color="#213B2A" style={{ marginVertical: 80 }} />
             ) : qr ? (
               <>
                 <Image
@@ -954,9 +971,7 @@ export default function PlantDetailScreen() {
                   accessibilityLabel={`QR code for ${qr.qrValue}`}
                 />
                 <Text style={styles.qrTag}>{qr.qrValue}</Text>
-                <Text style={styles.qrHint}>
-                  Scanning it opens the plant's public visitor page.
-                </Text>
+                <Text style={styles.qrHint}>Scanning it opens the plant's public visitor page.</Text>
                 <View style={styles.qrActions}>
                   <TouchableOpacity
                     style={[styles.qrPrimary, styles.qrAction, qrExporting && { opacity: 0.6 }]}
@@ -977,9 +992,7 @@ export default function PlantDetailScreen() {
                 </View>
               </>
             ) : (
-              <Text style={styles.qrError}>
-                {qrError || 'Could not load the QR code.'}
-              </Text>
+              <Text style={styles.qrError}>{qrError || 'Could not load the QR code.'}</Text>
             )}
 
             {!qrLoading && !qr && (
@@ -994,10 +1007,7 @@ export default function PlantDetailScreen() {
               </TouchableOpacity>
             )}
 
-            <TouchableOpacity
-              style={styles.qrSecondary}
-              onPress={() => setQrVisible(false)}
-            >
+            <TouchableOpacity style={styles.qrSecondary} onPress={() => setQrVisible(false)}>
               <Text style={styles.qrSecondaryText}>Close</Text>
             </TouchableOpacity>
           </View>
@@ -1007,70 +1017,19 @@ export default function PlantDetailScreen() {
   );
 }
 
+// Text never overflows: every Text in a row can shrink and wrap (flexShrink: 1, minWidth: 0),
+// buttons grow taller instead of clipping (minHeight, not height), and chips wrap to a new line.
 const styles = StyleSheet.create({
-  routeProblemRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#EEF2EF',
-  },
-  routeProblemText: {
-    flex: 1,
-    minWidth: 0,
-    fontSize: 12,
-    color: '#9B1C1C',
-    lineHeight: 17,
-  },
-  routeRetry: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#9B1C1C',
-    textDecorationLine: 'underline',
-  },
-  tagProblemBox: {
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#EEF2EF',
-  },
-  tagProblemText: {
-    fontSize: 12,
-    color: '#9B1C1C',
-    lineHeight: 17,
-  },
-  tagProblemAction: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#213B2A',
-    textDecorationLine: 'underline',
-    marginTop: 6,
-  },
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#F6F8F6',
-  },
-  heroBox: {
-    height: 260,
-    backgroundColor: '#2B3A30',
-    position: 'relative',
-  },
-  heroPhoto: {
-    height: 260,
-  },
-  heroEmpty: {
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  heroEmptyText: {
-    color: '#DCE4DF',
-    fontSize: 13.5,
-    fontWeight: '600',
-  },
-  backCircle: {
+  safeArea: { flex: 1, backgroundColor: '#F6F8F6' },
+  flexText: { flex: 1, flexShrink: 1, minWidth: 0 },
+
+  heroBox: { height: 260, backgroundColor: '#2B3A30', position: 'relative' },
+  heroPhoto: { height: 260 },
+  heroEmpty: { justifyContent: 'center', alignItems: 'center', gap: 6 },
+  heroEmptyText: { color: '#DCE4DF', fontSize: 13.5, fontWeight: '600', textAlign: 'center', paddingHorizontal: 24 },
+  heroButton: {
     position: 'absolute',
-    top: 30,
-    left: 20,
+    top: Platform.OS === 'android' ? 36 : 16,
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -1078,434 +1037,236 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  heroButtonLeft: { left: 16 },
+  heroButtonRight: { right: 16 },
   photoCountBadge: {
     position: 'absolute',
-    bottom: 16,
-    right: 16,
+    bottom: 14,
+    right: 14,
     backgroundColor: 'rgba(0,0,0,0.6)',
     paddingVertical: 4,
     paddingHorizontal: 12,
     borderRadius: 14,
   },
-  photoCountText: {
-    color: '#FFF',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  sheet: {
-    padding: 22,
-    backgroundColor: '#F6F8F6',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#1E2B22',
-  },
-  statusRow: {
+  photoCountText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
+
+  sheet: { padding: 20, backgroundColor: '#F6F8F6' },
+  title: { fontSize: 24, fontWeight: '800', color: '#1E2B22', flexShrink: 1 },
+  titleItalic: { fontStyle: 'italic' },
+  subtitle: { fontSize: 14, color: '#526659', marginTop: 4, flexShrink: 1 },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
+  chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginTop: 8,
-    marginBottom: 12,
+    gap: 4,
+    maxWidth: '100%',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 14,
   },
-  statusPill: {
-    paddingVertical: 5,
-    paddingHorizontal: 12,
-    borderRadius: 16,
-  },
-  statusPillText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  syncText: {
-    fontSize: 12,
-    color: '#68776D',
-    fontWeight: '600',
-  },
-  heading: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#6A7D71',
-    letterSpacing: 0.8,
-    marginTop: 16,
-    marginBottom: 6,
-  },
-  body: {
-    fontSize: 13.5,
-    color: '#2B392F',
-    lineHeight: 20,
-  },
-  detailCard: {
+  chipText: { fontSize: 12, fontWeight: '700', flexShrink: 1 },
+  chipNeutral: { backgroundColor: '#EEF1EF' },
+  chipNeutralText: { color: '#4A5A50' },
+
+  card: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     borderWidth: 1.2,
     borderColor: '#E6ECE8',
     paddingHorizontal: 14,
+    paddingVertical: 4,
   },
-  detailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 11,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E6ECE8',
-    gap: 12,
-  },
-  detailLabel: {
-    fontSize: 13,
-    color: '#68776D',
-  },
-  detailValue: {
+  tagProblemBox: { marginTop: 12, paddingVertical: 10 },
+  tagProblemText: { fontSize: 12.5, color: '#9B1C1C', lineHeight: 17, flexShrink: 1 },
+  tagProblemAction: { fontSize: 12.5, fontWeight: '700', color: '#213B2A', textDecorationLine: 'underline', marginTop: 6 },
+
+  actionRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  actionBtn: {
     flex: 1,
-    textAlign: 'right',
-    fontSize: 13.5,
-    fontWeight: '600',
-    color: '#1E2B22',
+    minWidth: 0,
+    flexDirection: 'row',
+    gap: 6,
+    backgroundColor: '#FFFFFF',
+    minHeight: 46,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 23,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1.2,
+    borderColor: '#DCE4DF',
   },
-  detailEmpty: {
-    color: '#98A69D',
-    fontStyle: 'italic',
-    fontWeight: '400',
-  },
+  actionBtnText: { color: '#213B2A', fontWeight: '700', fontSize: 14, flexShrink: 1, textAlign: 'center' },
+  actionBtnPrimary: { backgroundColor: '#213B2A', borderColor: '#213B2A', minHeight: 50 },
+  actionBtnPrimaryText: { color: '#FFFFFF', fontSize: 15 },
+  actionBtnMuted: { backgroundColor: '#F1F4F2', borderStyle: 'dashed' },
+  actionBtnMutedText: { color: '#68776D', fontWeight: '600', fontSize: 13, flexShrink: 1, textAlign: 'center' },
+
   identificationCard: {
     backgroundColor: '#FDF4D8',
     borderRadius: 16,
     borderWidth: 1.2,
     borderColor: '#F2D98C',
     padding: 14,
-    marginBottom: 12,
+    marginTop: 14,
   },
-  identificationTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#7A5200',
-  },
-  identificationText: {
-    fontSize: 12.5,
-    color: '#6A5730',
-    lineHeight: 18,
-    marginTop: 4,
-  },
+  identificationTitle: { fontSize: 14, fontWeight: '800', color: '#7A5200' },
+  identificationText: { fontSize: 12.5, color: '#6A5730', lineHeight: 18, marginTop: 4 },
   continueBtn: {
     backgroundColor: '#213B2A',
-    height: 44,
+    minHeight: 44,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
     borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 12,
   },
-  continueBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13.5,
-    fontWeight: '700',
-  },
+  continueBtnText: { color: '#FFFFFF', fontSize: 13.5, fontWeight: '700', textAlign: 'center' },
   commentBox: {
     backgroundColor: '#FDF2F2',
     borderRadius: 16,
     borderWidth: 1.2,
     borderColor: '#F5C9C9',
     padding: 14,
-    marginBottom: 12,
+    marginTop: 14,
   },
-  commentTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#9B1C1C',
-    marginBottom: 4,
-  },
-  commentBody: {
-    fontSize: 13.5,
-    color: '#1E2B22',
-    lineHeight: 19,
-  },
+  commentTitle: { fontSize: 12, fontWeight: '800', color: '#9B1C1C', marginBottom: 4 },
+  commentBody: { fontSize: 13.5, color: '#1E2B22', lineHeight: 19 },
   submitBtn: {
     backgroundColor: '#213B2A',
-    height: 48,
+    minHeight: 48,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 8,
+    marginTop: 14,
   },
-  submitBtnText: {
-    color: '#FFFFFF',
-    fontSize: 14.5,
-    fontWeight: '700',
-  },
-  lockedNote: {
-    fontSize: 12.5,
-    color: '#68776D',
-    marginBottom: 8,
-  },
-  photoSummary: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1E2B22',
-    paddingVertical: 6,
-  },
-  photoNote: {
+  submitBtnText: { color: '#FFFFFF', fontSize: 14.5, fontWeight: '700', textAlign: 'center' },
+  lockedNote: { fontSize: 12.5, color: '#68776D', marginTop: 12, lineHeight: 18 },
+
+  heading: {
     fontSize: 12,
-    color: '#68776D',
-    paddingBottom: 6,
+    fontWeight: '800',
+    color: '#6A7D71',
+    letterSpacing: 0.8,
+    marginTop: 22,
+    marginBottom: 8,
   },
+  body: { fontSize: 13.5, color: '#2B392F', lineHeight: 20 },
+
+  tileGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  tile: {
+    flexGrow: 1,
+    flexBasis: '45%',
+    minWidth: 0,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1.2,
+    borderColor: '#E6ECE8',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+  },
+  tileLabel: { fontSize: 12, color: '#68776D', fontWeight: '600' },
+  tileValue: { fontSize: 18, fontWeight: '800', color: '#1E2B22', marginTop: 4, flexShrink: 1 },
+  tileEmpty: { color: '#98A69D' },
+
+  miniMapWrap: { marginTop: 10, marginBottom: 4 },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    paddingVertical: 11,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E6ECE8',
+    gap: 12,
+  },
+  detailLabel: { fontSize: 13, color: '#68776D', flexShrink: 0, maxWidth: '45%' },
+  detailValue: { flex: 1, minWidth: 0, flexShrink: 1, textAlign: 'right', fontSize: 13.5, fontWeight: '600', color: '#1E2B22' },
+  detailEmpty: { color: '#98A69D', fontStyle: 'italic', fontWeight: '400' },
+
+  noteBlock: { paddingVertical: 10 },
+  noteLabel: { fontSize: 12, fontWeight: '700', color: '#68776D', marginBottom: 4 },
+
+  photoSummary: { fontSize: 13, fontWeight: '700', color: '#1E2B22', paddingVertical: 8 },
+  photoNote: { fontSize: 12, color: '#68776D', paddingBottom: 8 },
   photoProblemRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
     paddingVertical: 8,
     borderTopWidth: 1,
     borderTopColor: '#EEF2EF',
   },
-  photoProblemLabel: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#1E2B22',
-  },
-  photoProblemText: {
-    fontSize: 12,
-    color: '#9B1C1C',
-    marginTop: 2,
-  },
-  photoRemove: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#9B1C1C',
-    textDecorationLine: 'underline',
-    marginLeft: 12,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginVertical: 18,
-  },
-  actionBtn: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    height: 48,
-    borderRadius: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1.2,
-    borderColor: '#DCE4DF',
-    marginHorizontal: 4,
-  },
-  actionBtnText: {
-    color: '#213B2A',
-    fontWeight: '700',
-    fontSize: 13.5,
-  },
-  actionBtnMuted: {
-    backgroundColor: '#F1F4F2',
-    borderStyle: 'dashed',
-  },
-  actionBtnMutedText: {
-    color: '#68776D',
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  obsHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 10,
-    marginBottom: 12,
-  },
-  noObservations: { fontSize: 13, color: '#68776D', marginBottom: 12 },
-  obsCount: {
-    fontSize: 12,
-    color: '#68776D',
-    fontWeight: '600',
-  },
-  timelineItem: {
-    position: 'relative',
-    paddingLeft: 24,
-    marginBottom: 16,
-  },
-  timelineLine: {
-    position: 'absolute',
-    left: 6,
-    top: 12,
-    bottom: -12,
-    width: 2,
-    backgroundColor: '#D6E2DA',
-  },
-  timelineDot: {
-    position: 'absolute',
-    left: 2,
-    top: 6,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+  photoProblemLabel: { fontSize: 12.5, fontWeight: '700', color: '#1E2B22' },
+  photoProblemText: { fontSize: 12, color: '#9B1C1C', marginTop: 2 },
+  photoRemove: { fontSize: 12.5, fontWeight: '700', color: '#9B1C1C', textDecorationLine: 'underline' },
+
+  obsHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  obsCount: { fontSize: 12, color: '#68776D', fontWeight: '600', marginTop: 14, flexShrink: 0 },
+  obsCard: { paddingVertical: 12, marginBottom: 10 },
+  obsCardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  obsDate: { fontSize: 13.5, fontWeight: '700', color: '#1E2B22' },
+  statusBadge: { flexShrink: 1, maxWidth: '55%', paddingVertical: 3, paddingHorizontal: 9, borderRadius: 12 },
+  statusBadgeText: { fontSize: 11.5, fontWeight: '700', flexShrink: 1 },
+  obsAuthor: { fontSize: 12, color: '#7E8F83', marginTop: 2 },
+  obsReason: { fontSize: 12.5, fontWeight: '600', color: '#9B1C1C', marginTop: 6, lineHeight: 17 },
+  pillGroup: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  tagPill: { maxWidth: '100%', backgroundColor: '#EDF5EF', paddingVertical: 3, paddingHorizontal: 8, borderRadius: 8 },
+  tagPillText: { fontSize: 11.5, fontWeight: '700', color: '#213B2A', flexShrink: 1 },
+  obsNotes: { fontSize: 13, color: '#3A483E', lineHeight: 18, marginTop: 8 },
+  obsPhotos: { fontSize: 12, color: '#526659', fontWeight: '600', marginTop: 6 },
+  emptyObs: { alignItems: 'center', paddingVertical: 18, paddingHorizontal: 16 },
+  emptyObsTitle: { fontSize: 15, fontWeight: '800', color: '#1E2B22', textAlign: 'center' },
+  emptyObsText: { fontSize: 13, color: '#68776D', marginTop: 4, textAlign: 'center', lineHeight: 18 },
+  emptyObsBtn: {
+    marginTop: 12,
+    minHeight: 44,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 22,
     backgroundColor: '#213B2A',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  obsCard: {
+  emptyObsBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14, textAlign: 'center' },
+
+
+  menuBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  menuSheet: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1.2,
-    borderColor: '#E6ECE8',
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    paddingTop: 8,
+    paddingBottom: 24,
+    paddingHorizontal: 12,
   },
-  obsCardTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  obsDate: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1E2B22',
-  },
-  obsStatus: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#215A36',
-  },
-  visitBadge: { flexShrink: 1, marginLeft: 8, paddingVertical: 3, paddingHorizontal: 9, borderRadius: 12 },
-  visitBadgeText: { fontSize: 11, fontWeight: '700' },
-  visitReason: { fontSize: 12, fontWeight: '600', color: '#9B1C1C', marginTop: 4 },
-  obsAuthor: {
-    fontSize: 11.5,
-    color: '#7E8F83',
-    marginTop: 2,
-  },
-  pillGroup: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginVertical: 8,
-  },
-  tagPill: {
-    backgroundColor: '#EDF5EF',
-    paddingVertical: 3,
-    paddingHorizontal: 8,
-    borderRadius: 8,
-    marginRight: 6,
-    marginBottom: 6,
-  },
-  tagPillText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#213B2A',
-  },
-  obsNotes: {
-    fontSize: 12.5,
-    color: '#3A483E',
-    lineHeight: 18,
-    marginTop: 2,
-  },
-  obsPhotos: {
-    fontSize: 11.5,
-    color: '#526659',
-    fontWeight: '600',
-    marginTop: 6,
-  },
-  addObsBtn: {
-    backgroundColor: '#213B2A',
-    height: 52,
-    borderRadius: 26,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 16,
-    marginBottom: 16,
-  },
-  addObsBtnText: {
-    color: '#FFF',
-    fontWeight: '700',
-    fontSize: 14.5,
-  },
-  addSameSpeciesBtn: {
-    height: 48,
-    borderRadius: 24,
-    borderWidth: 1.2,
-    borderColor: '#213B2A',
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: -6,
-    marginBottom: 16,
-  },
-  addSameSpeciesText: {
-    color: '#213B2A',
-    fontWeight: '700',
-    fontSize: 14,
-  },
-  deleteBtn: {
-    height: 50,
-    borderRadius: 25,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1.4,
-    borderColor: '#C62828',
-    backgroundColor: '#FFF5F5',
-    marginBottom: 34,
-  },
-  deleteBtnDisabled: {
-    opacity: 0.55,
-  },
-  deleteBtnText: {
-    color: '#B42318',
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  qrBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    justifyContent: 'center',
-    padding: 24,
-  },
-  qrCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 24,
-    alignItems: 'center',
-  },
-  qrTag: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#1E2B22',
-    marginTop: 14,
-    letterSpacing: 1,
-  },
-  qrHint: {
-    fontSize: 12.5,
-    color: '#68776D',
-    marginTop: 4,
-    textAlign: 'center',
-  },
-  qrError: {
-    fontSize: 14,
-    color: '#9B1C1C',
-    textAlign: 'center',
-    marginVertical: 24,
-  },
+  menuItem: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 50, paddingVertical: 12, paddingHorizontal: 10 },
+  menuText: { fontSize: 15, fontWeight: '600', color: '#1E2B22', flexShrink: 1 },
+  menuDanger: { color: '#B42318' },
+  menuCancel: { justifyContent: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#E6ECE8', marginTop: 4 },
+  menuCancelText: { color: '#526659', textAlign: 'center' },
+
+  qrBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 24 },
+  qrCard: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 24, alignItems: 'center' },
+  qrTag: { fontSize: 22, fontWeight: '800', color: '#1E2B22', marginTop: 14, letterSpacing: 1, textAlign: 'center' },
+  qrHint: { fontSize: 12.5, color: '#68776D', marginTop: 4, textAlign: 'center' },
+  qrError: { fontSize: 14, color: '#9B1C1C', textAlign: 'center', marginVertical: 24 },
   qrPrimary: {
     backgroundColor: '#213B2A',
-    height: 48,
+    minHeight: 48,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderRadius: 24,
     alignSelf: 'stretch',
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 18,
   },
-  qrActions: {
-    flexDirection: 'row',
-    alignSelf: 'stretch',
-    gap: 10,
-  },
-  qrAction: {
-    flex: 1,
-    alignSelf: 'auto',
-  },
-  qrPrimaryText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 15,
-  },
-  qrSecondary: {
-    height: 44,
-    alignSelf: 'stretch',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  qrSecondaryText: {
-    color: '#213B2A',
-    fontWeight: '700',
-    fontSize: 14,
-  },
+  qrActions: { flexDirection: 'row', alignSelf: 'stretch', gap: 10 },
+  qrAction: { flex: 1, minWidth: 0, alignSelf: 'auto' },
+  qrPrimaryText: { color: '#FFFFFF', fontWeight: '700', fontSize: 15, textAlign: 'center', flexShrink: 1 },
+  qrSecondary: { minHeight: 44, alignSelf: 'stretch', justifyContent: 'center', alignItems: 'center', marginTop: 8 },
+  qrSecondaryText: { color: '#213B2A', fontWeight: '700', fontSize: 14 },
 });

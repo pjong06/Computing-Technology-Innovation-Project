@@ -162,11 +162,41 @@ test('Find plant: offline or without tiles, the phone-drawn map replaces the bla
   const screen = read('../../app/navigate-plant.tsx');
   assert.match(screen, /offline=\{offline\}/);
   assert.match(screen, /<OfflinePlantMap\s+here=\{currentPoint\}\s+headingDegrees=\{headingDegrees\}/);
-  // Distance and compass unchanged; arrival now allows for GPS accuracy (plantGuidance.ts).
+  // Arrival allows for GPS accuracy (plantGuidance.ts); distance and direction are on the map panel.
   assert.match(screen, /const hasArrived = isWithinArrival\(distanceToPlant, currentPoint\?\.accuracy \?\? null\);/);
-  assert.match(screen, /DISTANCE TO PLANT/);
+  assert.match(screen, /overlay=\{guidancePanel\}/);
 
   const offlineView = read('../components/OfflinePlantMap.tsx');
   assert.match(offlineView, /Offline map: GPS and compass only/);
   assert.doesNotMatch(offlineView, /react-native-svg|react-native-maps|WebView/);
+});
+
+test('Find plant layout: guidance on the map, zoom and follow, plant card below', () => {
+  const screen = read('../../app/navigate-plant.tsx');
+  // No separate guidance box or distance/compass card any more: the panel sits on the map.
+  assert.doesNotMatch(screen, /styles\.guideCard|styles\.telemetryCard|DISTANCE TO PLANT/);
+  assert.match(screen, /const guidancePanel = selectedTarget \? \(/);
+  assert.match(screen, /heading=\{headingDegrees\}/);
+  assert.match(screen, /follow=\{navigating\}/);
+  // Below the map: the plant card ("Change plant") and Start / Stop.
+  assert.match(screen, /styles\.plantCard/);
+  assert.match(screen, />Change plant</);
+
+  const map = read('../components/TransectMapView.tsx');
+  // Pinch, drag and double-tap zoom; a metric scale bar; + / − / recenter buttons.
+  assert.match(map, /dragging: true,\s*touchZoom: true,\s*doubleClickZoom: true/);
+  assert.match(map, /L\.control\.scale\(\{ metric: true, imperial: false/);
+  assert.match(map, /<MapControls onZoomIn=\{\(\) => zoom\(1\)\} onZoomOut=\{\(\) => zoom\(-1\)\} onRecenter=\{handleRecenter\}/);
+  // Following pauses on a manual pan, pinch or double-tap, until recenter.
+  assert.match(map, /map\.on\('dragstart', pauseFollowing\);/);
+  assert.match(map, /event\.touches\.length > 1\) pauseFollowing\(\)/);
+  assert.match(map, /window\.recenterMap = function\(\) \{\s*following = true;/);
+  // The phone is an arrow with a direction cone turning with the compass.
+  assert.match(map, /me-cone/);
+  assert.match(map, /rot\.style\.transform = 'rotate\('/);
+
+  const offlineView = read('../components/OfflinePlantMap.tsx');
+  assert.match(offlineView, /<MapControls/);
+  assert.match(offlineView, /fitMetersPerPixel\(\[targetOffset\], view\) \* 2 \*\* -zoomSteps/);
+  assert.match(offlineView, /styles\.meCone/);
 });

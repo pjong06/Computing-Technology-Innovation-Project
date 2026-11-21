@@ -181,11 +181,12 @@ const styles = StyleSheet.create({
   criteriaActive: { color: '#215A36', fontWeight: '700' },
   primaryBtn: {
     backgroundColor: '#213B2A',
-    height: 50,
+    minHeight: 50,
+    paddingVertical: 8,
     borderRadius: 25,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 14,
   },
-  primaryBtnText: { color: '#FFF', fontSize: 14.5, fontWeight: '700' },
+  primaryBtnText: { color: '#FFF', fontSize: 14.5, fontWeight: '700', flexShrink: 1, textAlign: 'center' },
 });

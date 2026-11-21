@@ -469,7 +469,7 @@ export default function AddObservationScreen() {
         </TouchableOpacity>
 
         <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle}>Add observation</Text>
+          <Text style={styles.headerTitle} numberOfLines={1}>Record observation</Text>
           <Text style={styles.headerSub}>Step {currentStep} of 3</Text>
         </View>
 
@@ -1047,7 +1047,8 @@ const styles = StyleSheet.create({
   },
   scanTagBtn: {
     marginTop: 12,
-    height: 46,
+    minHeight: 46,
+    paddingVertical: 8,
     borderRadius: 12,
     borderWidth: 1.4,
     borderColor: '#2F6B3A',
@@ -1055,7 +1056,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
   },
-  scanTagBtnText: { color: '#2F6B3A', fontSize: 15, fontWeight: '700' },
+  scanTagBtnText: { color: '#2F6B3A', fontSize: 15, fontWeight: '700', flexShrink: 1, textAlign: 'center' },
   textInput: {
     backgroundColor: '#F9FAF9',
     height: 48,
@@ -1068,6 +1069,7 @@ const styles = StyleSheet.create({
   },
   plantName: {
     flex: 1,
+    minWidth: 0,
     fontStyle: 'italic',
   },
   plantInfo: {
