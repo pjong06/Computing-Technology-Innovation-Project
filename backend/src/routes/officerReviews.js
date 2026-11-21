@@ -73,6 +73,33 @@ async function withReviewDetails(supabase, observations) {
     });
 }
 
+// The first record of each plant: its registration, which is the earliest active (not
+// deleted) observation, whatever its review status. Every later record of the same plant is
+// an observation of it, even while the plant itself is still pending.
+// Returns Map plant id -> { id, review_status }.
+async function firstRecordsOf(supabase, plantIds) {
+    if (plantIds.length === 0) return new Map();
+    const { data, error } = await supabase
+        .from("observations")
+        .select("id, plant_id, observed_at, review_status")
+        .in("plant_id", plantIds)
+        .is("deleted_at", null)
+        .order("observed_at", { ascending: true })
+        .order("id", { ascending: true })
+        .limit(5000);
+    if (error) throw error;
+    const first = new Map();
+    for (const row of data || []) {
+        if (!row.plant_id || !row.id) continue;
+        const current = first.get(row.plant_id);
+        // Ordered oldest first; the comparison also keeps this right if rows come unordered.
+        if (!current || (row.observed_at && current.observed_at && row.observed_at < current.observed_at)) {
+            first.set(row.plant_id, row);
+        }
+    }
+    return first;
+}
+
 // For the review queue's detail card: the plant's GPS point and its accuracy, its morphology
 // text, and its previous approved visit (date and height) before this one. Each lookup is
 // separate and optional: if one can't be read, those fields are null and the queue still loads.
@@ -110,6 +137,14 @@ async function withQueueExtras(supabase, observations) {
             .limit(1000)),
     ]);
 
+    // Which record is each plant's registration ("New plant"); null when it can't be read.
+    let firstByPlant = null;
+    try {
+        firstByPlant = await firstRecordsOf(supabase, plantIds);
+    } catch (error) {
+        console.error("Review queue first record error:", error?.message || error);
+    }
+
     const pointById = new Map(points.map(row => [row.id, row]));
     const plantById = new Map(plantRows.map(row => [row.id, row]));
     const number = value => (value === null || value === undefined || !Number.isFinite(Number(value)) ? null : Number(value));
@@ -122,8 +157,12 @@ async function withQueueExtras(supabase, observations) {
             visit.plant_id === observation.plant_id &&
             visit.observed_at && observation.observed_at &&
             visit.observed_at < observation.observed_at) || null;
+        const first = firstByPlant ? firstByPlant.get(observation.plant_id) : null;
         return {
             ...observation,
+            // true: the plant's registration (its earliest record) -> "New plant";
+            // false: a later record of the same plant -> "Observation"; null: unknown.
+            is_first_record: first ? first.id === observation.id : null,
             plant: observation.plant
                 ? {
                     ...observation.plant,
@@ -489,6 +528,22 @@ router.post("/:observationId/decision", async (req, res) => {
         } catch (speciesError) {
             console.error("Species check before approval error:", speciesError);
             return res.status(500).json({ message: "Could not check the plant's species" });
+        }
+
+        // A later record of a plant can only be approved once the plant's first record (its
+        // registration) is approved. Sending back is always allowed.
+        try {
+            const first = (await firstRecordsOf(req.supabase, [observation.plant_id])).get(observation.plant_id);
+            if (first && first.id !== observation.id && first.review_status !== "approved") {
+                return res.status(409).json({
+                    message: "Approve the new plant record first",
+                    code: "first_record_not_approved",
+                    first_record_id: first.id,
+                });
+            }
+        } catch (firstError) {
+            console.error("First record check before approval error:", firstError);
+            return res.status(500).json({ message: "Could not check the plant's first record" });
         }
     }
 

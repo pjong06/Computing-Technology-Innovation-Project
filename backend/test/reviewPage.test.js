@@ -281,3 +281,17 @@ test('clicking the photo opens it full size; Esc or a click closes it', () => {
   // Only a real photo opens: the placeholder isn't clickable.
   assert.match(queue, /if \(src\) \{\s*\/\/ A real photo opens full size \(the placeholder doesn't\)\.\s*large\.classList\.add\('can-open'\);/);
 });
+
+test('labels: only the plant\'s first record is NEW PLANT, a later record of a pending plant is OBSERVATION', () => {
+  const sandbox = {};
+  const code = queue.slice(queue.indexOf('function visitKind('), queue.indexOf('function visitKindBadge('));
+  vm.runInNewContext(`${code}\nthis.visitKind = visitKind;`, sandbox);
+  const pendingPlant = { tag_code: 'NIAH-PLT-00012', plant_status: 'pending' };
+  // Registration at 05:56 and another record at 06:14, both pending.
+  assert.equal(sandbox.visitKind({ is_first_record: true, plant: pendingPlant }), 'New plant');
+  assert.equal(sandbox.visitKind({ is_first_record: false, plant: pendingPlant }), 'Observation');
+  assert.equal(sandbox.visitKind({ is_first_record: false, plant: { plant_status: 'approved' } }), 'Observation');
+  // Without the field (an older backend), a pending plant still counts as new.
+  assert.equal(sandbox.visitKind({ plant: pendingPlant }), 'New plant');
+  assert.equal(sandbox.visitKind({ is_first_record: null, plant: { plant_status: 'approved' } }), 'Observation');
+});

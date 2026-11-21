@@ -33,8 +33,13 @@ let sendBackOpenFor = null; // the record whose "Send back" reason box is open
 
 // ---- Words ----
 
-// A new plant (its first visit) or a visit to a plant already approved.
+// "New plant" only for the plant's first record (its registration); every later record of
+// the same plant is an "Observation", even while the plant is still waiting for approval.
+// The pending API says which is which (is_first_record); without it, a pending plant counts
+// as new.
 function visitKind(observation) {
+  if (observation.is_first_record === true) return 'New plant';
+  if (observation.is_first_record === false) return 'Observation';
   return observation.plant?.plant_status === 'pending' ? 'New plant' : 'Observation';
 }
 
