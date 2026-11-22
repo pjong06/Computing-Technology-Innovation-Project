@@ -32,8 +32,11 @@ import {
 } from '../src/store/useRecordStore';
 
 import { NOT_SUBMITTED_BADGE, REVIEW_BADGE, visitStatus } from '../src/utils/reviewStatus';
-import { plantStatusLine, speciesSubtitle, type TagProblemCode } from '../src/utils/plantStatusLine';
+import { plantHeading, plantStatusLine, type TagProblemCode } from '../src/utils/plantStatusLine';
 import { firstVisitOf } from '../src/utils/submissionState';
+import { finalProblemText, retryableRecord } from '../src/utils/syncDetails';
+import { speciesRequestText } from '../src/utils/speciesSearch';
+import { useProposalStore } from '../src/store/useProposalStore';
 import { requeueLockedTagOperations, resumePausedRecordRetries } from '../src/services/offlineDatabase';
 import PlantNotFound from '../src/components/PlantNotFound';
 import { resolveStoredPhotoUri } from '../src/utils/photoStorage';
@@ -184,6 +187,7 @@ export default function PlantDetailScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
 
   const records = useRecordStore((state) => state.records);
+  const proposals = useProposalStore((state) => state.proposals);
   const submitForReview = useRecordStore((state) => state.submitForReview);
   const removePhoto = useRecordStore((state) => state.removePhoto);
   const deleteRecord = useRecordStore((state) => state.deleteRecord);
@@ -570,8 +574,16 @@ export default function PlantDetailScreen() {
   };
 
   const sync = syncChip(matched.syncStatus);
-  const commonLine = speciesSubtitle(matched.scientificName, matched.commonName, matched.family);
-  const statusLine = plantStatusLine(matched);
+  const heading = plantHeading(matched.tagCode, matched.scientificName, matched.commonName);
+  // The species request this plant waits for (on this phone), and what to say about it.
+  const waitingProposal = matched.speciesRequestId
+    ? proposals.find((proposal) => proposal.id === matched.speciesRequestId) ?? null
+    : null;
+  const requestLine = matched.speciesRequestId && !matched.speciesId
+    ? speciesRequestText(matched.speciesRequestName ?? matched.scientificName, waitingProposal)
+    : null;
+  // Retry only when trying again can help; a permanent refusal says why instead.
+  const statusLine = plantStatusLine(matched, retryableRecord(matched) ? null : finalProblemText(matched));
   const photoCount = photos.length;
 
   return (
@@ -658,21 +670,27 @@ export default function PlantDetailScreen() {
         </View>
 
         <View style={styles.sheet}>
-          {/* Title block */}
-          <Text style={[styles.title, !needsIdentification && styles.titleItalic]}>
-            {matched.scientificName || 'Identification pending'}
+          {/* Title block: the plant first (its tag), then its species, then where it is. */}
+          <Text style={[styles.title, !heading.hasTag && styles.titleMuted]} numberOfLines={1}>
+            {heading.title}
           </Text>
-          {commonLine ? <Text style={styles.subtitle}>{commonLine}</Text> : null}
+          <Text style={styles.subtitle} numberOfLines={2}>
+            <Text style={!needsIdentification && styles.titleItalic}>
+              {heading.scientific || 'Identification pending'}
+            </Text>
+            {heading.common ? ` · ${heading.common}` : null}
+          </Text>
+          {shown.locationNote ? (
+            <View style={styles.locationLine}>
+              <Ionicons name="location-outline" size={13} color="#68776D" />
+              <Text style={styles.locationText} numberOfLines={2}>{shown.locationNote}</Text>
+            </View>
+          ) : null}
 
+          {/* Review and upload status (the tag is the title now, so no tag chip). */}
           <View style={styles.chipRow}>
             <View style={[styles.chip, { backgroundColor: review.bg }]}>
               <Text style={[styles.chipText, { color: review.text }]}>{review.label}</Text>
-            </View>
-            <View style={[styles.chip, styles.chipNeutral]}>
-              <Ionicons name="pricetag-outline" size={12} color="#4A5A50" />
-              <Text style={[styles.chipText, styles.chipNeutralText]}>
-                {isPhysicalTag(matched.tagCode) ? matched.tagCode : 'No tag yet'}
-              </Text>
             </View>
             <View style={[styles.chip, { backgroundColor: sync.bg }]}>
               <Text style={[styles.chipText, { color: sync.text }]}>{sync.label}</Text>
@@ -686,9 +704,15 @@ export default function PlantDetailScreen() {
               <View style={[styles.card, styles.tagProblemBox]} accessibilityRole="alert">
                 <Text style={styles.tagProblemText}>{statusLine.text}</Text>
                 <View style={styles.statusActions}>
-                  <TouchableOpacity onPress={() => void retryUpload()} disabled={retryingUpload} hitSlop={8} accessibilityRole="button">
-                    <Text style={styles.tagProblemAction}>{retryingUpload ? 'Retrying…' : 'Retry'}</Text>
-                  </TouchableOpacity>
+                  {statusLine.retry ? (
+                    <TouchableOpacity onPress={() => void retryUpload()} disabled={retryingUpload} hitSlop={8} accessibilityRole="button">
+                      <Text style={styles.tagProblemAction}>{retryingUpload ? 'Retrying…' : 'Retry'}</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity onPress={() => router.push('/sync-details' as never)} hitSlop={8} accessibilityRole="button">
+                      <Text style={styles.tagProblemAction}>Sync details</Text>
+                    </TouchableOpacity>
+                  )}
                   {matched.tagProblem === 'in_use' || matched.tagProblem === 'not_yours' ? (
                     <TouchableOpacity onPress={openAttachTag} hitSlop={8} accessibilityRole="button">
                       <Text style={styles.tagProblemAction}>Attach a different tag</Text>
@@ -738,8 +762,31 @@ export default function PlantDetailScreen() {
             )}
           </View>
 
+          {/* Waiting for a species request (a species not in the catalogue yet): its name,
+              and the officer's reason if it was not added (the plant keeps waiting). */}
+          {needsIdentification && requestLine ? (
+            <View style={styles.identificationCard}>
+              <Text style={styles.identificationTitle} numberOfLines={2}>{requestLine.title}</Text>
+              {requestLine.reason ? (
+                <Text style={styles.identificationText}>{requestLine.reason}</Text>
+              ) : (
+                <Text style={styles.identificationText}>
+                  When an officer adds this species, the plant gets it and its records can be approved.
+                </Text>
+              )}
+              {waitingProposal?.review === 'rejected' ? (
+                <TouchableOpacity
+                  style={styles.continueBtn}
+                  onPress={() => router.push({ pathname: '/propose-species', params: { editId: waitingProposal.id } } as any)}
+                >
+                  <Text style={styles.continueBtnText}>Edit and send the request again</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ) : null}
+
           {/* Identification pending */}
-          {needsIdentification && (
+          {needsIdentification && !requestLine && (
             <View style={styles.identificationCard}>
               <Text style={styles.identificationTitle}>Identification pending</Text>
               <Text style={styles.identificationText}>
@@ -1094,8 +1141,11 @@ const styles = StyleSheet.create({
   photoCountText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
 
   sheet: { padding: 20, backgroundColor: '#F6F8F6' },
-  title: { fontSize: 24, fontWeight: '800', color: '#1E2B22', flexShrink: 1 },
+  title: { fontSize: 24, fontWeight: '800', color: '#1E2B22', flexShrink: 1, fontVariant: ['tabular-nums'] },
+  titleMuted: { color: '#68776D' },
   titleItalic: { fontStyle: 'italic' },
+  locationLine: { flexDirection: 'row', alignItems: 'flex-start', gap: 4, marginTop: 4, minWidth: 0 },
+  locationText: { flex: 1, minWidth: 0, fontSize: 13, color: '#68776D', lineHeight: 18 },
   subtitle: { fontSize: 14, color: '#526659', marginTop: 4, flexShrink: 1 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
   chip: {

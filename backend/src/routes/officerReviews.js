@@ -11,6 +11,16 @@ const OBSERVATION_COLUMNS =
     "id, plant_id, observer_id, observed_at, notes, review_status, " +
     "health_status, life_stage, height_cm, diameter_cm";
 
+// plants.species_request_id (20261122160000_plant_species_request.sql): read when it exists,
+// so these lookups keep working before that migration is applied.
+const missingRequestColumn = (error) => Boolean(error) && ["42703", "PGRST204"].includes(error.code) &&
+    /species_request_id/.test(String(error.message || ""));
+
+async function selectWithRequestColumn(build, columns) {
+    const first = await build(`${columns}, species_request_id`);
+    return missingRequestColumn(first.error) ? build(columns) : first;
+}
+
 // Ids of the rows, without repeats or blanks.
 function idsOf(rows, key) {
     return [...new Set(rows.map(row => row[key]).filter(Boolean))];
@@ -26,14 +36,15 @@ async function withReviewDetails(supabase, observations) {
     const observerIds = idsOf(observations, "observer_id");
 
     const { data: plants, error: plantError } = plantIds.length
-        ? await supabase
-            .from("plants")
-            .select("id, qr_code_value, location_description, species_id, plant_status")
-            .in("id", plantIds)
+        ? await selectWithRequestColumn(
+            (columns) => supabase.from("plants").select(columns).in("id", plantIds),
+            "id, qr_code_value, location_description, species_id, plant_status"
+        )
         : { data: [], error: null };
     if (plantError) throw plantError;
 
-    const speciesIds = idsOf(plants || [], "species_id");
+    // Species names, including the requested species of plants waiting for one.
+    const speciesIds = [...new Set([...idsOf(plants || [], "species_id"), ...idsOf(plants || [], "species_request_id")])];
     const { data: species, error: speciesError } = speciesIds.length
         ? await supabase
             .from("species")
@@ -68,6 +79,14 @@ async function withReviewDetails(supabase, observations) {
                     plant_status: plant.plant_status || null,
                     scientific_name: plantSpecies ? plantSpecies.scientific_name : null,
                     common_name: plantSpecies ? plantSpecies.common_name : null,
+                    // Waiting for a species the botanist requested (no species yet): its name
+                    // and id, so Review can link to it and hold Approve until it is added.
+                    species_request: !plant.species_id && plant.species_request_id
+                        ? {
+                            id: plant.species_request_id,
+                            scientific_name: speciesById.get(plant.species_request_id)?.scientific_name || null,
+                        }
+                        : null,
                 }
                 : null,
         };
@@ -497,12 +516,24 @@ router.patch("/plants/:plantId/species", async (req, res) => {
 // Approving needs the plant's species to be approved in the catalogue (a database rule).
 // Returns a plain-language reason when it isn't, or null when approval can go ahead.
 async function speciesBlocksApproval(supabase, plantId) {
-    const { data: plant, error: plantError } = await supabase
-        .from("plants")
-        .select("id, species_id")
-        .eq("id", plantId)
-        .maybeSingle();
+    const { data: plant, error: plantError } = await selectWithRequestColumn(
+        (columns) => supabase.from("plants").select(columns).eq("id", plantId).maybeSingle(),
+        "id, species_id"
+    );
     if (plantError) throw plantError;
+    if (plant && !plant.species_id && plant.species_request_id) {
+        // Waiting for a species the botanist requested: the officer adds it first.
+        const { data: request } = await supabase
+            .from("species")
+            .select("id, scientific_name")
+            .eq("id", plant.species_request_id)
+            .maybeSingle();
+        return {
+            message: `Waiting for species request: ${request?.scientific_name || "a new species"}. Add the species first.`,
+            code: "species_request_waiting",
+            species_request_id: plant.species_request_id,
+        };
+    }
     if (!plant || !plant.species_id) {
         return "This plant has no species yet, so the observation can't be approved. " +
             "The botanist needs to choose a species first.";
@@ -597,6 +628,7 @@ router.post("/:observationId/decision", async (req, res) => {
     if (decision === "approved") {
         try {
             const reason = await speciesBlocksApproval(req.supabase, observation.plant_id);
+            if (reason && typeof reason === "object") return res.status(409).json(reason);
             if (reason) return res.status(409).json({ message: reason, code: "species_not_approved" });
         } catch (speciesError) {
             console.error("Species check before approval error:", speciesError);

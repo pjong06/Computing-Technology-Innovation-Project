@@ -1560,3 +1560,25 @@ textarea {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+/* Review > Field records: a plant waiting for a species request (Approve is held). */
+.review-waiting {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--wa);
+  color: var(--wat);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.review-waiting a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.review-hold-hint {
+  margin: 8px 0 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}

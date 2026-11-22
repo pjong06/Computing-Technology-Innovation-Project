@@ -157,5 +157,8 @@ test('GET /species/proposals/pending returns each waiting request with its check
   assert.deepEqual(keys(body.data[0].checks), ['duplicate', 'name_format']);
   assert.match(body.data[0].checks[0].message, /Already in the catalogue as Begonia niahensis \(the same name with different capitals/);
   assert.equal(queries[2][0][1], 'species', 'the catalogue is read once, after the requests');
-  assert.equal(queries.length, 3);
+  // Then one lookup for "N plants waiting" (plants.species_request_id).
+  assert.equal(queries[3][0][1], 'plants');
+  assert.equal(queries.length, 4);
+  assert.equal(body.data[0].waiting_plants, 0);
 });

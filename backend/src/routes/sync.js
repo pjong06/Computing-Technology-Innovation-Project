@@ -270,6 +270,25 @@ async function applyOperation(req, operation) {
   return data;
 }
 
+// A refused operation is a normal answer (200), so nothing else would show it in the
+// server logs (Render). One info line per refused operation: what it was, the answer's
+// code and the record's IDs. No user ID, names, payload, message text or tokens.
+const LOG_TOKEN = /^[a-z0-9_]{1,40}$/;
+const LOG_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const logValue = (value, pattern) => (typeof value === 'string' && pattern.test(value) ? value : 'unknown');
+
+function logRefusedOperation(operation, result) {
+  if (!result || result.status === 'success') return;
+  console.info('Sync operation refused', {
+    entity_type: logValue(operation?.entity_type, LOG_TOKEN),
+    operation_type: logValue(operation?.operation_type, LOG_TOKEN),
+    status: logValue(result.status, LOG_TOKEN),
+    code: logValue(result.code, LOG_TOKEN),
+    operation_id: logValue(operation?.operation_id, LOG_UUID),
+    client_record_id: logValue(operation?.client_record_id, LOG_UUID),
+  });
+}
+
 router.post('/push', async (req, res) => {
   const operations = req.body?.operations;
 
@@ -288,7 +307,9 @@ router.post('/push', async (req, res) => {
   // observation create. A failed item does not hide the remaining results.
   const results = [];
   for (const operation of operations) {
-    results.push(await applyOperation(req, operation));
+    const result = await applyOperation(req, operation);
+    logRefusedOperation(operation, result);
+    results.push(result);
   }
 
   const summary = results.reduce(

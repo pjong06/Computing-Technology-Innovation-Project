@@ -436,6 +436,56 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         "id, client_record_id, scientific_name, common_name, local_name, proposed_family, " +
         "description, habitat, verification_status, review_comment";
 
+    // plants.species_request_id (20261122160000_plant_species_request.sql). Until that
+    // migration is applied, the lookups below answer "nothing waiting" instead of failing.
+    const missingRequestColumn = (error) => Boolean(error) && ["42703", "PGRST204"].includes(error.code) &&
+        /species_request_id/.test(String(error.message || ""));
+
+    // The species was added: the plants waiting for this request get it. Returns how many,
+    // or null when the link column doesn't exist yet or the update failed (the approval stands).
+    async function linkWaitingPlants(supabase, speciesId) {
+        try {
+            const { data, error } = await supabase
+                .from("plants")
+                .update({ species_id: speciesId })
+                .eq("species_request_id", speciesId)
+                .is("species_id", null)
+                .select("id");
+            if (error) {
+                if (!missingRequestColumn(error)) console.error("Link waiting plants error:", error.code, error.message);
+                return null;
+            }
+            return Array.isArray(data) ? data.length : 0;
+        } catch (error) {
+            console.error("Link waiting plants error:", error?.message || error);
+            return null;
+        }
+    }
+
+    // How many plants wait for each request (not deleted), for "N plants waiting".
+    async function waitingPlantCounts(supabase, requestIds) {
+        const counts = new Map();
+        if (requestIds.length === 0) return counts;
+        try {
+            const { data, error } = await supabase
+                .from("plants")
+                .select("species_request_id")
+                .in("species_request_id", requestIds)
+                .is("species_id", null)
+                .is("deleted_at", null);
+            if (error) {
+                if (!missingRequestColumn(error)) console.error("Waiting plants count error:", error.code, error.message);
+                return counts;
+            }
+            for (const row of data || []) {
+                counts.set(row.species_request_id, (counts.get(row.species_request_id) || 0) + 1);
+            }
+        } catch (error) {
+            console.error("Waiting plants count error:", error?.message || error);
+        }
+        return counts;
+    }
+
     // Escape % and _ so a name is matched literally by ILIKE (case-insensitive equality).
     function literalIlike(text) {
         return text.replace(/[\\%_]/g, (character) => `\\${character}`);
@@ -656,11 +706,14 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         // The "Before you decide" checks (services/speciesRequestChecks.js), against every
         // species in the catalogue or waiting. Read only when there are requests to check.
         const catalogue = (data || []).length > 0 ? await loadCatalogueNames(req.supabase) : [];
+        // "N plants waiting": field records that can't be approved until the species is added.
+        const waiting = await waitingPlantCounts(req.supabase, (data || []).map(row => row.id));
         return res.json({
             data: (data || []).map(row => ({
                 ...row,
                 proposer_name: nameById.get(row.proposed_by) || null,
                 checks: requestChecks(row, catalogue),
+                waiting_plants: waiting.get(row.id) || 0,
             })),
             pagination: paginationMetadata(paging, count),
         });
@@ -715,7 +768,16 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             console.error("Review species proposal error:", error);
             return res.status(500).json({ message: "Could not review the species request." });
         }
-        if (data) return res.json({ data });
+        if (data) {
+            // Added: every plant waiting for this request gets the new species, so its field
+            // records can be approved. Not added: the plants keep waiting (the botanist sees
+            // the reason on the request in the app).
+            if (decision === "approved") {
+                const linked = await linkWaitingPlants(req.supabase, req.params.id);
+                return res.json({ data, ...(linked === null ? {} : { linked_plants: linked }) });
+            }
+            return res.json({ data });
+        }
 
         // Nothing updated: tell apart "no such species" from "not pending any more".
         const { data: current, error: currentError } = await req.supabase

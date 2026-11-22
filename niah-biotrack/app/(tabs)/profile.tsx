@@ -34,6 +34,7 @@ import {
   resumeAllPausedRecordRetries,
 } from '../../src/services/offlineDatabase';
 import { pullServerRecords, serverPullError } from '../../src/services/serverPull';
+import { countSyncDetailItems } from '../../src/services/syncDetailsList';
 
 const NOT_RECORDED = 'Not recorded';
 
@@ -328,21 +329,40 @@ export default function ProfileScreen() {
         latestSuccessfulSync
       );
 
-      const totalFailed =
-        recordResult.failed +
-        proposalResult.failed +
-        routeResult.failed;
+      /*
+       * The count is what Sync details lists (the upload list, photos and observations
+       * sent for review), so the two always agree. Routes upload on their own path.
+       */
+      const waitingItems =
+        await countSyncDetailItems(
+          useRecordStore.getState().records
+        );
 
       const routesLine =
         routeResult.uploaded > 0
           ? ` ${routesUploadedText(routeResult.uploaded)}.`
           : '';
 
-      if (totalFailed > 0) {
+      const routesFailedLine =
+        routeResult.failed > 0
+          ? ` ${routeResult.failed} ${routeResult.failed === 1 ? 'route' : 'routes'} could not be uploaded.`
+          : '';
+
+      if (waitingItems > 0 || routeResult.failed > 0) {
         const reason = proposalResult.reasons[0] ?? downloadError;
+        const itemsLine =
+          waitingItems > 0
+            ? `${waitingItems} ${waitingItems === 1 ? 'item' : 'items'} could not be uploaded. They remain safely stored on this phone.`
+            : '';
         Alert.alert(
           'Sync needs attention',
-          `${totalFailed} ${totalFailed === 1 ? 'item' : 'items'} could not be uploaded. They remain safely stored on this phone.${reason ? ` ${reason}` : ''}${routesLine}`
+          `${itemsLine}${reason ? ` ${reason}` : ''}${routesFailedLine}${routesLine}`.trim(),
+          waitingItems > 0
+            ? [
+                { text: 'OK', style: 'cancel' },
+                { text: 'Details', onPress: () => router.push('/sync-details' as never) },
+              ]
+            : undefined
         );
 
         return;
@@ -1071,6 +1091,36 @@ export default function ProfileScreen() {
               </View>
               <Text style={styles.actionRowTitle}>
                 My QR tags
+              </Text>
+            </View>
+            <Ionicons
+              name="chevron-forward"
+              size={18}
+              color="#76877B"
+            />
+          </TouchableOpacity>
+        )}
+
+        {/* Sync details: every item still waiting to upload and the server's last answer. */}
+
+        {!isGuest && (
+          <TouchableOpacity
+            style={[styles.actionRowCard, styles.actionRowSpaced]}
+            activeOpacity={0.8}
+            onPress={() => router.push('/sync-details' as never)}
+            accessibilityRole="button"
+            accessibilityLabel="Sync details"
+          >
+            <View style={styles.actionRowLeft}>
+              <View style={styles.actionIconBox}>
+                <Ionicons
+                  name="cloud-upload-outline"
+                  size={18}
+                  color="#213B2A"
+                />
+              </View>
+              <Text style={styles.actionRowTitle}>
+                Sync details
               </Text>
             </View>
             <Ionicons

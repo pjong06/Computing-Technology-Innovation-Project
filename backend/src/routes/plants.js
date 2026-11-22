@@ -608,7 +608,7 @@ router.post(
         const { data: plant, error } =
             await req.supabase
                 .from("plants")
-                .select("id, registered_by, plant_status")
+                .select("id, registered_by, plant_status, deleted_at")
                 .eq("id", plantId)
                 .maybeSingle();
 
@@ -623,9 +623,12 @@ router.post(
             });
         }
 
-        if (!plant) {
-            return res.status(404).json({
-                message: "Plant not found"
+        // Removed on the server: a photo for it can never upload (the app offers to
+        // remove it from the phone instead of retrying).
+        if (!plant || plant.deleted_at) {
+            return res.status(410).json({
+                message: "This plant was removed on the server.",
+                code: "plant_deleted"
             });
         }
 
@@ -976,6 +979,43 @@ function reservationFailure(res, error) {
     if (['23505', 'P0001'].includes(error.code)) return res.status(409).json({ message: 'Tag binding conflict' });
     return res.status(503).json({ message: 'Tag reservation service unavailable; retry the same plant' });
 }
+
+// ── LINK A PLANT TO THE SPECIES REQUEST IT WAITS FOR ───────────
+// POST /api/plants/:id/species-request { request_client_id }: a plant registered for a
+// species that isn't in the catalogue yet waits for the botanist's species request
+// (20261122160000_plant_species_request.sql, link_plant_species_request). Own plant, own
+// request, plant without a species; when the officer adds the species, the plant gets it.
+router.post("/:id/species-request", requireRole("botanist"), async (req, res) => {
+    const plantId = req.params.id;
+    const requestClientId = req.body?.request_client_id;
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuid.test(plantId) || typeof requestClientId !== "string" || !uuid.test(requestClientId)) {
+        return res.status(400).json({ message: "A valid plant ID and species request ID are required" });
+    }
+    try {
+        const { data, error } = await req.supabase.rpc("link_plant_species_request", {
+            p_plant_id: plantId,
+            p_request_client_id: requestClientId,
+        });
+        if (error?.code === "P0002") {
+            // The request hasn't reached the server yet: the app sends it, then tries again.
+            return res.status(409).json({
+                message: "The species request hasn't been uploaded yet.",
+                code: "species_request_not_uploaded",
+            });
+        }
+        if (error?.code === "42501") {
+            return res.status(403).json({ message: "This plant can't be linked to that species request.", code: "species_request_refused" });
+        }
+        if (error) {
+            console.error("Link species request error:", { code: error.code, message: error.message });
+            return res.status(503).json({ message: "Could not link the species request. It will be tried again." });
+        }
+        return res.json({ plant_id: plantId, species_request_id: data });
+    } catch {
+        return res.status(503).json({ message: "Could not link the species request. It will be tried again." });
+    }
+});
 
 // ── 1-CLICK / AUTOMATIC TAG & QR GENERATION ────────────────────
 router.post("/:id/attach-tag", requireRole("botanist", "officer"), async (req, res) => {

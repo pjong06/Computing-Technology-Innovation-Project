@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isDeletedChange, serverDeletedPlants } from './serverDeletes.ts';
+import { isDeletedChange, serverDeletedObservations, serverDeletedPlants } from './serverDeletes.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const read = (file) => fs.readFileSync(path.join(here, file), 'utf8').replace(/\r\n/g, '\n');
@@ -50,4 +50,30 @@ test('sync pull: deleted plants leave the phone even with unsent or failed chang
   const fn = db.slice(db.indexOf('export async function removeServerDeletedPlant('));
   assert.match(fn.slice(0, 1200), /DELETE FROM sync_outbox[\s\S]*DELETE FROM local_entities/);
   assert.doesNotMatch(fn.slice(0, 1200), /sync_status !== 'uploaded'/);
+});
+
+test('an observation deleted on the server leaves the phone, whatever its local state', () => {
+  const obsChange = (entityId, action, payload = {}) => ({ entity_type: 'observations', entity_id: entityId, action, record_payload: payload });
+  const phone = [
+    { id: 'local-a', serverId: 'srv-a', observations: [{ id: 'visit-1', serverId: 'obs-1' }, { id: 'visit-2', serverId: 'obs-2' }] },
+    { id: 'local-c', serverId: null, observations: [{ id: 'visit-3' }] },
+  ];
+  // Hard or soft delete, matched by server id or client id.
+  assert.deepEqual(serverDeletedObservations([obsChange('obs-1', 'DELETE')], phone)
+    .map((item) => [item.record.id, item.observationId]), [['local-a', 'visit-1']]);
+  assert.deepEqual(serverDeletedObservations([obsChange('obs-x', 'UPDATE', { deleted_at: '2026-11-22T00:00:00Z', client_record_id: 'visit-2' })], phone)
+    .map((item) => item.observationId), ['visit-2']);
+  // Updates, unknown observations and a later re-insert are left alone.
+  assert.deepEqual(serverDeletedObservations([obsChange('obs-1', 'UPDATE', { review_status: 'approved' })], phone), []);
+  assert.deepEqual(serverDeletedObservations([obsChange('obs-zzz', 'DELETE')], phone), []);
+  assert.deepEqual(serverDeletedObservations([obsChange('obs-1', 'DELETE'), obsChange('obs-1', 'INSERT')], phone), []);
+
+  // The pull removes it with its queued changes (its submit and photos go with it),
+  // before the "keep local changes" rule, and no longer only when fully uploaded.
+  const pull = read('../services/serverPull.ts');
+  assert.match(pull, /for \(const \{ record, observationId \} of serverDeletedObservations\(changes, \[\.\.\.byClientId\.values\(\)\]\)\) \{\s*await removeServerDeletedObservation\(observationId\);/);
+  assert.doesNotMatch(pull, /removeUploadedLocalEntity\('observation'/);
+  const db = read('../services/offlineDatabase.ts');
+  const fn = db.slice(db.indexOf('export async function removeServerDeletedObservation('));
+  assert.match(fn.slice(0, 700), /DELETE FROM sync_outbox WHERE entity_type = 'observation'[\s\S]*DELETE FROM local_entities WHERE entity_type = 'observation'/);
 });

@@ -41,7 +41,8 @@ test('submit refused by row-level security returns a plain 403, not 500', async 
   );
   const result = await submit();
   assert.equal(result.status, 403);
-  assert.equal(result.body.message, "This visit can't be sent for review. Please contact the officer.");
+  assert.equal(result.body.message, "This observation can't be sent for review. Please contact the officer.");
+  assert.equal(result.body.code, 'submit_refused');
   // The update was attempted as the botanist, only on their own draft/rejected visit.
   assert.ok(db.calls.some(c => c[1] === 'update' && c[2].review_status === 'pending'));
   assert.ok(db.calls.some(c => c[1] === 'eq' && c[2] === 'observer_id' && c[3] === BOTANIST));

@@ -16,11 +16,44 @@ export interface PullChangeLike {
 export interface PhoneRecordLike {
   id: string;
   serverId?: string | null;
-  observations?: { id: string }[] | null;
+  observations?: { id: string; serverId?: string | null }[] | null;
 }
 
 export function isDeletedChange(change: PullChangeLike): boolean {
   return change.action === 'DELETE' || change.record_payload?.deleted_at != null;
+}
+
+/**
+ * Observations on the phone that a pull says were deleted on the server, whatever their
+ * local state: an unsent change, a photo or a "submit for review" waiting for one can never
+ * upload any more. Observations of a plant deleted in the same pull are left to
+ * serverDeletedPlants (they go with their plant). The last change per observation wins.
+ */
+export function serverDeletedObservations<T extends PhoneRecordLike>(
+  changes: PullChangeLike[],
+  records: T[]
+): { record: T; observationId: string }[] {
+  const latest = new Map<string, PullChangeLike>();
+  for (const change of changes) {
+    if (change.entity_type === 'observations' && change.entity_id) latest.set(change.entity_id, change);
+  }
+  const removed: { record: T; observationId: string }[] = [];
+  for (const change of latest.values()) {
+    if (!isDeletedChange(change)) continue;
+    const clientId = typeof change.record_payload?.client_record_id === 'string'
+      ? change.record_payload.client_record_id
+      : null;
+    for (const record of records) {
+      const visit = (Array.isArray(record.observations) ? record.observations : []).find((item) =>
+        Boolean(item) && (item.serverId === change.entity_id || (clientId !== null && item.id === clientId))
+      );
+      if (visit) {
+        removed.push({ record, observationId: visit.id });
+        break;
+      }
+    }
+  }
+  return removed;
 }
 
 // The last change per plant wins (a plant re-created after a delete is kept).

@@ -22,6 +22,7 @@ import {
   resumePausedRecordRetries,
 } from '../../src/services/offlineDatabase';
 import { pullServerRecords, serverPullError } from '../../src/services/serverPull';
+import { countSyncDetailItems } from '../../src/services/syncDetailsList';
 import { useProposalStore } from '../../src/store/useProposalStore';
 import { useSpeciesStore } from '../../src/store/useSpeciesStore';
 import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
@@ -82,7 +83,7 @@ export default function HomeScreen() {
     setSyncingAll(true);
     try {
       await resumeAllPausedRecordRetries();
-      const { uploaded, failed: recordsFailed, skipped, photosUploaded, photoProblems } = await syncAll();
+      const { uploaded, skipped, photosUploaded, photoProblems } = await syncAll();
       const routesResult = await syncRoutes();
       const proposalsResult = await syncAllProposals();
       await refreshProposalStatuses();
@@ -95,7 +96,10 @@ export default function HomeScreen() {
         downloadError = serverPullError(error);
       }
 
-      const failed = recordsFailed + proposalsResult.failed + routesResult.failed;
+      // The number Sync details lists (upload list, photos, observations sent for review), so
+      // this message and the Details screen agree. Routes upload on their own path.
+      const waitingItems = await countSyncDetailItems(useRecordStore.getState().records);
+      const failed = waitingItems + routesResult.failed;
       const parts = [`${uploaded} uploaded`];
       if (downloaded > 0) parts.push(`${downloaded} downloaded`);
       if (failed > 0) parts.push(`${failed} failed`);
@@ -113,10 +117,18 @@ export default function HomeScreen() {
       }
 
       const problem = proposalsResult.reasons[0] ?? downloadError;
+      const summary = problem ? `${parts.join(' · ')}. ${problem}` : parts.join(' · ');
       Toast.show({
         type: failed > 0 || downloadError ? 'error' : 'success',
         text1: failed > 0 ? 'Some records did not upload' : downloadError ? 'Uploaded, but couldn\'t download updates' : 'Sync complete',
-        text2: problem ? `${parts.join(' · ')}. ${problem}` : parts.join(' · '),
+        // A failure links to Sync details: what is waiting and what the server said.
+        text2: failed > 0 ? `${summary} · Tap for details` : summary,
+        onPress: failed > 0
+          ? () => {
+              Toast.hide();
+              router.push('/sync-details' as never);
+            }
+          : undefined,
         position: 'bottom',
       });
     } catch (error) {
