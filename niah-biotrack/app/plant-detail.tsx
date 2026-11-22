@@ -34,6 +34,9 @@ import {
 import { NOT_SUBMITTED_BADGE, REVIEW_BADGE, visitStatus } from '../src/utils/reviewStatus';
 import { plantHeading, plantStatusLine, type TagProblemCode } from '../src/utils/plantStatusLine';
 import { firstVisitOf } from '../src/utils/submissionState';
+import { NO_REASON_TEXT, isGoneCode, rowActions } from '../src/utils/rowActions';
+import RowActions from '../src/components/RowActions';
+import { explainAnswer } from '../src/utils/syncDetails';
 import { finalProblemText, retryableRecord } from '../src/utils/syncDetails';
 import { speciesRequestText } from '../src/utils/speciesSearch';
 import { useProposalStore } from '../src/store/useProposalStore';
@@ -812,10 +815,14 @@ export default function PlantDetailScreen() {
           {/* Officer's reason */}
           {matched.reviewStatus === ReviewStatus.REJECTED && (
             <View style={styles.commentBox}>
-              <Text style={styles.commentTitle}>Officer's reason</Text>
-              <Text style={styles.commentBody}>
-                {matched.reviewComment?.trim() || 'No reason was given.'}
-              </Text>
+              {matched.reviewComment?.trim() ? (
+                <>
+                  <Text style={styles.commentTitle}>Officer's reason</Text>
+                  <Text style={styles.commentBody}>{matched.reviewComment.trim()}</Text>
+                </>
+              ) : (
+                <Text style={styles.commentTitle}>{NO_REASON_TEXT}</Text>
+              )}
             </View>
           )}
 
@@ -941,6 +948,12 @@ export default function PlantDetailScreen() {
               // Each observation's review status and the officer's reason if it was sent back.
               const status = visitStatus(observation, matched.syncError);
               const chips = observationChips(observation);
+              // What the botanist can do on it (src/utils/rowActions.ts); someone else's
+              // plant has no actions for its records.
+              const gone = isGoneCode(observation.submitCode);
+              const actions = matched.otherBotanist
+                ? []
+                : rowActions({ action: status.action, retryable: retryableRecord(matched, observation.id), gone });
               return (
                 <View key={observation.id} style={[styles.card, styles.obsCard]}>
                   <View style={styles.obsCardTop}>
@@ -954,7 +967,17 @@ export default function PlantDetailScreen() {
                     </View>
                   </View>
                   {observation.recordedBy ? <Text style={styles.obsAuthor}>{observation.recordedBy}</Text> : null}
-                  {status.reason ? <Text style={styles.obsReason}>{status.reason}</Text> : null}
+                  {gone ? (
+                    <Text style={styles.obsReason}>{explainAnswer('plant_deleted').explanation}</Text>
+                  ) : status.reason ? (
+                    <Text style={styles.obsReason}>{status.reason}</Text>
+                  ) : null}
+                  <RowActions
+                    actions={actions}
+                    recordId={matched.id}
+                    obsId={observation.id}
+                    isRegistration={observation === registrationVisit}
+                  />
                   {chips.length > 0 ? (
                     <View style={styles.pillGroup}>
                       {chips.map((chip) => (

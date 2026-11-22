@@ -23,6 +23,7 @@ import {
   type PlantRecord,
 } from '../src/store/useRecordStore';
 import { useProfileStore } from '../src/store/useProfileStore';
+import { officerReasonText } from '../src/utils/rowActions';
 import {
   pickImageFromLibrary,
   takePhotoWithCamera,
@@ -106,14 +107,20 @@ export default function AddObservationScreen() {
   const router = useRouter();
   const { isVisitor } = useAuthRole();
 
+  // editObservationId: "Edit" / "Edit and resend" on an observation that is a draft or was
+  // sent back. The form opens with it filled in and the officer's reason at the top; saving
+  // sends it for review again.
   const params = useLocalSearchParams<{
     plantId?: string;
     tagCode?: string;
     scientificName?: string;
+    editObservationId?: string;
+    resend?: string;
   }>();
 
   const records = useRecordStore((state) => state.records);
   const addObservation = useRecordStore((state) => state.addObservation);
+  const editObservation = useRecordStore((state) => state.editObservation);
   const syncRecord = useRecordStore((state) => state.syncRecord);
   const me = useProfileStore((state) => state.me);
 
@@ -139,6 +146,12 @@ export default function AddObservationScreen() {
       )
     : undefined;
 
+  const editing = params.editObservationId
+    ? passedPlant?.observations.find((item) => item.id === params.editObservationId) ?? null
+    : null;
+  // The officer's reason when it was sent back (shown at the top).
+  const sentBackReason = editing && editing.reviewStatus === 'rejected' ? officerReasonText(editing.reviewComment) : null;
+
   const firstStep = passedPlant ? 2 : 1;
   const [currentStep, setCurrentStep] = useState<number>(firstStep);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -163,28 +176,41 @@ export default function AddObservationScreen() {
   );
 
   useEffect(() => {
+    // Editing: its own measurements (filled in below), not the plant's latest.
+    if (editing) return;
     const latest = getLatestPlantMeasurements(plant);
     setHeightM(latest.heightM);
     setDiameterCm(latest.diameterCm);
   }, [plant?.id]);
 
-  const [lifeStage, setLifeStage] = useState<LifeStage>('Mature');
-  const [healthStatus, setHealthStatus] = useState<HealthStatus>('Healthy');
+  const [lifeStage, setLifeStage] = useState<LifeStage>(editing?.stage ?? 'Mature');
+  const [healthStatus, setHealthStatus] = useState<HealthStatus>(editing?.health ?? 'Healthy');
 
   const scientificName =
     plant?.scientificName || params.scientificName || '';
 
   // ── UNIFIED PHOTO EVIDENCE (MIN 1, MAX 4) ────────────────────
-  const [photos, setPhotos] = useState<string[]>([]);
-  const [notes, setNotes] = useState<string>('');
+  const [photos, setPhotos] = useState<string[]>(editing?.photoUris ?? []);
+  const [notes, setNotes] = useState<string>(editing?.notes ?? '');
+  const editingLocation =
+    editing && typeof editing.latitude === 'number' && typeof editing.longitude === 'number'
+      ? { latitude: editing.latitude, longitude: editing.longitude, accuracyM: editing.gpsAccuracyM ?? null }
+      : null;
   const [visitLocation, setVisitLocation] = useState<{
     latitude: number;
     longitude: number;
     accuracyM: number | null;
-  } | null>(null);
+  } | null>(editingLocation);
   const [locationStatus, setLocationStatus] = useState<
     'not-requested' | 'capturing' | 'ready' | 'unavailable'
-  >('not-requested');
+  >(editingLocation ? 'ready' : 'not-requested');
+
+  // Editing: its own measurements.
+  useEffect(() => {
+    if (!editing) return;
+    if (editing.heightCm !== undefined && editing.heightCm !== null) setHeightM(String(Math.round(editing.heightCm) / 100));
+    if (editing.diameterCm !== undefined && editing.diameterCm !== null) setDiameterCm(String(editing.diameterCm));
+  }, [editing?.id]);
   const [locationMessage, setLocationMessage] = useState('');
 
   const captureVisitLocation = async () => {
@@ -247,7 +273,8 @@ export default function AddObservationScreen() {
 
   // Automatically capture location on mount
   useEffect(() => {
-    if (!isVisitor) {
+    // Editing an observation that already has its location: keep it.
+    if (!isVisitor && !editingLocation) {
       void captureVisitLocation();
     }
   }, [isVisitor]);
@@ -306,6 +333,12 @@ export default function AddObservationScreen() {
   };
 
   const handleRemovePhoto = (index: number) => {
+    // A photo already uploaded stays with the observation (the server has it).
+    const uri = photos[index];
+    if (editing && uri && editing.photoMeta?.[uri]?.uploaded) {
+      Toast.show({ type: 'info', text1: 'Photo already uploaded', text2: 'Photos already on the server stay with the observation.' });
+      return;
+    }
     setPhotos((previous) =>
       previous.filter((_, photoIndex) => photoIndex !== index)
     );
@@ -422,8 +455,9 @@ export default function AddObservationScreen() {
 
     try {
       const capturedLocation = visitLocation;
+      // Photos already saved with the observation keep their files; new ones are saved.
       const storedPhotoUris = await Promise.all(
-        photos.map((uri) => savePhotoPermanently(uri))
+        photos.map((uri) => (editing?.photoUris?.includes(uri) ? uri : savePhotoPermanently(uri)))
       );
 
       const now = new Date();
@@ -442,6 +476,34 @@ export default function AddObservationScreen() {
       const diameterCheck = checkDiameterCm(diameterCm);
       const heightMetres = heightCheck.ok ? heightCheck.value : undefined;
       const diameter = diameterCheck.ok ? diameterCheck.value : undefined;
+
+      if (editing) {
+        // "Edit and resend": the same observation, changed, sent for review again.
+        const saved = await editObservation(plant.id, editing.id, {
+          health: healthStatus,
+          stage: lifeStage,
+          measurement: `Height ${heightMetres ?? '-'} m · Diameter ${diameter ?? '-'} cm`,
+          heightCm: heightMetres === undefined ? undefined : metresToCm(heightMetres),
+          diameterCm: diameter,
+          notes: notes.trim(),
+          photoUris: storedPhotoUris,
+          latitude: capturedLocation?.latitude,
+          longitude: capturedLocation?.longitude,
+          gpsAccuracyM: capturedLocation?.accuracyM,
+        });
+        if (!saved) {
+          Toast.show({ type: 'error', text1: 'Not saved', text2: 'This observation is already waiting for review or approved.' });
+          return;
+        }
+        syncRecord(plant.id)
+          .then((result) => {
+            if (!result.ok) Toast.show({ type: 'info', text1: 'Saved, not sent yet', text2: result.reason });
+          })
+          .catch(() => Toast.show({ type: 'error', text1: 'Saved; sync could not start', text2: 'It is stored on this device and will retry.' }));
+        Toast.show({ type: 'success', text1: 'Observation saved', text2: 'It will be sent for review again.' });
+        router.back();
+        return;
+      }
 
       await addObservation(plant.id, {
         date: `${formattedDate} · ${formattedTime}`,
@@ -522,7 +584,7 @@ export default function AddObservationScreen() {
         </TouchableOpacity>
 
         <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle} numberOfLines={1}>Record observation</Text>
+          <Text style={styles.headerTitle} numberOfLines={1}>{editing ? 'Edit observation' : 'Record observation'}</Text>
           <Text style={styles.headerSub}>Step {currentStep} of 3</Text>
         </View>
 
@@ -554,6 +616,13 @@ export default function AddObservationScreen() {
       </View>
 
       <FormScrollView contentContainerStyle={styles.scrollContent}>
+        {/* Sent back: the officer's reason first, so the botanist knows what to fix. */}
+        {sentBackReason ? (
+          <View style={styles.reasonBanner}>
+            <Text style={styles.reasonBannerText}>{sentBackReason}</Text>
+          </View>
+        ) : null}
+
         {/* Identified Plant Summary Card */}
         {passedPlant && (
           <View style={styles.card}>
@@ -962,6 +1031,8 @@ export default function AddObservationScreen() {
 }
 
 const styles = StyleSheet.create({
+  reasonBanner: { backgroundColor: '#FDE2E2', borderRadius: 14, padding: 12, marginBottom: 12 },
+  reasonBannerText: { color: '#9B1C1C', fontSize: 13, fontWeight: '700', lineHeight: 18 },
   safeArea: {
     flex: 1,
     backgroundColor: '#F6F8F6',

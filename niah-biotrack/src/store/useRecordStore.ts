@@ -973,6 +973,40 @@ interface RecordState {
       | null
     >;
 
+  /*
+   * "Edit and resend" / "Edit": saves changes to an observation that is a draft or was sent
+   * back, queues the update and sends it for review again (on the next sync, started here).
+   * Returns the saved observation, or null when it can't be edited.
+   */
+  editObservation: (
+    plantRecordId: string,
+    observationId: string,
+    changes: Partial<
+      Pick<
+        ObservationVisit,
+        | 'health'
+        | 'stage'
+        | 'measurement'
+        | 'heightCm'
+        | 'diameterCm'
+        | 'notes'
+        | 'photoUris'
+        | 'latitude'
+        | 'longitude'
+        | 'gpsAccuracyM'
+      >
+    >
+  ) => Promise<ObservationVisit | null>;
+
+  /*
+   * "Send for review" on a record the server has as a draft ("Not submitted yet"): marks
+   * it to be submitted and syncs.
+   */
+  requestSubmit: (
+    plantRecordId: string,
+    observationId: string
+  ) => Promise<SyncResult>;
+
   syncRecord: (
     id: string,
     outboxRun?: SyncRunResult
@@ -1439,6 +1473,78 @@ export const useRecordStore =
             );
 
             return newObservation;
+          },
+
+        /* -------------------------------------------------
+         * EDIT AN OBSERVATION (draft or sent back) AND RESEND
+         * ------------------------------------------------ */
+
+        editObservation:
+          async (plantRecordId, observationId, changes) => {
+            const record = get().records.find((item) => item.id === plantRecordId);
+            const visit = record?.observations.find((item) => item.id === observationId);
+            if (!record || !visit) return null;
+            // Only a draft or one the officer sent back can be changed.
+            if (visit.reviewStatus === ReviewStatus.PENDING || visit.reviewStatus === ReviewStatus.APPROVED) {
+              return null;
+            }
+
+            // New photos get their own stable id; the ones already there keep theirs.
+            const photoMeta: Record<string, PhotoUpload> = { ...(visit.photoMeta ?? {}) };
+            for (const uri of changes.photoUris ?? visit.photoUris ?? []) {
+              if (!photoMeta[uri]) photoMeta[uri] = { id: randomUUID(), uploaded: false };
+            }
+
+            const updatedVisit: ObservationVisit = {
+              ...visit,
+              ...changes,
+              photoMeta,
+              syncStatus: SyncStatus.NOT_UPLOADED,
+              // Sent for review again once the change has uploaded.
+              submissionRequested: true,
+              submittedForReview: false,
+              submitError: null,
+              submitCode: null,
+            };
+            const updatedRecord: PlantRecord = {
+              ...record,
+              observations: record.observations.map((item) => (item.id === observationId ? updatedVisit : item)),
+              syncStatus: record.syncStatus === SyncStatus.UPLOADED ? SyncStatus.NOT_UPLOADED : record.syncStatus,
+            };
+
+            await persistObservation(updatedRecord, updatedVisit, isUploadable(updatedRecord));
+            await persistRecordSnapshot(updatedRecord);
+            set((state) => ({
+              records: state.records.map((item) => (item.id === plantRecordId ? updatedRecord : item)),
+            }));
+            return updatedVisit;
+          },
+
+        /* -------------------------------------------------
+         * SEND FOR REVIEW (a draft on the server)
+         * ------------------------------------------------ */
+
+        requestSubmit:
+          async (plantRecordId, observationId) => {
+            const record = get().records.find((item) => item.id === plantRecordId);
+            const visit = record?.observations.find((item) => item.id === observationId);
+            if (!record || !visit) {
+              return { ok: false, reason: 'Record not found' };
+            }
+            const updatedRecord: PlantRecord = {
+              ...record,
+              reviewStatus: record.reviewStatus === ReviewStatus.DRAFT ? ReviewStatus.PENDING : record.reviewStatus,
+              observations: record.observations.map((item) =>
+                item.id === observationId
+                  ? { ...item, submissionRequested: true, submittedForReview: false, submitError: null, submitCode: null }
+                  : item
+              ),
+            };
+            await persistRecordSnapshot(updatedRecord);
+            set((state) => ({
+              records: state.records.map((item) => (item.id === plantRecordId ? updatedRecord : item)),
+            }));
+            return get().syncRecord(plantRecordId);
           },
 
         /* -------------------------------------------------

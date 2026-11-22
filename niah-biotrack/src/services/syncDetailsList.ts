@@ -9,6 +9,7 @@
 import { useRecordStore, type PlantRecord } from '../store/useRecordStore';
 import {
   getWaitingOutboxRows,
+  removeOutboxOperation,
   removeServerDeletedObservation,
   removeServerDeletedPlant,
   type WaitingOutboxRow,
@@ -104,4 +105,38 @@ export async function removeRefusedSubmit(recordId: string, obsId: string, code:
   const updated: PlantRecord = { ...record, observations: record.observations.filter((visit) => visit.id !== obsId) };
   await persistRecordSnapshot(updated);
   await refreshStore(records.map((item) => (item.id === record.id ? updated : item)));
+}
+
+/**
+ * "Remove from phone" on a row (Recent activity, Plants list, plant detail Observations):
+ * removes every item of this record (or of this one observation) that can never upload, as
+ * Sync details lists them. Nothing is sent to the server. Returns how many were removed.
+ */
+export async function removePermanentProblems(recordId: string, obsId?: string | null): Promise<number> {
+  const rows = await loadSyncDetailRows(useRecordStore.getState().records);
+  const mine = rows.filter((row) => {
+    if (!row.final) return false;
+    const target = row.target;
+    if (target.type === 'outbox') {
+      if (target.recordId !== recordId) return false;
+      return !obsId || target.clientRecordId === obsId;
+    }
+    if (target.recordId !== recordId) return false;
+    return !obsId || target.obsId === obsId;
+  });
+
+  let removed = 0;
+  for (const row of mine) {
+    const target = row.target;
+    if (target.type === 'photo') {
+      await useRecordStore.getState().removePhoto(target.recordId, target.uri, target.obsId);
+    } else if (target.type === 'submit') {
+      await removeRefusedSubmit(target.recordId, target.obsId, row.code);
+    } else {
+      await removeOutboxOperation(target.operationId);
+    }
+    removed += 1;
+  }
+  if (mine.some((row) => row.target.type === 'outbox')) await useRecordStore.getState().hydrateOfflineRecords();
+  return removed;
 }
