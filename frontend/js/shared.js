@@ -1034,8 +1034,11 @@ const NAV_SECTIONS = [
   {
     label: 'Plants',
     carrySpecies: true,
+    // A plant's own page (opened from the list) keeps "Plants" highlighted but has no
+    // List / Map tab bar: it is a child page, not one of the section's pages.
+    alsoActiveOn: ['plant.html'],
     pages: [
-      { file: 'plants.html', label: 'List', alsoActiveOn: ['plant.html'] },
+      { file: 'plants.html', label: 'List' },
       { file: 'map.html', label: 'Map' }
     ]
   },

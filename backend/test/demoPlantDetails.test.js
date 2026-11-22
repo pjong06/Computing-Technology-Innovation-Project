@@ -80,7 +80,9 @@ test('fill: every generated record is flagged, approved (never in the Review que
   for (const field of Object.keys(plan.plantValues)) assert.ok(update.filters.includes(`${field}=is.null`), field);
   assert.match(read('scripts/demo-plant-details/fill.mjs'), /const \{ filters, body \} = plantUpdate\(plan, current\?\.demo_values\);/);
   // The Review queue lists only field records waiting for review, so approved demo records never appear.
-  assert.match(read('backend/src/routes/officerReviews.js'), /\.eq\("review_status", "pending"\)/);
+  // (The pending rule lives in services/liveObservations.js, used by the queue.)
+  assert.match(read('backend/src/services/liveObservations.js'), /\.eq\("review_status", "pending"\)/);
+  assert.match(read('backend/src/routes/officerReviews.js'), /livePendingObservations\(req\.supabase, OBSERVATION_COLUMNS, \{ limit: 100 \}\)/);
 });
 
 test('fill: plausible values for each growth form; no credit or source text', async () => {

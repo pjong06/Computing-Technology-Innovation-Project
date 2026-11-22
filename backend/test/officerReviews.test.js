@@ -44,7 +44,7 @@ function fakeDb(tables = {}) {
     from(table) {
       const chain = { table, filters: [] };
       const record = (name) => (...args) => { calls.push([table, name, ...args]); chain.filters.push([name, ...args]); return chain; };
-      for (const name of ['select', 'eq', 'is', 'in', 'order', 'limit']) chain[name] = record(name);
+      for (const name of ['select', 'eq', 'is', 'in', 'order', 'limit', 'range', 'not']) chain[name] = record(name);
       chain.insert = (row) => {
         calls.push([table, 'insert', row]);
         return { select: () => ({ single: async () => tables[`${table}:insert`] ?? { data: { id: 'review-1', ...row }, error: null } }) };

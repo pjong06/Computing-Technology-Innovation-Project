@@ -21,7 +21,7 @@ function fakeDb(tables = {}, counts = {}) {
     calls,
     from(table) {
       const query = { table, start: 0, end: Infinity };
-      for (const method of ['select', 'eq', 'in', 'is', 'order', 'limit', 'gte', 'lte']) {
+      for (const method of ['select', 'eq', 'in', 'is', 'order', 'limit', 'gte', 'lte', 'not']) {
         query[method] = (...args) => {
           calls.push([table, method, ...args]);
           if (method === 'limit') query.limitValue = args[0];
@@ -72,13 +72,20 @@ async function getExport(t, path) {
 
 test('report summary returns real table counts and is officer-only', async () => {
   role = 'officer';
-  db = fakeDb({}, { species: 8, observations: 3, plants: 42 });
+  // Three observations waiting; one is on a plant that was deleted, so it is not counted
+  // (the same rule as Review > Field records: services/liveObservations.js).
+  db = fakeDb({
+    observations: { data: [
+      { id: 'o1', plant_id: 'P-1' }, { id: 'o2', plant_id: 'P-2' }, { id: 'o3', plant_id: 'P-gone' },
+    ] },
+    plants: { data: [{ id: 'P-gone', deleted_at: '2026-11-20T00:00:00Z' }] },
+  }, { species: 8, plants: 42 });
   const result = await get('/summary');
   assert.equal(result.status, 200);
   assert.deepEqual(result.body.data, {
     species_count: 8,
     endangered_count: 8,
-    pending_observation_count: 3,
+    pending_observation_count: 2,
     plant_count: 42,
   });
   assert.ok(db.calls.some(call => call[0] === 'species' && call[1] === 'in' &&

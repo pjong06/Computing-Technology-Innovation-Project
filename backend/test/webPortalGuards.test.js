@@ -360,7 +360,7 @@ test('the plant catalogue is officer-only, linked from the menu and its page con
   // Plants section: List (plant catalogue, also for plant detail) then Map; the species
   // editor is no longer a menu page.
   const sections = shared.slice(shared.indexOf('const NAV_SECTIONS'), shared.indexOf('// Every page reachable from the menu'));
-  assert.match(sections, /label: 'Plants',\s*carrySpecies: true,\s*pages: \[\s*\{ file: 'plants\.html', label: 'List', alsoActiveOn: \['plant\.html'\] \},\s*\{ file: 'map\.html', label: 'Map' \}/);
+  assert.match(sections, /label: 'Plants',\s*carrySpecies: true,[\s\S]*?alsoActiveOn: \['plant\.html'\],\s*pages: \[\s*\{ file: 'plants\.html', label: 'List' \},\s*\{ file: 'map\.html', label: 'Map' \}/);
   assert.doesNotMatch(sections, /file: 'editor\.html'/);
 
   const catalogue = read('frontend/js/plants.js');
@@ -777,8 +777,10 @@ test('tab bars per section for officers, with the current page marked', () => {
     assert.deepEqual(tabs(page), review.map((tab, i) => ({ ...tab, active: i === activeIndex })), page);
   }
   assert.deepEqual(tabs('plants.html').map(t => [t.label, t.href, t.active]), [['List', 'plants.html', true], ['Map', 'map.html', false]]);
-  // Plant detail belongs to the Plants list.
-  assert.deepEqual(tabs('plant.html', '?id=1').map(t => [t.label, t.active]), [['List', true], ['Map', false]]);
+  // Plant detail is a child page of the Plants list: no List / Map tab bar there, but the
+  // Plants menu item stays highlighted.
+  assert.deepEqual(tabs('plant.html', '?id=1'), []);
+  assert.equal(plain(nav.navFor(OFFICER, 'plant.html', '?id=1').sections).find(s => s.label === 'Plants').active, true);
   assert.deepEqual(tabs('map.html').map(t => [t.label, t.active]), [['List', false], ['Map', true]]);
   // One-page sections have no tab bar (Admin is Users only now); the editor highlights Species.
   for (const page of ['species.html', 'editor.html', 'users.html', 'overview.html']) {

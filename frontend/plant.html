@@ -9,9 +9,11 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous">
 <link rel="stylesheet" href="css/style.css">
 <style>
-/* Top bar: breadcrumb on the left, the plant's actions on the right. */
-.plant-topbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; margin-bottom: 6px; }
-.breadcrumb { display: flex; min-width: 0; align-items: center; gap: 6px; font-weight: 600; }
+/* Layout, top to bottom: the full-width top row (breadcrumb left, buttons right); the header
+   card (photos left; tag, species, location, chips, facts right); Latest measurements and
+   Location side by side; Field notes; Observations. Narrow screens stack. */
+.plant-topbar { display: flex; width: 100%; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; margin-bottom: 6px; }
+.breadcrumb { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: 6px; font-weight: 600; }
 .breadcrumb a { color: var(--pri); text-decoration: none; }
 .breadcrumb a:hover { text-decoration: underline; }
 .breadcrumb .clip { max-width: 60vw; }
@@ -57,6 +59,8 @@ a.btn { display: inline-block; text-decoration: none; white-space: nowrap; }
 
 .detail-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 18px; }
 .detail-sections > .card { min-width: 0; }
+/* Field notes on its own full-width row, under Latest measurements and Location. */
+.detail-sections > #field-notes-card { grid-column: 1 / -1; }
 .card-title { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 10px; margin-bottom: 12px; }
 .card-title h2 { margin: 0; font-size: 17px; }
 .card-title .muted { margin: 0; font-size: 13px; }
@@ -120,11 +124,14 @@ a.btn { display: inline-block; text-decoration: none; white-space: nowrap; }
 <main class="wide">
 <section class="page on">
   <div class="plant-topbar">
-    <nav class="breadcrumb" aria-label="Breadcrumb">
+    <!-- A div with role="navigation", not a nav element: style.css gives every nav the side
+         menu's styles (sticky, 100vh tall), which turned this breadcrumb into a narrow
+         full-height column. -->
+    <div class="breadcrumb" role="navigation" aria-label="Breadcrumb">
       <a href="plants.html">Plants</a>
       <span aria-hidden="true">/</span>
       <span class="clip" id="plant-crumb" aria-current="page">Plant</span>
-    </nav>
+    </div>
     <div class="plant-actions" id="plant-actions" hidden>
       <button class="btn ghost" id="print-qr" type="button">Print QR tag</button>
       <a class="btn ghost" id="visitor-link" target="_blank" rel="noopener">Visitor page</a>
