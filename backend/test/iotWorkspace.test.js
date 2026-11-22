@@ -42,6 +42,17 @@ test('Botanist list always filters own ID and counts only assigned tasks',async 
   assert(f.queries[0].conditions.some(c=>c[0]==='eq'&&c[1]==='assigned_to'&&c[2]===OTHER));
   assert.equal((await f.call('/counts')).status,200);assert(f.queries[1].conditions.some(c=>c[1]==='alert_status'&&c[2]==='acknowledged'));
 });
+
+test('compact alert pages use bounded size and retain Botanist assignment filtering',async t=>{
+  const f=await fixture(t,'botanist',{count:19});
+  const r=await f.call('/alerts?status=acknowledged&page=2&page_size=8');
+  assert.equal(r.status,200);
+  assert.equal(JSON.parse(r.body).total_pages,3);
+  assert.equal(JSON.parse(r.body).has_more,true);
+  assert.deepEqual(f.queries[0].conditions.find(c=>c[0]==='range'),['range',8,15]);
+  assert(f.queries[0].conditions.some(c=>c[0]==='eq'&&c[1]==='assigned_to'&&c[2]===OTHER));
+  for(const size of ['0','51','-1','1.5','invalid',''])assert.equal((await f.call('/alerts?page_size='+size)).status,400);
+});
 test('task mutations validate payloads and use authenticated RPC with expected version',async t=>{
   const f=await fixture(t);assert.equal((await f.call(`/alerts/${ID}/assign`,'PATCH',{assigned_to:OTHER,assignment_notes:'check',expected_assigned_at:null})).status,200);
   assert.equal(f.calls[0].name,'iot_assign_alert');assert.equal(f.calls[0].args.p_expected,null);

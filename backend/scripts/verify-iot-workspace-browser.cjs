@@ -65,6 +65,9 @@ const express=require('express');const path=require('node:path');const assert=re
   await page.keyboard.press('Escape');
   await page.locator('[data-action=page][data-value=alerts]').click();
   await page.waitForFunction(()=>document.querySelector('.pagination span')?.textContent==='Page 1 / 3');
+  assert(requested.some(p=>p.endsWith('/alerts')));
+  const cardHeights=await page.evaluate(()=>['.alerts-panel','.review-panel'].map(s=>document.querySelector(s).getBoundingClientRect().height));
+  assert(Math.abs(cardHeights[0]-cardHeights[1])<=2,'Alert list and details must align on desktop');
   await page.locator('[data-action=next-page]').click();await page.waitForFunction(()=>document.querySelector('.pagination span')?.textContent==='Page 2 / 3');
   alertTotal=1;await page.locator('[data-action=refresh]').click();await page.waitForFunction(()=>document.querySelector('.pagination span')?.textContent==='Page 1 / 1');
   assert.equal(await page.locator('[data-action=next-page]').isDisabled(),true);

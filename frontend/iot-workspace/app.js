@@ -6,6 +6,8 @@ void (async()=>{
   let sb,identity,photos;
   const state={page:'overview',status:'open',station:null,alertStation:'all',resolution:'all',alertStations:[],range:'6h',metric:'temperature_c',from:'',to:'',severity:'all',query:'',selected:null,alertPage:1,alertPages:1,hasMore:false,alerts:[],stations:[],botanists:[],readings:[],evidence:[],evidenceId:null,location:null,ai:null,error:'',busy:false,loading:false,menu:false,resolving:false,readingsMore:false};
   let renderedAlertId=null;
+  // Keep page boundaries stable while selecting alerts or resizing the window.
+  const alertPageSize=window.matchMedia('(max-width:650px)').matches?4:8;
   let requestGeneration=0,detailGeneration=0,alertGeneration=0,polling=false,exporting=false;
   const labels={open:'Unassigned',acknowledged:'Assigned',resolved:'Resolved'};
   const metrics={temperature_c:{label:'Temperature',unit:'°C'},humidity_percent:{label:'Humidity',unit:'%'},soil_moisture_pct:{label:'Soil moisture',unit:'%'},rain_intensity_pct:{label:'Rain intensity',unit:'%'}};
@@ -136,7 +138,7 @@ void (async()=>{
   }
   async function loadAlerts(){
     const generation=++alertGeneration;
-    const r=await api('/alerts?'+new URLSearchParams({status:state.status,page:state.alertPage,...(state.alertStation==='all'?{}:{station:state.alertStation}),...(state.status==='resolved'&&state.resolution!=='all'?{resolution:state.resolution}:{})}));
+    const r=await api('/alerts?'+new URLSearchParams({status:state.status,page:state.alertPage,page_size:alertPageSize,...(state.alertStation==='all'?{}:{station:state.alertStation}),...(state.status==='resolved'&&state.resolution!=='all'?{resolution:state.resolution}:{})}));
     if(generation!==alertGeneration)return;
     state.alertPages=Number.isSafeInteger(r.total_pages)&&r.total_pages>0?r.total_pages:1;
     if(state.alertPage>state.alertPages){state.alertPage=state.alertPages;return loadAlerts();}
@@ -214,7 +216,20 @@ void (async()=>{
       if(action==='assign'||action==='resolve'){
         if(state.busy)return;const a=current();if(!a)return;
         const body=action==='assign'?{assigned_to:root.querySelector('#assignee').value,assignment_notes:root.querySelector('#assignment-note').value,expected_assigned_at:a.assigned_at}:{resolution_notes:root.querySelector('#resolution-note').value,expected_assigned_at:a.assigned_at};
-        if(action==='assign'&&!body.assigned_to)throw new Error('Select a botanist.');
+        if(action==='assign'&&!body.assigned_to){
+          const select=root.querySelector('#assignee');
+          let warning=root.querySelector('#assignee-warning');
+          if(!warning){
+            warning=document.createElement('span');warning.id='assignee-warning';
+            warning.className='workspace-error';warning.setAttribute('role','alert');
+            warning.textContent='Select a botanist.';select.after(warning);
+          }
+          select.setAttribute('aria-invalid','true');select.setAttribute('aria-describedby','assignee-warning');
+          select.onchange=()=>{
+            if(select.value){warning.remove();select.removeAttribute('aria-invalid');select.removeAttribute('aria-describedby');select.onchange=null;}
+          };
+          select.focus();return;
+        }
         if(action==='resolve'&&!body.resolution_notes.trim())throw new Error('Add a handling note.');
         state.busy=true;b.disabled=true;
         try{await api(`/alerts/${pathId(a.id)}/${action}`,{method:'PATCH',body:JSON.stringify(body)});state.status=action==='assign'?'acknowledged':'resolved';await loadAlerts();await counts();state.busy=false;render();}finally{state.busy=false;b.disabled=false;}
