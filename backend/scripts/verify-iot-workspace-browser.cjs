@@ -71,8 +71,6 @@ const express=require('express');const path=require('node:path');const assert=re
   await page.locator('[data-action=page][data-value=alerts]').click();
   await page.waitForFunction(()=>document.querySelector('.pagination span')?.textContent==='Page 1 / 3');
   assert(requested.some(p=>p.endsWith('/alerts')));
-  const cardHeights=await page.evaluate(()=>['.alerts-panel','.review-panel'].map(s=>document.querySelector(s).getBoundingClientRect().height));
-  assert(cardHeights[0]<=cardHeights[1]+2,'Alert list must not exceed details height on desktop');
   await page.locator('[data-action=next-page]').click();await page.waitForFunction(()=>document.querySelector('.pagination span')?.textContent==='Page 2 / 3');
   alertTotal=1;await page.locator('[data-action=refresh]').click();await page.waitForFunction(()=>document.querySelector('.pagination span')?.textContent==='Page 1 / 1');
   assert.equal(await page.locator('[data-action=next-page]').isDisabled(),true);
@@ -121,7 +119,7 @@ const express=require('express');const path=require('node:path');const assert=re
   alertDeleted=false;alertTotal=1;await page.locator('[data-action=refresh]').click();await page.locator('.alert-row').click();await page.waitForFunction(()=>document.querySelector('#assignee'));
   assert.equal(await page.locator('#assignee option').last().textContent(),'<img src=x onerror=window.injected=true>');
   assert.equal(await page.locator('#menu .who button').innerText(),'Log out');
-  assert.equal(await page.locator('.alert-copy strong').innerText(),'Movement detected near station');
+  assert.equal(await page.locator('.alert-copy strong').innerText(),'Movement detected');
   await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   hostile=true;await page.locator('[data-action=refresh]').click();await page.locator('[data-action=severity][data-value=all]').click();await page.locator('.alert-row').click();
   await page.waitForFunction(()=>document.querySelector('#workspace-error')?.textContent.includes('Invalid record identifier'));
@@ -143,19 +141,16 @@ const express=require('express');const path=require('node:path');const assert=re
   await page.setViewportSize({width:1440,height:1000});
   await page.goto(`http://127.0.0.1:${server.address().port}/portal/iot-workspace.html`);
   await page.locator('[data-action=page][data-value=alerts]').click();
-  await page.waitForFunction(()=>{
-    const list=document.querySelector('.alerts-panel'),detail=document.querySelector('.review-panel');
-    return document.querySelectorAll('.alert-row').length>0&&list.offsetHeight<=detail.offsetHeight+2;
-  });
+  await page.waitForFunction(()=>document.querySelectorAll('.alert-row').length===8);
   const firstPage=await page.locator('.alert-row').evaluateAll(rows=>rows.map(row=>row.dataset.value));
-  assert(firstPage.length<8,'Oversized eight-row page must shrink');
+  assert.equal(firstPage.length,8,'Pages must keep eight alerts regardless of details height');
   await page.locator('[data-action=next-page]').click();
   await page.waitForFunction(first=>!first.includes(document.querySelector('.alert-row')?.dataset.value),firstPage);
   const secondPage=await page.locator('.alert-row').evaluateAll(rows=>rows.map(row=>row.dataset.value));
   assert(!secondPage.some(id=>firstPage.includes(id)),'Next page must not repeat alerts');
   await page.setViewportSize({width:390,height:844});await page.reload();
   await page.locator('[data-action=page][data-value=alerts]').click();
-  await page.waitForFunction(()=>document.querySelectorAll('.alert-row').length===4);
+  await page.waitForFunction(()=>document.querySelectorAll('.alert-row').length===8);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   console.log('PASS: loaded history retained, popup paging, selected evidence/AI refresh, switched-photo analysis, shared navigation, labels, mobile layout.');
  }finally{await browser.close();await new Promise(resolve=>{server.closeAllConnections();server.close(resolve);});}

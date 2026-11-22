@@ -6,9 +6,7 @@ void (async()=>{
   let sb,identity,photos;
   const state={page:'overview',status:'open',station:null,alertStation:'all',resolution:'all',alertStations:[],range:'6h',metric:'temperature_c',from:'',to:'',severity:'all',query:'',selected:null,alertPage:1,alertPages:1,hasMore:false,alerts:[],stations:[],botanists:[],readings:[],evidence:[],evidenceId:null,location:null,ai:null,error:'',busy:false,loading:false,menu:false,resolving:false,readingsMore:false};
   let renderedAlertId=null;
-  // Pages may shrink to fit, but do not grow/jump when longer details are opened.
-  let alertPageSize=window.matchMedia('(max-width:650px)').matches?4:8;
-  let fittingAlerts=false;
+  const alertPageSize=8;
   let requestGeneration=0,detailGeneration=0,alertGeneration=0,polling=false,exporting=false;
   const labels={open:'Unassigned',acknowledged:'Assigned',resolved:'Resolved'};
   const metrics={temperature_c:{label:'Temperature',unit:'°C'},humidity_percent:{label:'Humidity',unit:'%'},soil_moisture_pct:{label:'Soil moisture',unit:'%'},rain_intensity_pct:{label:'Rain intensity',unit:'%'}};
@@ -128,27 +126,7 @@ void (async()=>{
     if(host&&e&&current())photos.attach(host,current().id,e);
     const overviewMap=root.querySelector('#station-location-map');if(overviewMap)WorkspaceMaps.attach(overviewMap,state.stations,'overview');
     const taskMap=root.querySelector('#task-location-map');if(taskMap&&state.location)WorkspaceMaps.attach(taskMap,[state.location],'task');
-    requestAnimationFrame(fitAlertPage);
   }
-  async function fitAlertPage(){
-    if(fittingAlerts||state.page!=='alerts'||!window.matchMedia('(min-width:1001px)').matches)return;
-    const list=root.querySelector('.alerts-panel'),detail=root.querySelector('.review-panel');
-    if(!list||!detail||list.offsetHeight<=detail.offsetHeight+2)return;
-    const rows=[...list.querySelectorAll('.alert-row')];
-    if(rows.length<2)return;
-    const available=detail.offsetHeight-(list.offsetHeight-rows.reduce((sum,row)=>sum+row.offsetHeight,0));
-    let used=0,fit=0;
-    for(const row of rows){if(used+row.offsetHeight>available)break;used+=row.offsetHeight;fit++;}
-    const size=Math.max(1,fit);
-    if(size>=alertPageSize)return;
-    fittingAlerts=true;
-    // Preserve the selected item's approximate dataset position when shrinking.
-    const selectedIndex=state.alerts.findIndex(a=>a.id===state.selected);
-    const offset=(state.alertPage-1)*alertPageSize+Math.max(0,selectedIndex);
-    alertPageSize=size;state.alertPage=Math.floor(offset/size)+1;
-    try{await loadAlerts();render();}catch(error){showError(error);}finally{fittingAlerts=false;}
-  }
-  window.addEventListener('resize',()=>requestAnimationFrame(fitAlertPage));
   function showError(error){state.error=error.message||'Service unavailable';const box=root.querySelector('#workspace-error');if(box){box.hidden=false;box.textContent=state.error;}else render();}
   async function loadReadings(){
     if(!state.station){state.readings=[];state.readingsMore=false;return;}
