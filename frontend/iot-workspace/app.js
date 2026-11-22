@@ -6,8 +6,7 @@ void (async()=>{
   let sb,identity,photos;
   const state={page:'overview',status:'open',station:null,alertStation:'all',resolution:'all',alertStations:[],range:'6h',metric:'temperature_c',from:'',to:'',severity:'all',query:'',selected:null,alertPage:1,alertPages:1,hasMore:false,alerts:[],stations:[],botanists:[],readings:[],evidence:[],evidenceId:null,location:null,ai:null,error:'',busy:false,loading:false,menu:false,resolving:false,readingsMore:false};
   let renderedAlertId=null;
-  // Keep page boundaries stable while selecting alerts or resizing the window.
-  const alertPageSize=window.matchMedia('(max-width:650px)').matches?4:8;
+  const alertPageSize=8;
   let requestGeneration=0,detailGeneration=0,alertGeneration=0,polling=false,exporting=false;
   const labels={open:'Unassigned',acknowledged:'Assigned',resolved:'Resolved'};
   const metrics={temperature_c:{label:'Temperature',unit:'°C'},humidity_percent:{label:'Humidity',unit:'%'},soil_moisture_pct:{label:'Soil moisture',unit:'%'},rain_intensity_pct:{label:'Rain intensity',unit:'%'}};

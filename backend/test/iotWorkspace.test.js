@@ -115,7 +115,8 @@ test('AI resolution filter is a parameterized query and rejects unknown values',
 
 test('plain alert labels preserve high/low meaning and support existing rule names',()=>{
  const title=require('../../frontend/iot-workspace/alert-labels');
- for(const [raw,want] of [['Camera movement within range (movement_nearby_cm)','Movement detected near station'],['IoT high temperature (temperature_c)','High temperature'],['Steven Sprint2 TEST temperature >35 (temperature_c)','High temperature'],['Low temperature (temperature_c)','Low temperature'],['IoT low soil moisture (soil_moisture_pct)','Low soil moisture'],['IoT heavy rain (rain_intensity_pct)','Heavy rain detected'],['Humidity rule (humidity_percent)','Humidity alert']])assert.equal(title(raw),want);
+ for(const [raw,want] of [['Camera movement within range (movement_nearby_cm)','Movement detected'],['IoT high temperature (temperature_c)','High temperature'],['Steven Sprint2 TEST temperature >35 (temperature_c)','High temperature'],['Low temperature (temperature_c)','Low temperature'],['IoT low soil moisture (soil_moisture_pct)','Low soil moisture'],['IoT heavy rain (rain_intensity_pct)','Heavy rain detected'],['Humidity rule (humidity_percent)','Humidity alert']])assert.equal(title(raw),want);
+ assert.equal(title('Movement detected (movement_detected)'),'Movement detected');
  assert.equal(title('Unknown alarm'),'Unknown alarm');
 });
 

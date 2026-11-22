@@ -7,11 +7,16 @@ const express=require('express');const path=require('node:path');const assert=re
  const browser=await chromium.launch({headless:true,...(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{})});
  try{
   const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[],queries=[];
+  let denseLayout=false;
   page.on('pageerror',e=>errors.push(e.message));
   const station='11111111-1111-4111-8111-111111111111',alert='22222222-2222-4222-8222-222222222222';
   let evidenceCount=1,analysisStatus='pending',hostile=false,alertTotal=101,alertCount=7,role='officer',analysisOverride={},alertFields={},alertDeleted=false,deleteFailure=false,deleteRequests=0;const requested=[];
   await page.route('**/*',async route=>{
    const url=new URL(route.request().url()),p=url.pathname,json=data=>route.fulfill({json:data});requested.push(p);
+   if(p.endsWith('/alerts')&&denseLayout){
+    const size=Number(url.searchParams.get('page_size')),n=Number(url.searchParams.get('page'));
+    return json({data:Array.from({length:Math.min(size,24-(n-1)*size)},(_,i)=>({id:'fixture-'+((n-1)*size+i),station_id:station,alert_message:'Movement detected (movement_detected)',severity:'high',alert_status:'open',triggered_at:new Date().toISOString()})),has_more:n<Math.ceil(24/size),total:24,total_pages:Math.ceil(24/size)});
+   }
    if(p.endsWith('/badge-check.html'))return route.fulfill({contentType:'text/html',body:'<!doctype html><html><body><nav id="menu"></nav><main></main><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script><script src="js/shared.js" data-navigation-only></script><script>startSession('+JSON.stringify({id:role,role,email:role+'@example.com'})+');drawMenu("species.html");</script></body></html>'});
    if(p.endsWith('/iot-workspace.html')){const r=await route.fetch();return route.fulfill({response:r,body:(await r.text()).replace(/ integrity="[^"]+"/g,'')});}
    if(url.hostname==='cdn.jsdelivr.net')return route.fulfill({contentType:'application/javascript',body:"window.supabase={createClient:()=>({auth:{getSession:async()=>({data:{session:{access_token:'fixture',expires_at:9999999999}}}),signOut:async()=>({})}})}"});
@@ -66,8 +71,6 @@ const express=require('express');const path=require('node:path');const assert=re
   await page.locator('[data-action=page][data-value=alerts]').click();
   await page.waitForFunction(()=>document.querySelector('.pagination span')?.textContent==='Page 1 / 3');
   assert(requested.some(p=>p.endsWith('/alerts')));
-  const cardHeights=await page.evaluate(()=>['.alerts-panel','.review-panel'].map(s=>document.querySelector(s).getBoundingClientRect().height));
-  assert(Math.abs(cardHeights[0]-cardHeights[1])<=2,'Alert list and details must align on desktop');
   await page.locator('[data-action=next-page]').click();await page.waitForFunction(()=>document.querySelector('.pagination span')?.textContent==='Page 2 / 3');
   alertTotal=1;await page.locator('[data-action=refresh]').click();await page.waitForFunction(()=>document.querySelector('.pagination span')?.textContent==='Page 1 / 1');
   assert.equal(await page.locator('[data-action=next-page]').isDisabled(),true);
@@ -116,7 +119,7 @@ const express=require('express');const path=require('node:path');const assert=re
   alertDeleted=false;alertTotal=1;await page.locator('[data-action=refresh]').click();await page.locator('.alert-row').click();await page.waitForFunction(()=>document.querySelector('#assignee'));
   assert.equal(await page.locator('#assignee option').last().textContent(),'<img src=x onerror=window.injected=true>');
   assert.equal(await page.locator('#menu .who button').innerText(),'Log out');
-  assert.equal(await page.locator('.alert-copy strong').innerText(),'Movement detected near station');
+  assert.equal(await page.locator('.alert-copy strong').innerText(),'Movement detected');
   await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   hostile=true;await page.locator('[data-action=refresh]').click();await page.locator('[data-action=severity][data-value=all]').click();await page.locator('.alert-row').click();
   await page.waitForFunction(()=>document.querySelector('#workspace-error')?.textContent.includes('Invalid record identifier'));
@@ -134,6 +137,21 @@ const express=require('express');const path=require('node:path');const assert=re
   assert.equal(await page.locator('#iot-alert-menu-count').getAttribute('class'),'menu-count');
   alertCount=0;await page.evaluate(()=>refreshIotAlertMenuCount());assert.equal(await page.locator('#iot-alert-menu-count').isHidden(),true);
   assert.deepEqual(errors,[]);assert(queries.some(q=>q.page==='2'));
+  denseLayout=true;hostile=false;alertDeleted=false;
+  await page.setViewportSize({width:1440,height:1000});
+  await page.goto(`http://127.0.0.1:${server.address().port}/portal/iot-workspace.html`);
+  await page.locator('[data-action=page][data-value=alerts]').click();
+  await page.waitForFunction(()=>document.querySelectorAll('.alert-row').length===8);
+  const firstPage=await page.locator('.alert-row').evaluateAll(rows=>rows.map(row=>row.dataset.value));
+  assert.equal(firstPage.length,8,'Pages must keep eight alerts regardless of details height');
+  await page.locator('[data-action=next-page]').click();
+  await page.waitForFunction(first=>!first.includes(document.querySelector('.alert-row')?.dataset.value),firstPage);
+  const secondPage=await page.locator('.alert-row').evaluateAll(rows=>rows.map(row=>row.dataset.value));
+  assert(!secondPage.some(id=>firstPage.includes(id)),'Next page must not repeat alerts');
+  await page.setViewportSize({width:390,height:844});await page.reload();
+  await page.locator('[data-action=page][data-value=alerts]').click();
+  await page.waitForFunction(()=>document.querySelectorAll('.alert-row').length===8);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   console.log('PASS: loaded history retained, popup paging, selected evidence/AI refresh, switched-photo analysis, shared navigation, labels, mobile layout.');
  }finally{await browser.close();await new Promise(resolve=>{server.closeAllConnections();server.close(resolve);});}
 })().catch(e=>{console.error(e);process.exit(1)});
