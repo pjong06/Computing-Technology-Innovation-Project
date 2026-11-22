@@ -51,24 +51,24 @@ export interface DatedVisit extends VisitSubmissionFields {
   date?: string;
 }
 
-// The visit made when the plant was registered on this phone (its "first visit"): the
-// visit with the plant's creation time. null when there is none (no visits yet, or a plant
-// registered elsewhere and scanned onto this phone). Only records without a creation time
-// fall back to the oldest visit (new visits are added to the front of the list, so on a
-// tie the last one is the oldest).
+// The plant's first record (its registration): the same rule as the officer Review page,
+// the plant's earliest observation (deleted ones are not on the phone). Compared by time,
+// not by text, so a visit the server sent back as "...+00:00" still matches a plant
+// created at "...Z". On equal times the one further down the list wins (new visits are
+// added to the front, so it is the older one); visits without a time count as newest.
+// null when there is none: no visits yet, someone else's plant scanned onto this phone
+// (its registration was the other botanist's, so this botanist's visits are observations),
+// or a plant cached from the server whose registration record isn't on this phone (its
+// earliest visit here is long after the plant was registered).
+export const REGISTRATION_TOLERANCE_MS = 60 * 1000;
+
 export function firstVisitOf<T extends DatedVisit>(record: {
   createdAtIso?: string;
+  otherBotanist?: boolean;
   observations: T[];
 }): T | null {
   const visits = record.observations;
-  if (visits.length === 0) return null;
-  if (record.createdAtIso) {
-    // The registration visit has the plant's creation time. A plant cached from the server
-    // (scanned; e.g. another botanist's approved plant) has its server registration time
-    // and no such visit: this botanist's visits there are revisits, not a "first visit".
-    return visits.find((visit) => visit.observedAt === record.createdAtIso) ?? null;
-  }
-  // Older records without a creation time: the oldest visit.
+  if (visits.length === 0 || record.otherBotanist) return null;
   const time = (visit: T) => {
     const parsed = Date.parse(visit.observedAt || visit.date || '');
     return Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : parsed;
@@ -77,7 +77,31 @@ export function firstVisitOf<T extends DatedVisit>(record: {
   for (const visit of visits) {
     if (time(visit) < time(oldest)) oldest = visit;
   }
+  // The registration record is made at the plant's creation time (the server may send that
+  // time in another format or rounded): an earliest visit well after it is an observation.
+  const created = Date.parse(record.createdAtIso ?? '');
+  if (!Number.isNaN(created) && time(oldest) - created > REGISTRATION_TOLERANCE_MS) return null;
   return oldest;
+}
+
+// A plant's rows in Recent activity: ONE "NEW PLANT" row for registering it (the plant
+// together with its first record, which is its registration), then an "OBSERVATION" row for
+// each later record. Someone else's plant has no NEW PLANT row: all of this botanist's
+// records there are observations.
+export function plantActivityEntries<T extends DatedVisit & { id?: string }>(record: {
+  createdAtIso?: string;
+  otherBotanist?: boolean;
+  observations: T[];
+}): { type: 'new_plant' | 'observation'; visit: T | null }[] {
+  const first = firstVisitOf(record);
+  const entries: { type: 'new_plant' | 'observation'; visit: T | null }[] = record.otherBotanist
+    ? []
+    : [{ type: 'new_plant', visit: first }];
+  for (const visit of record.observations) {
+    if (visit === first || !visit.id) continue;
+    entries.push({ type: 'observation', visit });
+  }
+  return entries;
 }
 
 // The review state of a newly registered plant's single list row: the status of its first

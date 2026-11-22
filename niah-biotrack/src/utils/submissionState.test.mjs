@@ -11,6 +11,7 @@ import {
   oversizedPhotoMessage,
   firstVisitOf,
   newPlantReview,
+  plantActivityEntries,
   waitingVisitsText,
   isPhotoLockFinal,
 } from './submissionState.ts';
@@ -110,6 +111,35 @@ test('the first visit of a plant is the registration visit (its creation time), 
   assert.equal(firstVisitOf({ observations: [revisit, registration] }), registration);
   assert.equal(firstVisitOf({ observations: [{ id: 'a' }, { id: 'b' }] }).id, 'b');
   assert.equal(firstVisitOf({ observations: [] }), null);
+});
+
+test('the first record is the earliest observation (the officer Review page rule), compared by time', () => {
+  // The server sends observed_at as "+00:00"; the plant was created at "...Z" on the phone.
+  const createdAtIso = '2026-11-22T02:00:00.000Z';
+  const registration = { id: 'r', observedAt: '2026-11-22T02:00:00+00:00' };
+  assert.equal(firstVisitOf({ createdAtIso, observations: [registration] }), registration);
+  // A registration a moment after the plant's creation time is still the first record.
+  const late = { id: 'l', observedAt: '2026-11-22T02:00:01.500Z' };
+  assert.equal(firstVisitOf({ createdAtIso, observations: [late] }), late);
+  // Someone else's plant: this botanist's records there are all observations.
+  assert.equal(firstVisitOf({ otherBotanist: true, observations: [registration] }), null);
+});
+
+test('Recent activity: a new plant with its first observation is ONE row; a later one is an OBSERVATION row', () => {
+  const createdAtIso = '2026-11-22T02:00:00.000Z';
+  const first = { id: 'first', observedAt: '2026-11-22T02:00:00+00:00' };
+  // Just registered: one NEW PLANT row, carrying the first record (its status).
+  const justRegistered = plantActivityEntries({ createdAtIso, observations: [first] });
+  assert.deepEqual(justRegistered.map((entry) => entry.type), ['new_plant']);
+  assert.equal(justRegistered[0].visit, first);
+  // A second observation later: its own OBSERVATION row (new visits are added to the front).
+  const second = { id: 'second', observedAt: '2026-12-01T03:00:00.000Z' };
+  const withSecond = plantActivityEntries({ createdAtIso, observations: [second, first] });
+  assert.deepEqual(withSecond.map((entry) => [entry.type, entry.visit?.id]), [['new_plant', 'first'], ['observation', 'second']]);
+  // A draft plant with no record yet: just the NEW PLANT row.
+  assert.deepEqual(plantActivityEntries({ createdAtIso, observations: [] }), [{ type: 'new_plant', visit: null }]);
+  // Someone else's plant: only OBSERVATION rows.
+  assert.deepEqual(plantActivityEntries({ otherBotanist: true, observations: [second] }).map((entry) => entry.type), ['observation']);
 });
 
 test('a new plant row uses its first visit status, plus revisits waiting once approved', () => {
