@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -9,8 +9,10 @@ import {
   Platform,
   StatusBar,
   ActivityIndicator,
+  RefreshControl,
+  AppState,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
 import { lookupPublicTag, describePublicTagLookup, type PublicTagLookupResult } from '../src/services/tagLookup';
 import { conservationStatusColors, plainConservationStatus } from '../src/utils/conservationStatus';
@@ -42,24 +44,12 @@ export default function PlantInfoScreen() {
 
   const species = useSpeciesStore((state) => state.species);
   const detailsById = useSpeciesStore((state) => state.detailsById);
+  const loadSpecies = useSpeciesStore((state) => state.loadSpecies);
   const loadSpeciesDetail = useSpeciesStore((state) => state.loadSpeciesDetail);
 
   const [scan, setScan] = useState<PublicTagLookupResult | null>(null);
   const [scanLoading, setScanLoading] = useState(Boolean(tag));
-
-  // A scanned tag: look the plant up on the public route.
-  useEffect(() => {
-    if (!tag) return;
-    let active = true;
-    void lookupPublicTag(tag).then((result) => {
-      if (!active) return;
-      setScan(result);
-      setScanLoading(false);
-    });
-    return () => {
-      active = false;
-    };
-  }, [tag]);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Which approved species this is: the one asked for, or (for a scan) the species with
   // the same scientific name, so its photo can be shown.
@@ -70,9 +60,44 @@ export default function PlantInfoScreen() {
       ? species.find((s) => normalise(s.scientific_name) === normalise(scanned.scientificName))?.id
       : undefined);
 
+  const syncPlantPage = useCallback(
+    async (manual = false) => {
+      if (manual) setRefreshing(true);
+      try {
+        if (species.length === 0) {
+          await loadSpecies({ silent: true });
+        }
+        if (tag) {
+          const result = await lookupPublicTag(tag);
+          setScan(result);
+          setScanLoading(false);
+        }
+        if (speciesId) {
+          await loadSpeciesDetail(speciesId, true);
+        }
+      } finally {
+        if (manual) setRefreshing(false);
+      }
+    },
+    [species.length, loadSpecies, tag, speciesId, loadSpeciesDetail]
+  );
+
+  // Auto-sync when opening or returning to this screen
+  useFocusEffect(
+    useCallback(() => {
+      void syncPlantPage(false);
+    }, [syncPlantPage])
+  );
+
+  // Auto-sync when returning to the app from the background
   useEffect(() => {
-    if (speciesId) void loadSpeciesDetail(speciesId);
-  }, [speciesId, loadSpeciesDetail]);
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        void syncPlantPage(false);
+      }
+    });
+    return () => subscription.remove();
+  }, [syncPlantPage]);
 
   const detail = speciesId ? detailsById[speciesId] : undefined;
   const listItem = speciesId ? species.find((s) => s.id === speciesId) : undefined;
@@ -121,7 +146,17 @@ export default function PlantInfoScreen() {
           <ActivityIndicator color="#213B2A" />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void syncPlantPage(true)}
+              tintColor="#213B2A"
+              colors={['#213B2A']}
+            />
+          }
+        >
           {photoUri ? (
             <View style={styles.photoBox}>
               <PlantThumbnail

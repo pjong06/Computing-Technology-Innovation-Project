@@ -1,4 +1,5 @@
 import { apiFetch, ApiError } from '../api/client';
+import { fetchSpecies } from '../api/species';
 import { parseTagCode } from '../utils/tagCode';
 import { detailsFromServer } from '../utils/plantDetails';
 import {
@@ -258,5 +259,93 @@ export function describePublicTagLookup(result: Exclude<PublicTagLookupResult, {
       return { title: 'No connection', message: 'Connect to the internet to look up this tag.' };
     case 'error':
       return { title: 'Could not look up tag', message: result.message };
+  }
+}
+
+export interface PublicPlantSummary {
+  id: string;
+  tagCode: string | null;
+  speciesId: string | null;
+  scientificName: string | null;
+  commonName: string | null;
+  localName: string | null;
+  speciesCategory: string | null;
+  conservationStatus: string | null;
+  description: string | null;
+  registeredAt: string | null;
+  photoUrl: string | null;
+}
+
+interface PublicPlantsListResponse {
+  data: {
+    id?: string;
+    tag_code?: string | null;
+    species_id?: string | null;
+    scientific_name?: string | null;
+    common_name?: string | null;
+    local_name?: string | null;
+    species_category?: string | null;
+    conservation_status?: string | null;
+    description?: string | null;
+    registered_at?: string | null;
+    photo_url?: string | null;
+  }[];
+}
+
+// Fallback when the running backend does not yet have GET /api/public/plants deployed:
+// extracts the approved plant tags attached to /api/knowledge/species (public_photo.tag).
+async function fetchPublicPlantsFromSpeciesFallback(): Promise<PublicPlantSummary[]> {
+  const speciesList = await fetchSpecies();
+  const plants: PublicPlantSummary[] = [];
+  const seenTags = new Set<string>();
+
+  for (const sp of speciesList) {
+    const tagCode = sp.public_photo?.tag?.trim().toUpperCase();
+    if (!tagCode || seenTags.has(tagCode)) continue;
+    seenTags.add(tagCode);
+    plants.push({
+      id: tagCode,
+      tagCode,
+      speciesId: sp.id,
+      scientificName: sp.scientific_name || null,
+      commonName: sp.common_name || null,
+      localName: sp.local_name || null,
+      speciesCategory: sp.species_category || null,
+      conservationStatus: sp.conservation_status || null,
+      description: sp.description || null,
+      registeredAt: null,
+      photoUrl: sp.public_photo?.url ?? null,
+    });
+  }
+
+  return plants.sort((a, b) => (b.tagCode ?? '').localeCompare(a.tagCode ?? ''));
+}
+
+export async function fetchPublicPlants(): Promise<PublicPlantSummary[]> {
+  try {
+    const response = await apiFetch<PublicPlantsListResponse>('/api/public/plants', {
+      auth: false,
+    });
+    const rows = Array.isArray(response?.data) ? response.data : [];
+    return rows
+      .filter((row) => Boolean(row?.id || row?.tag_code))
+      .map((row) => ({
+        id: (row.id || row.tag_code)!,
+        tagCode: typeof row.tag_code === 'string' && row.tag_code.length > 0 ? row.tag_code : null,
+        speciesId: row.species_id ?? null,
+        scientificName: row.scientific_name ?? null,
+        commonName: row.common_name ?? null,
+        localName: row.local_name ?? null,
+        speciesCategory: row.species_category ?? null,
+        conservationStatus: row.conservation_status ?? null,
+        description: row.description ?? null,
+        registeredAt: row.registered_at ?? null,
+        photoUrl: typeof row.photo_url === 'string' ? row.photo_url : null,
+      }));
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      return fetchPublicPlantsFromSpeciesFallback();
+    }
+    throw error;
   }
 }

@@ -1,4 +1,3 @@
-
 const path = require('path');
 
 require('dotenv').config({
@@ -140,8 +139,8 @@ app.get('/api/health/supabase', async (_req, res) => {
   });
 });
 
-// PUBLIC PLANT QR CODE LOOKUP
-// Return approved public plant information for a QR code.
+// PUBLIC PLANT QR CODE LOOKUP & APPROVED PLANTS LIST
+// Return approved public plant information for visitors (read-only).
 const { createQrLimiter } = require('./middleware/publicQrProtection');
 const qrLimiter = createQrLimiter({
   limit: Number(process.env.QR_RATE_LIMIT || 60),
@@ -149,6 +148,7 @@ const qrLimiter = createQrLimiter({
 });
 
 app.get('/api/public/plants/by-qr', qrLimiter, publicPlantRoutes.createPublicQrHandler(publicClient));
+app.get('/api/public/plants', qrLimiter, publicPlantRoutes.createPublicPlantsListHandler(publicClient));
 
 // CURRENT USER INFORMATION
 
