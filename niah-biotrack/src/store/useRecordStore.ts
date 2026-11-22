@@ -45,6 +45,9 @@ import {
 } from '../services/syncEngine';
 import { requestSyncRetry } from '../services/syncRetry';
 import type { ServerPlantDetails } from '../utils/plantDetails';
+import { TAG_PROBLEM_REASON, type TagProblemCode } from '../utils/plantStatusLine';
+
+const upperFirst = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 import { uploadablePhotoFile } from '../services/uploadablePhoto';
 import {
   applyServerReview,
@@ -247,12 +250,12 @@ export interface ObservationVisit {
 /*
  * Why the server refused this plant's tag:
  * in_use = another plant already has it;
- * locked = the plant can't be changed any more.
+ * not_yours = it isn't one of this botanist's reserved tags;
+ * already_set = the plant already has a physical tag on the server;
+ * locked = the plant can't be changed any more (a change other than the tag).
  * Rebuilt from the SQLite outbox on every load.
  */
-export type TagProblem =
-  | 'in_use'
-  | 'locked';
+export type TagProblem = TagProblemCode;
 
 export interface PlantRecord {
   syncError?: string;
@@ -1615,13 +1618,9 @@ export const useRecordStore =
                    * say what is actually wrong.
                    */
                   reason:
-                    refreshed.tagProblem ===
-                    'in_use'
-                      ? 'This tag is already attached to another plant'
-                      : refreshed.tagProblem ===
-                          'locked'
-                        ? "This plant can't be changed after submission, so the tag was not saved on the server"
-                        : hasConflict
+                    refreshed.tagProblem
+                      ? upperFirst(TAG_PROBLEM_REASON[refreshed.tagProblem])
+                      : hasConflict
                       ? 'A newer server version exists. This record needs conflict review.'
                       : refreshed.syncError ?? 'The server rejected part of this record. Review it and try again.',
 
@@ -3445,6 +3444,18 @@ export const useRecordStore =
                     null &&
                     plantMetadataStatus !==
                       'uploaded'),
+
+                /*
+                 * A plant already on the server: send only the tag. The server
+                 * accepts that in any review status (the plant's other fields are
+                 * locked once it is submitted); any other unsent change already
+                 * queued is kept in the same update.
+                 */
+                tagOnly:
+                  Boolean(
+                    current.serverId &&
+                    current.rowVersion
+                  ),
               }
             );
 

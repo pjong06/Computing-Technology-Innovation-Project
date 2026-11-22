@@ -32,6 +32,8 @@ import {
 } from '../src/store/useRecordStore';
 
 import { NOT_SUBMITTED_BADGE, REVIEW_BADGE, visitStatus } from '../src/utils/reviewStatus';
+import { plantStatusLine, speciesSubtitle, type TagProblemCode } from '../src/utils/plantStatusLine';
+import { requeueLockedTagOperations, resumePausedRecordRetries } from '../src/services/offlineDatabase';
 import PlantNotFound from '../src/components/PlantNotFound';
 import { resolveStoredPhotoUri } from '../src/utils/photoStorage';
 import { formatCoordinates } from '../src/utils/formatCoordinates';
@@ -47,11 +49,15 @@ import { isPhysicalTag } from '../src/utils/myTags';
 import { formatDiameterCm, formatHeightFromCm, parseMeasurement } from '../src/utils/units';
 import { routeSyncLabel, routesUploadedText } from '../src/utils/routeSync';
 
-const TAG_PROBLEM_TEXT: Record<'in_use' | 'locked', string> = {
+const TAG_PROBLEM_TEXT: Record<TagProblemCode, string> = {
   in_use:
     'This tag is already attached to another plant. Check the tag, then attach the right one.',
+  not_yours:
+    "This tag isn't one of your reserved tags. Attach one of your own tags from My QR tags.",
+  already_set:
+    'This plant already has a physical tag on the server.',
   locked:
-    "This plant can't be changed after submission, so the tag was not saved on the server. It stays on this phone.",
+    "This plant can't be changed after submission, so the change was not saved on the server. It stays on this phone.",
 };
 
 const TAG_NOT_ON_SERVER_TEXT =
@@ -181,8 +187,32 @@ export default function PlantDetailScreen() {
   const removePhoto = useRecordStore((state) => state.removePhoto);
   const deleteRecord = useRecordStore((state) => state.deleteRecord);
   const syncRoutes = useRecordStore((state) => state.syncRoutes);
+  const syncRecord = useRecordStore((state) => state.syncRecord);
 
   const { width } = useWindowDimensions();
+
+  // "Upload failed: <reason> · Retry": sends this plant again, including a tag the server
+  // refused before tags could be attached after submission (now sent as a tag-only change).
+  const [retryingUpload, setRetryingUpload] = useState(false);
+  const retryUpload = async () => {
+    const record = records.find((item) => item.id === id);
+    if (!record) return;
+    setRetryingUpload(true);
+    try {
+      await resumePausedRecordRetries(record.id, record.observations.map((visit) => visit.id));
+      await requeueLockedTagOperations(record.id);
+      const result = await syncRecord(record.id);
+      Toast.show(
+        result.ok
+          ? { type: 'success', text1: 'Plant uploaded', position: 'bottom' }
+          : { type: 'error', text1: 'Upload failed', text2: result.reason, position: 'bottom' }
+      );
+    } catch {
+      Toast.show({ type: 'error', text1: 'Could not retry this plant. Please try again.', position: 'bottom' });
+    } finally {
+      setRetryingUpload(false);
+    }
+  };
 
   // Retry for a route that did not upload: runs the route upload only (not the plant sync).
   const [retryingRoute, setRetryingRoute] = useState(false);
@@ -535,7 +565,8 @@ export default function PlantDetailScreen() {
   };
 
   const sync = syncChip(matched.syncStatus);
-  const commonLine = [matched.commonName?.trim(), matched.family?.trim()].filter(Boolean).join(' · ');
+  const commonLine = speciesSubtitle(matched.scientificName, matched.commonName, matched.family);
+  const statusLine = plantStatusLine(matched);
   const photoCount = photos.length;
 
   return (
@@ -643,15 +674,26 @@ export default function PlantDetailScreen() {
             </View>
           </View>
 
-          {matched.tagProblem ? (
-            <View style={[styles.card, styles.tagProblemBox]}>
-              <Text style={styles.tagProblemText}>{TAG_PROBLEM_TEXT[matched.tagProblem]}</Text>
-              {matched.tagProblem === 'in_use' ? (
-                <TouchableOpacity onPress={openAttachTag} hitSlop={8}>
-                  <Text style={styles.tagProblemAction}>Attach a different tag</Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
+          {/* One status line from the real state: Waiting for review (on the server),
+              Not uploaded yet, or Upload failed: <reason> · Retry. */}
+          {statusLine ? (
+            statusLine.kind === 'failed' ? (
+              <View style={[styles.card, styles.tagProblemBox]} accessibilityRole="alert">
+                <Text style={styles.tagProblemText}>{statusLine.text}</Text>
+                <View style={styles.statusActions}>
+                  <TouchableOpacity onPress={() => void retryUpload()} disabled={retryingUpload} hitSlop={8} accessibilityRole="button">
+                    <Text style={styles.tagProblemAction}>{retryingUpload ? 'Retrying…' : 'Retry'}</Text>
+                  </TouchableOpacity>
+                  {matched.tagProblem === 'in_use' || matched.tagProblem === 'not_yours' ? (
+                    <TouchableOpacity onPress={openAttachTag} hitSlop={8} accessibilityRole="button">
+                      <Text style={styles.tagProblemAction}>Attach a different tag</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              </View>
+            ) : (
+              <Text style={styles.lockedNote}>{statusLine.text}</Text>
+            )
           ) : null}
 
           {/* Main actions */}
@@ -735,12 +777,6 @@ export default function PlantDetailScreen() {
           ) : needsIdentification ? (
             <Text style={styles.lockedNote}>
               Confirm the species before submitting this record for officer review.
-            </Text>
-          ) : matched.reviewStatus === ReviewStatus.PENDING ? (
-            <Text style={styles.lockedNote}>
-              {matched.syncStatus === SyncStatus.UPLOADED
-                ? 'Waiting for a Conservation Officer to review it.'
-                : 'Submitted. It will go to an officer automatically when connectivity is available.'}
             </Text>
           ) : null}
 
@@ -1077,6 +1113,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   tagProblemBox: { marginTop: 12, paddingVertical: 10 },
+  statusActions: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16 },
   tagProblemText: { fontSize: 12.5, color: '#9B1C1C', lineHeight: 17, flexShrink: 1 },
   tagProblemAction: { fontSize: 12.5, fontWeight: '700', color: '#213B2A', textDecorationLine: 'underline', marginTop: 6 },
 

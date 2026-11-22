@@ -13,7 +13,11 @@ drawMenu('queue.html');
 const FIRST_ROWS = 6;
 
 let pending = [];        // the records waiting for review, as the backend sent them
-let selectedId = null;
+// queue.html?observation=<id> (the plant page's "Review it") opens at that record.
+let selectedId = (function () {
+  const wanted = new URLSearchParams(location.search).get('observation') || '';
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(wanted) ? wanted : null;
+})();
 let photosById = {};     // short-lived photo links for each record, once loaded
 let chosenPhoto = {};    // which photo is shown large, per record
 let busy = false;        // a decision is being saved

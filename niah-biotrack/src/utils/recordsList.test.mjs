@@ -174,7 +174,8 @@ test('Plant detail layout: title chips, actions, measurement tiles, location, fi
   assert.match(detail, /No photos yet/);
   // Title: italic scientific name, "common name · family", status / tag / sync chips.
   assert.match(detail, /styles\.titleItalic/);
-  assert.match(detail, /\[matched\.commonName\?\.trim\(\), matched\.family\?\.trim\(\)\]\.filter\(Boolean\)\.join\(' · '\)/);
+  // "common name · family" without repeating a word (src/utils/plantStatusLine.ts speciesSubtitle).
+  assert.match(detail, /const commonLine = speciesSubtitle\(matched\.scientificName, matched\.commonName, matched\.family\);/);
   assert.match(detail, /label: 'Synced'/);
   assert.match(detail, /label: 'Not uploaded'/);
   // Actions: Record observation (primary), Find plant, Show QR / Attach tag.

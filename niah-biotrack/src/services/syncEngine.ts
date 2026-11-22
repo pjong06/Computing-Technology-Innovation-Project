@@ -6,6 +6,7 @@ import {
   getReadyOutboxOperations,
   getUploadedPlantsQueuedAsCreate,
   rebaseQueuedCreateAsUpdate,
+  requeueLockedTagOperations,
   setLastSuccessfulSync,
   type OutboxOperation,
   type SyncOperationResult,
@@ -75,6 +76,8 @@ async function runPush(): Promise<SyncRunResult> {
     return { processed: 0, succeeded: 0, failed: 0, conflicts: 0, remaining: false, error: 'Waiting for an internet connection.' };
   }
   await adoptServerVersions();
+  // Tags attached after submission that were refused before the server allowed it.
+  await requeueLockedTagOperations();
 
   let processed = 0;
   let succeeded = 0;

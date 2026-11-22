@@ -12,6 +12,9 @@ let routeLayer = null;
 // the table and the code below are kept; set this to true to show routes again.
 const ROUTES_ON_MAP = false;
 let plants = [];
+// map.html?plant=<id> (the plant page's "Show on park map") centres on that plant.
+const focusPlantId = new URLSearchParams(location.search).get('plant') || '';
+const plantMarkers = new Map();
 let sensorStations = [];
 let fieldRoutes = [];
 
@@ -169,6 +172,7 @@ function drawMarkers(zoomToFit) {
   }
 
   markerLayer.clearLayers();
+  plantMarkers.clear();
   const chosenSpecies = document.getElementById('map-species').value;
   const chosenStatus = document.getElementById('map-status').value;
   const points = [];
@@ -184,13 +188,14 @@ function drawMarkers(zoomToFit) {
     }
 
     const point = [plant.latitude, plant.longitude];
-    L.circleMarker(point, {
+    const marker = L.circleMarker(point, {
       radius: 8,
       color: '#ffffff',
       weight: 2,
       fillColor: '#3d8b4f',
       fillOpacity: 0.9
     }).bindPopup(makePopup(plant)).addTo(markerLayer);
+    plantMarkers.set(plant.id, marker);
     points.push(point);
   });
 
@@ -313,6 +318,19 @@ async function loadPlants() {
   plants = result.data;
   fillSpeciesFilter();
   drawMarkers(true);
+  focusPlant();
+}
+
+// Centres the map on the plant from ?plant=<id> and opens its popup.
+function focusPlant() {
+  if (!focusPlantId) return;
+  const marker = plantMarkers.get(focusPlantId);
+  if (!marker) {
+    document.getElementById('map-message').textContent += ' This plant has no location on the map.';
+    return;
+  }
+  map.setView(marker.getLatLng(), 18);
+  marker.openPopup();
 }
 
 if (pageAllowed === false) {

@@ -26,7 +26,7 @@ test('web: records are "New plant" or "Observation", never "Revisit" or "visit"'
     const text = file.endsWith('.html') ? read(file).replace(/<!--[\s\S]*?-->/g, '') : visibleText(read(file));
     assert.doesNotMatch(text, /\b[Rr]evisits?\b|\b[Vv]isits?\b(?! *page)/, file);
   }
-  assert.match(read('frontend/plant.html'), /<h2>Observations<\/h2>/);
+  assert.match(read('frontend/plant.html'), /<h2>Observations <span class="count-pill" id="observations-total"><\/span><\/h2>/);
   assert.match(read('frontend/queue.html'), /<h1>Review<\/h1>/);
   // Review history labels its records the same way as the review list.
   const history = read('frontend/js/review-history.js');

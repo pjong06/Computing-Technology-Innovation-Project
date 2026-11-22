@@ -208,6 +208,28 @@ async function applyOperation(req, operation) {
     };
   }
 
+  // A tag attached after submission goes through attach_reserved_plant_tag
+  // (20261122140000_attach_tag_after_submission.sql), which refuses a tag that isn't one
+  // of the botanist's own reserved tags, or a plant that already has a physical tag.
+  // Neither is fixed by sending again, so both are conflicts with their own code.
+  if (isPlantUpdate && error?.code === '42501' && /not reserved by this botanist/i.test(error.message ?? '')) {
+    return {
+      operation_id: operation.operation_id,
+      status: 'conflict',
+      code: 'tag_not_yours',
+      message: "This tag isn't one of your reserved tags",
+    };
+  }
+  if (isPlantUpdate && error?.code === '42501' &&
+      /already has a physical tag|physical tag cannot be replaced/i.test(error.message ?? '')) {
+    return {
+      operation_id: operation.operation_id,
+      status: 'conflict',
+      code: 'tag_already_set',
+      message: 'This plant already has a physical tag',
+    };
+  }
+
   // The botanist's own plant that RLS no longer lets them change (e.g. after
   // submission): either refused outright (42501 from the update itself, not the
   // sign-in/role checks at the top of the function) or hidden from the update,
