@@ -195,6 +195,15 @@ export async function downloadTagImage(
 export async function saveTagImages(
   tags: Pick<MyTag, 'tag' | 'boundPlantId'>[]
 ): Promise<{ ok: true; message: string } | { ok: false; reason: string }> {
+  const downloaded = await downloadTagImages(tags);
+  if (!downloaded.ok) return downloaded;
+  return saveTagImageFiles(downloaded.files);
+}
+
+// The PNG labels of these tags, downloaded into the cache folder (step 1 of "Images").
+export async function downloadTagImages(
+  tags: Pick<MyTag, 'tag' | 'boundPlantId'>[]
+): Promise<{ ok: true; files: File[] } | { ok: false; reason: string }> {
   if (tags.length === 0) return { ok: false, reason: 'Choose at least one tag.' };
   if (await isSyncOffline()) return { ok: false, reason: 'You are offline. Tag images need the internet.' };
   const files: File[] = [];
@@ -203,6 +212,13 @@ export async function saveTagImages(
     if (!image.ok) return { ok: false, reason: `${tag.tag}: ${image.reason}` };
     files.push(image.file);
   }
+  return { ok: true, files };
+}
+
+// Saves (Android: one folder) or shares (iOS) the downloaded PNG labels (step 2 of "Images").
+export async function saveTagImageFiles(
+  files: File[]
+): Promise<{ ok: true; message: string } | { ok: false; reason: string }> {
   try {
     if (Platform.OS === 'ios') {
       for (const file of files) await Share.share({ url: file.uri, title: file.name });

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -23,7 +23,8 @@ import {
   fetchMyTags,
   printTagsPdf,
   reserveTags,
-  saveTagImages,
+  downloadTagImages,
+  saveTagImageFiles,
   shareTagsPdf,
 } from '../src/services/myTags';
 import { isSyncOffline } from '../src/services/syncRetry';
@@ -43,6 +44,13 @@ import {
   type MyTag,
   type PrintLayout,
 } from '../src/utils/myTags';
+import {
+  ANDROID_CLOSE_DELAY_MS,
+  IOS_DISMISS_TIMEOUT_MS,
+  preparingText,
+  printButtonState,
+  runPrintJob,
+} from '../src/utils/printJob';
 
 // "My QR tags" (botanists, from Profile): the QR tags reserved by this botanist.
 //   - Get new tags: how many (1–100, typed or − / +), then "Get N tags" (no layout yet).
@@ -87,6 +95,8 @@ export default function MyTagsScreen() {
   // The "Print N tags" sheet.
   const [printing, setPrinting] = useState<PrintRequest | null>(null);
   const [layout, setLayout] = useState<PrintLayout>('sheet');
+  // While labels are generated and shared: "Preparing 3 labels…" (Print stays disabled).
+  const [preparing, setPreparing] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -140,8 +150,13 @@ export default function MyTagsScreen() {
   };
 
   // Opens "Print N tags" for exactly these tags (a batch's, or the ones chosen).
+  // Opens for any batch (used tags print too) and while "Get tags" or another print is busy;
+  // only an empty list says why instead.
   const openPrint = (request: PrintRequest) => {
-    if (request.tags.length === 0) return;
+    if (request.tags.length === 0) {
+      Toast.show({ type: 'info', text1: 'No tags to print', position: 'bottom' });
+      return;
+    }
     setLayout('sheet');
     setPrinting(request);
   };
@@ -175,37 +190,67 @@ export default function MyTagsScreen() {
     void getTags(parsed.value);
   };
 
-  // Print: exactly the tags of the request, in the chosen layout.
+  // The sheet has gone: iOS says so with the Modal's onDismiss (then a share sheet can open;
+  // one opened while the Modal is still closing is silently ignored); Android after a delay.
+  const dismissed = useRef<(() => void) | null>(null);
+  const waitForSheetClose = () =>
+    new Promise<void>((resolve) => {
+      if (Platform.OS === 'ios') {
+        const done = () => {
+          dismissed.current = null;
+          resolve();
+        };
+        dismissed.current = done;
+        setTimeout(done, IOS_DISMISS_TIMEOUT_MS); // in case onDismiss never comes
+      } else {
+        setTimeout(resolve, ANDROID_CLOSE_DELAY_MS);
+      }
+    });
+
+  // Print: close the sheet, wait until it has gone, generate exactly the tags of the
+  // request in the chosen layout, then open the share / save sheet. Any failure says why.
   const runPrint = async () => {
-    if (!printing) return;
+    if (!printing || preparing) return;
     const request = printing;
     const plan = printPlan({ kind: 'selection', selected: request.tags }, layout);
-    setWorking(true);
-    if (plan.layout === 'images') {
-      const byTag = new Map((tags ?? []).map((tag) => [tag.tag, tag]));
-      const result = await saveTagImages(plan.tags.map((tag) => byTag.get(tag) ?? { tag, boundPlantId: null }));
-      setWorking(false);
-      Toast.show(
-        result.ok
-          ? { type: 'success', text1: 'Tag images ready', text2: result.message, position: 'bottom' }
-          : { type: 'error', text1: 'Not saved', text2: result.reason, position: 'bottom' }
-      );
-      if (!result.ok) return;
-    } else {
-      const result = await printTagsPdf(plan.tags, plan.layout);
-      setWorking(false);
-      if (!result.ok) {
-        Toast.show({ type: 'error', text1: 'Not printed', text2: result.reason, position: 'bottom' });
-        return;
-      }
-      setPdf(result.file);
-      setPrinting(null);
-      if (request.clearSelection) setSelected([]);
-      await sharePdf(result.file);
+    setPreparing(preparingText(plan.tags.length, plan.layout));
+    const byTag = new Map((tags ?? []).map((tag) => [tag.tag, tag]));
+
+    const result = plan.layout === 'images'
+      ? await runPrintJob({
+          closeSheet: () => setPrinting(null),
+          waitForClose: waitForSheetClose,
+          generate: async () => {
+            const made = await downloadTagImages(plan.tags.map((tag) => byTag.get(tag) ?? { tag, boundPlantId: null }));
+            return made.ok ? { ok: true as const, value: made.files } : made;
+          },
+          share: (files) => saveTagImageFiles(files),
+        })
+      : await runPrintJob({
+          closeSheet: () => setPrinting(null),
+          waitForClose: waitForSheetClose,
+          generate: async () => {
+            const made = await printTagsPdf(plan.tags, plan.layout === 'single' ? 'single' : 'sheet');
+            if (!made.ok) return made;
+            setPdf(made.file);
+            return { ok: true as const, value: made.file };
+          },
+          share: (file) => shareTagsPdf(file),
+        });
+
+    setPreparing(null);
+    if (!result.ok) {
+      console.error('Printing tags failed:', result.reason, 'error' in result ? result.error : undefined);
+      Toast.show({ type: 'error', text1: 'Not printed', text2: result.reason, position: 'bottom' });
       return;
     }
-    setPrinting(null);
     if (request.clearSelection) setSelected([]);
+    Toast.show({
+      type: 'success',
+      text1: plan.layout === 'images' ? 'Tag images ready' : 'QR labels ready',
+      text2: result.message,
+      position: 'bottom',
+    });
   };
 
   const choose = (tag: string) => {
@@ -233,6 +278,7 @@ export default function MyTagsScreen() {
 
   const parsedCount = parseTagCount(countText);
   const selectionPlan = printPlan({ kind: 'selection', selected }, 'sheet');
+  const printButton = printButtonState({ tagCount: printing?.tags.length ?? 0, preparing: Boolean(preparing) });
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -296,7 +342,7 @@ export default function MyTagsScreen() {
             disabled={working}
             accessibilityRole="button"
           >
-            {working && !printing ? (
+            {working ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
               <Text style={styles.primaryText} numberOfLines={1}>
@@ -356,7 +402,6 @@ export default function MyTagsScreen() {
                       const plan = printPlan({ kind: 'batch', batch }, 'sheet');
                       openPrint({ tags: plan.tags, title: plan.title, clearSelection: false });
                     }}
-                    disabled={working}
                     accessibilityRole="button"
                     accessibilityLabel={`Print ${batchLabel(batch)}`}
                   >
@@ -417,9 +462,8 @@ export default function MyTagsScreen() {
             <Text style={styles.clearText}>Clear</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.printBarBtn, working && styles.disabled]}
+            style={styles.printBarBtn}
             onPress={() => openPrint({ tags: selectionPlan.tags, title: selectionPlan.title, clearSelection: true })}
-            disabled={working}
             accessibilityRole="button"
           >
             <Text style={styles.printBarBtnText} numberOfLines={1}>Print {selectionPlan.tags.length}</Text>
@@ -427,9 +471,23 @@ export default function MyTagsScreen() {
         </View>
       ) : null}
 
-      {/* "Print N tags": the layout, then Print / Cancel. */}
-      <Modal visible={printing !== null} transparent animationType="slide" onRequestClose={() => setPrinting(null)}>
-        <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={() => !working && setPrinting(null)}>
+      {preparing ? (
+        <View style={styles.preparingBar} accessibilityRole="progressbar" accessibilityLabel={preparing}>
+          <ActivityIndicator color="#213B2A" />
+          <Text style={styles.preparingText} numberOfLines={2}>{preparing}</Text>
+        </View>
+      ) : null}
+
+      {/* "Print N tags": the layout, then Print / Cancel. onDismiss (iOS): the sheet has gone,
+          so the share sheet can open now. */}
+      <Modal
+        visible={printing !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setPrinting(null)}
+        onDismiss={() => dismissed.current?.()}
+      >
+        <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={() => !preparing && setPrinting(null)}>
           <TouchableOpacity activeOpacity={1} style={styles.sheet}>
             <Text style={styles.sheetTitle} numberOfLines={1}>{printing?.title ?? ''}</Text>
             {PRINT_LAYOUTS.map((option) => {
@@ -454,18 +512,19 @@ export default function MyTagsScreen() {
               <TouchableOpacity
                 style={styles.sheetCancel}
                 onPress={() => setPrinting(null)}
-                disabled={working}
+                disabled={Boolean(preparing)}
                 accessibilityRole="button"
               >
                 <Text style={styles.sheetCancelText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.sheetPrint, working && styles.disabled]}
+                style={[styles.sheetPrint, printButton.disabled && styles.disabled]}
                 onPress={() => void runPrint()}
-                disabled={working}
+                disabled={printButton.disabled}
                 accessibilityRole="button"
+                accessibilityState={{ disabled: printButton.disabled }}
               >
-                {working ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.primaryText}>Print</Text>}
+                <Text style={styles.primaryText} numberOfLines={1}>{printButton.label}</Text>
               </TouchableOpacity>
             </View>
             <Text style={styles.hint}>
@@ -530,6 +589,8 @@ const styles = StyleSheet.create({
   clearText: { fontSize: 13.5, fontWeight: '700', color: '#213B2A', textDecorationLine: 'underline' },
   printBarBtn: { height: 42, borderRadius: 21, backgroundColor: '#213B2A', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 18 },
   printBarBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 14 },
+  preparingBar: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 20, paddingVertical: 12, borderTopWidth: 1, borderTopColor: '#E6ECE8', backgroundColor: '#FFFFFF' },
+  preparingText: { flex: 1, minWidth: 0, fontSize: 14, fontWeight: '700', color: '#1E2B22' },
   sheetBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(15, 25, 19, 0.45)' },
   sheet: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 20, paddingBottom: 32 },
   sheetTitle: { fontSize: 17, fontWeight: '800', color: '#1E2B22', marginBottom: 12 },
