@@ -266,7 +266,10 @@ export async function getObservationMetadataSyncStatus(
 
 export async function persistPlantRecord(
   record: PlantRecord,
-  queueChange: boolean
+  queueChange: boolean,
+  // Only the tag changed (a tag attached to a plant already on the server): send just
+  // the tag, which the server accepts even after the plant was submitted.
+  tagOnly = false
 ): Promise<void> {
   const normalized =
     normalizePhotoEntries(record);
@@ -328,7 +331,9 @@ export async function persistPlantRecord(
       : undefined,
 
     payload: shouldQueue
-      ? plantPayload(normalized)
+      ? tagOnly
+        ? { qr_code_value: normalized.tagCode }
+        : plantPayload(normalized)
       : undefined,
   });
 }
@@ -375,6 +380,7 @@ export async function persistRecordSnapshot(
   options: {
     queuePlant?: boolean;
     queueObservationIds?: string[];
+    tagOnly?: boolean;
   } = {}
 ): Promise<void> {
   const normalized =
@@ -382,7 +388,8 @@ export async function persistRecordSnapshot(
 
   await persistPlantRecord(
     normalized,
-    options.queuePlant ?? false
+    options.queuePlant ?? false,
+    options.tagOnly ?? false
   );
 
   const queuedIds = new Set(
@@ -586,9 +593,13 @@ export async function loadOrMigrateRecords(
         tagProblem:
           tagRefusal === 'tag_in_use'
             ? 'in_use'
-            : tagRefusal === 'plant_locked'
-              ? 'locked'
-              : null,
+            : tagRefusal === 'tag_not_yours'
+              ? 'not_yours'
+              : tagRefusal === 'tag_already_set'
+                ? 'already_set'
+                : tagRefusal === 'plant_locked'
+                  ? 'locked'
+                  : null,
         serverId:
           entity.serverId ??
           snapshot.serverId,
