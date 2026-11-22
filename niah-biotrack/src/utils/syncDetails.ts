@@ -197,6 +197,8 @@ export interface ProblemRecordLike {
   scientificName?: string;
   syncStatus?: string;
   tagProblem?: string | null;
+  // The plant's latest upload error (a tag refusal keeps its code, e.g. tag_not_yours).
+  syncError?: string | null;
   photoEntries?: PhotoEntryLike[];
   photoUris?: string[];
   photoMeta?: Record<string, PhotoMetaLike>;
@@ -304,7 +306,10 @@ export function recordSyncProblems(record: ProblemRecordLike): RecordProblem[] {
  */
 export function retryableRecord(record: ProblemRecordLike, obsId?: string): boolean {
   const problems = recordSyncProblems(record).filter((problem) => obsId === undefined || problem.obsId === obsId);
-  const tagRefused = obsId === undefined && Boolean(record.tagProblem);
+  // A refused tag stops Retry only while it is the plant's own error: a tag kept on the plant
+  // after the rest was sent without it doesn't hide another problem's Retry.
+  const tagRefused = obsId === undefined && Boolean(record.tagProblem) &&
+    (!record.syncError || TAG_REFUSALS.has(record.syncError));
   if (problems.length === 0 && !tagRefused) return true;
   return problems.some((problem) => !problem.final);
 }

@@ -212,7 +212,10 @@ async function applyOperation(req, operation) {
   // (20261122140000_attach_tag_after_submission.sql), which refuses a tag that isn't one
   // of the botanist's own reserved tags, or a plant that already has a physical tag.
   // Neither is fixed by sending again, so both are conflicts with their own code.
-  if (isPlantUpdate && error?.code === '42501' && /not reserved by this botanist/i.test(error.message ?? '')) {
+  // A new plant registered with such a tag gets the same answer (enforce_reserved_plant_tag
+  // refuses it on insert too), so the phone sends the plant again without the tag.
+  if (operation.entity_type === 'plant' && error?.code === '42501' &&
+      /not reserved by this botanist/i.test(error.message ?? '')) {
     return {
       operation_id: operation.operation_id,
       status: 'conflict',

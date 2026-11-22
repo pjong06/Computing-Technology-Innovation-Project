@@ -32,7 +32,7 @@ import {
 } from '../src/store/useRecordStore';
 
 import { NOT_SUBMITTED_BADGE, REVIEW_BADGE, visitStatus } from '../src/utils/reviewStatus';
-import { plantHeading, plantStatusLine, type TagProblemCode } from '../src/utils/plantStatusLine';
+import { alreadySetText, plantHeading, plantStatusLine, tagNotice, TAG_CANT_BE_USED_TEXT, type TagProblemCode } from '../src/utils/plantStatusLine';
 import { firstVisitOf } from '../src/utils/submissionState';
 import { NO_REASON_TEXT, isGoneCode, rowActions } from '../src/utils/rowActions';
 import RowActions from '../src/components/RowActions';
@@ -57,12 +57,9 @@ import { formatDiameterCm, formatHeightFromCm, parseMeasurement } from '../src/u
 import { routeSyncLabel, routesUploadedText } from '../src/utils/routeSync';
 
 const TAG_PROBLEM_TEXT: Record<TagProblemCode, string> = {
-  in_use:
-    'This tag is already attached to another plant. Check the tag, then attach the right one.',
-  not_yours:
-    "This tag isn't one of your reserved tags. Attach one of your own tags from My QR tags.",
-  already_set:
-    'This plant already has a physical tag on the server.',
+  in_use: TAG_CANT_BE_USED_TEXT.in_use,
+  not_yours: TAG_CANT_BE_USED_TEXT.not_yours,
+  already_set: alreadySetText(null),
   locked:
     "This plant can't be changed after submission, so the change was not saved on the server. It stays on this phone.",
 };
@@ -320,7 +317,8 @@ export default function PlantDetailScreen() {
       return;
     }
 
-    if (matched.tagProblem) {
+    // already_set: the plant's tag is the server's (once refreshed), so its QR can be shown.
+    if (matched.tagProblem && matched.tagProblem !== 'already_set') {
       Alert.alert(
         'No QR code for this tag',
         TAG_PROBLEM_TEXT[matched.tagProblem]
@@ -587,6 +585,7 @@ export default function PlantDetailScreen() {
     : null;
   // Retry only when trying again can help; a permanent refusal says why instead.
   const statusLine = plantStatusLine(matched, retryableRecord(matched) ? null : finalProblemText(matched));
+  const notice = tagNotice(matched.tagProblem, matched.tagCode);
   const photoCount = photos.length;
 
   return (
@@ -716,16 +715,28 @@ export default function PlantDetailScreen() {
                       <Text style={styles.tagProblemAction}>Sync details</Text>
                     </TouchableOpacity>
                   )}
-                  {matched.tagProblem === 'in_use' || matched.tagProblem === 'not_yours' ? (
-                    <TouchableOpacity onPress={openAttachTag} hitSlop={8} accessibilityRole="button">
-                      <Text style={styles.tagProblemAction}>Attach a different tag</Text>
-                    </TouchableOpacity>
-                  ) : null}
                 </View>
               </View>
             ) : (
               <Text style={styles.lockedNote}>{statusLine.text}</Text>
             )
+          ) : null}
+
+          {/* A tag the server refused: shown on the plant itself. The rest of the plant
+              keeps uploading without it. */}
+          {notice ? (
+            <View style={[styles.card, styles.tagProblemBox]} accessibilityRole="alert">
+              <Text style={styles.tagProblemText}>{notice.text}</Text>
+              {/* No button when the plant already has a tag on the server: another tag
+                  can't be attached. */}
+              {notice.action ? (
+                <View style={styles.statusActions}>
+                  <TouchableOpacity onPress={openAttachTag} hitSlop={8} accessibilityRole="button">
+                    <Text style={styles.tagProblemAction}>{notice.action}</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+            </View>
           ) : null}
 
           {/* Main actions */}

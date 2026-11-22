@@ -17,6 +17,78 @@ export const TAG_PROBLEM_REASON: Record<TagProblemCode, string> = {
   locked: "this plant can't be changed after submission",
 };
 
+// A tag the server refused because it can't be used on this plant: shown on the plant itself,
+// with "Attach a different tag". The rest of the plant keeps uploading without it.
+export const ATTACH_DIFFERENT_TAG = 'Attach a different tag';
+export const TAG_CANT_BE_USED_TEXT: Record<'not_yours' | 'in_use', string> = {
+  not_yours: "This tag can't be used: it isn't one of your reserved tags. Attach a different tag.",
+  in_use: "This tag can't be used: it is already attached to another plant. Attach a different tag.",
+};
+
+/**
+ * tag_already_set: the plant already has a tag on the server, so no other tag can be
+ * attached (no button). The plant is refreshed from the server, which gives the phone that
+ * tag: "This plant already has a tag on the server (NIAH-PLT-00042)."
+ */
+export function alreadySetText(serverTag?: string | null): string {
+  const tag = typeof serverTag === 'string' && /^NIAH-PLT-\d{5}$/.test(serverTag.trim()) ? serverTag.trim() : null;
+  return tag
+    ? `This plant already has a tag on the server (${tag}).`
+    : 'This plant already has a tag on the server.';
+}
+
+/**
+ * The plant's tag notice, or null when its tag wasn't refused this way. action is the
+ * button ("Attach a different tag"), or null when another tag can't help (already_set).
+ * tagCode: the plant's tag on the phone (the server's, once the plant is refreshed).
+ */
+export function tagNotice(
+  tagProblem?: TagProblemCode | null,
+  tagCode?: string | null
+): { text: string; action: string | null } | null {
+  if (tagProblem === 'not_yours' || tagProblem === 'in_use') {
+    return { text: TAG_CANT_BE_USED_TEXT[tagProblem], action: ATTACH_DIFFERENT_TAG };
+  }
+  if (tagProblem === 'already_set') return { text: alreadySetText(tagCode), action: null };
+  return null;
+}
+
+/** Whether the plant should be refreshed from the server to learn its tag. */
+export function needsServerTag(plant: { tagProblem?: string | null; tagCode?: string | null; serverId?: string | null }): boolean {
+  return plant.tagProblem === 'already_set' && Boolean(plant.serverId) &&
+    !(typeof plant.tagCode === 'string' && /^NIAH-PLT-\d{5}$/.test(plant.tagCode));
+}
+
+// The server's codes for a tag that can't be used here, as the plant's tagProblem.
+const TAG_REFUSAL_PROBLEM: Record<string, TagProblemCode> = {
+  tag_not_yours: 'not_yours',
+  tag_already_set: 'already_set',
+  tag_in_use: 'in_use',
+};
+
+/** The plant's tagProblem for a refused tag's server code, or null for any other code. */
+export function tagRefusalProblem(code?: string | null): TagProblemCode | null {
+  return (code && TAG_REFUSAL_PROBLEM[code]) || null;
+}
+
+/**
+ * A plant operation whose tag was refused: what to send instead so the rest of the plant
+ * still uploads, or null when the tag was all it had (a tag-only change).
+ *   - create: the same plant without the tag (the server gives it a placeholder until a tag
+ *     is attached), so its observations and photos can upload;
+ *   - update: the other changed fields, without the tag.
+ */
+export function withoutRefusedTag(
+  operationType: string,
+  payload: unknown
+): Record<string, unknown> | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const { qr_code_value: _tag, ...rest } = payload as Record<string, unknown>;
+  if (operationType === 'create') return { ...rest, qr_code_value: null };
+  if (operationType === 'update' && Object.keys(rest).length > 0) return rest;
+  return null;
+}
+
 export type PlantStatusLine =
   | { kind: 'waiting'; text: string }
   | { kind: 'not_uploaded'; text: string }
@@ -51,7 +123,13 @@ export function plantStatusLine(
   // explanation, and no Retry.
   permanentReason?: string | null
 ): PlantStatusLine {
-  const sync = String(record.syncStatus ?? '');
+  let sync = String(record.syncStatus ?? '');
+  // Only the tag was refused (its own notice says so, with "Attach a different tag"): the
+  // plant itself is on the server, so no "Upload failed" line as well.
+  const syncError = String(record.syncError ?? '');
+  if (sync === FAILED && tagNotice(record.tagProblem) && (!syncError || tagRefusalProblem(syncError))) {
+    sync = UPLOADED;
+  }
   if (sync === FAILED && permanentReason) {
     return { kind: 'failed', text: `Upload failed: ${reasonText(permanentReason)}`, retry: false };
   }

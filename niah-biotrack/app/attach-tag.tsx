@@ -53,7 +53,7 @@ import {
 } from '../src/utils/tagCode';
 
 import FormScrollView from '../src/components/FormScrollView';
-import { myTagProblem } from '../src/services/myTags';
+import { myTagProblem, refreshMyTags } from '../src/services/myTags';
 
 interface AutoAttachTagResponse {
   tag_code: string;
@@ -179,6 +179,14 @@ export default function AttachTagScreen() {
     useState<PlantQr | null>(
       null
     );
+
+  /*
+   * Opening the scanner refreshes the saved tag list from the server when online, so a tag
+   * deleted or used elsewhere is not accepted later from an old list (offline scans).
+   */
+  useEffect(() => {
+    void refreshMyTags();
+  }, []);
 
   /*
    * Camera permission.
