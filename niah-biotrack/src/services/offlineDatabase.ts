@@ -1,5 +1,6 @@
 import { randomUUID } from 'expo-crypto';
 import * as SQLite from 'expo-sqlite';
+import { createSerialQueue, isDatabaseLocked, retryIfLocked } from '../utils/dbQueue';
 import { needsServerTag, tagOnlyPayload, tagRefusalProblem, withoutRefusedTag } from '../utils/plantStatusLine';
 
 export type SyncEntityType = 'plant' | 'observation' | 'proposal';
@@ -125,12 +126,74 @@ function parseJson<T>(value: string): T {
   return JSON.parse(value) as T;
 }
 
+// ONE connection for the whole app, opened once (also across reloads and re-renders: the
+// promise lives in this module). Short contention waits (busy_timeout) instead of failing,
+// and WAL lets reads go on while a write runs. If opening fails, the next call tries again.
+export const BUSY_TIMEOUT_MS = 5000;
+
+async function openSharedDatabase(): Promise<SQLite.SQLiteDatabase> {
+  const db = await SQLite.openDatabaseAsync(DATABASE_NAME);
+  await db.execAsync(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;`);
+  return db;
+}
+
 async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (!databasePromise) {
-    databasePromise = SQLite.openDatabaseAsync(DATABASE_NAME);
+    const opening = openSharedDatabase();
+    databasePromise = opening;
+    opening.catch(() => {
+      if (databasePromise === opening) databasePromise = null;
+    });
   }
 
   return databasePromise;
+}
+
+// Every write goes through this one queue, on the shared connection: one write
+// transaction at a time (BEGIN IMMEDIATE ... COMMIT, ROLLBACK on error). Not
+// withExclusiveTransactionAsync: in expo-sqlite it opens a NEW connection for each call,
+// without the busy_timeout, so overlapping writes failed with "database is locked".
+// A write that still finds the database locked is rolled back and tried once more.
+// Never call writeTransaction from inside a writeTransaction task (it would wait on itself).
+const runWrite = createSerialQueue();
+
+export async function writeTransaction(
+  db: SQLite.SQLiteDatabase,
+  task: (transaction: SQLite.SQLiteDatabase) => Promise<void>
+): Promise<void> {
+  await runWrite(() =>
+    retryIfLocked(
+      async () => {
+        await db.execAsync('BEGIN IMMEDIATE');
+        try {
+          await task(db);
+          await db.execAsync('COMMIT');
+        } catch (error) {
+          try {
+            await db.execAsync('ROLLBACK');
+          } catch {
+            // Already rolled back by SQLite; keep the original error.
+          }
+          throw error;
+        }
+      },
+      {
+        onRetry: (error) =>
+          console.warn('The phone database was busy; trying the write once more.', isDatabaseLocked(error) ? 'database is locked' : error),
+      }
+    )
+  );
+}
+
+// One write statement, through the same queue.
+async function writeStatement(
+  db: SQLite.SQLiteDatabase,
+  sql: string,
+  ...params: SQLite.SQLiteBindValue[]
+): Promise<void> {
+  await writeTransaction(db, async (transaction) => {
+    await transaction.runAsync(sql, ...params);
+  });
 }
 
 export async function initializeOfflineDatabase(): Promise<void> {
@@ -206,8 +269,7 @@ export async function initializeOfflineDatabase(): Promise<void> {
       );
     `;
 
-    await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
-    await db.withExclusiveTransactionAsync(async (transaction) => {
+    await writeTransaction(db, async (transaction) => {
       const version = await transaction.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
       if (version?.user_version === 1) {
         await transaction.execAsync(`
@@ -256,6 +318,10 @@ export async function initializeOfflineDatabase(): Promise<void> {
       `);
     });
   })();
+  const starting = initializationPromise;
+  starting.catch(() => {
+    if (initializationPromise === starting) initializationPromise = null;
+  });
 
   try {
     await initializationPromise;
@@ -279,7 +345,7 @@ export async function saveEntityAndQueue(
   const db = await getDatabase();
   const timestamp = nowIso();
 
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     const existing = await transaction.getFirstAsync<{
       created_at: string;
     }>(
@@ -529,7 +595,7 @@ export async function removeUploadedLocalEntity(
   const db = await getDatabase();
   let removed = false;
 
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     const entity = await transaction.getFirstAsync<{ sync_status: LocalSyncStatus }>(
       `
         SELECT sync_status
@@ -564,7 +630,7 @@ export async function removeUploadedLocalEntity(
 export async function removeServerDeletedObservation(observationId: string): Promise<void> {
   await initializeOfflineDatabase();
   const db = await getDatabase();
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     await transaction.runAsync(
       "DELETE FROM sync_outbox WHERE entity_type = 'observation' AND client_record_id = ?",
       observationId
@@ -585,7 +651,7 @@ export async function removeServerDeletedPlant(
   await initializeOfflineDatabase();
   const db = await getDatabase();
   const visits = JSON.stringify(observationIds);
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     await transaction.runAsync(
       `
         DELETE FROM sync_outbox
@@ -651,7 +717,7 @@ export async function getNextOutboxRetryAt(): Promise<number | null> {
 export async function resumePausedRecordRetries(plantId: string, observationIds: string[]): Promise<void> {
   await initializeOfflineDatabase();
   const db = await getDatabase();
-  await db.runAsync(`
+  await writeStatement(db, `
     UPDATE sync_outbox SET retry_count = 0, next_retry_at = 0
     WHERE status = 'retry' AND next_retry_at IS NULL AND (
       (entity_type = 'plant' AND client_record_id = ?) OR
@@ -665,7 +731,7 @@ export async function resumeAllPausedRecordRetries(): Promise<void> {
   const db = await getDatabase();
   const timestamp = nowIso();
 
-  await db.runAsync(
+  await writeStatement(db, 
     `
       UPDATE sync_outbox
       SET retry_count = 0,
@@ -707,7 +773,7 @@ export async function claimOutboxOperations(
   const timestamp = nowIso();
   const claimed: OutboxOperation[] = [];
 
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     for (const operationId of operationIds) {
       const row = await transaction.getFirstAsync<OutboxRow>(
         `
@@ -738,7 +804,7 @@ export async function applySyncOperationResult(
   const db = await getDatabase();
   const timestamp = nowIso();
 
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     const operation = await transaction.getFirstAsync<OutboxRow>(
       `
         SELECT *
@@ -941,7 +1007,7 @@ export async function applySyncOperationResult(
 export async function removeLocalProposal(id: string): Promise<void> {
   await initializeOfflineDatabase();
   const db = await getDatabase();
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     await transaction.runAsync(
       "DELETE FROM sync_outbox WHERE entity_type = 'proposal' AND client_record_id = ?",
       id
@@ -956,7 +1022,7 @@ export async function removeLocalProposal(id: string): Promise<void> {
 export async function clearLocalProposals(): Promise<void> {
   await initializeOfflineDatabase();
   const db = await getDatabase();
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     await transaction.execAsync(`
       DELETE FROM sync_outbox WHERE entity_type = 'proposal';
       DELETE FROM local_entities WHERE entity_type = 'proposal';
@@ -986,7 +1052,7 @@ export async function requeueLockedTagOperations(clientRecordId?: string): Promi
   const timestamp = nowIso();
   let requeued = 0;
 
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     const rows = await transaction.getAllAsync<{
       operation_id: string;
       client_record_id: string;
@@ -1117,7 +1183,7 @@ export async function retryOutboxOperation(operationId: string): Promise<void> {
   const db = await getDatabase();
   const timestamp = nowIso();
 
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     const row = await transaction.getFirstAsync<OutboxRow>(
       'SELECT * FROM sync_outbox WHERE operation_id = ?',
       operationId
@@ -1177,7 +1243,7 @@ export async function removeOutboxOperation(operationId: string): Promise<string
   const timestamp = nowIso();
   let clientRecordId: string | null = null;
 
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     const row = await transaction.getFirstAsync<OutboxRow>(
       'SELECT * FROM sync_outbox WHERE operation_id = ?',
       operationId
@@ -1334,7 +1400,7 @@ export async function adoptServerPlantTag(
   const db = await getDatabase();
   const timestamp = nowIso();
 
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     const entity = await transaction.getFirstAsync<{ snapshot_json: string; row_version: number | null }>(
       `SELECT snapshot_json, row_version FROM local_entities WHERE entity_type = 'plant' AND client_record_id = ?`,
       clientRecordId
@@ -1433,7 +1499,7 @@ export async function rebaseQueuedCreateAsUpdate(
   const db = await getDatabase();
   const timestamp = nowIso();
 
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     await transaction.runAsync(
       `
         UPDATE local_entities
@@ -1518,7 +1584,7 @@ export async function setSyncCursor(cursor: number): Promise<void> {
   const db = await getDatabase();
   const timestamp = nowIso();
 
-  await db.runAsync(
+  await writeStatement(db, 
     `
       INSERT INTO sync_state (
         state_key,
@@ -1543,7 +1609,7 @@ export async function setLastSuccessfulSync(
 
   const db = await getDatabase();
 
-  await db.runAsync(
+  await writeStatement(db, 
     `
       INSERT INTO sync_state (
         state_key,
@@ -1604,7 +1670,7 @@ export async function deletePlantLocallyAndQueueServerDelete(
 
   let queuedForServer = false;
 
-  await db.withExclusiveTransactionAsync(
+  await writeTransaction(db, 
     async (transaction) => {
       // Any unsent observation changes become irrelevant
       // when the whole plant is deleted.
@@ -1721,7 +1787,7 @@ export async function clearOfflineDatabase(): Promise<void> {
 
   const db = await getDatabase();
 
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     await transaction.execAsync(`
       DELETE FROM sync_outbox;
       DELETE FROM sync_state;

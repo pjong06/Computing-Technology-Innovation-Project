@@ -66,6 +66,7 @@ import { BASE_URL } from '../../src/api/client';
 import RowActions from '../../src/components/RowActions';
 import { isGoneCode, rowActions, type RowActionKind } from '../../src/utils/rowActions';
 import { explainAnswer, retryableRecord } from '../../src/utils/syncDetails';
+import { reportBackgroundError } from '../../src/utils/dbQueue';
 
 // The explanation shown when the plant no longer exists on the server.
 const GONE_TEXT = explainAnswer('plant_deleted').explanation;
@@ -280,8 +281,8 @@ export default function PlantsListScreen() {
   useFocusEffect(
     useCallback(() => {
       if (blocked) return undefined;
-      void refreshReviewStatuses();
-      void refreshProposalStatuses();
+      void refreshReviewStatuses().catch(reportBackgroundError('Checking review results'));
+      void refreshProposalStatuses().catch(reportBackgroundError('Checking species requests'));
       if (useSpeciesStore.getState().species.length === 0) void loadSpecies();
       void loadOtherPlants();
       return undefined;
