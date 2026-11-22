@@ -33,6 +33,7 @@ import {
 
 import { NOT_SUBMITTED_BADGE, REVIEW_BADGE, visitStatus } from '../src/utils/reviewStatus';
 import { plantStatusLine, speciesSubtitle, type TagProblemCode } from '../src/utils/plantStatusLine';
+import { firstVisitOf } from '../src/utils/submissionState';
 import { requeueLockedTagOperations, resumePausedRecordRetries } from '../src/services/offlineDatabase';
 import PlantNotFound from '../src/components/PlantNotFound';
 import { resolveStoredPhotoUri } from '../src/utils/photoStorage';
@@ -514,10 +515,14 @@ export default function PlantDetailScreen() {
     );
   };
 
-  // Observations, newest first.
+  // Observations, newest first. The plant's first record (the same rule as the officer
+  // Review page: its earliest observation) is its registration, labelled "Registration";
+  // only the later ones count as observations.
   const observations = [...visitsHere].sort(
     (a, b) => (Date.parse(b.observedAt || '') || 0) - (Date.parse(a.observedAt || '') || 0)
   );
+  const registrationVisit = firstVisitOf({ ...matched, observations: visitsHere });
+  const laterCount = observations.length - (registrationVisit ? 1 : 0);
 
   const recordObservation = () =>
     router.push({
@@ -869,9 +874,9 @@ export default function PlantDetailScreen() {
           {/* OBSERVATIONS, newest first */}
           <View style={styles.obsHeaderRow}>
             <Text style={[styles.heading, styles.flexText]}>OBSERVATIONS</Text>
-            {observations.length > 0 ? (
+            {laterCount > 0 ? (
               <Text style={styles.obsCount}>
-                {observations.length} {observations.length === 1 ? 'observation' : 'observations'}
+                {laterCount} {laterCount === 1 ? 'observation' : 'observations'}
               </Text>
             ) : null}
           </View>
@@ -892,7 +897,9 @@ export default function PlantDetailScreen() {
               return (
                 <View key={observation.id} style={[styles.card, styles.obsCard]}>
                   <View style={styles.obsCardTop}>
-                    <Text style={[styles.obsDate, styles.flexText]}>{observation.date}</Text>
+                    <Text style={[styles.obsDate, styles.flexText]}>
+                      {observation === registrationVisit ? `Registration · ${observation.date}` : observation.date}
+                    </Text>
                     <View style={[styles.statusBadge, { backgroundColor: status.badge.bg }]}>
                       <Text style={[styles.statusBadgeText, { color: status.badge.text }]}>
                         {status.badge.label}

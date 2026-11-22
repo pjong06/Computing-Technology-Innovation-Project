@@ -6,7 +6,7 @@ import Toast from 'react-native-toast-message';
 import { IdentificationStatus, SyncStatus, useRecordStore, type PlantRecord } from '../store/useRecordStore';
 import { useProposalStore, type SpeciesProposal } from '../store/useProposalStore';
 import { plantReviewBadge, recordRowBadge, statusReason, visitStatus } from '../utils/reviewStatus';
-import { firstVisitOf, isVisitSubmitted, newPlantReview } from '../utils/submissionState';
+import { firstVisitOf, isVisitSubmitted, newPlantReview, plantActivityEntries } from '../utils/submissionState';
 import { rowStatus } from '../utils/recordsList';
 import { resolveStoredPhotoUri } from '../utils/photoStorage';
 import { parseTagCode } from '../utils/tagCode';
@@ -86,8 +86,12 @@ function buildRows(
     const signed = !record.otherBotanist && record.serverId ? ownThumbnails[record.serverId] ?? null : null;
     const publicPath = record.otherBotanist ? record.publicPhotoUrl : null;
 
+    // One NEW PLANT row (the plant with its first record, its registration), then one
+    // OBSERVATION row per later record: plantActivityEntries, the officer Review page's rule.
+    const entries = plantActivityEntries(record);
+
     // The plant's first record (registering it): only for plants this botanist registered.
-    if (!record.otherBotanist) {
+    if (entries[0]?.type === 'new_plant') {
       const status = rowStatus({
         syncStatus: firstVisit?.syncStatus ?? record.syncStatus,
         outcome: newPlantReview(record).outcome,
@@ -122,8 +126,8 @@ function buildRows(
     }
 
     // Every later record of the plant by this botanist is an observation.
-    for (const visit of visits) {
-      if (visit === firstVisit || !visit.id) continue;
+    for (const { type, visit } of entries) {
+      if (type !== 'observation' || !visit) continue;
       const status = visitStatus(visit, record.syncError);
       const photo = Array.isArray(visit.photoUris) ? visit.photoUris[0] : undefined;
       push({
