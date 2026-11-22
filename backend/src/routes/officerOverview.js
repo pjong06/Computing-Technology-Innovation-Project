@@ -2,6 +2,7 @@
 
 const express = require("express");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { countLivePendingObservations } = require("../services/liveObservations");
 
 const STATUS_BUCKETS = [
     { code: "CR", label: "Critically Endangered" },
@@ -75,10 +76,9 @@ function createOfficerOverviewRouter({ now = () => new Date() } = {}) {
                     ...approvedSpecies,
                     ["in", "conservation_status", ["CR", "EN"]],
                 ]),
-                countRows(client, "observations", [
-                    ...activeObservations,
-                    ["eq", "review_status", "pending"],
-                ]),
+                // Waiting for review: the same rule as Review > Field records (not deleted,
+                // plant not deleted; services/liveObservations.js).
+                countLivePendingObservations(client),
                 countRows(client, "species", [["eq", "verification_status", "pending"]]),
                 countRows(client, "plants", [["is", "deleted_at", null]]),
                 Promise.all(STATUS_BUCKETS.map(async status => ({

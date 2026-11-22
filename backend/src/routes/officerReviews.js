@@ -2,6 +2,7 @@ const express = require("express");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { refreshPublicPlantPhoto } = require("../services/publicPlantPhotos");
 const { loadDecisions, filterHistory, officersOf, DECISIONS, TYPE_FILTERS, SORTS } = require("../services/reviewHistory");
+const { livePendingObservations, withoutDeletedPlants } = require("../services/liveObservations");
 
 const router = express.Router();
 
@@ -245,16 +246,12 @@ async function withThumbnails(supabase, observations) {
 
 // Observations waiting for an officer, newest first, with plant, species, botanist and a
 // thumbnail. (The page can switch to oldest first.)
+// Only live ones (services/liveObservations.js): not deleted, and their plant not deleted.
 router.get("/pending", async (req, res) => {
-    const { data, error } = await req.supabase
-        .from("observations")
-        .select(OBSERVATION_COLUMNS)
-        .eq("review_status", "pending")
-        .is("deleted_at", null)
-        .order("observed_at", { ascending: false })
-        .limit(100);
-
-    if (error) {
+    let data;
+    try {
+        data = await livePendingObservations(req.supabase, OBSERVATION_COLUMNS, { limit: 100 });
+    } catch (error) {
         console.error("Pending observations error:", error);
         return res.status(500).json({
             message: "Could not load field records."
@@ -288,7 +285,8 @@ router.get("/rejected", async (req, res) => {
     }
 
     try {
-        const detailed = await withReviewDetails(req.supabase, data || []);
+        // Not on a deleted plant (services/liveObservations.js).
+        const detailed = await withReviewDetails(req.supabase, await withoutDeletedPlants(req.supabase, data || []));
         // "New plant" (the plant's first record) or "Observation", as on the review list.
         let firstByPlant = null;
         try {

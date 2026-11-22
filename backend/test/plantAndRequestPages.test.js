@@ -15,7 +15,7 @@ const idsOf = html => new Set(Array.from(html.matchAll(/\bid="([^"]+)"/g), match
 test('plant detail: breadcrumb, Print QR tag, Visitor page and the "⋯" menu; no Edit plant, no Copy coordinates', () => {
   const html = read('frontend/plant.html');
   const script = read('frontend/js/plant.js');
-  assert.match(html, /<nav class="breadcrumb" aria-label="Breadcrumb">\s*<a href="plants\.html">Plants<\/a>\s*<span aria-hidden="true">\/<\/span>\s*<span class="clip" id="plant-crumb"/);
+  assert.match(html, /<div class="breadcrumb" role="navigation" aria-label="Breadcrumb">\s*<a href="plants\.html">Plants<\/a>\s*<span aria-hidden="true">\/<\/span>\s*<span class="clip" id="plant-crumb"/);
   assert.match(html, /<button class="btn ghost" id="print-qr" type="button">Print QR tag<\/button>/);
   assert.match(html, /<a class="btn ghost" id="visitor-link" target="_blank" rel="noopener">Visitor page<\/a>/);
   assert.match(html, /id="plant-more"[^>]*>⋯<\/button>/);
