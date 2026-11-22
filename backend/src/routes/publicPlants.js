@@ -1,7 +1,14 @@
 const express = require('express');
 const path = require('node:path');
 const { TAG_PATTERN } = require('../services/qrService');
-const { publicPlantPhotoExists, publicPhotoUrl, readPublicPlantPhoto, PUBLIC_THUMBNAIL_MAX_SIDE } = require('../services/publicPlantPhotos');
+const {
+    PUBLIC_PHOTO_BUCKET,
+    publicPhotoPath,
+    publicPlantPhotoExists,
+    publicPhotoUrl,
+    readPublicPlantPhoto,
+    PUBLIC_THUMBNAIL_MAX_SIDE,
+} = require('../services/publicPlantPhotos');
 const { cleanSpeciesText, SPECIES_TEXT_FIELDS } = require('../utils/speciesDescription');
 
 const STYLES = `
@@ -86,6 +93,151 @@ async function lookupPublicPlant(database, tag) {
     // The previous response remains available while the migration awaits rollout.
     if (result.error && result.error.code !== 'PGRST202') throw result.error;
     return { status: result.data === true && !result.error ? 'pending' : 'not-found' };
+}
+
+async function listPublicPhotoFiles(database) {
+    const copies = new Set();
+    try {
+        const bucket = database.storage.from(PUBLIC_PHOTO_BUCKET);
+        for (let offset = 0; ; offset += 1000) {
+            const { data, error } = await bucket.list('', { limit: 1000, offset });
+            if (error) break;
+            for (const file of data || []) {
+                if (file?.name) copies.add(file.name);
+            }
+            if (!data || data.length < 1000) break;
+        }
+    } catch {
+        // Leave copies empty if bucket listing is unavailable.
+    }
+    return copies;
+}
+
+function cleanPublicText(value) {
+    if (typeof value !== 'string') return null;
+    const cleaned = cleanSpeciesText(value).trim();
+    return cleaned ? cleaned.slice(0, 10000) : null;
+}
+
+function normalizePublicTag(raw) {
+    if (typeof raw !== 'string') return null;
+    const trimmed = raw.trim().toUpperCase();
+    return TAG_PATTERN.test(trimmed) ? trimmed : null;
+}
+
+function toPublicPlantSummary(row, tagCode, hasPhoto) {
+    const species = row?.species && typeof row.species === 'object' ? row.species : row;
+    const id = row?.id || tagCode;
+    if (!id) return null;
+    return {
+        id,
+        tag_code: tagCode,
+        species_id: species?.id || row?.species_id || null,
+        scientific_name: typeof species?.scientific_name === 'string' ? species.scientific_name.trim() || null : null,
+        common_name: typeof species?.common_name === 'string' ? species.common_name.trim() || null : null,
+        local_name: typeof species?.local_name === 'string' ? species.local_name.trim() || null : null,
+        species_category: typeof species?.species_category === 'string' ? species.species_category.trim() || null : null,
+        conservation_status: typeof species?.conservation_status === 'string' ? species.conservation_status.trim() || null : null,
+        description: cleanPublicText(species?.description),
+        registered_at: typeof row?.registered_at === 'string' ? row.registered_at : null,
+        photo_url: tagCode && hasPhoto ? publicPhotoUrl(tagCode) : null,
+    };
+}
+
+async function listPublicApprovedPlants(database) {
+    // 1. Dedicated public RPC (returns all approved plants, newest first)
+    const rpcResult = await database.rpc('public_approved_plants');
+    if (!rpcResult.error && Array.isArray(rpcResult.data)) {
+        const copies = await listPublicPhotoFiles(database);
+        const items = [];
+        for (const row of rpcResult.data) {
+            const tagCode = normalizePublicTag(row?.qr_code_value);
+            const file = tagCode ? publicPhotoPath(tagCode) : null;
+            const summary = toPublicPlantSummary(row, tagCode, Boolean(file && copies.has(file)));
+            if (summary) items.push(summary);
+        }
+        return items;
+    }
+
+    // 2. Direct read of approved plants + approved species (newest first)
+    const { data: plantRows, error: plantsError } = await database
+        .from('plants')
+        .select(`
+            id,
+            species_id,
+            qr_code_value,
+            registered_at,
+            species:species_id (
+                id,
+                scientific_name,
+                common_name,
+                local_name,
+                species_category,
+                conservation_status,
+                description,
+                verification_status
+            )
+        `)
+        .eq('plant_status', 'approved')
+        .is('deleted_at', null)
+        .order('registered_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(0, 999);
+
+    if (!plantsError && Array.isArray(plantRows) && plantRows.length > 0) {
+        const copies = await listPublicPhotoFiles(database);
+        const items = [];
+        for (const row of plantRows) {
+            if (row.species && row.species.verification_status && row.species.verification_status !== 'approved') {
+                continue;
+            }
+            const tagCode = normalizePublicTag(row?.qr_code_value);
+            const file = tagCode ? publicPhotoPath(tagCode) : null;
+            const summary = toPublicPlantSummary(row, tagCode, Boolean(file && copies.has(file)));
+            if (summary) items.push(summary);
+        }
+        return items;
+    }
+
+    // 3. Fallback when RLS hides the plants table from anonymous reads: resolve public tags
+    const copies = await listPublicPhotoFiles(database);
+    const tags = [...copies]
+        .map((name) => name.replace(/\.jpg$/i, '').toUpperCase())
+        .filter((tag) => TAG_PATTERN.test(tag))
+        .sort((a, b) => b.localeCompare(a));
+
+    const items = [];
+    for (let start = 0; start < tags.length; start += 10) {
+        const batch = tags.slice(start, start + 10);
+        const resolved = await Promise.all(
+            batch.map(async (tagCode) => {
+                try {
+                    const { data, error } = await database.rpc('public_plant_by_qr_v2', { p_qr: tagCode });
+                    if (error || !Array.isArray(data) || data.length === 0) return null;
+                    return toPublicPlantSummary(data[0], tagCode, true);
+                } catch {
+                    return null;
+                }
+            })
+        );
+        for (const item of resolved) {
+            if (item) items.push(item);
+        }
+    }
+    return items;
+}
+
+function createPublicPlantsListHandler(database) {
+    return async (_req, res) => {
+        try {
+            const data = await listPublicApprovedPlants(database);
+            res.set('Cache-Control', 'no-store');
+            return res.json({ data });
+        } catch (error) {
+            console.error('Public approved plants list error:', error);
+            return res.status(500).json({ message: 'Could not load approved plants' });
+        }
+    };
 }
 
 function createPublicQrHandler(database) {
@@ -199,3 +351,4 @@ function createPublicPlantsRouter({ client } = {}) {
 module.exports = createPublicPlantsRouter();
 module.exports.createPublicPlantsRouter = createPublicPlantsRouter;
 module.exports.createPublicQrHandler = createPublicQrHandler;
+module.exports.createPublicPlantsListHandler = createPublicPlantsListHandler;

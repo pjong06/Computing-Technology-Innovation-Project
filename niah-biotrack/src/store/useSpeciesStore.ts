@@ -211,11 +211,13 @@ export const useSpeciesStore =
                 null;
 
 
-            const previousIds =
-              new Set(
+            const previousById =
+              new Map(
                 previousSpecies.map(
-                  (item) =>
-                    item.id
+                  (item) => [
+                    item.id,
+                    item,
+                  ]
                 )
               );
 
@@ -245,7 +247,7 @@ export const useSpeciesStore =
                 hadExistingCatalogue
                   ? list.filter(
                       (item) =>
-                        !previousIds.has(
+                        !previousById.has(
                           item.id
                         )
                     )
@@ -301,19 +303,35 @@ export const useSpeciesStore =
               /*
                * Automatically maintain the offline reference.
                *
-               * loadSpeciesDetail() already avoids downloading
-               * details again when the cached copy is less than
-               * 24 hours old.
-               *
-               * This replaces the old manual
-               * "Download for offline use" button.
+               * Force-refresh details when a species is new or its
+               * public plant photo / summary changed; otherwise keep
+               * the 24-hour cached copy.
                */
               for (
                 const item of list
               ) {
+                const prev =
+                  previousById.get(
+                    item.id
+                  );
+
+                const changed =
+                  !prev ||
+                  prev.public_photo?.url !==
+                    item.public_photo?.url ||
+                  prev.common_name !==
+                    item.common_name ||
+                  prev.scientific_name !==
+                    item.scientific_name ||
+                  prev.conservation_status !==
+                    item.conservation_status ||
+                  prev.description !==
+                    item.description;
+
                 void get()
                   .loadSpeciesDetail(
-                    item.id
+                    item.id,
+                    changed
                   );
               }
 

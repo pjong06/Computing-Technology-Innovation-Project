@@ -4,13 +4,16 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
   Platform,
   StatusBar,
   Image,
   Alert,
   ActivityIndicator,
+  ScrollView,
+  RefreshControl,
+  AppState,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
@@ -24,10 +27,9 @@ import {
 import { pullServerRecords, serverPullError } from '../../src/services/serverPull';
 import { countSyncDetailItems } from '../../src/services/syncDetailsList';
 import { useProposalStore } from '../../src/store/useProposalStore';
-import { useSpeciesStore } from '../../src/store/useSpeciesStore';
+import { usePublicPlantsStore } from '../../src/store/usePublicPlantsStore';
 import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
 import { routesUploadedText } from '../../src/utils/routeSync';
-import { plantPhotoCaption } from '../../src/utils/plantPhotoCaption';
 import { BASE_URL } from '../../src/api/client';
 import PlantThumbnail from '../../src/components/PlantThumbnail';
 import { thumbnailSources } from '../../src/utils/thumbnailSources';
@@ -35,25 +37,59 @@ import RecentActivity from '../../src/components/RecentActivity';
 
 const FEATURED_COUNT = 4;
 
+function plantPhotoCaption(tagCode: string | null | undefined): string | null {
+  const trimmed = tagCode?.trim();
+  return trimmed ? trimmed : null;
+}
+
 export default function HomeScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const topInset = Math.max(insets.top, Platform.OS === 'android' ? (StatusBar.currentHeight ?? 28) : 0);
+
   const { isVisitor, userName, logout } = useAuthRole();
   const refreshReviewStatuses = useRecordStore((state) => state.refreshReviewStatuses);
 
-  useFocusEffect(
-    React.useCallback(() => {
-      if (!isVisitor) void refreshReviewStatuses();
-    }, [isVisitor, refreshReviewStatuses])
+  const publicPlants = usePublicPlantsStore((state) => state.plants);
+  const loadPublicPlants = usePublicPlantsStore((state) => state.loadPublicPlants);
+  const featured = publicPlants.slice(0, FEATURED_COUNT);
+
+  const [refreshingVisitor, setRefreshingVisitor] = useState(false);
+
+  const refreshVisitorHome = React.useCallback(
+    async (manual = false) => {
+      if (!isVisitor) return;
+      if (manual) setRefreshingVisitor(true);
+      try {
+        await loadPublicPlants({ silent: !manual && publicPlants.length > 0 });
+      } finally {
+        if (manual) setRefreshingVisitor(false);
+      }
+    },
+    [isVisitor, loadPublicPlants, publicPlants.length]
   );
 
-  const species = useSpeciesStore((state) => state.species);
-  const loadSpecies = useSpeciesStore((state) => state.loadSpecies);
-  const featured = species.slice(0, FEATURED_COUNT);
+  // Auto-sync whenever the screen gains focus (visitor or staff)
+  useFocusEffect(
+    React.useCallback(() => {
+      if (isVisitor) {
+        void refreshVisitorHome(false);
+      } else {
+        void refreshReviewStatuses();
+      }
+    }, [isVisitor, refreshVisitorHome, refreshReviewStatuses])
+  );
 
+  // Auto-sync visitor approved plants when returning to the app
   useEffect(() => {
-    if (isVisitor) void loadSpecies();
-  }, [isVisitor, loadSpecies]);
-
+    if (!isVisitor) return;
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        void refreshVisitorHome(false);
+      }
+    });
+    return () => subscription.remove();
+  }, [isVisitor, refreshVisitorHome]);
 
   const records = useRecordStore((state) => state.records);
   const syncAll = useRecordStore((state) => state.syncAll);
@@ -179,7 +215,7 @@ export default function HomeScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <View style={[styles.safeArea, { paddingTop: topInset }]}>
       <View style={styles.container}>
         <View style={styles.headerRow}>
           <View style={styles.headerLeft}>
@@ -328,78 +364,100 @@ export default function HomeScreen() {
             }
           />
         ) : (
-          <View style={styles.visitorSection}>
-            <TouchableOpacity
-              style={styles.visitorHeroCard}
-              activeOpacity={0.85}
-              onPress={() => router.push('/(tabs)/scan')}
-            >
-              <View style={styles.visitorHeroInfo}>
-                <Text style={styles.visitorHeroTitle}>Scan a plant tag</Text>
-                <Text style={styles.visitorHeroSub}>
-                  Point your camera at the QR tag next to a plant to learn about it.
-                </Text>
-              </View>
-              <View style={styles.visitorHeroIconCircle}>
-                <Ionicons name="camera-outline" size={22} color="#FFFFFF" />
-              </View>
-            </TouchableOpacity>
-
-            {featured.length > 0 && (
-              <>
-                <View style={styles.sectionRow}>
-                  <Text style={styles.sectionHeading}>Featured plants</Text>
-                  <TouchableOpacity onPress={() => router.push('/(tabs)/plants' as any)}>
-                    <Text style={styles.seeAll}>See all</Text>
-                  </TouchableOpacity>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.visitorScrollContent}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshingVisitor}
+                onRefresh={() => void refreshVisitorHome(true)}
+                tintColor="#284632"
+                colors={['#284632']}
+              />
+            }
+          >
+            <View style={styles.visitorSection}>
+              <TouchableOpacity
+                style={styles.visitorHeroCard}
+                activeOpacity={0.85}
+                onPress={() => router.push('/(tabs)/scan')}
+              >
+                <View style={styles.visitorHeroInfo}>
+                  <Text style={styles.visitorHeroTitle}>Scan a plant tag</Text>
+                  <Text style={styles.visitorHeroSub}>
+                    Point your camera at the QR tag next to a plant to learn about it.
+                  </Text>
                 </View>
-                <View style={styles.featuredGrid}>
-                  {featured.map((item) => {
-                    const status = plainConservationStatus(item.conservation_status);
-                    const colors = conservationStatusColors(status.code);
-                    // The species' public plant photo (served stripped by the backend), or the leaf.
-                    const photo = item.public_photo ?? null;
-                    return (
-                      <TouchableOpacity
-                        key={item.id}
-                        style={styles.featuredCard}
-                        activeOpacity={0.8}
-                        onPress={() => router.push({ pathname: '/plant-info', params: { speciesId: item.id } } as any)}
-                      >
-                        <PlantThumbnail
-                          sources={thumbnailSources({ publicPath: photo?.url, baseUrl: BASE_URL })}
-                          style={styles.featuredPhoto}
-                          caption={
-                            photo ? (
-                              <Text style={styles.featuredCaption} numberOfLines={1}>{plantPhotoCaption(photo.tag)}</Text>
-                            ) : null
-                          }
-                          placeholder={
-                            <View style={[styles.featuredPhoto, styles.featuredPlaceholder]}>
-                              <Ionicons name="leaf-outline" size={26} color="#46654F" />
-                            </View>
-                          }
-                        />
-                        <Text style={styles.featuredName} numberOfLines={1}>
-                          {item.common_name || item.scientific_name}
-                        </Text>
-                        <View style={[styles.featuredBadge, { backgroundColor: colors.bg }]}>
-                          <Text style={[styles.featuredBadgeText, { color: colors.text }]}>{status.label}</Text>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
+                <View style={styles.visitorHeroIconCircle}>
+                  <Ionicons name="camera-outline" size={22} color="#FFFFFF" />
                 </View>
-              </>
-            )}
+              </TouchableOpacity>
 
-            <View style={styles.respectBox}>
-              <Text style={styles.respectText}>Please don't pick or touch plants. Many here are protected.</Text>
+              {featured.length > 0 && (
+                <>
+                  <View style={styles.sectionRow}>
+                    <Text style={styles.sectionHeading}>Featured plants</Text>
+                    <TouchableOpacity onPress={() => router.push('/(tabs)/plants' as any)}>
+                      <Text style={styles.seeAll}>See all</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={styles.featuredGrid}>
+                    {featured.map((item) => {
+                      const status = plainConservationStatus(item.conservationStatus);
+                      const colors = conservationStatusColors(status.code);
+                      const photo = item.photoUrl ? { url: item.photoUrl } : null;
+                      const caption = plantPhotoCaption(item.tagCode);
+                      return (
+                        <TouchableOpacity
+                          key={item.id}
+                          style={styles.featuredCard}
+                          activeOpacity={0.8}
+                          onPress={() =>
+                            router.push({
+                              pathname: '/plant-info',
+                              params: item.tagCode
+                                ? { tag: item.tagCode }
+                                : item.speciesId
+                                  ? { speciesId: item.speciesId }
+                                  : {},
+                            } as any)
+                          }
+                        >
+                          <PlantThumbnail
+                            sources={thumbnailSources({ publicPath: photo?.url, baseUrl: BASE_URL })}
+                            style={styles.featuredPhoto}
+                            placeholder={
+                              <View style={[styles.featuredPhoto, styles.featuredPlaceholder]}>
+                                <Ionicons name="leaf-outline" size={26} color="#46654F" />
+                              </View>
+                            }
+                          />
+                          <Text style={styles.featuredName} numberOfLines={1}>
+                            {item.scientificName || item.commonName || 'Approved plant'}
+                          </Text>
+                          {caption ? (
+                            <Text style={styles.featuredCaption} numberOfLines={1}>
+                              {caption}
+                            </Text>
+                          ) : null}
+                          <View style={[styles.featuredBadge, { backgroundColor: colors.bg }]}>
+                            <Text style={[styles.featuredBadgeText, { color: colors.text }]}>{status.label}</Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </>
+              )}
+
+              <View style={styles.respectBox}>
+                <Text style={styles.respectText}>Please don't pick or touch plants. Many here are protected.</Text>
+              </View>
             </View>
-          </View>
+          </ScrollView>
         )}
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -407,7 +465,6 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#F6F8F6',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   container: { flex: 1, paddingHorizontal: 20, paddingTop: 12 },
   headerRow: {
@@ -500,12 +557,13 @@ const styles = StyleSheet.create({
   },
   featuredPhoto: { width: '100%', aspectRatio: 4 / 3, borderRadius: 12, backgroundColor: '#E7EFEA' },
   featuredPlaceholder: { justifyContent: 'center', alignItems: 'center' },
-  featuredName: { fontSize: 13.5, fontWeight: '700', color: '#1E2B22', marginTop: 8 },
-  featuredCaption: { fontSize: 11, color: '#68776D', marginTop: 4 },
-  featuredBadge: { alignSelf: 'flex-start', paddingVertical: 2, paddingHorizontal: 8, borderRadius: 10, marginTop: 4 },
+  featuredName: { fontSize: 13.5, fontWeight: '700', fontStyle: 'italic', color: '#1E2B22', marginTop: 8 },
+  featuredCaption: { fontSize: 11, color: '#68776D', marginTop: 2 },
+  featuredBadge: { alignSelf: 'flex-start', paddingVertical: 2, paddingHorizontal: 8, borderRadius: 10, marginTop: 6 },
   featuredBadgeText: { fontSize: 10.5, fontWeight: '700' },
   respectBox: { backgroundColor: '#E8F5E9', borderRadius: 14, padding: 14, marginTop: 4 },
   respectText: { fontSize: 13, color: '#215A36', fontWeight: '600', textAlign: 'center' },
+  visitorScrollContent: { paddingBottom: 24 },
   visitorSection: { marginTop: 6 },
   visitorHeroCard: {
     flexDirection: 'row',

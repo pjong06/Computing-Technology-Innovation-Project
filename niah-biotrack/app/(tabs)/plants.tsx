@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -7,67 +7,102 @@ import {
   TouchableOpacity,
   ScrollView,
   StyleSheet,
-  SafeAreaView,
   Platform,
   StatusBar,
   ActivityIndicator,
+  AppState,
 } from 'react-native';
-import { useRouter } from 'expo-router';
-import { useSpeciesStore } from '../../src/store/useSpeciesStore';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { usePublicPlantsStore } from '../../src/store/usePublicPlantsStore';
 import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
-import { plantPhotoCaption } from '../../src/utils/plantPhotoCaption';
-import { publicPhotoUri } from '../../src/utils/publicPhoto';
 import { BASE_URL } from '../../src/api/client';
 import PlantThumbnail from '../../src/components/PlantThumbnail';
 import { thumbnailSources } from '../../src/utils/thumbnailSources';
 
-// The visitor and guest "Plant guide": the approved species list (public data, cached on
-// the phone), in plain language. Botanists use the Species tab instead.
-export default function PlantGuideScreen() {
+const AUTO_REFRESH_INTERVAL_MS = 30_000;
+
+function plantPhotoCaption(tagCode: string | null | undefined): string | null {
+  const trimmed = tagCode?.trim();
+  return trimmed ? trimmed : null;
+}
+
+// Visitor "Plants" tab: read-only list of approved plants synced with the park's
+// approved plant records (no coordinates, no staff details, and no add/edit controls).
+export default function VisitorPlantsScreen() {
   const router = useRouter();
-  const species = useSpeciesStore((state) => state.species);
-  const loading = useSpeciesStore((state) => state.loading);
-  const error = useSpeciesStore((state) => state.error);
-  const loadSpecies = useSpeciesStore((state) => state.loadSpecies);
+  const insets = useSafeAreaInsets();
+  const topInset = Math.max(insets.top, Platform.OS === 'android' ? (StatusBar.currentHeight ?? 28) : 0);
+
+  const plants = usePublicPlantsStore((state) => state.plants);
+  const loading = usePublicPlantsStore((state) => state.loading);
+  const error = usePublicPlantsStore((state) => state.error);
+  const loadPublicPlants = usePublicPlantsStore((state) => state.loadPublicPlants);
 
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState<string | null>(null);
 
-  useEffect(() => {
-    void loadSpecies();
-  }, [loadSpecies]);
+  const syncPlants = useCallback(
+    (silent: boolean) => {
+      void loadPublicPlants({ silent });
+    },
+    [loadPublicPlants]
+  );
 
-  // The categories that actually appear (chips are hidden when there are none).
+  // Auto-sync whenever the Plants tab gains focus and every 30s while open
+  useFocusEffect(
+    useCallback(() => {
+      syncPlants(plants.length > 0);
+      const timer = setInterval(() => {
+        syncPlants(true);
+      }, AUTO_REFRESH_INTERVAL_MS);
+      return () => clearInterval(timer);
+    }, [plants.length, syncPlants])
+  );
+
+  // Auto-sync when returning to the app from the background
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        syncPlants(true);
+      }
+    });
+    return () => subscription.remove();
+  }, [syncPlants]);
+
   const categories = useMemo(() => {
     const names = new Set<string>();
-    for (const s of species) {
-      const name = s.species_category?.trim();
+    for (const p of plants) {
+      const name = p.speciesCategory?.trim();
       if (name) names.add(name);
     }
     return [...names].sort((a, b) => a.localeCompare(b));
-  }, [species]);
+  }, [plants]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return species.filter((s) => {
+    return plants.filter((p) => {
       const matchesSearch =
         query === '' ||
-        [s.common_name, s.local_name, s.scientific_name].some((name) => name?.toLowerCase().includes(query));
-      const matchesCategory = category === null || s.species_category?.trim() === category;
+        [p.scientificName, p.commonName, p.localName, p.tagCode].some((value) =>
+          value?.toLowerCase().includes(query)
+        );
+      const matchesCategory = category === null || p.speciesCategory?.trim() === category;
       return matchesSearch && matchesCategory;
     });
-  }, [species, search, category]);
+  }, [plants, search, category]);
 
   const renderEmpty = () => {
-    if (species.length === 0 && loading) {
+    if (plants.length === 0 && loading) {
       return <ActivityIndicator color="#213B2A" style={{ marginTop: 40 }} />;
     }
-    if (species.length === 0 && error) {
+    if (plants.length === 0 && error) {
       return (
         <View style={styles.emptyBox}>
-          <Text style={styles.emptyTitle}>Couldn't load the plant guide</Text>
-          <Text style={styles.emptyText}>Connect to the internet once to download it.</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={() => void loadSpecies()}>
+          <Text style={styles.emptyTitle}>Couldn't load plants</Text>
+          <Text style={styles.emptyText}>{error}</Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={() => void loadPublicPlants()}>
             <Text style={styles.retryText}>Try again</Text>
           </TouchableOpacity>
         </View>
@@ -77,13 +112,13 @@ export default function PlantGuideScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <View style={[styles.safeArea, { paddingTop: topInset }]}>
       <View style={styles.container}>
-        <Text style={styles.title}>Plant guide</Text>
+        <Text style={styles.title}>Plants</Text>
 
         <TextInput
           style={styles.search}
-          placeholder="Search by name"
+          placeholder="Search plant, species or tag"
           placeholderTextColor="#8C9A91"
           value={search}
           onChangeText={setSearch}
@@ -116,42 +151,65 @@ export default function PlantGuideScreen() {
           </ScrollView>
         )}
 
+        {plants.length > 0 && (
+          <Text style={styles.summary}>
+            {filtered.length} {filtered.length === 1 ? 'plant' : 'plants'} · newest first
+          </Text>
+        )}
+
         <FlatList
           data={filtered}
           keyExtractor={(item) => item.id}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
-          refreshing={loading && species.length > 0}
-          onRefresh={() => void loadSpecies()}
+          refreshing={loading && plants.length > 0}
+          onRefresh={() => void loadPublicPlants()}
           ListEmptyComponent={renderEmpty}
           renderItem={({ item }) => {
-            const status = plainConservationStatus(item.conservation_status);
+            const status = plainConservationStatus(item.conservationStatus);
             const colors = conservationStatusColors(status.code);
-            // The species' public plant photo (served stripped by the backend), or the leaf.
-            const photo = item.public_photo ?? null;
-            const photoUri = publicPhotoUri(BASE_URL, photo?.url);
+            const photo = item.photoUrl ? { url: item.photoUrl } : null;
+            const caption = plantPhotoCaption(item.tagCode);
             return (
               <TouchableOpacity
                 style={styles.row}
-                activeOpacity={0.7}
-                onPress={() => router.push({ pathname: '/plant-info', params: { speciesId: item.id } } as any)}
+                activeOpacity={0.75}
+                onPress={() =>
+                  router.push({
+                    pathname: '/plant-info',
+                    params: item.tagCode
+                      ? { tag: item.tagCode }
+                      : item.speciesId
+                        ? { speciesId: item.speciesId }
+                        : {},
+                  } as any)
+                }
+                accessibilityRole="button"
               >
-                <View style={styles.photoColumn}>
-                  <PlantThumbnail
-                    sources={thumbnailSources({ publicPath: photo?.url, baseUrl: BASE_URL })}
-                    style={styles.thumb}
-                    placeholder={
-                      <View style={[styles.thumb, styles.thumbPlaceholder]}>
-                        <Text style={{ fontSize: 22 }}>🌿</Text>
-                      </View>
-                    }
-                  />
-                </View>
-                <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text style={styles.commonName}>{item.common_name || item.scientific_name}</Text>
-                  {item.common_name ? <Text style={styles.scientific}>{item.scientific_name}</Text> : null}
-                  {photo && photoUri ? <Text style={styles.photoCaption} numberOfLines={1}>{plantPhotoCaption(photo.tag)}</Text> : null}
+                <PlantThumbnail
+                  sources={thumbnailSources({ publicPath: photo?.url, baseUrl: BASE_URL })}
+                  style={styles.thumb}
+                  placeholder={
+                    <View style={[styles.thumb, styles.thumbPlaceholder]}>
+                      <Ionicons name="leaf-outline" size={22} color="#46654F" />
+                    </View>
+                  }
+                />
+                <View style={styles.textCol}>
+                  <Text style={styles.scientificName} numberOfLines={2}>
+                    {item.scientificName || item.commonName || 'Approved plant'}
+                  </Text>
+                  {caption ? (
+                    <Text style={styles.tagCode} numberOfLines={1}>
+                      {caption}
+                    </Text>
+                  ) : null}
+                  {item.commonName && item.scientificName ? (
+                    <Text style={styles.commonName} numberOfLines={1}>
+                      {item.commonName}
+                    </Text>
+                  ) : null}
                   <View style={[styles.badge, { backgroundColor: colors.bg }]}>
                     <Text style={[styles.badgeText, { color: colors.text }]}>{status.label}</Text>
                   </View>
@@ -162,13 +220,12 @@ export default function PlantGuideScreen() {
           }}
         />
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F6F8F6', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
-  photoColumn: { width: 110 },
+  safeArea: { flex: 1, backgroundColor: '#F6F8F6' },
   container: { flex: 1, paddingHorizontal: 20, paddingTop: 12 },
   title: { fontSize: 24, fontWeight: '800', color: '#1E2B22', marginBottom: 12 },
   search: { backgroundColor: '#FFFFFF', height: 46, borderRadius: 23, paddingHorizontal: 18, fontSize: 14, color: '#1E2B22', borderWidth: 1.2, borderColor: '#E6ECE8', marginBottom: 10 },
@@ -178,12 +235,14 @@ const styles = StyleSheet.create({
   chipOn: { backgroundColor: '#213B2A', borderColor: '#213B2A' },
   chipText: { fontSize: 12.5, fontWeight: '600', color: '#334839' },
   chipTextOn: { color: '#FFFFFF' },
+  summary: { fontSize: 12.5, color: '#68776D', marginBottom: 10 },
   row: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 18, padding: 12, borderWidth: 1.2, borderColor: '#E6ECE8', marginBottom: 8 },
-  thumb: { width: 56, height: 56, borderRadius: 14, backgroundColor: '#E7EFEA' },
+  thumb: { width: 56, height: 56, borderRadius: 12, backgroundColor: '#E7EFEA' },
   thumbPlaceholder: { justifyContent: 'center', alignItems: 'center' },
-  commonName: { fontSize: 15, fontWeight: '700', color: '#1E2B22' },
-  scientific: { fontSize: 12.5, fontStyle: 'italic', color: '#526659', marginTop: 1 },
-  photoCaption: { fontSize: 11, color: '#68776D', marginTop: 2 },
+  textCol: { flex: 1, minWidth: 0, marginLeft: 12 },
+  scientificName: { fontSize: 14.5, fontWeight: '700', fontStyle: 'italic', color: '#1E2B22' },
+  tagCode: { fontSize: 12, color: '#68776D', marginTop: 2 },
+  commonName: { fontSize: 12, color: '#526659', marginTop: 1 },
   badge: { alignSelf: 'flex-start', paddingVertical: 3, paddingHorizontal: 9, borderRadius: 10, marginTop: 6 },
   badgeText: { fontSize: 11, fontWeight: '700' },
   chevron: { fontSize: 24, color: '#8A998E', marginLeft: 8 },
