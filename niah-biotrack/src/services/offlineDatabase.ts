@@ -1,6 +1,6 @@
 import { randomUUID } from 'expo-crypto';
 import * as SQLite from 'expo-sqlite';
-import { tagOnlyPayload } from '../utils/plantStatusLine';
+import { needsServerTag, tagOnlyPayload, tagRefusalProblem, withoutRefusedTag } from '../utils/plantStatusLine';
 
 export type SyncEntityType = 'plant' | 'observation' | 'proposal';
 export type SyncOperationType = 'create' | 'update' | 'delete';
@@ -805,6 +805,80 @@ export async function applySyncOperationResult(
       return;
     }
 
+    // A tag the server refused (not one of the botanist's reserved tags, already used, or
+    // the plant already has one): the plant remembers it (its notice offers "Attach a
+    // different tag"), and the rest of the plant is sent again without the tag, so the plant,
+    // its observations and photos keep uploading. A tag-only change stays refused (below).
+    const tagProblem =
+      operation.entity_type === 'plant' && result.status === 'conflict'
+        ? tagRefusalProblem(result.code)
+        : null;
+    if (tagProblem) {
+      let payload: unknown = null;
+      try {
+        payload = parseJson<unknown>(operation.payload_json);
+      } catch {
+        payload = null;
+      }
+      const refusedTag =
+        payload && typeof payload === 'object'
+          ? (payload as Record<string, unknown>).qr_code_value
+          : null;
+      const entity = await transaction.getFirstAsync<{ snapshot_json: string }>(
+        'SELECT snapshot_json FROM local_entities WHERE entity_type = ? AND client_record_id = ?',
+        operation.entity_type,
+        operation.client_record_id
+      );
+      if (entity) {
+        try {
+          const snapshot = parseJson<Record<string, unknown>>(entity.snapshot_json);
+          await transaction.runAsync(
+            'UPDATE local_entities SET snapshot_json = ?, updated_at = ? WHERE entity_type = ? AND client_record_id = ?',
+            JSON.stringify({
+              ...snapshot,
+              tagCode: refusedTag && snapshot.tagCode === refusedTag ? null : snapshot.tagCode,
+              tagProblem,
+            }),
+            timestamp,
+            operation.entity_type,
+            operation.client_record_id
+          );
+        } catch {
+          // Leave the phone's copy as it is.
+        }
+      }
+
+      const resend = withoutRefusedTag(operation.operation_type, payload);
+      if (resend) {
+        await transaction.runAsync(
+          `
+            UPDATE sync_outbox
+            SET payload_json = ?,
+                status = 'pending',
+                last_error = NULL, last_code = NULL,
+                retry_count = 0,
+                next_retry_at = NULL,
+                updated_at = ?
+            WHERE operation_id = ?
+          `,
+          JSON.stringify(resend),
+          timestamp,
+          result.operation_id
+        );
+        await transaction.runAsync(
+          `
+            UPDATE local_entities
+            SET sync_status = 'pending', updated_at = ?
+            WHERE entity_type = ? AND client_record_id = ?
+          `,
+          timestamp,
+          operation.entity_type,
+          operation.client_record_id
+        );
+        return;
+      }
+    }
+
     const outboxStatus: OutboxStatus =
       result.status === 'retry'
         ? 'retry'
@@ -1216,6 +1290,97 @@ export async function getPlantTagRefusals(): Promise<
     }
   }
   return refusals;
+}
+
+/**
+ * Plants refused as tag_already_set whose tag on the server the phone doesn't know yet:
+ * the sync refreshes each one from the server (syncEngine refreshPlantsWithServerTag).
+ */
+export async function getPlantsNeedingServerTag(): Promise<{ clientRecordId: string; serverId: string }[]> {
+  await initializeOfflineDatabase();
+  const db = await getDatabase();
+  const rows = await db.getAllAsync<{ client_record_id: string; server_id: string | null; snapshot_json: string }>(
+    `SELECT client_record_id, server_id, snapshot_json FROM local_entities WHERE entity_type = 'plant' AND server_id IS NOT NULL`
+  );
+  const plants: { clientRecordId: string; serverId: string }[] = [];
+  for (const row of rows) {
+    try {
+      const snapshot = parseJson<Record<string, unknown>>(row.snapshot_json);
+      const plant = {
+        tagProblem: typeof snapshot.tagProblem === 'string' ? snapshot.tagProblem : null,
+        tagCode: typeof snapshot.tagCode === 'string' ? snapshot.tagCode : null,
+        serverId: row.server_id,
+      };
+      if (needsServerTag(plant)) plants.push({ clientRecordId: row.client_record_id, serverId: row.server_id as string });
+    } catch {
+      // Skip a copy that can't be read.
+    }
+  }
+  return plants;
+}
+
+/**
+ * The plant's tag on the server, from the refreshed plant: the phone's copy takes it (and the
+ * server's row_version), keeping tagProblem 'already_set' so the plant says why ("This plant
+ * already has a tag on the server (<tag>)."). The refused tag change is settled (complete):
+ * the server's tag is the plant's tag now, so there is nothing left to send or retry.
+ */
+export async function adoptServerPlantTag(
+  clientRecordId: string,
+  serverTag: string,
+  rowVersion?: number | null
+): Promise<void> {
+  await initializeOfflineDatabase();
+  const db = await getDatabase();
+  const timestamp = nowIso();
+
+  await db.withExclusiveTransactionAsync(async (transaction) => {
+    const entity = await transaction.getFirstAsync<{ snapshot_json: string; row_version: number | null }>(
+      `SELECT snapshot_json, row_version FROM local_entities WHERE entity_type = 'plant' AND client_record_id = ?`,
+      clientRecordId
+    );
+    if (!entity) return;
+
+    await transaction.runAsync(
+      `
+        UPDATE sync_outbox
+        SET status = 'complete', updated_at = ?
+        WHERE entity_type = 'plant' AND client_record_id = ?
+          AND status = 'conflict' AND last_error = 'tag_already_set'
+      `,
+      timestamp,
+      clientRecordId
+    );
+    const other = await transaction.getFirstAsync<{ operation_id: string }>(
+      `
+        SELECT operation_id FROM sync_outbox
+        WHERE entity_type = 'plant' AND client_record_id = ?
+          AND status IN ('pending', 'processing', 'retry')
+        LIMIT 1
+      `,
+      clientRecordId
+    );
+
+    let snapshot: Record<string, unknown>;
+    try {
+      snapshot = parseJson<Record<string, unknown>>(entity.snapshot_json);
+    } catch {
+      return;
+    }
+    const version = typeof rowVersion === 'number' && rowVersion > 0 ? rowVersion : entity.row_version;
+    await transaction.runAsync(
+      `
+        UPDATE local_entities
+        SET snapshot_json = ?, row_version = ?, sync_status = ?, updated_at = ?
+        WHERE entity_type = 'plant' AND client_record_id = ?
+      `,
+      JSON.stringify({ ...snapshot, tagCode: serverTag, tagProblem: 'already_set', ...(version ? { rowVersion: version } : {}) }),
+      version ?? null,
+      other ? 'pending' : 'uploaded',
+      timestamp,
+      clientRecordId
+    );
+  });
 }
 
 /**

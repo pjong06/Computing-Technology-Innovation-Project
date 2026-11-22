@@ -600,7 +600,9 @@ export async function loadOrMigrateRecords(
                 ? 'already_set'
                 : tagRefusal === 'plant_locked'
                   ? 'locked'
-                  : null,
+                  // A refused tag whose plant was sent again without it (offlineDatabase
+                  // applySyncOperationResult) is kept on the plant until another tag is attached.
+                  : snapshot.tagProblem ?? null,
         serverId:
           entity.serverId ??
           snapshot.serverId,

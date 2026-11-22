@@ -8,6 +8,7 @@ import { isSyncOffline } from './syncRetry';
 import {
   base64FromBytes,
   fromServer,
+  refreshTagList,
   tagImagePath,
   tagOwnershipProblem,
   type MyTag,
@@ -65,6 +66,13 @@ export async function fetchMyTags(): Promise<MyTag[]> {
   const tags = fromServer(rows);
   await saveCache(tags).catch(() => {});
   return tags;
+}
+
+// The saved list, refreshed from the server whenever online: on opening the tag scanner
+// (Attach tag, also after Register plant) and on every sync (syncEngine). Offline it keeps
+// the saved list.
+export function refreshMyTags(): Promise<'refreshed' | 'offline' | 'failed'> {
+  return refreshTagList({ isOffline: isSyncOffline, fetchTags: fetchMyTags });
 }
 
 // Whether this botanist may attach this tag to this plant: one of their own reserved tags,

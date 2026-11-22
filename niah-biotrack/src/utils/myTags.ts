@@ -180,6 +180,25 @@ export function tagCountsText(tags: MyTag[]): string {
   return `${unused} unused · ${tags.length - unused} used`;
 }
 
+/**
+ * Refreshes the botanist's saved tag list from the server whenever online (opening the tag
+ * scanner, every sync), so a tag deleted or used elsewhere is no longer accepted from an old
+ * list when scanning offline. Offline, or when the server can't be reached, the saved list
+ * stays as it is. Never throws.
+ */
+export async function refreshTagList(deps: {
+  isOffline: () => Promise<boolean>;
+  fetchTags: () => Promise<MyTag[]>;
+}): Promise<'refreshed' | 'offline' | 'failed'> {
+  try {
+    if (await deps.isOffline()) return 'offline';
+    await deps.fetchTags();
+    return 'refreshed';
+  } catch {
+    return 'failed';
+  }
+}
+
 // Base64 for the downloaded PDF (written to a file with expo-file-system).
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 export function base64FromBytes(bytes: Uint8Array): string {

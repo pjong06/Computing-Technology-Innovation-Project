@@ -22,9 +22,14 @@ test('status line: one message from the real state', () => {
   // Something still to send (a new tag, an observation) on a submitted plant.
   assert.deepEqual(plantStatusLine({ syncStatus: 'Not uploaded', reviewStatus: 'pending' }), { kind: 'not_uploaded', text: NOT_UPLOADED_TEXT });
   assert.equal(NOT_UPLOADED_TEXT, "Not uploaded yet — it will send when you're online");
-  // Refused: the reason, and Retry.
+  // Only the tag refused: the plant's own tag notice says it (tagRefusal.test.mjs), so no
+  // "Upload failed" line as well.
   assert.deepEqual(plantStatusLine({ syncStatus: 'Upload failed', reviewStatus: 'pending', tagProblem: 'not_yours' }),
-    { kind: 'failed', text: "Upload failed: this tag isn't one of your reserved tags", retry: true });
+    { kind: 'waiting', text: WAITING_TEXT });
+  // A refused tag on a locked plant: the reason, and Retry.
+  assert.deepEqual(plantStatusLine({ syncStatus: 'Upload failed', reviewStatus: 'pending', tagProblem: 'locked' }),
+    { kind: 'failed', text: "Upload failed: this plant can't be changed after submission", retry: true });
+  // Refused: the reason, and Retry.
   assert.equal(plantStatusLine({ syncStatus: 'Upload failed', reviewStatus: 'pending', syncError: 'The server rejected part of this record. ' }).text,
     'Upload failed: the server rejected part of this record');
   assert.equal(plantStatusLine({ syncStatus: 'Upload failed' }).text, 'Upload failed: the server refused part of this record');
