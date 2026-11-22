@@ -321,9 +321,17 @@ test('plant catalogue facets provide species counts and registered-by options', 
   db = fakeDb({
     plants: {
       data: [
-        { species_id: SPECIES_ID, registered_by: OFFICER_ID, plant_status: 'approved', data_source: 'field' },
-        { species_id: SPECIES_ID, registered_by: OFFICER_ID, plant_status: 'pending', data_source: 'inaturalist' },
-        { species_id: null, registered_by: OFFICER_ID, plant_status: 'pending', data_source: 'field' },
+        { id: PLANT_ID, species_id: SPECIES_ID, registered_by: OFFICER_ID, plant_status: 'approved', data_source: 'field' },
+        { id: 'p2', species_id: SPECIES_ID, registered_by: OFFICER_ID, plant_status: 'pending', data_source: 'inaturalist' },
+        { id: 'p3', species_id: null, registered_by: OFFICER_ID, plant_status: 'pending', data_source: 'field' },
+      ],
+      error: null,
+    },
+    observations: {
+      data: [
+        { plant_id: PLANT_ID, observed_at: '2026-11-03T08:00:00Z' },
+        { plant_id: 'p2', observed_at: '2026-11-10T08:00:00Z' },
+        { plant_id: 'p3', observed_at: '2026-11-20T08:00:00Z' }, // a plant with no species
       ],
       error: null,
     },
@@ -332,7 +340,14 @@ test('plant catalogue facets provide species counts and registered-by options', 
 
   const result = await callRoute('/api/officer/plants', router, { path: '/facets' });
   assert.equal(result.status, 200);
-  assert.deepEqual(result.body.data.species_counts, [{ species_id: SPECIES_ID, count: 2 }]);
+  // Plant count and when any of the species' plants was last observed (Species catalogue).
+  assert.deepEqual(result.body.data.species_counts, [
+    { species_id: SPECIES_ID, count: 2, last_observed_at: '2026-11-10T08:00:00Z' },
+  ]);
+  // Counts per review status (the Plants page tabs).
+  assert.deepEqual(result.body.data.status_counts, { approved: 1, pending: 2 });
+  assert.ok(db.calls.some((call) => call[0] === 'observations' && call[1] === 'is' &&
+    call[2] === 'deleted_at' && call[3] === null));
   assert.deepEqual(result.body.data.registered_by, [{ id: OFFICER_ID, name: 'Field Officer' }]);
   assert.deepEqual(result.body.data.plant_statuses, ['approved', 'pending']);
   assert.deepEqual(result.body.data.data_sources, ['field', 'inaturalist']);

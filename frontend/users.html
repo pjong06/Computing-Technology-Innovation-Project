@@ -3,33 +3,67 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>User & role admin - Niah Biotrack</title>
+<title>Users - Niah Biotrack</title>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="icon" href="images/logo.png">
 <link rel="stylesheet" href="css/style.css">
+<style>
+/* Column widths of the users table (the shared .data-table keeps text inside its cell). */
+#users-table { min-width: 900px; }
+#users-table .col-name { width: 20%; }
+#users-table .col-username { width: 14%; }
+#users-table .col-email { width: 24%; }
+#users-table .col-role { width: 17%; }
+#users-table .col-status { width: 12%; }
+#users-table .col-actions { width: 13%; }
+#users-table select { max-width: 100%; }
+.user-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.user-actions .btn { padding: 5px 12px; font-size: 13px; }
+.protected { color: var(--mute); font-size: 13px; font-style: italic; }
+.add-user { margin-bottom: 16px; }
+</style>
 </head>
 <body>
 <div class="app">
 
 <nav id="menu"></nav>
 
-<main>
+<main class="wide">
 <section class="page on">
-  <h1>User <span>& role admin</span></h1>
-  <p class="lead">Staff accounts for the portal and the mobile app, managed by the conservation officer. Add a botanist here with a temporary password. Accounts made any other way stay <b>Pending approval</b> until you activate them. There is only one officer account.</p>
-  <div class="bar">
+  <h1>Users</h1>
+  <p class="lead">Staff accounts for the app and the portal, managed by the conservation officer.</p>
+
+  <div class="bar add-user" aria-label="Add a botanist">
     <input id="new-username" class="grow" placeholder="Username" aria-label="Username">
     <input id="new-email" class="grow" type="email" placeholder="Email" aria-label="Email">
     <input id="new-password" class="grow" type="password" placeholder="Temporary password" aria-label="Temporary password">
-    <button class="btn" onclick="addUser()">Add user</button>
+    <button class="btn" type="button" onclick="addUser()">Add botanist</button>
   </div>
-  <p class="muted" id="users-count"></p>
-  <div class="card tw">
-    <table>
-      <thead><tr><th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Status</th><th></th></tr></thead>
-      <tbody id="user-body"></tbody>
-    </table>
-  </div>
+
+  <article class="card table-card">
+    <div class="table-card-head">
+      <h2>Accounts</h2>
+    </div>
+    <div class="table-toolbar">
+      <input id="user-search" type="search" placeholder="Search by name or email" aria-label="Search accounts by name or email">
+      <select id="role-filter" aria-label="Filter by role">
+        <option value="">All roles</option>
+        <option>Botanist</option>
+        <option>Conservation Officer</option>
+      </select>
+      <select id="status-filter" aria-label="Filter by status">
+        <option value="">All statuses</option>
+        <option value="active">Active</option>
+        <option value="pending">Pending approval</option>
+        <option value="suspended">Suspended</option>
+      </select>
+    </div>
+    <p class="table-note" id="users-count" role="status"></p>
+    <div class="table-scroll">
+      <table class="data-table" id="users-table"><thead></thead><tbody></tbody></table>
+    </div>
+    <div class="table-pager" id="users-pager"></div>
+  </article>
 </section>
 </main>
 </div>

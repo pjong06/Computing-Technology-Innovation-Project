@@ -1163,3 +1163,400 @@ textarea {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* ---- Officer data tables (Species catalogue, Plants, Users; drawn by shared.js) ---- */
+
+/* Tabs with counts (also the Overview report tabs). */
+.report-tabs,
+.table-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.report-tabs button,
+.table-tabs button {
+  border: 0;
+  background: none;
+  padding: 8px 14px;
+  border-radius: 10px;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.report-tabs button[aria-selected="true"],
+.table-tabs button[aria-selected="true"] {
+  background: var(--mint);
+}
+
+.tab-count {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--neutral);
+  color: var(--neutralt);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* Rank tag, "Missing" badge and conservation status dot (also on the Overview page). */
+.rank-tag {
+  display: inline-block;
+  flex-shrink: 0;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--neutral);
+  color: var(--neutralt);
+  font-size: 11px;
+  font-weight: 700;
+  font-style: normal;
+  vertical-align: 1px;
+}
+
+.missing-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--wa);
+  color: var(--wat);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.status-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  margin-right: 7px;
+  border-radius: 50%;
+  vertical-align: 0;
+}
+
+.status-dot.critical { background: var(--ert); }
+.status-dot.warning { background: var(--wat); }
+.status-dot.near { background: var(--wa); }
+.status-dot.safe { background: var(--sage); }
+.status-dot.unknown { background: var(--line); }
+
+.table-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.table-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 18px 12px;
+}
+
+.table-card-head h2 {
+  margin: 0 auto 0 0;
+  font-size: 18px;
+}
+
+.table-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 0 18px 12px;
+}
+
+.table-toolbar input[type="search"] {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.table-toolbar .table-tabs {
+  flex: 1 1 100%;
+}
+
+/* The table scrolls sideways inside its card on narrow screens; the page never does. */
+.table-scroll {
+  overflow-x: auto;
+  border-top: 1px solid var(--line);
+}
+
+.data-table {
+  width: 100%;
+  min-width: 860px;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+.data-table th,
+.data-table td {
+  padding: 10px 12px;
+  vertical-align: middle;
+  overflow: hidden;
+}
+
+.data-table tr.selected td {
+  background: var(--mint);
+}
+
+.data-table .select-col {
+  width: 44px;
+}
+
+.data-table .table-empty {
+  padding: 22px 18px;
+  color: var(--mute);
+  text-align: center;
+}
+
+.th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sort-arrow {
+  flex-shrink: 0;
+  color: var(--sage);
+  font-size: 10px;
+}
+
+/* Text inside a cell never overflows: one line (or two with .clip-2), then an ellipsis. */
+.clip {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.clip-2 {
+  display: -webkit-box;
+  white-space: normal;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+
+.cell-line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cell-line > .clip {
+  flex: 0 1 auto;
+}
+
+.cell-sub {
+  display: block;
+  margin-top: 2px;
+  color: var(--mute);
+  font-size: 13px;
+}
+
+.muted-text {
+  color: var(--mute);
+  font-style: italic;
+}
+
+.sci {
+  font-style: italic;
+}
+
+.chip-muted {
+  display: inline-block;
+  max-width: 100%;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--neutral);
+  color: var(--neutralt);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lock-icon {
+  flex-shrink: 0;
+  margin-left: 6px;
+  font-size: 12px;
+}
+
+.status-badge,
+.plant-status {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.table-link {
+  color: var(--pri);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.table-link:hover {
+  text-decoration: underline;
+}
+
+.row-thumb {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  margin-right: 10px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--mint);
+}
+
+.plant-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.plant-cell > div {
+  min-width: 0;
+}
+
+/* The bar shown while rows are selected. */
+.bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 18px 12px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--mint);
+}
+
+.bulk-bar[hidden] {
+  display: none;
+}
+
+.bulk-count {
+  margin-right: auto;
+  font-weight: 700;
+}
+
+.bulk-bar select {
+  max-width: 220px;
+}
+
+.table-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+}
+
+.pager-label {
+  margin-right: auto;
+  color: var(--mute);
+  font-size: 13px;
+}
+
+/* Filters and Export panels open under their button. */
+.popover-wrap {
+  position: relative;
+}
+
+.popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  gap: 10px;
+  width: min(300px, 90vw);
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+}
+
+.popover[hidden] {
+  display: none;
+}
+
+.popover label {
+  display: grid;
+  gap: 4px;
+  color: var(--mute);
+  font-size: 13px;
+}
+
+.popover .btn {
+  width: 100%;
+}
+
+.table-note {
+  margin: 0;
+  padding: 0 18px 12px;
+  color: var(--mute);
+  font-size: 13px;
+}
+
+@media (max-width: 820px) {
+  .table-card-head,
+  .table-toolbar {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .bulk-bar {
+    margin-left: 14px;
+    margin-right: 14px;
+  }
+}
+
+/* Page title with its main action on the right (wraps under the title on narrow screens). */
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+
+.page-head h1 {
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+/* In a table a long badge ("Waiting for review") wraps onto a second line instead of being cut. */
+.data-table .status-badge,
+.data-table .plant-status {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* A tag code is short and must be read in full: it may break, never be cut. */
+.data-table .tag-text {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

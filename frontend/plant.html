@@ -5,91 +5,100 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Plant details - Niah Biotrack</title>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous">
 <link rel="icon" href="images/logo.png">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous">
 <link rel="stylesheet" href="css/style.css">
 <style>
-.detail-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr); gap: 18px; }
-.detail-card { min-width: 0; padding: 20px; }
 .back-link { display: inline-block; margin-bottom: 14px; color: var(--pri); font-weight: 600; text-decoration: none; }
-.tag-line { color: var(--mute); font-size: 14px; }
-.detail-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 18px; }
-.detail-fact { min-width: 0; }
-.detail-label { color: var(--mute); font-size: 12px; }
-.detail-value { margin-top: 2px; overflow-wrap: anywhere; font-weight: 600; }
-.photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin-top: 14px; }
-.photo-grid img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 10px; background: var(--mint); }
-#plant-map { height: 260px; margin-top: 12px; border-radius: 10px; background: var(--mint); }
-.history-card { margin-top: 18px; overflow: hidden; }
-.table-wrap { overflow-x: auto; }
-.history-table { width: 100%; border-collapse: collapse; min-width: 760px; }
-.history-table th, .history-table td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
-.history-table th { color: var(--mute); font-size: 12px; font-weight: 700; }
-.history-table td { font-size: 13px; }
+.plant-head { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.gallery-main { position: relative; aspect-ratio: 4 / 3; overflow: hidden; border-radius: 12px; background: var(--mint); }
+.gallery-main img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.gallery-count { position: absolute; right: 10px; bottom: 10px; padding: 3px 10px; border-radius: 999px; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 12px; font-weight: 700; }
+.gallery-strip { display: flex; gap: 8px; margin-top: 8px; overflow-x: auto; }
+.gallery-strip button { flex: 0 0 auto; width: 64px; height: 48px; padding: 0; overflow: hidden; border: 2px solid transparent; border-radius: 8px; background: var(--mint); cursor: pointer; }
+.gallery-strip button[aria-current="true"] { border-color: var(--pri); }
+.gallery-strip img { width: 100%; height: 100%; object-fit: cover; }
+.plant-name { margin: 0; font-style: italic; overflow-wrap: anywhere; }
+.plant-sub { margin: 6px 0 0; color: var(--mute); overflow-wrap: anywhere; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.detail-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 18px; }
+.detail-sections > .card { min-width: 0; }
+.detail-sections h2 { margin: 0 0 12px; font-size: 17px; }
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.tile { display: block; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; }
+.tile-label { display: block; color: var(--mute); font-size: 12px; }
+.tile-value { display: block; margin-top: 4px; font-size: 18px; font-weight: 700; overflow-wrap: anywhere; }
+.info-row { display: grid; grid-template-columns: minmax(110px, 0.4fr) minmax(0, 1fr); gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.info-row:last-child { border-bottom: 0; }
+.info-label { color: var(--mute); font-size: 13px; }
+.info-value { min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.note-block + .note-block { margin-top: 12px; }
+.note-block p { margin: 4px 0 0; white-space: pre-line; overflow-wrap: anywhere; }
+#plant-map { height: 220px; margin-bottom: 8px; border-radius: 10px; background: var(--mint); }
+.observations-card { margin-top: 18px; }
+.observation-item { padding: 12px 0; border-top: 1px solid var(--line); }
+.observation-top { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.observation-date { font-weight: 700; }
+.observation-by { display: block; margin-top: 2px; color: var(--mute); font-size: 13px; overflow-wrap: anywhere; }
+.observation-reason { margin: 6px 0 0; color: var(--ert); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 .plant-state { padding: 18px; }
-.plant-state[hidden] { display: none; }
-@media (max-width: 760px) {
-  .detail-grid { grid-template-columns: 1fr; }
+.plant-state[hidden], .detail-sections > [hidden] { display: none; }
+@media (max-width: 900px) {
+  .plant-head, .detail-sections { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 520px) {
   main { padding: 20px 16px; }
-  .detail-card { padding: 15px; }
-  .detail-facts { gap: 10px; }
+  .info-row { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 }
 </style>
 </head>
 <body>
 <div class="app">
 <nav id="menu"></nav>
-<main>
+<main class="wide">
 <section class="page on">
   <a class="back-link" href="plants.html">‹ Plants</a>
-  <p class="lead">One plant's details, photos, location and observations, for conservation officers.</p>
+  <p class="lead">One plant's photos, measurements, location and observations, for the conservation officer.</p>
   <div class="card plant-state" id="plant-loading" role="status">Loading plant details...</div>
   <div class="card plant-state" id="plant-error" role="alert" hidden></div>
+
   <div id="plant-detail" hidden>
-    <div class="detail-grid">
-      <article class="card detail-card">
-        <p class="tag-line" id="plant-tag"></p>
-        <h1 id="plant-title">Plant</h1>
-        <p class="lead" id="plant-species"></p>
-        <div class="detail-facts">
-          <div class="detail-fact"><div class="detail-label">Plant status</div><div class="detail-value" id="plant-status"></div></div>
-          <div class="detail-fact"><div class="detail-label" id="plant-registered-label">Registered by</div><div class="detail-value" id="plant-registered-by"></div></div>
-          <div class="detail-fact"><div class="detail-label">Registered</div><div class="detail-value" id="plant-registered-at"></div></div>
-          <div class="detail-fact"><div class="detail-label">Last observation</div><div class="detail-value" id="plant-last-observation"></div></div>
-          <div class="detail-fact"><div class="detail-label">Location note</div><div class="detail-value" id="plant-location"></div></div>
-          <div class="detail-fact"><div class="detail-label">Conservation status</div><div class="detail-value" id="plant-conservation"></div></div>
-          <div class="detail-fact"><div class="detail-label">Coordinates</div><div class="detail-value" id="plant-coordinates"></div></div>
-          <div class="detail-fact"><div class="detail-label">Observations</div><div class="detail-value" id="plant-observation-count"></div></div>
+    <article class="card plant-head">
+      <div>
+        <div class="gallery-main">
+          <img id="gallery-image" alt="">
+          <span class="gallery-count" id="gallery-count" hidden></span>
         </div>
-        <h2 id="plant-photo-heading">Plant photos</h2>
-        <div class="photo-grid" id="plant-photos"></div>
-        <p class="muted" id="plant-no-photos" hidden>No photos have been added to this plant.</p>
+        <div class="gallery-strip" id="gallery-strip" aria-label="Plant photos"></div>
+      </div>
+      <div>
+        <h1 class="plant-name" id="plant-title">Plant</h1>
+        <p class="plant-sub" id="plant-species"></p>
+        <div class="chip-row" id="plant-chips"></div>
+      </div>
+    </article>
+
+    <div class="detail-sections">
+      <article class="card" id="measurements-card">
+        <h2>Measurements</h2>
+        <div class="tiles" id="measurements"></div>
       </article>
-      <article class="card detail-card">
-        <h2>Plant location</h2>
+      <article class="card" id="location-card">
+        <h2>Location</h2>
         <div id="plant-map"></div>
-        <p class="muted" id="plant-map-message"></p>
+        <div id="location-rows"></div>
+      </article>
+      <article class="card" id="field-notes-card">
+        <h2>Field notes</h2>
+        <div id="field-notes"></div>
       </article>
     </div>
-    <article class="card history-card">
-      <div class="detail-card">
-        <h2>Observations</h2>
-        <p class="muted" id="observations-count"></p>
-      </div>
-      <div class="table-wrap">
-        <table class="history-table">
-          <thead>
-            <tr>
-              <th>Date</th><th>Observer</th><th>Health</th><th>Life stage</th>
-              <th>Height (m)</th><th>Diameter (cm)</th><th>Review status</th><th>Latest reviewer comment</th>
-            </tr>
-          </thead>
-          <tbody id="observations-body"></tbody>
-        </table>
-      </div>
-      <p class="muted detail-card" id="observations-empty" hidden>No observations are recorded for this plant.</p>
+
+    <article class="card observations-card">
+      <h2>Observations</h2>
+      <p class="muted" id="observations-count"></p>
+      <div id="observations-list"></div>
+      <p class="muted" id="observations-empty" hidden>No observations yet</p>
     </article>
   </div>
 </section>

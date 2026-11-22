@@ -6,6 +6,9 @@ const {
     PUBLIC_PHOTO_BUCKET,
     refreshPublicPlantPhoto,
 } = require("../services/publicPlantPhotos");
+const { generateQRBatchPDF } = require("../services/qrPdfService");
+const { TAG_PATTERN, QrConfigurationError } = require("../services/qrService");
+const { rankOf } = require("../services/reportService");
 
 const router = express.Router();
 router.use(requireAuth, requireRole("officer"));
@@ -24,7 +27,20 @@ const PHOTO_URL_TTL_SECONDS = 600;
 const PLANT_COLUMNS =
     "id, qr_code_value, species_id, location_description, plant_status, " +
     "registered_by, registered_at";
-const SPECIES_COLUMNS = "id, scientific_name, common_name, conservation_status";
+const SPECIES_COLUMNS = "id, scientific_name, common_name, conservation_status, taxonomy(family)";
+// Extra plant columns for the plant detail page (field notes).
+const PLANT_DETAIL_COLUMNS = `${PLANT_COLUMNS}, morphology, description`;
+// Column sorting for the plant list: ?sort=<key>&dir=asc|desc. newest / oldest stay as before.
+const PLANT_SORTS = {
+    newest: { column: "registered_at", ascending: false },
+    oldest: { column: "registered_at", ascending: true },
+    registered: { column: "registered_at" },
+    tag: { column: "qr_code_value" },
+    location: { column: "location_description" },
+    status: { column: "plant_status" },
+};
+// The most plants whose QR tags can be printed at once (the PDF generator's limit).
+const MAX_PRINT_PLANTS = 100;
 const SPECIES_PHOTO_COLUMNS =
     "id, species_id, file_path, is_primary, source";
 const OBSERVATION_COLUMNS =
@@ -71,13 +87,22 @@ function hasUnsafeFilterCharacter(value) {
     return /[%\\"]/.test(value) || /[\u0000-\u001f]/.test(value);
 }
 
+// The species of these plants: names, conservation status, family and how far it was
+// identified ("Genus", "Family", ...; reportService.rankOf), for the list and detail pages.
 async function loadSpeciesById(supabase, speciesIds) {
     if (speciesIds.length === 0) return new Map();
     const rows = throwOnError(await supabase
         .from("species")
         .select(SPECIES_COLUMNS)
         .in("id", speciesIds));
-    return new Map(rows.map((row) => [row.id, row]));
+    return new Map(rows.map((row) => [row.id, {
+        id: row.id,
+        scientific_name: row.scientific_name,
+        common_name: row.common_name,
+        conservation_status: row.conservation_status,
+        family: row.taxonomy?.family || null,
+        rank: rankOf(row.scientific_name, row.taxon_rank),
+    }]));
 }
 
 async function loadSpeciesPhotos(supabase, speciesIds) {
@@ -260,6 +285,8 @@ router.post("/public-photos/refresh", async (req, res) => {
 router.get("/facets", async (req, res) => {
     try {
         const counts = new Map();
+        const statusCounts = new Map();
+        const speciesByPlant = new Map();
         const statuses = new Set();
         const dataSources = new Set();
         const profileIds = new Set();
@@ -268,12 +295,16 @@ router.get("/facets", async (req, res) => {
         do {
             rows = throwOnError(await req.supabase
                 .from("plants")
-                .select("species_id, registered_by, plant_status, data_source")
+                .select("id, species_id, registered_by, plant_status, data_source")
                 .is("deleted_at", null)
                 .order("id", { ascending: true })
                 .range(start, start + RELATED_PAGE_SIZE - 1));
             for (const row of rows) {
-                if (row.species_id) counts.set(row.species_id, (counts.get(row.species_id) || 0) + 1);
+                if (row.species_id) {
+                    counts.set(row.species_id, (counts.get(row.species_id) || 0) + 1);
+                    if (row.id) speciesByPlant.set(row.id, row.species_id);
+                }
+                if (row.plant_status) statusCounts.set(row.plant_status, (statusCounts.get(row.plant_status) || 0) + 1);
                 if (row.registered_by) profileIds.add(row.registered_by);
                 if (row.plant_status) statuses.add(row.plant_status);
                 if (row.data_source) dataSources.add(row.data_source);
@@ -281,10 +312,18 @@ router.get("/facets", async (req, res) => {
             start += rows.length;
         } while (rows.length === RELATED_PAGE_SIZE);
 
-        const names = await loadProfileNames(req.supabase, [...profileIds]);
+        const [names, lastObserved] = await Promise.all([
+            loadProfileNames(req.supabase, [...profileIds]),
+            lastObservedBySpecies(req.supabase, speciesByPlant),
+        ]);
         return res.json({
             data: {
-                species_counts: [...counts].map(([species_id, count]) => ({ species_id, count })),
+                species_counts: [...counts].map(([species_id, count]) => ({
+                    species_id,
+                    count,
+                    last_observed_at: lastObserved.get(species_id) || null,
+                })),
+                status_counts: Object.fromEntries(statusCounts),
                 registered_by: [...profileIds]
                     .map((id) => ({ id, name: names.get(id) || "Unknown staff member" }))
                     .sort((a, b) => a.name.localeCompare(b.name)),
@@ -308,12 +347,14 @@ router.get("/", async (req, res) => {
     const conservationStatus = oneQueryValue(req.query, "conservation_status");
     const registeredBy = oneQueryValue(req.query, "registered_by");
     const source = oneQueryValue(req.query, "source");
-    // Newest first unless ?sort=oldest.
-    const sort = oneQueryValue(req.query, "sort");
-    if (!["", "newest", "oldest"].includes(sort)) {
-        return res.status(400).json({ message: "sort must be newest or oldest" });
+    // Newest first unless ?sort= names another column (PLANT_SORTS) with ?dir=asc|desc.
+    const sort = oneQueryValue(req.query, "sort") || "newest";
+    const dir = oneQueryValue(req.query, "dir");
+    if (!Object.hasOwn(PLANT_SORTS, sort) || !["", "asc", "desc"].includes(dir)) {
+        return res.status(400).json({ message: "sort must be newest, oldest, registered, tag, location or status" });
     }
-    const oldestFirst = sort === "oldest";
+    const sortColumn = PLANT_SORTS[sort].column;
+    const ascending = PLANT_SORTS[sort].ascending ?? dir !== "desc";
     if (search === null || search.length > 100 || hasUnsafeFilterCharacter(search)) {
         return res.status(400).json({ message: "Invalid search" });
     }
@@ -381,8 +422,8 @@ router.get("/", async (req, res) => {
         }
 
         const { data: plantRows, error, count } = await query
-            .order("registered_at", { ascending: oldestFirst })
-            .order("id", { ascending: oldestFirst })
+            .order(sortColumn, { ascending, nullsFirst: false })
+            .order("id", { ascending })
             .range(paging.start, paging.start + paging.page_size - 1);
         if (error) throw error;
 
@@ -452,6 +493,68 @@ router.get("/", async (req, res) => {
     }
 });
 
+// When each species was last observed: the newest observation of any of its active plants.
+async function lastObservedBySpecies(supabase, speciesByPlant) {
+    const last = new Map();
+    let start = 0;
+    let rows;
+    do {
+        rows = throwOnError(await supabase
+            .from("observations")
+            .select("plant_id, observed_at")
+            .is("deleted_at", null)
+            .order("id", { ascending: true })
+            .range(start, start + RELATED_PAGE_SIZE - 1));
+        for (const row of rows) {
+            const speciesId = speciesByPlant.get(row.plant_id);
+            if (!speciesId || !row.observed_at) continue;
+            if (!last.has(speciesId) || row.observed_at > last.get(speciesId)) last.set(speciesId, row.observed_at);
+        }
+        start += rows.length;
+    } while (rows.length === RELATED_PAGE_SIZE);
+    return last;
+}
+
+// POST /api/officer/plants/qr-tags { plant_ids: [...] }: a PDF sheet of QR labels for the
+// chosen plants (officer only, any registering botanist). Only active plants with a real
+// NIAH-PLT tag are printed; the others are skipped and counted in the X-Skipped-Count header.
+router.post("/qr-tags", async (req, res) => {
+    const plantIds = req.body?.plant_ids;
+    if (!Array.isArray(plantIds) || plantIds.length === 0 || plantIds.length > MAX_PRINT_PLANTS ||
+        plantIds.some((id) => typeof id !== "string" || !UUID_PATTERN.test(id)) ||
+        new Set(plantIds).size !== plantIds.length) {
+        return res.status(400).json({ message: `Choose 1-${MAX_PRINT_PLANTS} different plants` });
+    }
+    try {
+        const rows = throwOnError(await req.supabase
+            .from("plants")
+            .select("id, qr_code_value")
+            .in("id", plantIds)
+            .is("deleted_at", null));
+        const tags = [...new Set(rows
+            .map((row) => String(row.qr_code_value || ""))
+            .filter((tag) => TAG_PATTERN.test(tag)))].sort();
+        const skipped = plantIds.length - tags.length;
+        if (tags.length === 0) {
+            return res.status(400).json({ message: "None of the selected plants has a NIAH-PLT tag yet" });
+        }
+        const pdf = await generateQRBatchPDF(tags, { layout: "sheet" });
+        res.set({
+            "Content-Type": "application/pdf",
+            "Content-Disposition": 'attachment; filename="plant-qr-tags.pdf"',
+            "X-Printed-Count": String(tags.length),
+            "X-Skipped-Count": String(skipped),
+        });
+        return res.send(pdf);
+    } catch (error) {
+        if (error instanceof QrConfigurationError) {
+            return res.status(503).json({ message: "Public QR URL is not configured" });
+        }
+        console.error("Plant QR tag print error:", error);
+        return res.status(500).json({ message: "Could not print the QR tags" });
+    }
+});
+
 router.get("/:id", async (req, res) => {
     const { id } = req.params;
     if (!UUID_PATTERN.test(id)) return res.status(400).json({ message: "Invalid plant ID" });
@@ -459,7 +562,7 @@ router.get("/:id", async (req, res) => {
     try {
         const { data: plant, error: plantError } = await req.supabase
             .from("plants")
-            .select(PLANT_COLUMNS)
+            .select(PLANT_DETAIL_COLUMNS)
             .eq("id", id)
             .is("deleted_at", null)
             .maybeSingle();
@@ -515,6 +618,8 @@ router.get("/:id", async (req, res) => {
                 tag_code: plant.qr_code_value || null,
                 species: speciesById.get(plant.species_id) || null,
                 location_description: plant.location_description || null,
+                morphology: plant.morphology?.trim() || null,
+                notes: plant.description?.trim() || null,
                 plant_status: plant.plant_status || null,
                 registered_by: profileNames.get(plant.registered_by) || null,
                 registered_at: plant.registered_at || null,

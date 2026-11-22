@@ -140,17 +140,16 @@ test('app: public photos for others\' plants in the Plants tab, plant detail and
 });
 
 test('"This plant" and "About this species": plant detail, app visitor page and web visitor page', () => {
+  // The app's plant detail (redesigned): Measurements, Location, Field notes, Observations, in
+  // that order, and no species card (the species page has the species facts).
   const detail = read('niah-biotrack/app/plant-detail.tsx');
-  assert.ok(detail.indexOf('>THIS PLANT<') > 0 && detail.indexOf('>THIS PLANT<') < detail.indexOf('>ABOUT THIS SPECIES<'));
-  assert.doesNotMatch(detail, /SPECIES DETAILS|>LOCATION</);
-  const plantPart = detail.slice(detail.indexOf('>THIS PLANT<'), detail.indexOf('MORPHOLOGICAL CHARACTERISTICS'));
-  for (const label of ['Plant tag', 'Location note', 'Height (m)', 'Diameter (cm)', 'Health', 'Life stage']) {
-    assert.ok(plantPart.includes(`label="${label}"`), label);
+  const order = ['>MEASUREMENTS<', '>LOCATION<', '>FIELD NOTES<', '>OBSERVATIONS<'].map((heading) => detail.indexOf(heading));
+  assert.ok(order.every((index) => index > 0), 'every section heading is there');
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'sections in order');
+  for (const label of ['Location note', 'Coordinates', 'Height (m)', 'Diameter (cm)', 'Health', 'Life stage']) {
+    assert.ok(detail.includes(`label="${label}"`), label);
   }
-  const speciesPart = detail.slice(detail.indexOf('>ABOUT THIS SPECIES<'));
-  for (const label of ['Scientific name', 'Common name', 'Local name', 'Conservation status', 'Habitat', 'Description']) {
-    assert.ok(speciesPart.includes(`label="${label}"`), label);
-  }
+  assert.doesNotMatch(detail, /ABOUT THIS SPECIES|ABOUT THE SPECIES/);
   const visitor = read('niah-biotrack/app/plant-info.tsx');
   assert.ok(visitor.indexOf('>This plant<') > 0 && visitor.indexOf('>This plant<') < visitor.indexOf('>About this species<'));
   const web = read('backend/src/routes/publicPlants.js');

@@ -1,15 +1,18 @@
-// users.js - the User & role admin page.
-// The users are the real login accounts, saved in the table website_users.
-// Changing a role or suspending someone also changes what they are allowed to do.
+// users.js - Admin > Users. The users are the real login accounts, saved in the table
+// website_users (the database copies role and status changes to profiles, so they change
+// what each person may do). Every action finds its account by id, never by row position.
+// The table, sorting and paging helpers are shared with the other table pages (shared.js).
 
 drawMenu('users.html');
 
 const ROLES = ['Botanist', 'Conservation Officer'];
+const signedIn = getCurrentUser();
 
 // The real account status of each user (profiles.account_status), by user id. Accounts
 // that signed themselves up are 'pending' until the officer activates them here.
 // Officers may read every profile (RLS policy "officers read profiles").
 let profileStatus = {};
+const userView = { search: '', role: '', status: '', page: 1 };
 
 async function loadProfileStatuses() {
   const result = await sb.from('profiles').select('id, account_status');
@@ -18,8 +21,8 @@ async function loadProfileStatuses() {
     return;
   }
   profileStatus = {};
-  for (let i = 0; i < result.data.length; i++) {
-    profileStatus[result.data[i].id] = result.data[i].account_status;
+  for (const profile of result.data) {
+    profileStatus[profile.id] = profile.account_status;
   }
 }
 
@@ -28,137 +31,135 @@ function isPending(user) {
   return !user.active && profileStatus[user.id] === 'pending';
 }
 
-// Counts the users who have the Conservation Officer role.
-function countOfficers(list) {
-  let count = 0;
-  for (let i = 0; i < list.length; i++) {
-    if (list[i].role === 'Conservation Officer') {
-      count++;
-    }
-  }
-  return count;
+// 'active', 'pending' or 'suspended', with its words and pill colour.
+function accountStatus(user) {
+  if (user.active) return { value: 'active', label: 'Active', css: 'pill' };
+  if (isPending(user)) return { value: 'pending', label: 'Pending approval', css: 'pill w' };
+  return { value: 'suspended', label: 'Suspended', css: 'pill e' };
 }
 
-// Makes the drop-down that shows the role of a user. Changing it saves the new role.
-function makeRoleSelect(index) {
-  const users = getUsers();
-  const select = document.createElement('select');
+function displayName(user) {
+  return user.name || user.username || user.email || 'This account';
+}
 
-  for (let i = 0; i < ROLES.length; i++) {
-    const option = document.createElement('option');
-    option.textContent = ROLES[i];
-    select.appendChild(option);
+// The signed-in officer's own account can't be changed from here.
+function isProtected(user) {
+  return Boolean(signedIn) && user.id === signedIn.id;
+}
+
+// Saves the list with one account changed (found by id). Returns true when it was saved.
+function saveUserChange(id, change) {
+  const list = getUsers();
+  const user = list.find(item => item.id === id);
+  if (!user) {
+    showToast('That account is no longer in the list. Reload the page.');
+    return false;
   }
-  select.value = users[index].role;
+  change(user, list);
+  if (writeStorage(USERS_KEY, list)) return true;
+  showToast('The change could not be saved. Reload the page and try again.');
+  return false;
+}
 
+function makeRoleSelect(user) {
+  const select = document.createElement('select');
+  select.setAttribute('aria-label', 'Role of ' + displayName(user));
+  ROLES.forEach(role => select.add(new Option(role, role)));
+  select.value = user.role;
   select.onchange = function () {
-    const list = getUsers();
-    const oldRole = list[index].role;
-
-    // There must always be exactly one officer.
-    if (select.value === 'Conservation Officer' && countOfficers(list) >= 1) {
-      showToast('There is only one officer account');
-      select.value = oldRole;
+    // There is exactly one officer account (the signed-in officer's, which is protected).
+    if (select.value === 'Conservation Officer') {
+      showToast('There is only one officer account.');
+      select.value = user.role;
       return;
     }
-    if (oldRole === 'Conservation Officer') {
-      showToast('There must be one officer account');
-      select.value = oldRole;
-      return;
+    if (saveUserChange(user.id, account => { account.role = select.value; })) {
+      showToast(displayName(user) + ' is now a ' + select.value + '.');
     }
-    list[index].role = select.value;
-    writeStorage(USERS_KEY, list);
-    showToast('Role updated.');
+    drawUsers();
   };
   return select;
 }
 
-// Makes one table row for one user. index is its position in the saved list.
-function makeUserRow(user, index) {
-  const row = document.createElement('tr');
-  row.appendChild(makeCell(user.name));
-  row.appendChild(makeCell(user.username));
-  row.appendChild(makeCell(user.email));
-
-  const roleCell = document.createElement('td');
-  roleCell.appendChild(makeRoleSelect(index));
-  row.appendChild(roleCell);
-
-  const pill = document.createElement('span');
-  if (user.active) {
-    pill.className = 'pill';
-    pill.textContent = 'Active';
-  } else if (isPending(user)) {
-    pill.className = 'pill w';
-    pill.textContent = 'Pending approval';
-  } else {
-    pill.className = 'pill e';
-    pill.textContent = 'Suspended';
-  }
-  const statusCell = document.createElement('td');
-  statusCell.appendChild(pill);
-  row.appendChild(statusCell);
-
+function actionButton(label, onClick) {
   const button = document.createElement('button');
+  button.type = 'button';
   button.className = 'btn ghost';
-  if (user.active) {
-    button.textContent = 'Suspend';
-  } else if (isPending(user)) {
-    button.textContent = 'Activate';
-  } else {
-    button.textContent = 'Reactivate';
-  }
-  button.onclick = function () {
-    toggleUser(index);
-  };
-
-  const deleteButton = document.createElement('button');
-  deleteButton.className = 'btn ghost';
-  deleteButton.textContent = 'Delete';
-  deleteButton.onclick = function () {
-    deleteUser(index);
-  };
-
-  const buttons = document.createElement('div');
-  buttons.className = 'acts';
-  buttons.appendChild(button);
-  buttons.appendChild(deleteButton);
-
-  const buttonCell = document.createElement('td');
-  buttonCell.appendChild(buttons);
-  row.appendChild(buttonCell);
-
-  return row;
+  button.textContent = label;
+  button.onclick = onClick;
+  return button;
 }
+
+const USER_COLUMNS = [
+  { key: 'name', label: 'Name', className: 'col-name', render: (td, user) => td.appendChild(clippedText(user.name || '—')) },
+  { key: 'username', label: 'Username', className: 'col-username', render: (td, user) => td.appendChild(clippedText(user.username || '—')) },
+  { key: 'email', label: 'Email', className: 'col-email', render: (td, user) => td.appendChild(clippedText(user.email || '—')) },
+  {
+    key: 'role', label: 'Role', className: 'col-role',
+    render: (td, user) => td.appendChild(isProtected(user) ? clippedText(user.role) : makeRoleSelect(user)),
+  },
+  {
+    key: 'status', label: 'Status', className: 'col-status',
+    render: (td, user) => {
+      const status = accountStatus(user);
+      td.appendChild(labelSpan(status.css, status.label));
+    },
+  },
+  {
+    key: 'actions', label: '', className: 'col-actions',
+    render: (td, user) => {
+      if (isProtected(user)) {
+        td.appendChild(labelSpan('protected', 'Protected account'));
+        return;
+      }
+      const buttons = labelSpan('user-actions');
+      const status = accountStatus(user).value;
+      buttons.appendChild(actionButton(status === 'active' ? 'Suspend' : 'Activate', () => toggleUser(user.id)));
+      buttons.appendChild(actionButton('Delete', () => deleteUser(user.id)));
+      td.appendChild(buttons);
+    },
+  },
+];
 
 // Newest account first by default. Accounts are stored in the order they were added
 // (website_users.sort_order: each new account gets the next number), so newest first is
-// that order reversed. Rows keep their stored index: the role and delete actions use it.
+// that order reversed.
 let userSort = SORT_NEWEST;
 
-// Draws the table of users.
+function shownUsers() {
+  const needle = userView.search.toLowerCase();
+  const list = getUsers().filter(function (user) {
+    if (needle && !(String(user.name || '') + ' ' + String(user.email || '')).toLowerCase().includes(needle)) return false;
+    if (userView.role && user.role !== userView.role) return false;
+    if (userView.status && accountStatus(user).value !== userView.status) return false;
+    return true;
+  });
+  return userSort === SORT_NEWEST ? list.reverse() : list;
+}
+
 function drawUsers() {
-  const list = getUsers();
+  const total = getUsers().length;
+  const rows = shownUsers();
   const count = document.getElementById('users-count');
-  if (count) {
-    count.textContent = list.length === 0
-      ? 'No accounts yet. Add a botanist above.'
-      : list.length + ' account' + (list.length === 1 ? '' : 's') + '.';
-    addListSortSelect('users-count', 'users-sort', function (order) {
-      userSort = order;
-      drawUsers();
-    });
-  }
-  const body = document.getElementById('user-body');
-  body.innerHTML = '';
-  // No accounts: show only the count message, not an empty table.
-  const tableCard = body.closest('.card');
-  if (tableCard) tableCard.hidden = list.length === 0;
-  const indexes = list.map((_, i) => i);
-  if (userSort === SORT_NEWEST) indexes.reverse();
-  for (const i of indexes) {
-    body.appendChild(makeUserRow(list[i], i));
-  }
+  count.textContent = total === 0
+    ? 'No accounts yet. Add a botanist above.'
+    : (rows.length === total ? '' : rows.length + ' of ') + total + ' account' + (total === 1 ? '' : 's');
+  addListSortSelect('users-count', 'users-sort', function (order) {
+    userSort = order;
+    drawUsers();
+  });
+  const pages = Math.max(1, Math.ceil(rows.length / TABLE_PAGE_SIZE));
+  userView.page = Math.min(userView.page, pages);
+  drawDataTable(document.getElementById('users-table'), {
+    columns: USER_COLUMNS,
+    rows: pageOf(rows, userView.page),
+    keyOf: user => user.id,
+    empty: total === 0 ? 'No accounts yet.' : 'No accounts match the search or filters.',
+  });
+  drawPager(document.getElementById('users-pager'), userView.page, rows.length, function (page) {
+    userView.page = page;
+    drawUsers();
+  });
 }
 
 // A plain message for an account Supabase refused to create (its own text stays in the console).
@@ -220,24 +221,19 @@ async function addUser() {
   }
 
   // The database added the new user (pending, inactive). Load the list again, then
-  // activate the new row: the sync trigger copies that to the profile.
+  // activate the new account (by id, or by email if the id isn't known): the sync trigger
+  // copies that to the profile.
   reloadFromDatabase(USERS_KEY);
   const newId = result.data && result.data.user ? result.data.user.id : null;
   const list = getUsers();
-  let added = -1;
-  for (let i = 0; i < list.length; i++) {
-    if ((newId && list[i].id === newId) || sameText(list[i].email, email)) {
-      added = i;
-      break;
-    }
-  }
+  const added = list.find(user => (newId && user.id === newId) || sameText(user.email, email));
   document.getElementById('new-username').value = '';
   document.getElementById('new-email').value = '';
   document.getElementById('new-password').value = '';
-  if (added === -1) {
+  if (!added) {
     showToast('Account created. Activate it in the list once it appears.');
   } else {
-    list[added].active = true;
+    added.active = true;
     if (writeStorage(USERS_KEY, list)) {
       showToast('User added and activated');
     }
@@ -246,44 +242,52 @@ async function addUser() {
   drawUsers();
 }
 
-// Switches a user between Active and Suspended.
-function toggleUser(index) {
-  const list = getUsers();
-  if (list[index].role === 'Conservation Officer') {
-    showToast('The officer account cannot be suspended');
+// Suspends an active account, or activates a pending / suspended one (found by id).
+function toggleUser(id) {
+  const user = getUsers().find(item => item.id === id);
+  if (!user || isProtected(user)) return;
+  const name = displayName(user);
+  if (user.active && !confirm('Suspend ' + name + "? They won't be able to sign in until you activate them again. Their records stay.")) {
     return;
   }
-  list[index].active = !list[index].active;
-  const name = list[index].name || list[index].username || 'The account';
-  if (writeStorage(USERS_KEY, list)) {
+  const nowActive = !user.active;
+  if (saveUserChange(id, account => { account.active = nowActive; })) {
     // The sync trigger has changed the profile; show its new status.
-    profileStatus[list[index].id] = list[index].active ? 'active' : 'suspended';
-    showToast(name + (list[index].active ? ' is now active.' : ' is now suspended.'));
-  } else {
-    showToast('The change could not be saved. Reload the page and try again.');
+    profileStatus[id] = nowActive ? 'active' : 'suspended';
+    showToast(name + (nowActive ? ' is now active.' : ' is now suspended.'));
   }
   drawUsers();
 }
 
-// Asks for confirmation, then deletes the user.
-function deleteUser(index) {
-  const list = getUsers();
-  const user = list[index];
-  if (user.role === 'Conservation Officer') {
-    showToast('The officer account cannot be deleted');
+// Asks for confirmation, then deletes the account (found by id). Their records stay.
+function deleteUser(id) {
+  const user = getUsers().find(item => item.id === id);
+  if (!user || isProtected(user)) return;
+  const name = displayName(user);
+  if (!confirm('Delete ' + name + "? This can't be undone. Their records stay.")) {
     return;
   }
-
-  const sure = confirm('Delete ' + user.name + '? They will no longer be able to log in.');
-  if (sure === false) {
-    return;
+  if (saveUserChange(id, (account, list) => { list.splice(list.indexOf(account), 1); })) {
+    showToast(name + ' was deleted.');
   }
-
-  list.splice(index, 1);
-  writeStorage(USERS_KEY, list);
-  showToast('User deleted.');
   drawUsers();
 }
 
-drawUsers();
-loadProfileStatuses().then(drawUsers).catch(showUnexpectedError);
+function startUsersPage() {
+  document.getElementById('user-search').addEventListener('input', debounce(function () {
+    userView.search = document.getElementById('user-search').value.trim();
+    userView.page = 1;
+    drawUsers();
+  }));
+  for (const [id, key] of [['role-filter', 'role'], ['status-filter', 'status']]) {
+    document.getElementById(id).addEventListener('change', function () {
+      userView[key] = document.getElementById(id).value;
+      userView.page = 1;
+      drawUsers();
+    });
+  }
+  drawUsers();
+  loadProfileStatuses().then(drawUsers).catch(showUnexpectedError);
+}
+
+if (pageAllowed !== false) startUsersPage();

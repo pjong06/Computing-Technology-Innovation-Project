@@ -177,6 +177,8 @@ const TABS = {
         unit: "species",
         statusOptions: [
             { value: "threatened", label: "Threatened (CR + EN)" },
+            // The Species catalogue's Threatened tab (its export uses this).
+            { value: "at_risk", label: "Threatened (CR, EN, VU)" },
             ...Object.entries(STATUS_NAMES).map(([value, label]) => ({ value, label })),
             { value: "NA", label: "Not assessed" },
         ],
@@ -286,6 +288,7 @@ async function inventoryReport(client, { from, to, status, sort }) {
             .order("scientific_name");
         query = applyDateRange(query, "created_at", from, to);
         if (status === "threatened") query = query.in("conservation_status", ["CR", "EN"]);
+        else if (status === "at_risk") query = query.in("conservation_status", ["CR", "EN", "VU"]);
         else if (status === "NA") query = query.is("conservation_status", null);
         else if (status) query = query.eq("conservation_status", status);
         return readReportRows(query, "species inventory");

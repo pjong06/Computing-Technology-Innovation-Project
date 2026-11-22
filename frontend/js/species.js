@@ -1,213 +1,310 @@
-// species.js - the Species catalogue page. Every plant species is shown as a card with a big photo:
-// the primary photo of one of its plants (the newest approved plant with a photo), captioned
-// "From plant <tag>", or the placeholder. Species reference photos are not shown.
-// The species come from the real species table (/api/knowledge), the same one the mobile app reads.
-// Officers see every approved and archived species and the botanists' proposals; botanists see
-// the approved species and can propose a new one.
+// species.js - the Species catalogue page: every species as a row of a data table (no
+// photos), with tabs, search, filters, sortable columns, paging and, for the conservation
+// officer, bulk changes and exports. The table helpers are shared (shared.js).
+// The species come from the real species table (/api/knowledge), the same one the mobile app
+// reads. Officers see approved and archived species; botanists see the approved list
+// (read only) and request new species instead of adding them.
 
 drawMenu('species.html');
 
 const viewer = getCurrentUser();
 const viewerIsOfficer = viewer !== null && isBotanist(viewer) === false;
 
-let speciesList = [];   // the species shown in the grid, as the backend sent them
-let plantCountsBySpecies = new Map();
-let plantCountsLoaded = false;
-const overviewStatusFilter = new URLSearchParams(location.search).get('status');
+let speciesList = [];                 // every species the server sent
+let plantFacts = new Map();           // species id -> { count, last_observed_at }
+let plantFactsLoaded = false;
+const speciesSelection = new Set();   // selected species ids
+const speciesView = {
+  tab: new URLSearchParams(location.search).get('status') === 'threatened' ? 'threatened' : 'all',
+  search: '',
+  family: '',
+  rank: '',
+  plants: '',
+  sort: { key: 'species', dir: 'asc' },
+  page: 1,
+};
 
-// Makes the big photo box of a card. The status pill sits on the photo.
-// The species list already carries a signed link for one plant photo (plant_photo), so no
-// request is made per card.
-function makePlantPhoto(species) {
-  const photoArea = document.createElement('div');
-  photoArea.className = 'plant-photo-area';
-  const box = document.createElement('div');
-  box.className = 'plant-photo';
-
-  const plantPhoto = species.plant_photo && species.plant_photo.url ? species.plant_photo : null;
-  const img = document.createElement('img');
-  img.alt = plantPhoto
-    ? species.scientific_name + ', plant ' + displayTag(plantPhoto.tag, 'without a tag')
-    : '';
-  img.loading = 'lazy';
-  img.decoding = 'async';
-  img.src = plantPhoto ? plantPhoto.url : PICTURE_BLANK;
-  box.appendChild(img);
-  box.appendChild(makePill(statusLabel(species.conservation_status)));
-  photoArea.appendChild(box);
-
-  if (plantPhoto) {
-    const caption = document.createElement('div');
-    caption.className = 'plant-photo-caption';
-    caption.textContent = 'From plant ' + displayTag(plantPhoto.tag, 'without a tag');
-    photoArea.appendChild(caption);
-    // A broken or expired link shows the placeholder instead, without the caption.
-    img.onerror = function () {
-      img.onerror = null;
-      img.src = PICTURE_BLANK;
-      img.alt = '';
-      caption.hidden = true;
-    };
-  }
-  return photoArea;
-}
+const byId = id => document.getElementById(id);
 
 // The family of a species (from its taxonomy row), or ''.
 function familyOf(species) {
   return species.taxonomy && species.taxonomy.family ? species.taxonomy.family : '';
 }
 
-// Makes the text under the photo: the common name, the scientific name, the family and local name.
-function makePlantInfo(species) {
-  const info = document.createElement('div');
-  info.className = 'plant-info';
-
-  // Plants without a common name show their scientific name as the main title.
-  const name = document.createElement('div');
-  name.className = 'plant-name';
-  name.textContent = species.common_name || species.scientific_name;
-  if (!species.common_name) {
-    name.classList.add('latin');
-  }
-  info.appendChild(name);
-
-  if (species.common_name) {
-    const scientific = document.createElement('div');
-    scientific.className = 'plant-sci';
-    scientific.textContent = species.scientific_name;
-    info.appendChild(scientific);
-  }
-
-  const details = [];
-  if (familyOf(species)) {
-    details.push(familyOf(species));
-  }
-  if (species.local_name) {
-    details.push(species.local_name);
-  }
-  if (species.verification_status === 'archived') {
-    details.push('Archived: hidden from the mobile app');
-  }
-  if (details.length > 0) {
-    const place = document.createElement('div');
-    place.className = 'plant-place';
-    place.textContent = details.join(' · ');
-    place.title = place.textContent;
-    info.appendChild(place);
-  }
-  return info;
+function isArchived(species) {
+  return species.verification_status === 'archived';
 }
 
-// Makes one card for one species.
-function makePlantCard(species) {
-  const card = document.createElement('div');
-  card.className = 'plant-card';
-
-  card.appendChild(makePlantPhoto(species));
-  card.appendChild(makePlantInfo(species));
-
-  // Botanists can't change the catalogue (they propose new species instead).
-  if (viewerIsOfficer === false) {
-    card.style.cursor = 'default';
-    return card;
-  }
-
-  card.onclick = function () {
-    openSpeciesEditor(species.id);
-  };
-
-  const editButton = document.createElement('button');
-  editButton.className = 'btn ghost';
-  editButton.textContent = 'Edit';
-  editButton.onclick = function (event) {
-    event.stopPropagation();
-    openSpeciesEditor(species.id);
-  };
-
-  const buttons = document.createElement('div');
-  buttons.className = 'plant-actions';
-  const viewPlants = document.createElement('a');
-  viewPlants.className = 'btn ghost';
-  viewPlants.href = 'plants.html?species=' + encodeURIComponent(species.id);
-  viewPlants.textContent = plantCountsLoaded
-    ? 'View plants (' + (plantCountsBySpecies.get(species.id) || 0) + ')'
-    : 'View plants';
-  viewPlants.onclick = function (event) {
-    event.stopPropagation();
-  };
-  buttons.appendChild(viewPlants);
-  buttons.appendChild(editButton);
-
-  if (species.verification_status === 'approved') {
-    const archiveButton = document.createElement('button');
-    archiveButton.className = 'btn ghost';
-    archiveButton.textContent = 'Archive';
-    archiveButton.onclick = function (event) {
-      event.stopPropagation();
-      archiveSpecies(species).catch(showUnexpectedError);
-    };
-    buttons.appendChild(archiveButton);
-  }
-
-  card.appendChild(buttons);
-  return card;
+// "Needs info": a species without its family, common name, description or habitat.
+function needsInfo(species) {
+  return !familyOf(species) || !species.common_name || !species.description || !species.habitat;
 }
 
-// Draws the cards again, showing only the species that match the search box and the status filter.
+// The tabs (archived species only appear in their own tab).
+const SPECIES_TABS = [
+  { value: 'all', label: 'All', test: species => !isArchived(species) },
+  { value: 'threatened', label: 'Threatened', test: species => !isArchived(species) && THREATENED_CODES.includes(species.conservation_status) },
+  { value: 'not-assessed', label: 'Not assessed', test: species => !isArchived(species) && !species.conservation_status },
+  { value: 'needs-info', label: 'Needs info', test: species => !isArchived(species) && needsInfo(species) },
+  { value: 'archived', label: 'Archived', test: isArchived, officerOnly: true },
+];
+
+function plantCount(species) {
+  return plantFacts.get(species.id)?.count || 0;
+}
+
+function lastObserved(species) {
+  return plantFacts.get(species.id)?.last_observed_at || null;
+}
+
+// Status order for sorting: most threatened first, not assessed last.
+const STATUS_ORDER = ['CR', 'EN', 'VU', 'NT', 'LC', 'DD'];
+
+const SPECIES_COLUMNS = [
+  {
+    key: 'species', label: 'Species', className: 'col-species', sortable: true,
+    sortValue: species => species.scientific_name,
+    render: (td, species) => speciesNameCell(td, species.scientific_name, species.rank, species.common_name),
+  },
+  {
+    key: 'family', label: 'Family', className: 'col-family', sortable: true,
+    sortValue: familyOf,
+    render: (td, species) => td.appendChild(familyOf(species) ? clippedText(familyOf(species)) : labelSpan('missing-badge', 'Missing')),
+  },
+  {
+    key: 'status', label: 'Conservation status', className: 'col-status', sortable: true,
+    sortValue: species => {
+      const index = STATUS_ORDER.indexOf(species.conservation_status);
+      return index === -1 ? STATUS_ORDER.length : index;
+    },
+    render: (td, species) => conservationCell(td, species.conservation_status),
+  },
+  {
+    key: 'plants', label: 'Plants', className: 'col-plants', sortable: true, officerOnly: true,
+    sortValue: plantCount,
+    render: (td, species) => {
+      if (!plantFactsLoaded) {
+        td.textContent = '…';
+        return;
+      }
+      const count = plantCount(species);
+      if (count === 0) {
+        td.textContent = '0';
+        return;
+      }
+      // The count opens the Plants list filtered to this species.
+      const link = document.createElement('a');
+      link.className = 'table-link';
+      link.href = 'plants.html?species=' + encodeURIComponent(species.id);
+      link.textContent = count.toLocaleString();
+      link.setAttribute('aria-label', 'View ' + count + ' plant' + (count === 1 ? '' : 's') + ' of ' + species.scientific_name);
+      td.appendChild(link);
+    },
+  },
+  {
+    key: 'open', label: '', className: 'col-open', officerOnly: true,
+    render: (td, species) => {
+      const link = document.createElement('a');
+      link.className = 'table-link';
+      link.href = '#';
+      link.textContent = 'Open';
+      link.setAttribute('aria-label', 'Open ' + species.scientific_name + ' in the species editor');
+      link.onclick = function (event) {
+        event.preventDefault();
+        openSpeciesEditor(species.id);
+      };
+      td.appendChild(link);
+    },
+  },
+].filter(column => viewerIsOfficer || !column.officerOnly);
+
+// The species matching the search box and filters (before the tab).
+function filteredSpecies() {
+  const needle = speciesView.search.toLowerCase();
+  return speciesList.filter(function (species) {
+    const names = [species.scientific_name, species.common_name, species.local_name, familyOf(species)]
+      .join(' ').toLowerCase();
+    if (needle && !names.includes(needle)) return false;
+    if (speciesView.family && familyOf(species) !== speciesView.family) return false;
+    if (speciesView.rank && species.rank !== speciesView.rank) return false;
+    if (speciesView.plants === 'with' && plantCount(species) === 0) return false;
+    if (speciesView.plants === 'none' && plantCount(species) > 0) return false;
+    return true;
+  });
+}
+
+function currentTab() {
+  return SPECIES_TABS.find(tab => tab.value === speciesView.tab) || SPECIES_TABS[0];
+}
+
+// The rows of the current tab, sorted (every page).
+function shownSpecies() {
+  const column = SPECIES_COLUMNS.find(item => item.key === speciesView.sort.key);
+  return sortRows(filteredSpecies().filter(currentTab().test), column, speciesView.sort.dir);
+}
+
 function drawSpeciesTable() {
-  const searchInput = document.getElementById('search-box');
-  const statusFilter = document.getElementById('status-filter');
-  const grid = document.getElementById('species-grid');
-  if (grid === null) {
-    return;
-  }
-  const searchText = searchInput ? searchInput.value.toLowerCase() : '';
-  const chosenStatus = statusFilter ? statusFilter.value : '';
-  grid.innerHTML = '';
-  let shown = 0;
+  const matching = filteredSpecies();
+  drawTableTabs(byId('species-tabs'),
+    SPECIES_TABS.filter(tab => viewerIsOfficer || !tab.officerOnly)
+      .map(tab => ({ value: tab.value, label: tab.label, count: matching.filter(tab.test).length })),
+    speciesView.tab,
+    function (value) {
+      speciesView.tab = value;
+      speciesView.page = 1;
+      drawSpeciesTable();
+    });
 
-  for (let i = 0; i < speciesList.length; i++) {
-    const species = speciesList[i];
-    const names = (species.scientific_name + ' ' + (species.common_name || '') + ' ' +
-      (species.local_name || '')).toLowerCase();
+  const rows = shownSpecies();
+  const pages = Math.max(1, Math.ceil(rows.length / TABLE_PAGE_SIZE));
+  speciesView.page = Math.min(speciesView.page, pages);
+  drawDataTable(byId('species-table'), {
+    columns: SPECIES_COLUMNS,
+    rows: pageOf(rows, speciesView.page),
+    keyOf: species => species.id,
+    labelOf: species => species.scientific_name,
+    selection: viewerIsOfficer ? speciesSelection : null,
+    sort: speciesView.sort,
+    onSort: function (key) {
+      speciesView.sort = nextSort(speciesView.sort, key);
+      drawSpeciesTable();
+    },
+    onSelect: drawSpeciesTable,
+    empty: speciesList.length === 0 ? 'No species yet. Add the first one.' : 'No species match. Clear the search or filters.',
+  });
+  drawPager(byId('species-pager'), speciesView.page, rows.length, function (page) {
+    speciesView.page = page;
+    drawSpeciesTable();
+  });
+  byId('species-count').textContent = rows.length.toLocaleString() + ' species · ' +
+    speciesList.filter(species => !isArchived(species)).length.toLocaleString() + ' in the catalogue';
+  if (viewerIsOfficer) drawSpeciesBulkBar();
+}
 
-    const nameMatches = names.includes(searchText);
-    const overviewStatusMatches = overviewStatusFilter !== 'threatened' ||
-      ['CR', 'EN'].includes(species.conservation_status);
-    const statusMatches = overviewStatusMatches &&
-      (chosenStatus === '' || statusLabel(species.conservation_status) === chosenStatus);
+// ---- Bulk actions ----
 
-    if (nameMatches && statusMatches) {
-      grid.appendChild(makePlantCard(species));
-      shown = shown + 1;
+function selectedSpecies() {
+  return speciesList.filter(species => speciesSelection.has(species.id));
+}
+
+function drawSpeciesBulkBar() {
+  const statusOptions = Object.keys(STATUS_LABELS).map(code => ({ value: code, label: STATUS_LABELS[code] }))
+    .concat([{ value: 'NA', label: NOT_ASSESSED }]);
+  drawBulkBar(byId('species-bulk'), speciesSelection.size, [
+    { label: 'Set conservation status', options: statusOptions, onSelect: code => bulkSetStatus(code).catch(showUnexpectedError) },
+    { label: 'Set family', onClick: () => bulkSetFamily().catch(showUnexpectedError) },
+    { label: 'Export selected', onClick: () => exportSpeciesCsv(selectedSpecies(), 'selected') },
+  ], function () {
+    speciesSelection.clear();
+    drawSpeciesTable();
+  });
+}
+
+// Runs change(species) for every selected species with the officer species update endpoint
+// (PATCH /api/knowledge/species/:id), then reports how many worked.
+async function updateSelectedSpecies(change, doneText) {
+  const chosen = selectedSpecies();
+  let failed = 0;
+  let firstError = '';
+  for (const species of chosen) {
+    try {
+      await api('/knowledge/species/' + species.id, { method: 'PATCH', body: JSON.stringify(await change(species)) });
+    } catch (error) {
+      failed += 1;
+      firstError = firstError || error.message;
     }
   }
+  const worked = chosen.length - failed;
+  showToast(failed === 0
+    ? doneText + ' for ' + worked + ' species.'
+    : doneText + ' for ' + worked + ' of ' + chosen.length + ' species. ' + failed + ' failed: ' + firstError);
+  speciesSelection.clear();
+  await loadSpecies();
+}
 
-  const count = document.getElementById('species-count');
-  if (count) {
-    count.textContent = 'Showing ' + shown + ' of ' + speciesList.length + ' species';
+async function bulkSetStatus(code) {
+  const words = code === 'NA' ? NOT_ASSESSED : statusLabel(code);
+  if (!confirmChange('Set the conservation status of ' + speciesSelection.size + ' species to ' + words + '?')) return;
+  await updateSelectedSpecies(() => ({ conservation_status: code === 'NA' ? null : code }), 'Conservation status set to ' + words);
+}
+
+async function bulkSetFamily() {
+  const family = (prompt('Family for the ' + speciesSelection.size + ' selected species (for example Nepenthaceae):') || '').trim();
+  if (family === '') return;
+  if (!/^[A-Za-z][A-Za-z -]{1,98}$/.test(family)) {
+    showToast('Enter a family name in letters, for example Nepenthaceae.');
+    return;
   }
-  const noSpecies = document.getElementById('no-species');
-  if (noSpecies) {
-    noSpecies.hidden = shown > 0;
+  if (!confirmChange('Set the family of ' + speciesSelection.size + ' species to ' + family + '?')) return;
+  const taxonomy = await loadTaxonomy();
+  await updateSelectedSpecies(
+    async species => ({ taxonomy_id: await taxonomyIdFor(taxonomy, family, species.scientific_name) }),
+    'Family set to ' + family
+  );
+}
+
+// ---- Export ----
+
+const SPECIES_CSV_COLUMNS = [
+  { label: 'Scientific name', value: species => species.scientific_name },
+  { label: 'Identified to', value: species => species.rank || '' },
+  { label: 'Common name', value: species => species.common_name || '' },
+  { label: 'Family', value: familyOf },
+  { label: 'Conservation status', value: species => statusLabel(species.conservation_status) },
+  { label: 'Plants', value: plantCount },
+  { label: 'Last observed', value: species => (lastObserved(species) || '').slice(0, 10) },
+  { label: 'Catalogue status', value: species => (isArchived(species) ? 'Archived' : 'Approved') },
+];
+
+function exportSpeciesCsv(rows, what) {
+  downloadCsv('niah-species-' + what + '-' + fileDate() + '.csv', SPECIES_CSV_COLUMNS, rows);
+  showToast(rows.length + ' species exported.');
+}
+
+// The Species inventory report (GET /api/reports/inventory) covers approved species with a
+// status and a search; it is used when the table shows exactly that. Other views (Needs info,
+// Archived, extra filters) export the rows shown as a CSV made here.
+const REPORT_STATUS_FOR_TAB = { all: '', threatened: 'at_risk', 'not-assessed': 'NA' };
+
+function reportCoversView() {
+  return Object.hasOwn(REPORT_STATUS_FOR_TAB, speciesView.tab) &&
+    !speciesView.family && !speciesView.rank && !speciesView.plants;
+}
+
+async function exportSpecies(format) {
+  if (!reportCoversView()) {
+    if (format === 'pdf') {
+      showToast('The PDF report covers the All, Threatened and Not assessed tabs without extra filters. Use CSV for this view.');
+      return;
+    }
+    exportSpeciesCsv(shownSpecies(), speciesView.tab);
+    return;
+  }
+  const params = new URLSearchParams({ format: format });
+  if (REPORT_STATUS_FOR_TAB[speciesView.tab]) params.set('status', REPORT_STATUS_FOR_TAB[speciesView.tab]);
+  if (speciesView.search) params.set('q', speciesView.search);
+  try {
+    const file = await apiFile('/reports/inventory?' + params.toString());
+    downloadBlob(file.blob, file.name);
+    showToast('Species inventory downloaded.');
+  } catch (error) {
+    showToast('The export could not be made: ' + error.message);
   }
 }
 
-// Asks for confirmation, then archives the species. Archived species stay in the database
-// (plants already recorded keep their species) but disappear from the mobile app's list.
-async function archiveSpecies(species) {
-  const sure = confirm('Archive ' + species.scientific_name + '? It will no longer appear in the mobile app.');
-  if (sure === false) {
-    return;
-  }
-  try {
-    await api('/knowledge/species/' + species.id, { method: 'DELETE' });
-  } catch (error) {
-    showToast('Could not archive the species: ' + error.message);
-    return;
-  }
-  showToast('Species archived');
-  await loadSpecies();
+// ---- Loading ----
+
+function fillFilterOptions() {
+  const fill = function (select, values, allLabel) {
+    const current = select.value;
+    select.replaceChildren(new Option(allLabel, ''));
+    values.forEach(value => select.add(new Option(value, value)));
+    select.value = values.includes(current) ? current : '';
+  };
+  const families = [...new Set(speciesList.map(familyOf).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const ranks = [...new Set(speciesList.map(species => species.rank).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  fill(byId('family-filter'), families, 'All families');
+  fill(byId('rank-filter'), ranks, 'Any rank');
 }
 
 // Loads the species. Officers get approved and archived ones; botanists the approved list.
@@ -216,56 +313,68 @@ async function loadSpecies() {
     if (viewerIsOfficer) {
       const all = await fetchAllPages('/knowledge/species/manage');
       // Pending and rejected species are handled on the officer proposal page.
-      speciesList = all.filter(function (species) {
-        return species.verification_status === 'approved' || species.verification_status === 'archived';
-      });
+      speciesList = all.filter(species => species.verification_status === 'approved' || isArchived(species));
     } else {
       speciesList = await fetchAllPages('/knowledge/species');
     }
   } catch (error) {
     speciesList = [];
-    const grid = document.getElementById('species-grid');
-    if (grid) {
-      grid.innerHTML = '';
-    }
-    const noSpecies = document.getElementById('no-species');
-    if (noSpecies) {
-      noSpecies.hidden = true;
-    }
-    const count = document.getElementById('species-count');
-    if (count) {
-      count.textContent = 'Could not load the species: ' + error.message;
-    }
+    byId('species-count').textContent = 'Could not load the species: ' + error.message;
     return;
   }
+  for (const id of [...speciesSelection]) {
+    if (!speciesList.some(species => species.id === id)) speciesSelection.delete(id);
+  }
+  fillFilterOptions();
   drawSpeciesTable();
 }
 
-async function loadPlantCounts() {
+// Plant count and last observation per species (officer only).
+async function loadPlantFacts() {
   try {
     const result = await api('/officer/plants/facets');
     if (!Array.isArray(result?.data?.species_counts)) {
       throw new Error('The data could not be read. Please reload the page.');
     }
-    plantCountsBySpecies = new Map(
-      result.data.species_counts.map(item => [item.species_id, item.count])
-    );
-    plantCountsLoaded = true;
+    plantFacts = new Map(result.data.species_counts.map(item => [item.species_id, item]));
+    plantFactsLoaded = true;
     drawSpeciesTable();
   } catch (error) {
     showToast('Plant counts could not be loaded. ' + error.message);
   }
 }
 
-// Botanists propose instead of adding.
-if (viewerIsOfficer === false) {
-  const addButton = document.getElementById('add-species');
-  if (addButton) {
-    addButton.textContent = 'Request a species';
+function startSpeciesPage() {
+  // Botanists look species up and request new ones; they don't change or export the catalogue.
+  if (!viewerIsOfficer) {
+    byId('add-species').textContent = 'Request a species';
+    byId('export-wrap').hidden = true;
+    byId('plants-filter-label').hidden = true;
   }
+  byId('search-box').addEventListener('input', debounce(function () {
+    speciesView.search = byId('search-box').value.trim();
+    speciesView.page = 1;
+    drawSpeciesTable();
+  }));
+  for (const [id, key] of [['family-filter', 'family'], ['rank-filter', 'rank'], ['plants-filter', 'plants']]) {
+    byId(id).addEventListener('change', function () {
+      speciesView[key] = byId(id).value;
+      speciesView.page = 1;
+      drawSpeciesTable();
+    });
+  }
+  byId('filters-clear').onclick = function () {
+    ['family-filter', 'rank-filter', 'plants-filter'].forEach(id => { byId(id).value = ''; });
+    Object.assign(speciesView, { family: '', rank: '', plants: '', page: 1 });
+    drawSpeciesTable();
+  };
+  makePopover(byId('filters-button'), byId('filters-panel'));
+  const closeExport = makePopover(byId('export-button'), byId('export-panel'));
+  byId('export-csv').onclick = function () { closeExport(); exportSpecies('csv').catch(showUnexpectedError); };
+  byId('export-pdf').onclick = function () { closeExport(); exportSpecies('pdf').catch(showUnexpectedError); };
+
+  loadSpecies().catch(showUnexpectedError);
+  if (viewerIsOfficer) loadPlantFacts().catch(showUnexpectedError);
 }
 
-loadSpecies().catch(showUnexpectedError);
-if (viewerIsOfficer) {
-  loadPlantCounts().catch(showUnexpectedError);
-}
+if (pageAllowed !== false) startSpeciesPage();

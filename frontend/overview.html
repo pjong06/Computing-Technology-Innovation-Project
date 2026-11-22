@@ -19,11 +19,11 @@
 .overview-status-name { color: var(--ink); font-size: 14px; }
 .overview-track { height: 10px; overflow: hidden; border-radius: 999px; background: var(--mint); }
 .overview-fill { height: 100%; border-radius: inherit; background: var(--sage); }
-.overview-fill.critical, .status-dot.critical { background: var(--ert); }
-.overview-fill.warning, .status-dot.warning { background: var(--wat); }
-.overview-fill.near, .status-dot.near { background: var(--wa); }
-.overview-fill.safe, .status-dot.safe { background: var(--sage); }
-.overview-fill.unknown, .status-dot.unknown { background: var(--line); }
+.overview-fill.critical { background: var(--ert); }
+.overview-fill.warning { background: var(--wat); }
+.overview-fill.near { background: var(--wa); }
+.overview-fill.safe { background: var(--sage); }
+.overview-fill.unknown { background: var(--line); }
 .overview-line { width: 100%; height: auto; display: block; }
 .overview-line text { fill: var(--mute); font-size: 11px; font-family: inherit; }
 .overview-line .count { fill: var(--ink); font-weight: 600; }
@@ -36,9 +36,6 @@
 .overview-iot-line a { color: var(--pri); font-weight: 600; }
 .overview-error { margin: 12px 0; }
 .report-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-.report-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px; border: 1px solid var(--line); border-radius: 14px; }
-.report-tabs button { border: 0; background: none; padding: 8px 14px; border-radius: 10px; color: var(--ink); font: inherit; font-weight: 600; cursor: pointer; }
-.report-tabs button[aria-selected="true"] { background: var(--mint); }
 .report-exports { display: flex; gap: 8px; }
 .report-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .report-toolbar input[type="search"] { flex: 1 1 220px; min-width: 0; }
@@ -49,9 +46,6 @@
 .report-custom { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 10px; }
 .report-custom label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--mute); }
 .report-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin: 12px 0 8px; font-size: 13px; color: var(--mute); }
-.rank-tag { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: var(--neutral); color: var(--neutralt); font-size: 11px; font-weight: 700; font-style: normal; vertical-align: 1px; }
-.missing-badge { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--wa); color: var(--wat); font-size: 12px; font-weight: 700; }
-.status-dot { display: inline-block; width: 9px; height: 9px; margin-right: 7px; border-radius: 50%; vertical-align: 0; }
 .plant-bar { display: flex; align-items: center; gap: 8px; min-width: 120px; }
 .plant-bar span { display: block; height: 8px; min-width: 2px; border-radius: 999px; background: var(--sage); }
 .no-plants { color: var(--mute); font-size: 13px; }

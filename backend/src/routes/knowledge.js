@@ -6,6 +6,7 @@ const { requireAuth, requireRole } = require("../middleware/auth");
 const { cleanSpeciesFields } = require("../utils/speciesDescription");
 const { createKnowledgeRateLimit } = require("../middleware/knowledgeRateLimit");
 const { publicPhotoUrl } = require("../services/publicPlantPhotos");
+const { rankOf } = require("../services/reportService");
 
 function parsePagination(query, defaultSize = 50) {
     const { page = "1", page_size = String(defaultSize) } = query;
@@ -385,26 +386,31 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             return res.status(400).json({ message: "Invalid species filters" });
         }
 
-        let query = req.supabase
-            .from("species")
-            .select(MANAGE_COLUMNS, { count: "exact" });
-        if (status) query = query.eq("verification_status", status);
-        if (q.trim()) {
-            const search = q.trim();
-            query = query.or(`scientific_name.ilike.%${search}%,common_name.ilike.%${search}%,local_name.ilike.%${search}%`);
-        }
-        const { data, error, count } = await query
-            .order("scientific_name")
-            .order("id")
-            .range(paging.start, paging.end);
+        // With taxon_rank when the column exists, so each row can say how far it was identified.
+        const { data, error, count } = await withRankFallback(withRank => {
+            let query = req.supabase
+                .from("species")
+                .select(columnsWithRank(MANAGE_COLUMNS, withRank), { count: "exact" });
+            if (status) query = query.eq("verification_status", status);
+            if (q.trim()) {
+                const search = q.trim();
+                query = query.or(`scientific_name.ilike.%${search}%,common_name.ilike.%${search}%,local_name.ilike.%${search}%`);
+            }
+            return query
+                .order("scientific_name")
+                .order("id")
+                .range(paging.start, paging.end);
+        });
 
         if (error) {
             console.error("Manage species list error:", error);
             return res.status(500).json({ message: "Could not load species" });
         }
 
+        // rank: "Species", "Genus", "Family", ... (the Species catalogue's rank tag).
+        const ranked = orderSpeciesMedia(data).map(item => ({ ...item, rank: rankOf(item.scientific_name, item.taxon_rank) }));
         return res.json({
-            data: await withPlantPhotos(req.supabase, orderSpeciesMedia(data)),
+            data: await withPlantPhotos(req.supabase, ranked),
             pagination: paginationMetadata(paging, count),
         });
     });
@@ -680,13 +686,19 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
         if (decision === "approved" && taxonomyId != null) changes.taxonomy_id = taxonomyId;
 
         // Only a pending proposal can be reviewed; the status filter makes this atomic.
-        const { data, error } = await req.supabase
+        // Who decided and when (for Review history; 20261122120000_species_review_decider.sql).
+        // Before that migration the decision is saved without them.
+        const review = (withDecider) => req.supabase
             .from("species")
-            .update(changes)
+            .update(withDecider ? { ...changes, reviewed_by: req.user.id, reviewed_at: new Date().toISOString() } : changes)
             .eq("id", req.params.id)
             .eq("verification_status", "pending")
             .select(PROPOSAL_COLUMNS)
             .maybeSingle();
+        let { data, error } = await review(true);
+        if (error && ["42703", "PGRST204"].includes(error.code) && /reviewed_(by|at)/.test(String(error.message || ""))) {
+            ({ data, error } = await review(false));
+        }
 
         if (error?.code === "23503") {
             return res.status(400).json({ message: "The family could not be found." });

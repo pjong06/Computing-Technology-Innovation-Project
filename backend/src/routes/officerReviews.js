@@ -1,6 +1,7 @@
 const express = require("express");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { refreshPublicPlantPhoto } = require("../services/publicPlantPhotos");
+const { loadDecisions, filterHistory, officersOf, DECISIONS, TYPE_FILTERS, SORTS } = require("../services/reviewHistory");
 
 const router = express.Router();
 
@@ -305,6 +306,67 @@ router.get("/rejected", async (req, res) => {
     } catch (detailError) {
         console.error("Rejected observation details error:", detailError);
         return res.status(500).json({ message: "Could not load field records that need changes." });
+    }
+});
+
+// Review history: every decision on field records and species requests, newest first, with
+// filters and counts (services/reviewHistory.js). Query: page, page_size (1-50, or up to 1000
+// for the CSV export, which has no thumbnails), type, decision, officer, from, to, q, sort.
+const HISTORY_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const HISTORY_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+function historyOptions(query) {
+    const text = (value) => (value === undefined || value === "" ? undefined : value);
+    const options = {
+        page: query.page === undefined ? 1 : Number(query.page),
+        pageSize: query.page_size === undefined ? 10 : Number(query.page_size),
+        type: text(query.type),
+        decision: text(query.decision),
+        officer: text(query.officer),
+        from: text(query.from),
+        to: text(query.to),
+        q: typeof query.q === "string" ? query.q.trim() || undefined : text(query.q),
+        sort: text(query.sort) ?? "newest",
+    };
+    const valid =
+        Number.isSafeInteger(options.page) && options.page >= 1 &&
+        Number.isSafeInteger(options.pageSize) && options.pageSize >= 1 && options.pageSize <= 1000 &&
+        (options.type === undefined || TYPE_FILTERS.includes(options.type)) &&
+        (options.decision === undefined || Object.hasOwn(DECISIONS, options.decision)) &&
+        (options.officer === undefined || (typeof options.officer === "string" && HISTORY_UUID.test(options.officer))) &&
+        [options.from, options.to].every(date => date === undefined || (typeof date === "string" && HISTORY_DATE.test(date))) &&
+        !(options.from && options.to && options.from > options.to) &&
+        (options.q === undefined || (typeof options.q === "string" && options.q.length <= 100)) &&
+        SORTS.includes(options.sort);
+    return valid ? options : null;
+}
+
+router.get("/history", async (req, res) => {
+    const options = historyOptions(req.query);
+    if (!options) return res.status(400).json({ message: "Choose the filters from the lists." });
+    try {
+        const all = await loadDecisions(req.supabase, firstRecordsOf);
+        const { rows, counts } = filterHistory(all, options);
+        const total = rows.length;
+        const start = (options.page - 1) * options.pageSize;
+        let pageRows = rows.slice(start, start + options.pageSize);
+        // Thumbnails (signed, short-lived) for the field records on screen; not for exports.
+        if (options.pageSize <= 50) {
+            const withPhotos = await withThumbnails(req.supabase,
+                pageRows.filter(row => row.observation_id).map(row => ({ id: row.observation_id })));
+            const photoById = new Map(withPhotos.map(row => [row.id, row.thumbnail_url || null]));
+            pageRows = pageRows.map(row => ({ ...row, thumbnail_url: photoById.get(row.observation_id) ?? null }));
+        }
+        res.set("Cache-Control", "no-store");
+        return res.json({
+            data: pageRows,
+            counts,
+            officers: officersOf(all),
+            pagination: { page: options.page, page_size: options.pageSize, total, total_pages: Math.ceil(total / options.pageSize) },
+        });
+    } catch (error) {
+        console.error("Review history error:", error?.message || error);
+        return res.status(500).json({ message: "Could not load the review history." });
     }
 });
 

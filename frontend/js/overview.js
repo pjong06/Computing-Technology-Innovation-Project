@@ -9,7 +9,6 @@ drawMenu('overview.html');
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
   'September', 'October', 'November', 'December'];
-const STATUS_CLASS = { CR: 'critical', EN: 'critical', VU: 'warning', NT: 'near', LC: 'safe' };
 // A sensor key in an alert message (letter, underscore, letter: "soil_moisture"). The same
 // test as before, without repeated quantifiers.
 const SENSOR_KEY = /[a-z]_[a-z]/;
@@ -210,13 +209,7 @@ function fillSelect(select, options, value, allLabel) {
   select.value = chosen;
 }
 
-// A <span> with a class and (optional) text: tags, badges, dots and bars in the table.
-function labelSpan(className, text) {
-  const span = document.createElement('span');
-  span.className = className;
-  if (text !== undefined) span.textContent = text;
-  return span;
-}
+// labelSpan and STATUS_CLASS (the status dot colours) are shared with the table pages (shared.js).
 
 function statusBadge(td, text, row) {
   if (text) td.appendChild(labelSpan('status-badge ' + (row.status_code || ''), text));

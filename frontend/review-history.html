@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Review history - Niah Biotrack</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="images/logo.png">
+<link rel="stylesheet" href="css/style.css">
+<style>
+/* Column widths of the history table (the shared .data-table keeps text inside its cell). */
+#history-table { min-width: 900px; }
+#history-table .col-thumb { width: 64px; }
+#history-table .col-record { width: 32%; }
+#history-table .col-decision { width: 120px; }
+#history-table .col-decided { width: 19%; }
+#history-table .col-reason { width: 25%; }
+#history-table .col-open { width: 72px; }
+/* Badges and labels never grow past their cell. */
+#history-table .status-badge,
+#history-table .review-kind { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+#history-table .review-kind { margin-bottom: 4px; }
+#history-table .review-kind.species-request { background: var(--info); color: var(--infot); }
+.history-icon { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 8px; background: var(--mint); font-size: 22px; }
+.history-dates { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.history-dates button { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; color: var(--ink); cursor: pointer; }
+.history-dates button[aria-pressed="true"] { background: var(--pri); border-color: var(--pri); color: #fff; }
+.history-custom { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.history-custom label, .history-toolbar label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--mute); }
+</style>
+</head>
+<body>
+<div class="app">
+<nav id="menu"></nav>
+<main class="wide">
+<section class="page on">
+  <h1>Review <span>history</span></h1>
+  <p class="lead">Every decision on field records and species requests, for the conservation officer.</p>
+
+  <article class="card table-card">
+    <div class="table-toolbar history-toolbar">
+      <input id="history-search" type="search" placeholder="Search species, tag or botanist"
+        aria-label="Search by species, plant tag or botanist">
+      <label>Type
+        <select id="history-type">
+          <option value="">All types</option>
+          <option value="field_record">Field records</option>
+          <option value="new_plant">New plant</option>
+          <option value="observation">Observation</option>
+          <option value="species_request">Species request</option>
+        </select>
+      </label>
+      <label>Officer <select id="history-officer"><option value="">All officers</option></select></label>
+      <label>Sort
+        <select id="history-sort">
+          <option value="newest">Newest first</option>
+          <option value="oldest">Oldest first</option>
+        </select>
+      </label>
+      <button class="btn ghost" id="history-export" type="button">Export</button>
+    </div>
+    <div class="table-toolbar">
+      <div class="history-dates" role="group" aria-label="Decided">
+        <button type="button" data-range="7" aria-pressed="false">Last 7 days</button>
+        <button type="button" data-range="30" aria-pressed="false">Last 30 days</button>
+        <button type="button" data-range="year" aria-pressed="false">This year</button>
+        <button type="button" data-range="all" aria-pressed="true">All time</button>
+        <button type="button" data-range="custom" aria-pressed="false">Custom…</button>
+      </div>
+      <div class="history-custom" id="history-custom" hidden>
+        <label for="history-from">From <input type="date" id="history-from"></label>
+        <label for="history-to">To <input type="date" id="history-to"></label>
+      </div>
+      <div class="table-tabs" id="history-decisions" aria-label="Decision"></div>
+    </div>
+    <p class="table-note" id="history-count" role="status">Loading decisions...</p>
+    <div class="card plant-state" id="history-error" role="alert" hidden></div>
+    <div class="table-scroll">
+      <table class="data-table" id="history-table">
+        <caption class="sr-only">Review decisions with the current filters</caption>
+        <thead><tr><th scope="col">Record</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="table-pager" id="history-pager"></div>
+  </article>
+</section>
+</main>
+</div>
+<div id="toast" role="status"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R" crossorigin="anonymous"></script>
+<script src="js/shared.js"></script>
+<script src="js/review-history.js"></script>
+</body>
+</html>

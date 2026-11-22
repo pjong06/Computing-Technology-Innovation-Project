@@ -100,16 +100,18 @@ async function api(path, options) {
 }
 
 // Downloads a file (a CSV or PDF export) from the backend with the officer's login token
-// (see fetchWithLogin). Returns { blob, name } (the server's file name).
-async function apiFile(path) {
-  const response = await fetchWithLogin(path, {}, {});
+// (see fetchWithLogin). options (optional) is { method, body } for a POST that answers with a
+// file. Returns { blob, name, headers } (the server's file name and response headers).
+async function apiFile(path, options) {
+  const request = options || {};
+  const response = await fetchWithLogin(path, request, request.body ? { 'Content-Type': 'application/json' } : {});
   if (response.ok === false) {
     const body = await response.json().catch(function () { return {}; });
     throw new Error(body.message || SERVER_PROBLEM_MESSAGE);
   }
   const disposition = response.headers.get('Content-Disposition') || '';
   const match = /filename="([^"]+)"/.exec(disposition);
-  return { blob: await response.blob(), name: match ? match[1] : 'niah-report' };
+  return { blob: await response.blob(), name: match ? match[1] : 'niah-report', headers: response.headers };
 }
 
 // ---------- The real species catalogue (/api/knowledge) ----------
@@ -1018,7 +1020,8 @@ const NAV_SECTIONS = [
     pages: [
       { file: 'queue.html', label: 'Field records', countId: 'field-records-count' },
       { file: 'proposals.html', label: 'Species requests', countId: 'species-proposals-count' },
-      { file: 'rejected.html', label: 'Rejected history' }
+      // Rejected history became Review history; rejected.html redirects there.
+      { file: 'review-history.html', label: 'Review history', alsoActiveOn: ['rejected.html'] }
     ]
   },
   {
@@ -1471,6 +1474,318 @@ function makeCell(text) {
   const td = document.createElement('td');
   td.textContent = text;
   return td;
+}
+
+// ---------- Officer data tables (Species catalogue, Plants, Users) ----------
+// One set of helpers for every table page: tabs with counts, sortable column headers, a
+// select column, paging ("1–10 of 178"), the bulk-action bar, cells whose text never
+// overflows (clipped with an ellipsis, full text in a tooltip) and CSV/PDF downloads.
+// Pages only describe their columns and data.
+
+const TABLE_PAGE_SIZE = 10;
+// IUCN codes counted as threatened: their exact locations are protected (lock icon).
+const THREATENED_CODES = ['CR', 'EN', 'VU'];
+// The colour of the conservation status dot (also used by the Overview page).
+const STATUS_CLASS = { CR: 'critical', EN: 'critical', VU: 'warning', NT: 'near', LC: 'safe' };
+
+// A <span> with a class and (optional) text: tags, badges, dots and chips.
+function labelSpan(className, text) {
+  const span = document.createElement('span');
+  span.className = className;
+  if (text !== undefined) span.textContent = text;
+  return span;
+}
+
+// Text that stays inside its cell: `lines` lines at most, then an ellipsis; the full text is
+// the tooltip. Long single words break instead of widening the table.
+function clippedText(text, className, lines) {
+  const span = labelSpan('clip' + (lines === 2 ? ' clip-2' : '') + (className ? ' ' + className : ''), text);
+  span.title = text;
+  return span;
+}
+
+// A small padlock: the species is threatened, so its plants' exact locations are protected.
+function lockIcon() {
+  const lock = labelSpan('lock-icon', '🔒');
+  lock.title = 'Threatened species: exact location protected';
+  lock.setAttribute('aria-label', lock.title);
+  lock.setAttribute('role', 'img');
+  return lock;
+}
+
+// Species cell: italic scientific name, a rank tag (Genus, Family, ...) when it isn't a
+// species, and the common name (or "No common name") underneath.
+function speciesNameCell(td, scientificName, rank, commonName) {
+  const top = labelSpan('cell-line');
+  top.appendChild(clippedText(scientificName || 'Species not recorded', 'sci'));
+  if (rank && rank !== 'Species') top.appendChild(labelSpan('rank-tag', rank));
+  td.appendChild(top);
+  td.appendChild(commonName
+    ? clippedText(commonName, 'cell-sub')
+    : labelSpan('cell-sub muted-text', 'No common name'));
+}
+
+// Conservation status: coloured dot and words, with the padlock for threatened species.
+function conservationCell(td, code) {
+  const dot = labelSpan('status-dot ' + (STATUS_CLASS[code] || 'unknown'));
+  dot.setAttribute('aria-hidden', 'true');
+  const line = labelSpan('cell-line');
+  line.append(dot, clippedText(statusLabel(code)));
+  if (THREATENED_CODES.includes(code)) line.appendChild(lockIcon());
+  td.appendChild(line);
+}
+
+// A plant's tag, or the grey "No tag yet" chip (placeholders are never shown).
+function tagCell(td, tag) {
+  const shown = displayTag(tag, '');
+  if (shown && shown !== NO_PHYSICAL_TAG) td.appendChild(clippedText(shown, 'tag-text'));
+  else td.appendChild(labelSpan('chip-muted', 'No tag yet'));
+}
+
+// Tabs with counts: tabs = [{ value, label, count }]. onChange(value) when one is chosen.
+function drawTableTabs(container, tabs, active, onChange) {
+  container.replaceChildren();
+  container.setAttribute('role', 'tablist');
+  for (const tab of tabs) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.setAttribute('role', 'tab');
+    button.setAttribute('aria-selected', String(tab.value === active));
+    button.append(tab.label);
+    if (tab.count !== null && tab.count !== undefined) button.appendChild(labelSpan('tab-count', String(tab.count)));
+    button.onclick = function () { onChange(tab.value); };
+    container.appendChild(button);
+  }
+}
+
+// Sorts rows by a column's sortValue(row) (text A–Z or numbers), empty values last.
+function sortRows(rows, column, direction) {
+  if (!column || !column.sortValue) return rows;
+  const factor = direction === 'desc' ? -1 : 1;
+  return [...rows].sort(function (a, b) {
+    const x = column.sortValue(a);
+    const y = column.sortValue(b);
+    const xEmpty = x === null || x === undefined || x === '';
+    const yEmpty = y === null || y === undefined || y === '';
+    if (xEmpty || yEmpty) return Number(xEmpty) - Number(yEmpty);
+    if (typeof x === 'number' && typeof y === 'number') return (x - y) * factor;
+    return String(x).localeCompare(String(y), undefined, { numeric: true, sensitivity: 'base' }) * factor;
+  });
+}
+
+// Draws a table: columns = [{ key, label, sortable, render(td, row), className }].
+// options: rows (this page), keyOf(row), selection (a Set of keys, or null for no select
+// column), sort { key, dir }, onSort(key), onSelect() after the selection changed, empty.
+function drawDataTable(table, options) {
+  const columns = options.columns;
+  const head = table.tHead || table.createTHead();
+  const body = table.tBodies[0] || table.createTBody();
+  head.replaceChildren();
+  body.replaceChildren();
+  const selection = options.selection || null;
+  const headRow = head.insertRow();
+
+  if (selection) {
+    const th = document.createElement('th');
+    th.className = 'select-col';
+    const all = document.createElement('input');
+    all.type = 'checkbox';
+    all.setAttribute('aria-label', 'Select all rows on this page');
+    const keys = options.rows.map(options.keyOf);
+    const chosen = keys.filter(key => selection.has(key)).length;
+    all.checked = keys.length > 0 && chosen === keys.length;
+    all.indeterminate = chosen > 0 && chosen < keys.length;
+    all.onchange = function () {
+      keys.forEach(key => (all.checked ? selection.add(key) : selection.delete(key)));
+      options.onSelect();
+    };
+    th.appendChild(all);
+    headRow.appendChild(th);
+  }
+  for (const column of columns) {
+    const th = document.createElement('th');
+    th.scope = 'col';
+    if (column.className) th.className = column.className;
+    if (column.sortable && options.onSort) {
+      const active = options.sort && options.sort.key === column.key;
+      th.setAttribute('aria-sort', active ? (options.sort.dir === 'desc' ? 'descending' : 'ascending') : 'none');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'th-sort';
+      button.append(column.label, labelSpan('sort-arrow', active ? (options.sort.dir === 'desc' ? '▼' : '▲') : '↕'));
+      button.onclick = function () { options.onSort(column.key); };
+      th.appendChild(button);
+    } else {
+      th.textContent = column.label;
+    }
+    headRow.appendChild(th);
+  }
+
+  if (options.rows.length === 0) {
+    const cell = body.insertRow().insertCell();
+    cell.colSpan = columns.length + (selection ? 1 : 0);
+    cell.className = 'table-empty';
+    cell.textContent = options.empty || 'Nothing matches.';
+    return;
+  }
+  for (const row of options.rows) {
+    const tr = body.insertRow();
+    const key = options.keyOf(row);
+    if (selection) {
+      const cell = tr.insertCell();
+      cell.className = 'select-col';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = selection.has(key);
+      box.setAttribute('aria-label', 'Select ' + (options.labelOf ? options.labelOf(row) : 'row'));
+      box.onchange = function () {
+        if (box.checked) selection.add(key); else selection.delete(key);
+        options.onSelect();
+      };
+      cell.appendChild(box);
+      if (box.checked) tr.classList.add('selected');
+    }
+    for (const column of columns) {
+      const td = tr.insertCell();
+      if (column.className) td.className = column.className;
+      column.render(td, row);
+    }
+  }
+}
+
+// The changes to a table's sort after a header click: same column flips, a new one starts A–Z.
+function nextSort(current, key) {
+  return current && current.key === key
+    ? { key: key, dir: current.dir === 'asc' ? 'desc' : 'asc' }
+    : { key: key, dir: 'asc' };
+}
+
+// Paging under a table: "1–10 of 178" (or "1–10 of 48 decisions" with a unit) with Previous /
+// Next. onPage(page) to move.
+function drawPager(container, page, total, onPage, unit) {
+  container.replaceChildren();
+  const pages = Math.max(1, Math.ceil(total / TABLE_PAGE_SIZE));
+  const first = total === 0 ? 0 : (page - 1) * TABLE_PAGE_SIZE + 1;
+  const last = Math.min(total, page * TABLE_PAGE_SIZE);
+  const label = labelSpan('pager-label', total === 0
+    ? 'No results'
+    : first.toLocaleString() + '–' + last.toLocaleString() + ' of ' + total.toLocaleString() + (unit ? ' ' + unit : ''));
+  const previous = document.createElement('button');
+  previous.type = 'button';
+  previous.className = 'btn ghost';
+  previous.textContent = 'Previous';
+  previous.disabled = page <= 1;
+  previous.onclick = function () { onPage(page - 1); };
+  const next = document.createElement('button');
+  next.type = 'button';
+  next.className = 'btn ghost';
+  next.textContent = 'Next';
+  next.disabled = page >= pages;
+  next.onclick = function () { onPage(page + 1); };
+  container.append(label, previous, next);
+}
+
+// The rows of one page (pages are TABLE_PAGE_SIZE long, page 1 first).
+function pageOf(rows, page) {
+  return rows.slice((page - 1) * TABLE_PAGE_SIZE, page * TABLE_PAGE_SIZE);
+}
+
+// The bar shown while rows are selected: "N selected", the actions, and Clear.
+// actions: [{ label, onClick }] for buttons, or [{ label, options: [{ value, label }],
+// onSelect(value) }] for a drop-down that applies the chosen value.
+function drawBulkBar(container, count, actions, onClear) {
+  container.replaceChildren();
+  container.hidden = count === 0;
+  if (count === 0) return;
+  container.appendChild(labelSpan('bulk-count', count + ' selected'));
+  for (const action of actions) {
+    if (action.options) {
+      const select = document.createElement('select');
+      select.setAttribute('aria-label', action.label);
+      select.add(new Option(action.label + '…', ''));
+      action.options.forEach(option => select.add(new Option(option.label, option.value)));
+      select.onchange = function () {
+        const value = select.value;
+        select.value = '';
+        if (value !== '') action.onSelect(value);
+      };
+      container.appendChild(select);
+    } else {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn ghost';
+      button.textContent = action.label;
+      button.onclick = action.onClick;
+      container.appendChild(button);
+    }
+  }
+  const clear = document.createElement('button');
+  clear.type = 'button';
+  clear.className = 'btn ghost';
+  clear.textContent = 'Clear';
+  clear.onclick = onClear;
+  container.appendChild(clear);
+}
+
+// A button that opens a small panel under it (Filters, Export). Clicking outside closes it.
+function makePopover(button, panel) {
+  panel.hidden = true;
+  button.setAttribute('aria-expanded', 'false');
+  const close = function () {
+    panel.hidden = true;
+    button.setAttribute('aria-expanded', 'false');
+  };
+  button.addEventListener('click', function (event) {
+    event.stopPropagation();
+    panel.hidden = !panel.hidden;
+    button.setAttribute('aria-expanded', String(!panel.hidden));
+  });
+  panel.addEventListener('click', function (event) { event.stopPropagation(); });
+  document.addEventListener('click', close);
+  return close;
+}
+
+// Calls fn after the user stopped typing for a moment (search boxes).
+function debounce(fn, waitMs) {
+  let timer = null;
+  return function () {
+    clearTimeout(timer);
+    timer = setTimeout(fn, waitMs || 250);
+  };
+}
+
+// Saves a file the browser has in memory (a downloaded export or a CSV made here).
+function downloadBlob(blob, name) {
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(function () { URL.revokeObjectURL(link.href); }, 1000);
+}
+
+// A CSV of rows: columns = [{ label, value(row) }]. Cells that a spreadsheet would run as a
+// formula (=, +, -, @) start with ' (as the server's exports do).
+function downloadCsv(name, columns, rows) {
+  const cell = function (value) {
+    let text = String(value ?? '');
+    if (/^[=+@-]/.test(text.trimStart()) && !/^-\d/.test(text.trimStart())) text = "'" + text;
+    return '"' + text.replaceAll('"', '""') + '"';
+  };
+  const lines = [columns.map(column => cell(column.label)).join(',')];
+  rows.forEach(row => lines.push(columns.map(column => cell(column.value(row))).join(',')));
+  downloadBlob(new Blob(['﻿' + lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' }), name);
+}
+
+// Today as YYYY-MM-DD, for file names.
+function fileDate() {
+  return isoDate(new Date());
+}
+
+// Asks before a change to several records; returns true to go ahead.
+function confirmChange(message) {
+  return confirm(message);
 }
 
 // The IoT workspace verifies /api/iot-workspace/session itself and only needs
