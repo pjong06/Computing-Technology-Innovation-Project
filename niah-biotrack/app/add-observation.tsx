@@ -20,6 +20,7 @@ import {
   useRecordStore,
   type HealthStatus,
   type LifeStage,
+  type PlantRecord,
 } from '../src/store/useRecordStore';
 import { useProfileStore } from '../src/store/useProfileStore';
 import {
@@ -59,6 +60,47 @@ const HEALTH_STATUSES: {
   { label: 'Damaged', color: '#7C3AED', bg: '#F3E8FF', border: '#D8B4FE' },
   { label: 'Dead', color: '#4B5563', bg: '#F3F4F6', border: '#D1D5DB' },
 ];
+
+function formatInitialMetric(value: number): string {
+  const rounded = Math.round(value * 100) / 100;
+  return Number.isInteger(rounded) ? rounded.toFixed(1) : String(rounded);
+}
+
+function getLatestPlantMeasurements(target?: PlantRecord): {
+  heightM: string;
+  diameterCm: string;
+} {
+  if (!target) {
+    return { heightM: '', diameterCm: '' };
+  }
+
+  const latestHeightVisit = target.observations?.find(
+    (observation) => observation.heightCm !== undefined
+  );
+  const initialHeight =
+    latestHeightVisit?.heightCm !== undefined
+      ? latestHeightVisit.heightCm / 100
+      : parseMeasurement(target.height);
+
+  const latestDiameterVisit = target.observations?.find(
+    (observation) => observation.diameterCm !== undefined
+  );
+  const initialDiameter =
+    latestDiameterVisit?.diameterCm !== undefined
+      ? latestDiameterVisit.diameterCm
+      : parseMeasurement(target.diameter);
+
+  return {
+    heightM:
+      initialHeight !== null && initialHeight > 0
+        ? formatInitialMetric(initialHeight)
+        : '',
+    diameterCm:
+      initialDiameter !== null && initialDiameter > 0
+        ? formatInitialMetric(initialDiameter)
+        : '',
+  };
+}
 
 export default function AddObservationScreen() {
   const router = useRouter();
@@ -104,20 +146,30 @@ export default function AddObservationScreen() {
   const [scannerOpen, setScannerOpen] = useState(false);
   const [isLookingUpTag, setIsLookingUpTag] = useState(false);
 
-  // ── PART 1 & 2: SPLIT MEASUREMENT STATES ─────────────────────
-  // Typed: height in metres, diameter in cm. Height is converted to cm when saved.
-  const [heightM, setHeightM] = useState<string>('');
-  const [diameterCm, setDiameterCm] = useState<string>('');
-
-  const [lifeStage, setLifeStage] = useState<LifeStage>('Mature');
-  const [healthStatus, setHealthStatus] = useState<HealthStatus>('Healthy');
-
   const cleanTag = plantTag.trim().toUpperCase();
   const plant =
     passedPlant ??
     (cleanTag
       ? records.find((record) => record.tagCode === cleanTag)
       : undefined);
+
+  // ── PART 1 & 2: SPLIT MEASUREMENT STATES ─────────────────────
+  // Pre-filled from the plant's latest recorded height (m) and diameter (cm)
+  // so +/- buttons increment directly from the existing measurement.
+  const initialMeasurements = getLatestPlantMeasurements(passedPlant);
+  const [heightM, setHeightM] = useState<string>(initialMeasurements.heightM);
+  const [diameterCm, setDiameterCm] = useState<string>(
+    initialMeasurements.diameterCm
+  );
+
+  useEffect(() => {
+    const latest = getLatestPlantMeasurements(plant);
+    setHeightM(latest.heightM);
+    setDiameterCm(latest.diameterCm);
+  }, [plant?.id]);
+
+  const [lifeStage, setLifeStage] = useState<LifeStage>('Mature');
+  const [healthStatus, setHealthStatus] = useState<HealthStatus>('Healthy');
 
   const scientificName =
     plant?.scientificName || params.scientificName || '';
@@ -207,8 +259,9 @@ export default function AddObservationScreen() {
   ) => {
     setter((previous) => {
       const current = parseMeasurement(previous) ?? 0;
-      const updated = Math.max(0, current + delta);
-      return isFloat ? updated.toFixed(1) : Math.round(updated).toString();
+      const updated = Math.max(0, Math.round((current + delta) * 100) / 100);
+      if (!isFloat) return Math.round(updated).toString();
+      return Number.isInteger(updated) ? updated.toFixed(1) : String(updated);
     });
   };
 
