@@ -172,6 +172,9 @@ export default function NewRecordScreen() {
   const [speciesChoice, setSpeciesChoice] = useState<SpeciesChoice>(null);
   const [speciesQuery, setSpeciesQuery] = useState(existingRecord?.scientificName ?? '');
   const [speciesNotice, setSpeciesNotice] = useState('');
+  const [scientificName, setScientificName] = useState(existingRecord?.scientificName ?? '');
+  const [commonName, setCommonName] = useState(existingRecord?.commonName ?? '');
+  const [family, setFamily] = useState(existingRecord?.family ?? '');
   const [height, setHeight] = useState(existingRecord?.height ?? '');
   const [diameter, setDiameter] = useState((existingRecord as PlantRecordWithOfflinePhotos)?.diameter ?? '');
   const [lifeStage, setLifeStage] = useState<LifeStage>(existingRecord?.observations?.[0]?.stage ?? 'Mature');
@@ -253,6 +256,9 @@ export default function NewRecordScreen() {
       if (match) {
         setSpeciesChoice({ kind: 'species', species: match });
         setSpeciesQuery(match.scientific_name);
+        setScientificName(existingRecord.scientificName || match.scientific_name || '');
+        setCommonName(existingRecord.commonName || match.common_name || '');
+        setFamily(existingRecord.family || match.taxonomy?.family || '');
       }
 
       speciesSelectionInitialized.current = true;
@@ -269,6 +275,9 @@ export default function NewRecordScreen() {
     if (match) {
       setSpeciesChoice({ kind: 'species', species: match });
       setSpeciesQuery(match.scientific_name);
+      setScientificName(match.scientific_name ?? '');
+      setCommonName(match.common_name ?? '');
+      setFamily(match.taxonomy?.family ?? '');
     }
 
     speciesSelectionInitialized.current = true;
@@ -369,14 +378,14 @@ export default function NewRecordScreen() {
       if (req.signal.aborted) return;
       setSuggestions(next);
       if (next.length === 0) {
-        setIdentifyMessage('No species match found. Search the offline catalogue or save the record for later.');
+        setIdentifyMessage('No species match found. Search the offline catalogue or enter the plant details below.');
       }
     } catch (err) {
       if (req.signal.aborted) return;
       setIdentifyMessage(
         err instanceof Error && err.name === 'IdentifyNetworkError'
-          ? "Can't reach the AI server. Search the offline catalogue or save the record for later."
-          : 'Identification failed. Search the offline catalogue or save the record for later.'
+          ? "Can't reach the AI server. Search the offline catalogue or enter the plant details below."
+          : 'Identification failed. Search the offline catalogue or enter the plant details below.'
       );
     } finally {
       if (identifyRequest.current === req) {
@@ -397,11 +406,17 @@ export default function NewRecordScreen() {
 
     if (catalogueMatch) {
       setSpeciesChoice({ kind: 'species', species: catalogueMatch });
+      setScientificName(catalogueMatch.scientific_name ?? '');
+      setCommonName(catalogueMatch.common_name ?? s.commonName ?? '');
+      setFamily(catalogueMatch.taxonomy?.family ?? s.family ?? '');
       setSpeciesNotice('AI suggestion matched an approved species in the offline catalogue.');
     } else {
       setSpeciesChoice(null);
+      setScientificName(s.scientificName ?? '');
+      setCommonName(s.commonName ?? '');
+      setFamily(s.family ?? '');
       setSpeciesNotice(
-        'This AI suggestion is not in the approved catalogue. Save for later, then confirm the species before submitting.'
+        'This AI suggestion is not in the approved catalogue. You can review or edit the fields below.'
       );
     }
 
@@ -416,6 +431,9 @@ export default function NewRecordScreen() {
 
     if (choice?.kind === 'species') {
       setSpeciesQuery(choice.species.scientific_name);
+      setScientificName(choice.species.scientific_name ?? '');
+      setCommonName(choice.species.common_name ?? '');
+      setFamily(choice.species.taxonomy?.family ?? '');
     } else {
       setSpeciesQuery('');
     }
@@ -446,11 +464,24 @@ export default function NewRecordScreen() {
       photoMeta[uri] = { ...(prevMeta?.type === photoType ? prevMeta : {}), id: photoId, type: photoType, uploaded: status === SyncStatus.UPLOADED };
     });
 
+    const trimmedScientific = scientificName.trim();
+    const trimmedCommon = commonName.trim();
+    const trimmedFamily = family.trim();
+
+    const matchedApprovedSpecies =
+      approvedSpecies ??
+      (trimmedScientific
+        ? allSpecies.find(
+            (species) =>
+              species.scientific_name.trim().toLowerCase() === trimmedScientific.toLowerCase()
+          ) ?? null
+        : null);
+
     const photoList = photoEntries.map((p) => p.uri);
     const nextErrors: FieldErrors = {};
     if (!photoList.length) nextErrors.photos = 'Add at least one photo (min. 1, max. 4).';
-    if (submitForReview && !approvedSpecies) {
-      nextErrors.scientificName = 'Select an approved species before submitting. You can save for later without one.';
+    if (submitForReview && !trimmedScientific) {
+      nextErrors.scientificName = 'Enter or select a scientific name before submitting.';
     }
     if (!locationName.trim()) nextErrors.locationName = 'Enter a location landmark.';
     if (!gpsFix) nextErrors.gps = 'A GPS fix is required. Wait for it, or tap Retry.';
@@ -502,10 +533,10 @@ export default function NewRecordScreen() {
       : existingRecord?.walkingTime;
 
     const recordData = {
-      scientificName: approvedSpecies?.scientific_name ?? '',
-      speciesId: approvedSpecies?.id ?? null,
-      commonName: approvedSpecies?.common_name ?? '',
-      family: approvedSpecies?.taxonomy?.family ?? '',
+      scientificName: trimmedScientific,
+      speciesId: matchedApprovedSpecies?.id ?? null,
+      commonName: trimmedCommon,
+      family: trimmedFamily,
       height: heightMetres === undefined ? undefined : String(heightMetres),
       diameter: diameterCm === undefined ? undefined : String(diameterCm),
       morphology: morphology.trim() || undefined,
@@ -523,7 +554,10 @@ export default function NewRecordScreen() {
         ? [initialVisit, ...existingRecord.observations.slice(1)]
         : [initialVisit],
       recordStatus: submitForReview ? RecordStatus.COMPLETE : RecordStatus.DRAFT,
-      identificationStatus: approvedSpecies ? IdentificationStatus.IDENTIFIED : IdentificationStatus.PENDING,
+      identificationStatus:
+        trimmedScientific || matchedApprovedSpecies
+          ? IdentificationStatus.IDENTIFIED
+          : IdentificationStatus.PENDING,
       syncStatus: submitForReview ? SyncStatus.NOT_UPLOADED : SyncStatus.LOCAL_ONLY,
       reviewStatus: submitForReview ? ReviewStatus.PENDING : ReviewStatus.DRAFT,
     };
@@ -665,7 +699,7 @@ export default function NewRecordScreen() {
               <View style={styles.suggestionsBlock}>
                 <Text style={styles.suggestionsTitle}>AI species suggestions</Text>
                 <Text style={styles.suggestionsHelp}>
-                  Select a suggestion. Only a match in the approved catalogue can be submitted.
+                  Select a suggestion to auto-fill the plant details below.
                 </Text>
                 {suggestions.map((s) => {
                   const selected = selectedSpecies?.rank === s.rank && selectedSpecies.scientificName === s.scientificName;
@@ -703,11 +737,34 @@ export default function NewRecordScreen() {
           </View>
         )}
 
-        {/* Section 2: Approved species selection */}
-        <Text style={styles.sectionLabel}>SPECIES DETAILS</Text>
-        <Text style={styles.fieldLabel}>Approved species</Text>
+        {/* Section 2: Plant Details */}
+        <Text style={styles.sectionLabel}>PLANT DETAILS</Text>
+
+        <Text style={styles.fieldLabel}>Scientific name *</Text>
+        <TextInput
+          style={[styles.input, errors.scientificName && styles.inputError]}
+          placeholder="e.g. Nepenthes ampullaria"
+          placeholderTextColor="#8C9A91"
+          value={scientificName}
+          onChangeText={(text) => {
+            setScientificName(text);
+            clearError('scientificName');
+            if (
+              approvedSpecies &&
+              text.trim().toLowerCase() !== approvedSpecies.scientific_name.trim().toLowerCase()
+            ) {
+              setSpeciesChoice(null);
+            }
+          }}
+          autoCapitalize="sentences"
+          autoCorrect={false}
+          returnKeyType="done"
+        />
+        {errors.scientificName && <Text style={styles.errorText}>{errors.scientificName}</Text>}
+
+        <Text style={styles.fieldLabel}>Species</Text>
         <Text style={styles.pickerHelp}>
-          Search the offline species catalogue. If you cannot confirm the species in the field, save the record for later.
+          Search the offline species catalogue to auto-fill, or enter the details manually.
         </Text>
         <SpeciesPicker
           value={speciesChoice}
@@ -716,12 +773,29 @@ export default function NewRecordScreen() {
           onQueryChange={(text) => {
             setSpeciesQuery(text);
             setSpeciesNotice('');
-            clearError('scientificName');
           }}
-          hasError={Boolean(errors.scientificName)}
         />
-        {errors.scientificName && <Text style={styles.errorText}>{errors.scientificName}</Text>}
         {speciesNotice !== '' && <Text style={styles.speciesNotice}>{speciesNotice}</Text>}
+
+        <Text style={styles.fieldLabel}>Common name</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="e.g. Flask-shaped pitcher plant"
+          placeholderTextColor="#8C9A91"
+          value={commonName}
+          onChangeText={setCommonName}
+          returnKeyType="done"
+        />
+
+        <Text style={styles.fieldLabel}>Family</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="e.g. Nepenthaceae"
+          placeholderTextColor="#8C9A91"
+          value={family}
+          onChangeText={setFamily}
+          returnKeyType="done"
+        />
 
         {/* Section 3: Measurements */}
         <View style={styles.measurementRow}>
