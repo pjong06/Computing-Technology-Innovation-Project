@@ -178,8 +178,9 @@ test('My QR tags and plant detail: print sheet with layouts, images, and plant d
   const screen = read('../../app/my-tags.tsx');
   // Every print: exactly the planned tags, in the layout chosen in the sheet.
   assert.match(screen, /const plan = printPlan\(\{ kind: 'selection', selected: request\.tags \}, layout\);/);
-  assert.match(screen, /await printTagsPdf\(plan\.tags, plan\.layout\);/);
-  assert.match(screen, /await saveTagImages\(plan\.tags\.map/);
+  assert.match(screen, /await printTagsPdf\(plan\.tags, plan\.layout === 'single' \? 'single' : 'sheet'\);/);
+  assert.match(screen, /await downloadTagImages\(plan\.tags\.map/);
+  assert.match(screen, /share: \(files\) => saveTagImageFiles\(files\),/);
   assert.match(read('../services/myTags.ts'), /downloadTagImage\(tag\.tag, tagImagePath\(tag\)\)/);
   const detail = read('../../app/plant-detail.tsx');
   assert.match(detail, /downloadTagImage\(qr\.qrValue, `\/api\/plants\/\$\{encodeURIComponent\(matched\.serverId\)\}\/qr\/image`\)/);
@@ -245,7 +246,7 @@ test('the layout chosen in "Print N tags" is passed through: Sheet (default), On
   }
   const screen = read('../../app/my-tags.tsx');
   // Each print starts on "Sheet of labels".
-  assert.match(screen, /const openPrint = \(request: PrintRequest\) => \{\s*if \(request\.tags\.length === 0\) return;\s*setLayout\('sheet'\);/);
+  assert.match(screen, /setLayout\('sheet'\);\s*setPrinting\(request\);/);
   // The service sends that layout to the print endpoint.
   assert.match(read('../services/myTags.ts'), /apiDownload\('\/api\/tag-reservations\/print', \{ tags, layout \}\)/);
 });
