@@ -8,41 +8,50 @@
 <link rel="icon" href="images/logo.png">
 <link rel="stylesheet" href="css/style.css">
 <style>
-.proposal-list { display: grid; gap: 14px; }
-.proposal-card { padding: 20px; }
-.proposal-card h2 { margin: 0 0 12px; font-size: 20px; }
-.proposal-card .proposal-value { white-space: pre-line; overflow-wrap: anywhere; }
-.proposal-photo {
-  display: block;
-  max-width: min(100%, 440px);
-  max-height: 300px;
-  margin-top: 8px;
-  border-radius: 12px;
-  object-fit: contain;
-}
-.proposal-state { padding: 18px; }
-.proposal-state[hidden] { display: none; }
-.proposal-dialog {
-  width: min(520px, calc(100% - 32px));
-  padding: 22px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--card);
-  color: var(--ink);
-}
-.proposal-dialog::backdrop { background: rgba(15, 25, 19, .58); }
-.proposal-dialog h2 { margin-top: 0; }
-.proposal-dialog textarea {
-  display: block;
-  width: 100%;
-  min-height: 120px;
-  margin: 8px 0 14px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--bg);
-  color: var(--ink);
-  font: inherit;
+/* Column widths of the requests table (the shared .data-table keeps text inside its cell). */
+#requests-table { min-width: 960px; }
+#requests-table .col-species { width: 21%; }
+#requests-table .col-common { width: 15%; }
+#requests-table .col-family { width: 13%; }
+#requests-table .col-by { width: 14%; }
+#requests-table .col-on { width: 15%; }
+#requests-table .col-checks { width: 12%; }
+#requests-table .col-toggle { width: 100px; text-align: right; }
+#requests-table tr.expanded td { background: var(--mint); border-bottom: 0; }
+#requests-table .table-detail { padding: 0 12px 16px; background: var(--mint); white-space: normal; }
+.requests-toolbar .table-note { padding: 0; }
+.requests-toolbar .list-sort-bar { margin: 0 0 0 auto; }
+.check-badge { display: inline-block; max-width: 100%; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.check-badge.good { background: var(--ok); color: var(--okt); }
+.check-badge.warn { background: var(--wa); color: var(--wat); }
+.toggle-button { padding: 6px 14px; font-size: 13px; }
+
+/* The expanded request: what was sent, the checks, and the two decisions. */
+.request-detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; padding-top: 4px; }
+.request-detail section { min-width: 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.request-detail h3 { margin: 0 0 10px; font-size: 15px; overflow-wrap: anywhere; }
+.sent-list { display: grid; gap: 8px; margin: 0; }
+.sent-list dt { color: var(--mute); font-size: 12px; }
+.sent-list dd { margin: 2px 0 0; white-space: pre-line; overflow-wrap: anywhere; }
+.sent-list .not-given { color: var(--mute); font-style: italic; }
+.check-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.check-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 10px; border-radius: 10px; background: var(--wa); color: var(--wat); }
+.check-list li.good { background: var(--ok); color: var(--okt); }
+.check-list li span { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
+.decide-row { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 14px; }
+.decide-add label, .decide-reject label { display: grid; gap: 4px; color: var(--mute); font-size: 13px; }
+.decide-add select { max-width: 100%; }
+.decide-add .btn, .decide-reject .btn { margin-top: 10px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reason-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.reason-chips button { max-width: 100%; padding: 5px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--card); color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; overflow-wrap: anywhere; }
+.reason-chips button:hover { border-color: var(--pri); }
+.decide-reject textarea { display: block; width: 100%; min-height: 90px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: inherit; }
+.decide-reject .muted { margin: 6px 0 0; font-size: 13px; overflow-wrap: anywhere; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.request-state { padding: 18px; }
+.request-state[hidden] { display: none; }
+@media (max-width: 900px) {
+  .request-detail, .decide-row { grid-template-columns: minmax(0, 1fr); }
 }
 </style>
 </head>
@@ -52,28 +61,32 @@
 <main class="wide">
 <section class="page on">
   <h1>Species <span>requests</span></h1>
-  <p class="lead">New species that botanists requested from the field, for the conservation officer to approve or reject (a rejection needs a reason, which is shared with the botanist).</p>
-  <p class="muted" id="proposals-count">Loading species requests...</p>
-  <div class="card proposal-state" id="proposals-loading" role="status">Loading species requests...</div>
-  <div class="card proposal-state" id="proposals-error" role="alert" hidden></div>
-  <div class="card proposal-state" id="proposals-empty" hidden>Nothing waiting for review. New species requests from the mobile app will appear here.</div>
-  <div class="proposal-list" id="proposals-list"></div>
+  <p class="lead">New species that botanists asked to add from the field, waiting for the conservation officer's decision. Decisions are kept in Review history.</p>
+  <div class="card request-state" id="proposals-loading" role="status">Loading species requests...</div>
+  <div class="card request-state" id="proposals-error" role="alert" hidden></div>
+  <div class="card request-state" id="proposals-empty" hidden>Nothing waiting for review. New species requests from the mobile app will appear here.</div>
+
+  <article class="card table-card" id="proposals-card" hidden>
+    <div class="table-card-head">
+      <h2>Species requests</h2>
+    </div>
+    <p class="table-note">Botanists ask to add a species that isn't in the catalogue yet.</p>
+    <div class="table-toolbar requests-toolbar">
+      <input id="proposals-search" type="search" placeholder="Search species, family or botanist"
+        aria-label="Search species requests by species, family or botanist">
+      <span class="table-note" id="proposals-count" role="status">Loading species requests...</span>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table" id="requests-table">
+        <caption class="sr-only">Species requests waiting for review</caption>
+        <thead><tr><th scope="col">Requested species</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </article>
 </section>
 </main>
 </div>
-<dialog class="proposal-dialog" id="reject-dialog" aria-labelledby="reject-title">
-  <form id="reject-form">
-    <h2 id="reject-title">Don't add this species</h2>
-    <p id="reject-proposal-name"></p>
-    <label for="reject-reason">Reason <span aria-hidden="true">*</span></label>
-    <textarea id="reject-reason" required aria-describedby="reject-help"></textarea>
-    <p class="muted" id="reject-help">This reason will be sent to the botanist.</p>
-    <div class="acts">
-      <button class="btn ghost" type="button" id="reject-cancel">Cancel</button>
-      <button class="btn red" type="submit" id="reject-submit">Don't add</button>
-    </div>
-  </form>
-</dialog>
 <div id="toast" role="status"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R" crossorigin="anonymous"></script>
 <script src="js/shared.js"></script>

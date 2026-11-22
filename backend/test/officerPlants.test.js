@@ -467,3 +467,47 @@ test('facet statuses and sources are sorted with a compare function (SonarCloud 
   assert.deepEqual(result.body.data.plant_statuses, ['approved', 'pending', 'rejected']);
   assert.deepEqual(result.body.data.data_sources, ['field', 'inaturalist']);
 });
+
+test('plant detail (redesigned page): observation notes, GPS accuracy and photo captions, nothing internal', async () => {
+  role = 'officer';
+  const OBSERVER = '88888888-8888-4888-8888-888888888888';
+  db = fakeDb({
+    plants: {
+      single: {
+        id: PLANT_ID, qr_code_value: 'NIAH-PLT-00001', species_id: SPECIES_ID, plant_status: 'approved',
+        registered_by: OFFICER_ID, registered_at: '2026-08-01T08:00:00Z', gps_accuracy_m: 4.6,
+      },
+      data: [],
+      error: null,
+    },
+    plant_map_points: { single: { id: PLANT_ID, latitude: 3.8, longitude: 113.78 }, data: [], error: null },
+    species: { data: [{ id: SPECIES_ID, scientific_name: 'Nepenthes ampullaria' }], error: null },
+    profiles: { data: [{ id: OFFICER_ID, full_name: 'Registered By' }, { id: OBSERVER, full_name: 'Siti Botanist' }], error: null },
+    observations: {
+      data: [{ id: OBSERVATION_ID, plant_id: PLANT_ID, observer_id: OBSERVER, observed_at: '2026-11-02T10:00:00Z',
+        height_cm: 140, review_status: 'pending', notes: '  New pitchers forming.  ' }],
+      error: null,
+    },
+    observation_reviews: { data: [], error: null },
+    plant_media: {
+      data: [{ id: PHOTO_ID, plant_id: PLANT_ID, file_path: 'a/b/whole.jpg', photo_type: 'whole_plant', is_primary: true,
+        uploaded_by: OBSERVER, created_at: '2026-08-01T09:00:00Z', client_record_id: 'secret-client-id' }],
+      error: null,
+    },
+  });
+  const result = await callRoute('/api/officer/plants', router, { path: `/${PLANT_ID}` });
+  assert.equal(result.status, 200);
+  const plant = result.body.data;
+  assert.equal(plant.gps_accuracy_m, 4.6);
+  assert.equal(plant.observations[0].notes, 'New pitchers forming.');
+  assert.equal(plant.photos[0].taken_at, '2026-08-01T09:00:00Z');
+  assert.equal(plant.photos[0].added_by_name, 'Siti Botanist');
+  // Only the listed photo fields: no storage path, uploader id or client id.
+  assert.deepEqual(Object.keys(plant.photos[0]).sort(),
+    ['added_by_name', 'expires_in', 'id', 'is_primary', 'photo_type', 'taken_at', 'url']);
+  assert.doesNotMatch(JSON.stringify(result.body), /file_path|uploaded_by|secret-client-id/);
+  // The photos are this plant's (by plant id); the notes come with the observations.
+  assert.ok(db.calls.some(call => call[0] === 'plant_media' && call[1] === 'eq' && call[2] === 'plant_id' && call[3] === PLANT_ID));
+  assert.ok(db.calls.some(call => call[0] === 'observations' && call[1] === 'select' && /, notes$/.test(call[2])));
+  assert.ok(db.calls.some(call => call[0] === 'plants' && call[1] === 'select' && /gps_accuracy_m/.test(call[2])));
+});

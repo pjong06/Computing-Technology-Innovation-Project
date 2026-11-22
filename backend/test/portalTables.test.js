@@ -100,14 +100,16 @@ test('Plants: thumbnails, tag chip, lock icon, tabs, and Print QR tags through t
 test('Plant detail: gallery, chips, Measurements, Location, Field notes and Observations; empty sections hidden', () => {
   const html = read('frontend/plant.html');
   const script = read('frontend/js/plant.js');
-  for (const heading of ['Measurements', 'Location', 'Field notes', 'Observations']) {
+  for (const heading of ['Latest measurements', 'Location', 'Field notes']) {
     assert.match(html, new RegExp(`<h2>${heading}</h2>`), heading);
   }
+  assert.match(html, /<h2>Observations <span class="count-pill" id="observations-total"><\/span><\/h2>/);
   // Measurements come from the newest approved observation; empty tiles and cards are hidden.
   assert.match(script, /observations\.filter\(item => item\.review_status === 'approved'\)/);
   assert.match(script, /byId\('measurements-card'\)\.hidden = tiles\.length === 0;/);
   assert.match(script, /byId\('field-notes-card'\)\.hidden = box\.children\.length === 0;/);
-  assert.match(script, /'Recorded by ' \+/);
+  // Timeline line: "<date/time> · <observer>".
+  assert.match(script, /formatWhen\(observation\.observed_at, 'Date not recorded'\) \+ ' · ' \+/);
   assert.match(script, /observation\.review_status === 'rejected' && observation\.reviewer_comment/);
   assert.match(html, /No observations yet/);
   // No photo credit on screen (comments aside).

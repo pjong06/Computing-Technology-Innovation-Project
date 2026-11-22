@@ -175,7 +175,7 @@ test('species.js and editor.js use /api/knowledge, not the old website copy', ()
   assert.match(proposals, /'\/knowledge\/species\/proposals\/' \+ proposal\.id \+ '\/review'/);
   assert.match(proposals, /proposal\.created_at/);
   assert.match(proposals, /proposal\.habitat/);
-  assert.match(read('frontend/proposals.html'), /id="reject-reason"/);
+  assert.match(proposals, /reason\.id = 'reject-reason';\s*reason\.required = true;/);
   assert.doesNotMatch(proposals, /prompt\(/);
   assert.match(proposals, /Habitat \/ location note/);
   assert.doesNotMatch(proposals, /No reference photo provided/);
@@ -201,8 +201,9 @@ test('species proposals page is officer-only, guarded, and its controls match th
   const script = read('frontend/js/proposals.js');
   assert.match(script, /if \(pageAllowed === false\)/);
   assert.match(script, /loadProposals\(\)\.catch/);
-  assert.match(html, /<dialog[^>]+id="reject-dialog"/);
-  assert.match(html, /<textarea[^>]+id="reject-reason" required/);
+  // The reason box is in the open request (required), not in a dialog.
+  assert.doesNotMatch(html, /<dialog/);
+  assert.match(script, /reason\.id = 'reject-reason';\s*reason\.required = true;/);
 
   const htmlIds = new Set(Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]));
   const scriptIds = Array.from(script.matchAll(/byId\(['"]([^'"]+)['"]\)/g), match => match[1]);
@@ -375,7 +376,7 @@ test('the plant catalogue is officer-only, linked from the menu and its page con
   assert.match(catalogue, /image\.src = plant\.photo_thumbnail\?\.url \|\| PICTURE_BLANK;/);
   assert.doesNotMatch(catalogue, /species_photo|Species photo|makeSpeciesPhotoCredit|makePhotoCreditInfo|photoCreditText/);
   assert.doesNotMatch(detail, /Imported from|Observer:|plant-source/);
-  assert.match(detail, /renderGallery\(plant\.photos \|\| \[\]\);/);
+  assert.match(detail, /renderGallery\(plant\.photos \|\| \[\], plant\);/);
   assert.match(detail, /image\.alt = 'No photos of this plant yet';/);
   assert.doesNotMatch(detail, /species_photo|speciesFallback|makePhotoCreditInfo|Species reference photo/);
 
@@ -646,7 +647,7 @@ test('plant detail shows coordinates rounded to 6 decimals', () => {
   assert.equal(displayCoordinates('3.8', '113.78'), '3.800000, 113.780000');
   assert.equal(displayCoordinates(null, 113.78), 'Not recorded');
   assert.equal(displayCoordinates('x', 'y'), 'Not recorded');
-  assert.match(read('frontend/js/plant.js'), /\['Coordinates', located \? displayCoordinates\(plant\.latitude, plant\.longitude\) : ''\]/);
+  assert.match(read('frontend/js/plant.js'), /\['Coordinates', located \? displayCoordinates\(plant\.latitude, plant\.longitude\) : 'Not recorded'\]/);
 });
 
 test('a request that never reaches the server says so plainly, not "Failed to fetch"', async () => {

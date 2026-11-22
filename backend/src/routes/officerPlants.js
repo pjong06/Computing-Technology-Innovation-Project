@@ -29,7 +29,7 @@ const PLANT_COLUMNS =
     "registered_by, registered_at";
 const SPECIES_COLUMNS = "id, scientific_name, common_name, conservation_status, taxonomy(family)";
 // Extra plant columns for the plant detail page (field notes).
-const PLANT_DETAIL_COLUMNS = `${PLANT_COLUMNS}, morphology, description`;
+const PLANT_DETAIL_COLUMNS = `${PLANT_COLUMNS}, morphology, description, gps_accuracy_m`;
 // Column sorting for the plant list: ?sort=<key>&dir=asc|desc. newest / oldest stay as before.
 const PLANT_SORTS = {
     newest: { column: "registered_at", ascending: false },
@@ -46,6 +46,8 @@ const SPECIES_PHOTO_COLUMNS =
 const OBSERVATION_COLUMNS =
     "id, plant_id, observer_id, observed_at, height_cm, diameter_cm, " +
     "health_status, life_stage, review_status";
+// The plant detail page also shows each observation's note.
+const OBSERVATION_DETAIL_COLUMNS = `${OBSERVATION_COLUMNS}, notes`;
 const PHOTO_COLUMNS = "id, plant_id, file_path, photo_type, is_primary";
 
 function oneQueryValue(query, key, fallback = "") {
@@ -152,11 +154,11 @@ async function loadPlantCoordinates(supabase, plantId) {
     };
 }
 
-async function loadObservations(supabase, plantIds) {
+async function loadObservations(supabase, plantIds, columns = OBSERVATION_COLUMNS) {
     if (plantIds.length === 0) return [];
     return throwOnError(await supabase
         .from("observations")
-        .select(OBSERVATION_COLUMNS)
+        .select(columns)
         .in("plant_id", plantIds)
         .is("deleted_at", null)
         .order("observed_at", { ascending: false }));
@@ -184,6 +186,18 @@ async function loadPlantPhotos(supabase, plantIds, primaryOnly) {
     if (primaryOnly) query = query.eq("is_primary", true);
     return throwOnError(await query);
 }
+
+// The plant detail page's photos, with who added each one and when (for the photo caption).
+// All columns, so the date is used when the table has one; the caption falls back to the
+// plant's registration otherwise.
+async function loadDetailPhotos(supabase, plantId) {
+    return throwOnError(await supabase
+        .from("plant_media")
+        .select("*")
+        .eq("plant_id", plantId));
+}
+
+const photoTakenAt = (photo) => photo.captured_at || photo.created_at || photo.uploaded_at || null;
 
 async function signPhotos(supabase, photos, bucket = "plant-media") {
     if (photos.length === 0) return new Map();
@@ -572,14 +586,15 @@ router.get("/:id", async (req, res) => {
         const [speciesById, profileNames, observations, photos, coordinates] = await Promise.all([
             loadSpeciesById(req.supabase, plant.species_id ? [plant.species_id] : []),
             loadProfileNames(req.supabase, plant.registered_by ? [plant.registered_by] : []),
-            loadObservations(req.supabase, [plant.id]),
-            loadPlantPhotos(req.supabase, [plant.id], false),
+            loadObservations(req.supabase, [plant.id], OBSERVATION_DETAIL_COLUMNS),
+            loadDetailPhotos(req.supabase, plant.id),
             loadPlantCoordinates(req.supabase, plant.id),
         ]);
         const observationIds = uniqueIds(observations, "id");
-        const observerIds = uniqueIds(observations, "observer_id");
+        // Observers, and whoever added each photo (for the photo caption).
+        const personIds = [...new Set([...uniqueIds(observations, "observer_id"), ...uniqueIds(photos, "uploaded_by")])];
         const [observerNames, reviews] = await Promise.all([
-            loadProfileNames(req.supabase, observerIds),
+            loadProfileNames(req.supabase, personIds),
             observationIds.length
                 ? req.supabase
                     .from("observation_reviews")
@@ -627,11 +642,17 @@ router.get("/:id", async (req, res) => {
                 observation_count: summary.count,
                 latitude: coordinates.latitude,
                 longitude: coordinates.longitude,
+                gps_accuracy_m: plant.gps_accuracy_m ?? null,
                 photo_thumbnail: primaryPhoto ? publicPhoto(primaryPhoto, photoUrls) : null,
                 species_photo: photos.length === 0
                     ? publicSpeciesPhoto(preferredSpeciesPhoto, speciesPhotoUrls)
                     : null,
-                photos: photos.map((photo) => publicPhoto(photo, photoUrls)),
+                // Each photo with its caption: when it was added and by whom (null when unknown).
+                photos: photos.map((photo) => ({
+                    ...publicPhoto(photo, photoUrls),
+                    taken_at: photoTakenAt(photo),
+                    added_by_name: observerNames.get(photo.uploaded_by) || null,
+                })),
                 observations: observations.map((observation) => ({
                     id: observation.id,
                     observed_at: observation.observed_at,
@@ -640,6 +661,7 @@ router.get("/:id", async (req, res) => {
                     health_status: observation.health_status,
                     life_stage: observation.life_stage,
                     review_status: observation.review_status,
+                    notes: observation.notes?.trim() || null,
                     reviewer_comment: latestCommentByObservation.get(observation.id) || null,
                     observer_name: observerNames.get(observation.observer_id) || null,
                 })),
