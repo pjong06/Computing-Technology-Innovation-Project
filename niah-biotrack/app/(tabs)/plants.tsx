@@ -7,12 +7,12 @@ import {
   TouchableOpacity,
   ScrollView,
   StyleSheet,
-  SafeAreaView,
   Platform,
   StatusBar,
   ActivityIndicator,
   AppState,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { usePublicPlantsStore } from '../../src/store/usePublicPlantsStore';
@@ -23,10 +23,18 @@ import { thumbnailSources } from '../../src/utils/thumbnailSources';
 
 const AUTO_REFRESH_INTERVAL_MS = 30_000;
 
+function plantPhotoCaption(tagCode: string | null | undefined): string | null {
+  const trimmed = tagCode?.trim();
+  return trimmed ? trimmed : null;
+}
+
 // Visitor "Plants" tab: read-only list of approved plants synced with the park's
 // approved plant records (no coordinates, no staff details, and no add/edit controls).
 export default function VisitorPlantsScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const topInset = Math.max(insets.top, Platform.OS === 'android' ? (StatusBar.currentHeight ?? 28) : 0);
+
   const plants = usePublicPlantsStore((state) => state.plants);
   const loading = usePublicPlantsStore((state) => state.loading);
   const error = usePublicPlantsStore((state) => state.error);
@@ -104,7 +112,7 @@ export default function VisitorPlantsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <View style={[styles.safeArea, { paddingTop: topInset }]}>
       <View style={styles.container}>
         <Text style={styles.title}>Plants</Text>
 
@@ -161,6 +169,8 @@ export default function VisitorPlantsScreen() {
           renderItem={({ item }) => {
             const status = plainConservationStatus(item.conservationStatus);
             const colors = conservationStatusColors(status.code);
+            const photo = item.photoUrl ? { url: item.photoUrl } : null;
+            const caption = plantPhotoCaption(item.tagCode);
             return (
               <TouchableOpacity
                 style={styles.row}
@@ -178,7 +188,7 @@ export default function VisitorPlantsScreen() {
                 accessibilityRole="button"
               >
                 <PlantThumbnail
-                  sources={thumbnailSources({ publicPath: item.photoUrl, baseUrl: BASE_URL })}
+                  sources={thumbnailSources({ publicPath: photo?.url, baseUrl: BASE_URL })}
                   style={styles.thumb}
                   placeholder={
                     <View style={[styles.thumb, styles.thumbPlaceholder]}>
@@ -190,9 +200,11 @@ export default function VisitorPlantsScreen() {
                   <Text style={styles.scientificName} numberOfLines={2}>
                     {item.scientificName || item.commonName || 'Approved plant'}
                   </Text>
-                  <Text style={styles.tagCode} numberOfLines={1}>
-                    {item.tagCode}
-                  </Text>
+                  {caption ? (
+                    <Text style={styles.tagCode} numberOfLines={1}>
+                      {caption}
+                    </Text>
+                  ) : null}
                   {item.commonName && item.scientificName ? (
                     <Text style={styles.commonName} numberOfLines={1}>
                       {item.commonName}
@@ -208,12 +220,12 @@ export default function VisitorPlantsScreen() {
           }}
         />
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F6F8F6', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
+  safeArea: { flex: 1, backgroundColor: '#F6F8F6' },
   container: { flex: 1, paddingHorizontal: 20, paddingTop: 12 },
   title: { fontSize: 24, fontWeight: '800', color: '#1E2B22', marginBottom: 12 },
   search: { backgroundColor: '#FFFFFF', height: 46, borderRadius: 23, paddingHorizontal: 18, fontSize: 14, color: '#1E2B22', borderWidth: 1.2, borderColor: '#E6ECE8', marginBottom: 10 },

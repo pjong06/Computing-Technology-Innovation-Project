@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
   Platform,
   StatusBar,
   Image,
@@ -14,6 +13,7 @@ import {
   RefreshControl,
   AppState,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
@@ -36,8 +36,16 @@ import RecentActivity from '../../src/components/RecentActivity';
 
 const FEATURED_COUNT = 4;
 
+function plantPhotoCaption(tagCode: string | null | undefined): string | null {
+  const trimmed = tagCode?.trim();
+  return trimmed ? trimmed : null;
+}
+
 export default function HomeScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const topInset = Math.max(insets.top, Platform.OS === 'android' ? (StatusBar.currentHeight ?? 28) : 0);
+
   const { isVisitor, userName, logout } = useAuthRole();
   const refreshReviewStatuses = useRecordStore((state) => state.refreshReviewStatuses);
 
@@ -195,7 +203,7 @@ export default function HomeScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <View style={[styles.safeArea, { paddingTop: topInset }]}>
       <View style={styles.container}>
         <View style={styles.headerRow}>
           <View style={styles.headerLeft}>
@@ -385,6 +393,8 @@ export default function HomeScreen() {
                     {featured.map((item) => {
                       const status = plainConservationStatus(item.conservationStatus);
                       const colors = conservationStatusColors(status.code);
+                      const photo = item.photoUrl ? { url: item.photoUrl } : null;
+                      const caption = plantPhotoCaption(item.tagCode);
                       return (
                         <TouchableOpacity
                           key={item.id}
@@ -402,7 +412,7 @@ export default function HomeScreen() {
                           }
                         >
                           <PlantThumbnail
-                            sources={thumbnailSources({ publicPath: item.photoUrl, baseUrl: BASE_URL })}
+                            sources={thumbnailSources({ publicPath: photo?.url, baseUrl: BASE_URL })}
                             style={styles.featuredPhoto}
                             placeholder={
                               <View style={[styles.featuredPhoto, styles.featuredPlaceholder]}>
@@ -413,9 +423,11 @@ export default function HomeScreen() {
                           <Text style={styles.featuredName} numberOfLines={1}>
                             {item.scientificName || item.commonName || 'Approved plant'}
                           </Text>
-                          <Text style={styles.featuredCaption} numberOfLines={1}>
-                            {item.tagCode}
-                          </Text>
+                          {caption ? (
+                            <Text style={styles.featuredCaption} numberOfLines={1}>
+                              {caption}
+                            </Text>
+                          ) : null}
                           <View style={[styles.featuredBadge, { backgroundColor: colors.bg }]}>
                             <Text style={[styles.featuredBadgeText, { color: colors.text }]}>{status.label}</Text>
                           </View>
@@ -433,7 +445,7 @@ export default function HomeScreen() {
           </ScrollView>
         )}
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -441,7 +453,6 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#F6F8F6',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   container: { flex: 1, paddingHorizontal: 20, paddingTop: 12 },
   headerRow: {
