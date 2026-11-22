@@ -16,3 +16,6 @@ scripts/species-descriptions/*.csv
 # Species text cleaning and demo plant details reports
 scripts/clean-species-text/*.csv
 scripts/demo-plant-details/*.csv
+# Species conservation status (IUCN via GBIF): report and API cache
+scripts/species-status/*.csv
+scripts/species-status/.cache/
