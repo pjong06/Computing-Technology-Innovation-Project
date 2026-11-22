@@ -125,6 +125,8 @@ async function uploadProposal(operation: OutboxOperation, proposal: SpeciesPropo
       operation_id: operation.operationId,
       status: retryable ? 'retry' : 'failed',
       message: reason,
+      // For Sync details: no answer at all, or the HTTP status the server gave.
+      code: status === 0 ? 'network' : `http_${status}`,
       retryAfterMs: error instanceof ApiError ? error.retryAfterMs : undefined,
     });
     if (retryable) requestSyncRetry();
@@ -150,6 +152,10 @@ function reviewFromServer(status: string): ProposalReview {
 
 interface ProposalState {
   proposals: SpeciesProposal[];
+  // A request made from Register plant ("Species not in the list?"), handed back to that
+  // form when it returns, so the plant is linked to it. Taken (cleared) once read.
+  pendingPlantLink: { id: string; scientificName: string } | null;
+  setPendingPlantLink: (link: { id: string; scientificName: string } | null) => void;
   hydrateOfflineProposals: () => Promise<void>;
   addProposal: (
     data: Pick<SpeciesProposal, 'scientificName' | 'commonName' | 'localName' | 'family' | 'description' | 'habitat'>
@@ -176,6 +182,8 @@ export const useProposalStore = create<ProposalState>()((set) => {
     };
     return {
       proposals: [],
+      pendingPlantLink: null,
+      setPendingPlantLink: (link) => set({ pendingPlantLink: link }),
       hydrateOfflineProposals: () => serialize(async () => {
         await reload();
       }),

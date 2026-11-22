@@ -15,6 +15,7 @@ import {
   type LocalSyncStatus,
   type SyncOperationType,
 } from './offlineDatabase';
+import { speciesReady } from '../utils/speciesSearch';
 
 const UPLOADED = 'Uploaded';
 const NOT_UPLOADED = 'Not uploaded';
@@ -62,10 +63,10 @@ function toStoreStatus(
 function recordCanUpload(
   record: PlantRecord
 ): boolean {
+  // A catalogue species, or a species request the plant waits for (speciesReady).
   return (
     record.recordStatus === 'complete' &&
-    record.identificationStatus === 'identified' &&
-    Boolean(record.speciesId) &&
+    speciesReady(record) &&
     typeof record.latitude === 'number' &&
     typeof record.longitude === 'number'
   );

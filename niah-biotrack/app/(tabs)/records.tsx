@@ -499,8 +499,11 @@ export default function PlantsListScreen() {
                 }
               />
               <View style={styles.plantText}>
+                {/* Plant first (its tag), species second, then where it is. */}
+                <Text style={[styles.plantTag, !isPhysicalTag(item.tag) && styles.plantTagMuted]} numberOfLines={1}>
+                  {isPhysicalTag(item.tag) ? item.tag : 'No tag yet'}
+                </Text>
                 <Text style={styles.plantName} numberOfLines={2}>{item.name}</Text>
-                {isPhysicalTag(item.tag) ? <Text style={styles.plantMeta} numberOfLines={1}>{item.tag}</Text> : null}
                 {item.place ? <Text style={styles.plantMeta} numberOfLines={1}>{item.place}</Text> : null}
                 <View style={styles.badgeRow}>
                   <View style={[styles.statusBadge, { backgroundColor: item.badge.bg }]}>
@@ -608,7 +611,9 @@ const styles = StyleSheet.create({
   thumb: { width: 56, height: 56, borderRadius: 12, backgroundColor: '#E7EFEA' },
   thumbPlaceholder: { justifyContent: 'center', alignItems: 'center' },
   plantText: { flex: 1, minWidth: 0, marginLeft: 12 },
-  plantName: { fontSize: 14.5, fontWeight: '700', fontStyle: 'italic', color: '#1E2B22' },
+  plantTag: { fontSize: 14.5, fontWeight: '800', color: '#1E2B22', fontVariant: ['tabular-nums'] },
+  plantTagMuted: { color: '#68776D' },
+  plantName: { fontSize: 13.5, fontWeight: '600', fontStyle: 'italic', color: '#33463A', marginTop: 2 },
   plantMeta: { fontSize: 12, color: '#68776D', marginTop: 2 },
   badgeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
   statusBadge: { flexShrink: 1, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 14 },

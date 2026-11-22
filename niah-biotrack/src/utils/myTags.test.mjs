@@ -96,8 +96,9 @@ test('plant detail: own plants with a placeholder show Attach tag; Show QR only 
   const detail = read('../../app/plant-detail.tsx');
   assert.match(detail, /\{isPhysicalTag\(matched\.tagCode\) \? \(\s*<TouchableOpacity style=\{styles\.actionBtn\} onPress=\{\(\) => void openQr\(\)\}>/);
   assert.match(detail, />Attach tag</);
-  // The title block's tag chip: the real tag, or "No tag yet".
-  assert.match(detail, /\{isPhysicalTag\(matched\.tagCode\) \? matched\.tagCode : 'No tag yet'\}/);
+  // The title is the plant's tag: the real tag, or "No tag yet" (plantHeading).
+  assert.match(detail, /const heading = plantHeading\(matched\.tagCode, matched\.scientificName, matched\.commonName\);/);
+  assert.match(detail, /\{heading\.title\}/);
   // The "⋯" menu offers Attach/Change tag on the botanist's own plants only.
   assert.match(detail, /\{!matched\.otherBotanist \? \(\s*<TouchableOpacity\s+style=\{styles\.menuItem\}/);
   assert.match(detail, /isPhysicalTag\(matched\.tagCode\) \? 'Change tag' : 'Attach tag'/);

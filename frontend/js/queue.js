@@ -103,6 +103,11 @@ function plainValue(value) {
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : '—';
 }
 
+// The species request this record's plant waits for ({ id, scientific_name }), or null.
+function speciesRequestOf(observation) {
+  return observation.plant && observation.plant.species_request ? observation.plant.species_request : null;
+}
+
 function botanistName(observation) {
   return observation.observer_name || 'Botanist';
 }
@@ -147,7 +152,10 @@ function makeRow(observation) {
 
   const sci = document.createElement('div');
   sci.className = 'review-sci';
-  sci.textContent = observationName(observation);
+  const waitingFor = speciesRequestOf(observation);
+  sci.textContent = waitingFor
+    ? 'Waiting for species request: ' + (waitingFor.scientific_name || 'a new species')
+    : observationName(observation);
   text.appendChild(sci);
 
   const meta = document.createElement('div');
@@ -340,11 +348,14 @@ function addActions(card, observation) {
   actions.className = 'review-actions';
   const open = sendBackOpenFor === observation.id;
 
+  // Held while the plant waits for a species request: the species must be added first.
+  const waitingFor = observation.plant && observation.plant.species_request ? observation.plant.species_request : null;
   const approveButton = document.createElement('button');
   approveButton.className = 'btn';
   approveButton.type = 'button';
   approveButton.textContent = 'Approve';
-  approveButton.disabled = busy;
+  approveButton.disabled = busy || Boolean(waitingFor);
+  if (waitingFor) approveButton.title = 'Add the species first';
   approveButton.onclick = function () {
     reviewObservation(observation.id, 'approved', null).catch(showUnexpectedError);
   };
@@ -362,6 +373,12 @@ function addActions(card, observation) {
   buttons.appendChild(approveButton);
   buttons.appendChild(sendBackButton);
   actions.appendChild(buttons);
+  if (waitingFor) {
+    const hint = document.createElement('p');
+    hint.className = 'muted review-hold-hint';
+    hint.textContent = 'Add the species first';
+    actions.appendChild(hint);
+  }
 
   // The reason box, hidden until Send back is pressed.
   const box = document.createElement('div');
@@ -467,6 +484,19 @@ function makeDetailCard(observation) {
   subline.textContent = [visitKind(observation), tagText(observation), botanistName(observation),
     reviewTime(observation.observed_at)].join(' · ');
   info.appendChild(subline);
+
+  // The plant waits for a species the botanist requested: say which, with a link to it.
+  const waitingFor = speciesRequestOf(observation);
+  if (waitingFor) {
+    const waiting = document.createElement('p');
+    waiting.className = 'review-waiting';
+    waiting.append('Waiting for species request: ');
+    const link = document.createElement('a');
+    link.href = 'proposals.html?request=' + encodeURIComponent(waitingFor.id);
+    link.textContent = waitingFor.scientific_name || 'a new species';
+    waiting.appendChild(link);
+    info.appendChild(waiting);
+  }
 
   // Two by two; "—" when a value wasn't recorded.
   const tiles = document.createElement('div');

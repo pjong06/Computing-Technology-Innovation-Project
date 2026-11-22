@@ -187,18 +187,33 @@ function conservationChip(code) {
   return chip;
 }
 
+// The common name only when there is one and it isn't the scientific name again.
+function distinctCommonName(species) {
+  const common = String(species.common_name || '').trim();
+  const scientific = String(species.scientific_name || '').trim();
+  return common && common.toLowerCase() !== scientific.toLowerCase() ? common : '';
+}
+
 function renderTitle(plant) {
   const species = plant.species || {};
-  byId('plant-title').textContent = species.scientific_name || 'Species not recorded';
-  document.title = (species.scientific_name || 'Plant') + ' - Niah Biotrack';
+  // Plant first: its tag is the title ("No tag yet" without a real tag).
+  const tag = displayTag(plant.tag_code, '');
+  const hasTag = Boolean(tag) && tag !== NO_PHYSICAL_TAG;
+  byId('plant-title').textContent = hasTag ? tag : 'No tag yet';
+  byId('plant-title').classList.toggle('no-tag', !hasTag);
+  document.title = (hasTag ? tag : species.scientific_name || 'Plant') + ' - Niah Biotrack';
 
-  // "common name · family · Open species"
+  // Species second: "<italic scientific name> · <common name> · Open species".
   const sub = byId('plant-species');
   sub.replaceChildren();
-  const words = [species.common_name, species.family].filter(Boolean);
-  if (words.length) sub.append(words.join(' · '));
+  const scientific = document.createElement('span');
+  scientific.className = 'sci';
+  scientific.textContent = species.scientific_name || 'Species not recorded';
+  sub.appendChild(scientific);
+  const common = distinctCommonName(species);
+  if (common) sub.append(' · ' + common);
   if (species.id) {
-    if (words.length) sub.append(' · ');
+    sub.append(' · ');
     const open = document.createElement('a');
     open.href = '#';
     open.textContent = 'Open species';
@@ -208,12 +223,14 @@ function renderTitle(plant) {
     };
     sub.appendChild(open);
   }
-  sub.hidden = sub.childNodes.length === 0;
 
+  // Then where it is (the location note), when there is one.
+  byId('plant-location').textContent = plant.location_description || '';
+  byId('plant-location').hidden = !plant.location_description;
+
+  // Review status and conservation status (the tag is the title now).
   const chips = byId('plant-chips');
   chips.replaceChildren();
-  const tag = displayTag(plant.tag_code, '');
-  chips.appendChild(tag && tag !== NO_PHYSICAL_TAG ? labelSpan('status-badge', tag) : labelSpan('chip-muted', 'No tag yet'));
   const status = reviewStatusDisplay(plant.plant_status);
   chips.appendChild(labelSpan(('status-badge ' + status.css).trim(), status.label));
   chips.appendChild(conservationChip(species.conservation_status));
@@ -224,7 +241,6 @@ function renderTitle(plant) {
     ['Registered by', plant.registered_by || 'Not recorded'],
     ['Registered', formatDay(plant.registered_at)],
     ['Last observation', formatDay(plant.last_observation_at, 'None yet')],
-    ['Location note', plant.location_description || 'Not recorded'],
   ]) {
     const item = document.createElement('div');
     const term = document.createElement('dt');

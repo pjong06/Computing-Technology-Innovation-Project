@@ -104,6 +104,7 @@ export default function RootLayout() {
         <Stack.Screen name="species-reference/[id]" />
         <Stack.Screen name="attach-tag" />
         <Stack.Screen name="my-tags" />
+        <Stack.Screen name="sync-details" />
         <Stack.Screen name="add-observation" />
         <Stack.Screen name="navigate-plant" />
         <Stack.Screen name="manual-qr" />

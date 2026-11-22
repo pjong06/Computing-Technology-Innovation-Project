@@ -111,6 +111,8 @@ async function runPush(): Promise<SyncRunResult> {
           operation_id: operation.operationId,
           status: retryable ? 'retry' : 'failed',
           message,
+          // For Sync details: no answer at all, or the HTTP status the server gave.
+          code: status === 0 ? 'network' : `http_${status}`,
           retryAfterMs: error instanceof ApiError ? error.retryAfterMs : undefined,
         });
       }
@@ -145,6 +147,7 @@ async function runPush(): Promise<SyncRunResult> {
         operation_id: operation.operationId,
         status: 'retry',
         message: 'The server did not return a result for this operation.',
+        code: 'no_result',
       });
       processed += 1;
       failed += 1;

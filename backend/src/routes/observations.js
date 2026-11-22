@@ -253,7 +253,7 @@ router.patch("/:id/submit", async (req, res) => {
 
     const { data: observation, error } = await req.supabase
         .from("observations")
-        .select("id, observer_id, review_status")
+        .select("id, observer_id, review_status, plant_id, deleted_at")
         .eq("id", id)
         .maybeSingle();
 
@@ -263,17 +263,41 @@ router.patch("/:id/submit", async (req, res) => {
         });
     }
 
-    if (!observation) {
+    // Removed on the server (or no longer visible): it can never be sent for review, so
+    // the app stops retrying and offers to remove it from the phone (code below).
+    if (!observation || observation.deleted_at) {
         return res.status(404).json({
-            message: "Observation not found"
+            message: "Observation not found",
+            code: "observation_deleted"
         });
     }
 
     // Only the observation owner can submit it.
     if (observation.observer_id !== req.user.id) {
         return res.status(403).json({
-            message: "You do not own this observation"
+            message: "You do not own this observation",
+            code: "submit_refused"
         });
+    }
+
+    // Its plant was removed on the server (soft-deleted): same, a permanent answer.
+    if (observation.plant_id) {
+        const { data: plant, error: plantError } = await req.supabase
+            .from("plants")
+            .select("id, deleted_at")
+            .eq("id", observation.plant_id)
+            .maybeSingle();
+        if (plantError) {
+            return res.status(500).json({
+                message: "Failed to check observation"
+            });
+        }
+        if (!plant || plant.deleted_at) {
+            return res.status(410).json({
+                message: "This plant was removed on the server.",
+                code: "plant_deleted"
+            });
+        }
     }
 
     // Retrying an already-submitted observation is successful.
@@ -286,7 +310,8 @@ router.patch("/:id/submit", async (req, res) => {
 
     if (!["draft", "rejected"].includes(observation.review_status)) {
         return res.status(400).json({
-            message: "Only draft or rejected observations can be submitted"
+            message: "Only draft or rejected observations can be submitted",
+            code: "submit_refused"
         });
     }
 
@@ -302,10 +327,12 @@ router.patch("/:id/submit", async (req, res) => {
 
     if (updateError) {
         // Row-level security refused the change (42501). Say so plainly with a 4xx, so the
-        // app shows the reason on the visit instead of retrying a server error on every sync.
+        // app shows the reason on the observation instead of retrying a server error on
+        // every sync.
         if (updateError.code === "42501") {
             return res.status(403).json({
-                message: "This visit can't be sent for review. Please contact the officer."
+                message: "This observation can't be sent for review. Please contact the officer.",
+                code: "submit_refused"
             });
         }
 
@@ -385,7 +412,7 @@ router.post("/:id/photo", async (req, res, next) => {
 
     const { data: observation, error } = await req.supabase
         .from("observations")
-        .select("id, observer_id, review_status, deleted_at")
+        .select("id, observer_id, review_status, deleted_at, plant_id")
         .eq("id", observationId)
         .maybeSingle();
 
@@ -393,8 +420,23 @@ router.post("/:id/photo", async (req, res, next) => {
         console.error("Observation photo lookup error:", error);
         return res.status(500).json({ message: "Failed to check observation" });
     }
+    // Removed on the server: the photo can never upload (permanent, with a code).
     if (!observation || observation.deleted_at) {
-        return res.status(404).json({ message: "Observation not found" });
+        return res.status(404).json({ message: "Observation not found", code: "observation_deleted" });
+    }
+    if (observation.plant_id) {
+        const { data: plant, error: plantError } = await req.supabase
+            .from("plants")
+            .select("id, deleted_at")
+            .eq("id", observation.plant_id)
+            .maybeSingle();
+        if (plantError) {
+            console.error("Observation photo plant lookup error:", plantError);
+            return res.status(500).json({ message: "Failed to check observation" });
+        }
+        if (!plant || plant.deleted_at) {
+            return res.status(410).json({ message: "This plant was removed on the server.", code: "plant_deleted" });
+        }
     }
     if (observation.observer_id !== req.user.id) {
         return res.status(403).json({ message: "Only the observer may upload photos" });

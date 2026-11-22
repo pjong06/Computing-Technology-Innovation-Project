@@ -20,7 +20,8 @@ export const TAG_PROBLEM_REASON: Record<TagProblemCode, string> = {
 export type PlantStatusLine =
   | { kind: 'waiting'; text: string }
   | { kind: 'not_uploaded'; text: string }
-  | { kind: 'failed'; text: string; retry: true }
+  // retry: false when it can never upload (the text says why; Sync details can remove it).
+  | { kind: 'failed'; text: string; retry: boolean }
   | null;
 
 export const WAITING_TEXT = 'Waiting for review';
@@ -39,13 +40,21 @@ function reasonText(text: string): string {
  *   - on the server, waiting for review -> "Waiting for review"
  *   - otherwise (draft, approved, sent back: the review chip and reason say it) -> null
  */
-export function plantStatusLine(record: {
-  syncStatus?: string | null;
-  reviewStatus?: string | null;
-  syncError?: string | null;
-  tagProblem?: TagProblemCode | null;
-}): PlantStatusLine {
+export function plantStatusLine(
+  record: {
+    syncStatus?: string | null;
+    reviewStatus?: string | null;
+    syncError?: string | null;
+    tagProblem?: TagProblemCode | null;
+  },
+  // Set when everything that failed can never upload (src/utils/syncDetails.ts): its
+  // explanation, and no Retry.
+  permanentReason?: string | null
+): PlantStatusLine {
   const sync = String(record.syncStatus ?? '');
+  if (sync === FAILED && permanentReason) {
+    return { kind: 'failed', text: `Upload failed: ${reasonText(permanentReason)}`, retry: false };
+  }
   if (sync === FAILED) {
     const reason = record.tagProblem
       ? TAG_PROBLEM_REASON[record.tagProblem]
@@ -76,6 +85,30 @@ export function speciesSubtitle(scientificName?: string | null, commonName?: str
   if (commonUseful && familyUseful && !sameWords(common, familyName)) return `${common} · ${familyName}`;
   if (familyUseful) return familyName;
   return commonUseful ? common : '';
+}
+
+/**
+ * Plant first, species second (plant detail header, Plants list, Recent activity):
+ *   title   - the plant's tag (NIAH-PLT-#####), or "No tag yet";
+ *   species - the scientific name (shown italic) and, after " · ", the common name only when
+ *             there is one and it differs from the scientific name.
+ */
+export function plantHeading(tagCode?: string | null, scientificName?: string | null, commonName?: string | null): {
+  title: string;
+  hasTag: boolean;
+  scientific: string;
+  common: string | null;
+} {
+  const tag = (tagCode ?? '').trim();
+  const hasTag = /^NIAH-PLT-\d{5}$/.test(tag);
+  const scientific = (scientificName ?? '').trim();
+  const common = (commonName ?? '').trim();
+  return {
+    title: hasTag ? tag : 'No tag yet',
+    hasTag,
+    scientific,
+    common: common && !sameWords(common, scientific) ? common : null,
+  };
 }
 
 /**
