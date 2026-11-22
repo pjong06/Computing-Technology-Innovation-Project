@@ -9,25 +9,57 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous">
 <link rel="stylesheet" href="css/style.css">
 <style>
-.back-link { display: inline-block; margin-bottom: 14px; color: var(--pri); font-weight: 600; text-decoration: none; }
-.plant-head { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+/* Top bar: breadcrumb on the left, the plant's actions on the right. */
+.plant-topbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; margin-bottom: 6px; }
+.breadcrumb { display: flex; min-width: 0; align-items: center; gap: 6px; font-weight: 600; }
+.breadcrumb a { color: var(--pri); text-decoration: none; }
+.breadcrumb a:hover { text-decoration: underline; }
+.breadcrumb .clip { max-width: 60vw; }
+.plant-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+a.btn { display: inline-block; text-decoration: none; white-space: nowrap; }
+.plant-actions .btn[aria-disabled="true"], .plant-actions .btn:disabled { opacity: .5; cursor: not-allowed; }
+.plant-actions .btn[aria-disabled="true"] { pointer-events: none; }
+.more-button { min-width: 44px; font-size: 18px; line-height: 1; }
+.plant-menu .btn { justify-content: flex-start; text-align: left; }
+
+/* "N new observations waiting for review" */
+.review-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; margin-bottom: 16px; padding: 14px 18px; border-color: var(--infot); background: var(--info); color: var(--infot); }
+.review-banner p { min-width: 0; margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+
+/* Header card: photos on the left, the plant on the right. */
+.plant-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 22px; align-items: start; }
 .gallery-main { position: relative; aspect-ratio: 4 / 3; overflow: hidden; border-radius: 12px; background: var(--mint); }
 .gallery-main img { display: block; width: 100%; height: 100%; object-fit: cover; }
-.gallery-count { position: absolute; right: 10px; bottom: 10px; padding: 3px 10px; border-radius: 999px; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 12px; font-weight: 700; }
-.gallery-strip { display: flex; gap: 8px; margin-top: 8px; overflow-x: auto; }
+.gallery-expand { position: absolute; top: 10px; right: 10px; width: 36px; height: 36px; border: 0; border-radius: 999px; background: rgba(0, 0, 0, .6); color: #fff; font-size: 16px; cursor: pointer; }
+.gallery-caption { position: absolute; left: 0; right: 0; bottom: 0; margin: 0; padding: 18px 12px 8px; background: linear-gradient(transparent, rgba(0, 0, 0, .65)); color: #fff; font-size: 13px; font-weight: 600; }
+.gallery-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.gallery-strip { display: flex; min-width: 0; gap: 8px; overflow: hidden; }
 .gallery-strip button { flex: 0 0 auto; width: 64px; height: 48px; padding: 0; overflow: hidden; border: 2px solid transparent; border-radius: 8px; background: var(--mint); cursor: pointer; }
 .gallery-strip button[aria-current="true"] { border-color: var(--pri); }
 .gallery-strip img { width: 100%; height: 100%; object-fit: cover; }
-.plant-name { margin: 0; font-style: italic; overflow-wrap: anywhere; }
+.gallery-all { flex: 0 0 auto; margin-left: auto; white-space: nowrap; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-row > * { min-width: 0; max-width: 100%; }
+.status-chip { display: inline-flex; min-width: 0; align-items: center; gap: 6px; padding: 2px 10px; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; font-weight: 600; }
+.plant-name { margin: 12px 0 0; font-style: italic; overflow-wrap: anywhere; }
 .plant-sub { margin: 6px 0 0; color: var(--mute); overflow-wrap: anywhere; }
-.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.plant-sub a { color: var(--pri); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; margin: 18px 0 0; }
+.facts > div { min-width: 0; }
+.facts dt { color: var(--mute); font-size: 12px; }
+.facts dd { margin: 3px 0 0; font-weight: 600; overflow-wrap: anywhere; }
+
 .detail-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 18px; }
 .detail-sections > .card { min-width: 0; }
-.detail-sections h2 { margin: 0 0 12px; font-size: 17px; }
+.card-title { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 10px; margin-bottom: 12px; }
+.card-title h2 { margin: 0; font-size: 17px; }
+.card-title .muted { margin: 0; font-size: 13px; }
+.officer-only { padding: 2px 9px; border-radius: 999px; background: var(--wa); color: var(--wat); font-size: 12px; font-weight: 700; white-space: nowrap; }
 .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .tile { display: block; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; }
 .tile-label { display: block; color: var(--mute); font-size: 12px; }
 .tile-value { display: block; margin-top: 4px; font-size: 18px; font-weight: 700; overflow-wrap: anywhere; }
+.tile-change { display: block; margin-top: 2px; color: var(--mute); font-size: 12px; overflow-wrap: anywhere; }
 .info-row { display: grid; grid-template-columns: minmax(110px, 0.4fr) minmax(0, 1fr); gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); }
 .info-row:last-child { border-bottom: 0; }
 .info-label { color: var(--mute); font-size: 13px; }
@@ -35,19 +67,43 @@
 .note-block + .note-block { margin-top: 12px; }
 .note-block p { margin: 4px 0 0; white-space: pre-line; overflow-wrap: anywhere; }
 #plant-map { height: 220px; margin-bottom: 8px; border-radius: 10px; background: var(--mint); }
+.location-actions { margin-top: 12px; }
+
+/* Observations timeline (newest first). */
 .observations-card { margin-top: 18px; }
-.observation-item { padding: 12px 0; border-top: 1px solid var(--line); }
+.observations-card h2 { display: flex; align-items: center; gap: 8px; margin: 0; }
+.count-pill { padding: 1px 9px; border-radius: 999px; background: var(--mint); font-size: 13px; font-weight: 700; }
+.count-pill:empty { display: none; }
+.observation-item { position: relative; margin-left: 8px; padding: 12px 0 14px 20px; border-left: 2px solid var(--line); }
+.observation-item::before { content: ''; position: absolute; top: 17px; left: -6px; width: 10px; height: 10px; border-radius: 50%; background: var(--sage); }
 .observation-top { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
-.observation-date { font-weight: 700; }
-.observation-by { display: block; margin-top: 2px; color: var(--mute); font-size: 13px; overflow-wrap: anywhere; }
-.observation-reason { margin: 6px 0 0; color: var(--ert); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.observation-date { min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
+.observation-note { margin: 6px 0 0; white-space: pre-line; overflow-wrap: anywhere; }
+.observation-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.observation-chips .chip-muted { white-space: normal; overflow-wrap: anywhere; }
+.observation-reason { margin: 8px 0 0; color: var(--ert); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+
+/* Photos at full size, or all of them. */
+.photo-dialog { width: min(960px, calc(100% - 32px)); max-height: calc(100vh - 48px); padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--card); color: var(--ink); }
+.photo-dialog::backdrop { background: rgba(15, 25, 19, .7); }
+.photo-dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.photo-dialog-head h2 { margin: 0; font-size: 17px; }
+.photo-full { display: block; max-width: 100%; max-height: calc(100vh - 160px); margin: 0 auto; border-radius: 10px; object-fit: contain; }
+.photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+.photo-grid button { padding: 0; overflow: hidden; border: 0; border-radius: 10px; background: var(--mint); cursor: pointer; aspect-ratio: 4 / 3; }
+.photo-grid img { width: 100%; height: 100%; object-fit: cover; }
+.photo-dialog-caption { margin: 8px 0 0; color: var(--mute); font-size: 13px; text-align: center; overflow-wrap: anywhere; }
+
+.observations-card .list-sort-bar { margin: 0 0 0 auto; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .plant-state { padding: 18px; }
-.plant-state[hidden], .detail-sections > [hidden] { display: none; }
+.plant-state[hidden], .detail-sections > [hidden], .review-banner[hidden] { display: none; }
 @media (max-width: 900px) {
   .plant-head, .detail-sections { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 520px) {
   main { padding: 20px 16px; }
+  .facts { grid-template-columns: minmax(0, 1fr); }
   .info-row { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 }
 </style>
@@ -57,46 +113,84 @@
 <nav id="menu"></nav>
 <main class="wide">
 <section class="page on">
-  <a class="back-link" href="plants.html">‹ Plants</a>
+  <div class="plant-topbar">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="plants.html">Plants</a>
+      <span aria-hidden="true">/</span>
+      <span class="clip" id="plant-crumb" aria-current="page">Plant</span>
+    </nav>
+    <div class="plant-actions" id="plant-actions" hidden>
+      <button class="btn ghost" id="print-qr" type="button">Print QR tag</button>
+      <a class="btn ghost" id="visitor-link" target="_blank" rel="noopener">Visitor page</a>
+      <div class="popover-wrap">
+        <button class="btn ghost more-button" id="plant-more" type="button" aria-controls="plant-menu"
+          aria-label="More actions for this plant">⋯</button>
+        <div class="popover plant-menu" id="plant-menu" role="menu" aria-label="More actions" hidden>
+          <a class="btn ghost" id="menu-map" role="menuitem">Show on park map</a>
+        </div>
+      </div>
+    </div>
+  </div>
   <p class="lead">One plant's photos, measurements, location and observations, for the conservation officer.</p>
   <div class="card plant-state" id="plant-loading" role="status">Loading plant details...</div>
   <div class="card plant-state" id="plant-error" role="alert" hidden></div>
 
   <div id="plant-detail" hidden>
+    <div class="card review-banner" id="pending-banner" role="status" hidden>
+      <p id="pending-text"></p>
+      <a class="btn" id="pending-link">Review it</a>
+    </div>
+
     <article class="card plant-head">
       <div>
         <div class="gallery-main">
           <img id="gallery-image" alt="">
-          <span class="gallery-count" id="gallery-count" hidden></span>
+          <button class="gallery-expand" id="gallery-expand" type="button" aria-label="Show this photo full size" hidden>⤢</button>
+          <p class="gallery-caption clip" id="gallery-caption" hidden></p>
         </div>
-        <div class="gallery-strip" id="gallery-strip" aria-label="Plant photos"></div>
+        <div class="gallery-row">
+          <div class="gallery-strip" id="gallery-strip" aria-label="Plant photos"></div>
+          <button class="btn ghost small gallery-all" id="gallery-all" type="button" hidden></button>
+        </div>
       </div>
       <div>
+        <div class="chip-row" id="plant-chips"></div>
         <h1 class="plant-name" id="plant-title">Plant</h1>
         <p class="plant-sub" id="plant-species"></p>
-        <div class="chip-row" id="plant-chips"></div>
+        <dl class="facts" id="plant-facts"></dl>
       </div>
     </article>
 
     <div class="detail-sections">
       <article class="card" id="measurements-card">
-        <h2>Measurements</h2>
+        <div class="card-title">
+          <h2>Latest measurements</h2>
+          <p class="muted" id="measurements-date"></p>
+        </div>
         <div class="tiles" id="measurements"></div>
       </article>
       <article class="card" id="location-card">
-        <h2>Location</h2>
+        <div class="card-title">
+          <h2>Location</h2>
+          <span class="officer-only">Officers only</span>
+        </div>
         <div id="plant-map"></div>
         <div id="location-rows"></div>
+        <div class="location-actions">
+          <a class="btn ghost" id="location-map-link">Show on park map</a>
+        </div>
       </article>
       <article class="card" id="field-notes-card">
-        <h2>Field notes</h2>
+        <div class="card-title"><h2>Field notes</h2></div>
         <div id="field-notes"></div>
       </article>
     </div>
 
     <article class="card observations-card">
-      <h2>Observations</h2>
-      <p class="muted" id="observations-count"></p>
+      <div class="card-title">
+        <h2>Observations <span class="count-pill" id="observations-total"></span></h2>
+        <span class="sr-only" id="observations-count"></span>
+      </div>
       <div id="observations-list"></div>
       <p class="muted" id="observations-empty" hidden>No observations yet</p>
     </article>
@@ -104,6 +198,13 @@
 </section>
 </main>
 </div>
+<dialog class="photo-dialog" id="photo-dialog" aria-labelledby="photo-dialog-title">
+  <div class="photo-dialog-head">
+    <h2 id="photo-dialog-title">Photos</h2>
+    <button class="btn ghost small" id="photo-dialog-close" type="button">Close</button>
+  </div>
+  <div id="photo-dialog-body"></div>
+</dialog>
 <div id="toast" role="status"></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R" crossorigin="anonymous"></script>

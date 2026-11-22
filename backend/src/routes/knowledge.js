@@ -7,6 +7,7 @@ const { cleanSpeciesFields } = require("../utils/speciesDescription");
 const { createKnowledgeRateLimit } = require("../middleware/knowledgeRateLimit");
 const { publicPhotoUrl } = require("../services/publicPlantPhotos");
 const { rankOf } = require("../services/reportService");
+const { requestChecks, loadCatalogueNames } = require("../services/speciesRequestChecks");
 
 function parsePagination(query, defaultSize = 50) {
     const { page = "1", page_size = String(defaultSize) } = query;
@@ -652,8 +653,15 @@ function createKnowledgeRouter({ supabase = require("../config/supabase").public
             }
         }
 
+        // The "Before you decide" checks (services/speciesRequestChecks.js), against every
+        // species in the catalogue or waiting. Read only when there are requests to check.
+        const catalogue = (data || []).length > 0 ? await loadCatalogueNames(req.supabase) : [];
         return res.json({
-            data: (data || []).map(row => ({ ...row, proposer_name: nameById.get(row.proposed_by) || null })),
+            data: (data || []).map(row => ({
+                ...row,
+                proposer_name: nameById.get(row.proposed_by) || null,
+                checks: requestChecks(row, catalogue),
+            })),
             pagination: paginationMetadata(paging, count),
         });
     });

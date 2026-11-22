@@ -1576,6 +1576,8 @@ function sortRows(rows, column, direction) {
 // Draws a table: columns = [{ key, label, sortable, render(td, row), className }].
 // options: rows (this page), keyOf(row), selection (a Set of keys, or null for no select
 // column), sort { key, dir }, onSort(key), onSelect() after the selection changed, empty.
+// Optional: expandedKey and renderExpanded(td, row) draw one row's details in a full-width
+// row under it (Species requests' Review / Close).
 function drawDataTable(table, options) {
   const columns = options.columns;
   const head = table.tHead || table.createTHead();
@@ -1649,6 +1651,15 @@ function drawDataTable(table, options) {
       const td = tr.insertCell();
       if (column.className) td.className = column.className;
       column.render(td, row);
+    }
+    if (options.renderExpanded && options.expandedKey === key) {
+      tr.classList.add('expanded');
+      const detail = body.insertRow();
+      detail.className = 'table-detail-row';
+      const cell = detail.insertCell();
+      cell.colSpan = columns.length + (selection ? 1 : 0);
+      cell.className = 'table-detail';
+      options.renderExpanded(cell, row);
     }
   }
 }

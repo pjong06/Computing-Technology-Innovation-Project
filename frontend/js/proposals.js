@@ -1,69 +1,231 @@
-// proposals.js - officer review of pending species proposals.
+// proposals.js - Review > Species requests (officers): the requests WAITING for a decision,
+// as a table (decisions are listed in Review history). Search and Newest / Oldest sort;
+// "Review" opens a request under its row with what the botanist sent, the "Before you
+// decide" checks worked out by the server (services/speciesRequestChecks.js), and the two
+// decisions: "Add to catalogue" (with a conservation status) or "Don't add" (a reason the
+// botanist sees). "Fix name" / "Clear" save the change to the request before deciding.
 
 drawMenu('proposals.html');
 
 const byId = id => document.getElementById(id);
 let proposals = [];
-let proposalSort = SORT_NEWEST; // newest proposal first; the select switches it
+let proposalSort = SORT_NEWEST; // newest request first; the select switches it
 let taxonomyRows = null;
 let proposalBusy = false;
-let rejectingProposal = null;
+let openId = null;              // the request open under its row
+let searchText = '';
+const reasonDrafts = {};        // a reason typed for a request, kept while the list redraws
+const statusDrafts = {};        // the conservation status chosen for a request
 
-// The portal's one date format: "21 Nov 2026, 11:30" (shared.js formatWhen).
-function displayDate(value) {
-  return formatWhen(value, 'Date not recorded');
+// Quick reasons: the chip and the sentence it puts in the reason box.
+const REASON_CHIPS = [
+  ['Already in catalogue', 'This species is already in the catalogue.'],
+  ['Name misspelled', 'The scientific name is misspelled. Please check the spelling and send it again.'],
+  ['Not found in Niah', 'This species is not known from Niah National Park.'],
+  ['Needs more detail', 'Please add more detail (family, a description and where you saw it) and send it again.'],
+];
+
+const botanistOf = proposal => proposal.proposer_name || 'the botanist';
+
+// ---- table cells ----
+
+function speciesCell(td, proposal) {
+  td.appendChild(clippedText(proposal.scientific_name || 'Unnamed species', 'sci'));
 }
 
-function addProposalInfo(card, label, value) {
-  const row = document.createElement('p');
-  row.className = 'proposal-value';
-  const heading = document.createElement('b');
-  heading.textContent = label;
-  row.appendChild(heading);
-  row.appendChild(document.createElement('br'));
-  row.appendChild(document.createTextNode(value || 'Not provided'));
-  card.appendChild(row);
+function textCell(value, fallback) {
+  return function (td, proposal) {
+    const text = proposal[value];
+    td.appendChild(text ? clippedText(text) : labelSpan('muted-text', fallback));
+  };
 }
 
-function makeProposalCard(proposal) {
-  const card = document.createElement('article');
-  card.className = 'card proposal-card';
+function checksCell(td, proposal) {
+  const count = (proposal.checks || []).length;
+  const badge = count === 0
+    ? labelSpan('check-badge good', 'Looks good')
+    : labelSpan('check-badge warn', count + ' to check');
+  badge.title = count === 0 ? 'No problems found' : (proposal.checks || []).map(check => check.message).join('\n');
+  td.appendChild(badge);
+}
 
-  const title = document.createElement('h2');
-  const scientificName = document.createElement('i');
-  scientificName.className = 'sci';
-  scientificName.textContent = proposal.scientific_name || 'Unnamed species';
-  title.appendChild(scientificName);
-  card.appendChild(title);
+function toggleCell(td, proposal) {
+  const open = openId === proposal.id;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'btn toggle-button' + (open ? ' ghost' : '');
+  button.textContent = open ? 'Close' : 'Review';
+  button.setAttribute('aria-expanded', String(open));
+  button.setAttribute('aria-label', (open ? 'Close ' : 'Review ') + (proposal.scientific_name || 'this request'));
+  button.onclick = function () {
+    openId = open ? null : proposal.id;
+    drawProposals();
+  };
+  td.appendChild(button);
+}
 
-  addProposalInfo(card, 'Common name', proposal.common_name);
-  if (proposal.local_name) addProposalInfo(card, 'Local name', proposal.local_name);
-  addProposalInfo(card, 'Family', proposal.proposed_family);
-  addProposalInfo(card, 'Description', proposal.description);
-  addProposalInfo(card, 'Habitat / location note', proposal.habitat);
-  addProposalInfo(card, 'Requested by', proposal.proposer_name || 'Botanist');
-  addProposalInfo(card, 'Requested on', displayDate(proposal.created_at));
+const REQUEST_COLUMNS = [
+  { key: 'species', label: 'Requested species', className: 'col-species', render: speciesCell },
+  { key: 'common', label: 'Common name', className: 'col-common', render: textCell('common_name', 'None given') },
+  { key: 'family', label: 'Family', className: 'col-family', render: textCell('proposed_family', 'Not given') },
+  { key: 'by', label: 'Requested by', className: 'col-by', render: (td, proposal) => td.appendChild(clippedText(proposal.proposer_name || 'Unknown botanist')) },
+  { key: 'on', label: 'Requested on', className: 'col-on', render: (td, proposal) => td.appendChild(clippedText(formatWhen(proposal.created_at, 'Date not recorded'))) },
+  { key: 'checks', label: 'Checks', className: 'col-checks', render: checksCell },
+  { key: 'toggle', label: '', className: 'col-toggle', render: toggleCell },
+];
 
-  const actions = document.createElement('div');
-  actions.className = 'acts';
-  const approve = document.createElement('button');
-  approve.className = 'btn';
-  approve.type = 'button';
-  approve.textContent = 'Approve';
-  approve.disabled = proposalBusy;
-  approve.addEventListener('click', () => {
-    void reviewProposal(proposal, 'approved').catch(showUnexpectedError);
-  });
+// ---- the open request ----
 
-  const reject = document.createElement('button');
-  reject.className = 'btn red';
-  reject.type = 'button';
-  reject.textContent = "Don't add";
-  reject.disabled = proposalBusy;
-  reject.addEventListener('click', () => openRejectDialog(proposal));
-  actions.append(approve, reject);
-  card.appendChild(actions);
-  return card;
+function section(title) {
+  const box = document.createElement('section');
+  const heading = document.createElement('h3');
+  heading.textContent = title;
+  box.appendChild(heading);
+  return box;
+}
+
+function sentSection(proposal) {
+  const box = section('What ' + botanistOf(proposal) + ' sent');
+  const list = document.createElement('dl');
+  list.className = 'sent-list';
+  for (const [label, value] of [
+    ['Common name', proposal.common_name],
+    ['Local name', proposal.local_name],
+    ['Family', proposal.proposed_family],
+    ['Habitat / location note', proposal.habitat],
+    ['Description', proposal.description],
+  ]) {
+    const term = document.createElement('dt');
+    term.textContent = label;
+    const detail = document.createElement('dd');
+    detail.textContent = value || 'Not given';
+    if (!value) detail.className = 'not-given';
+    list.append(term, detail);
+  }
+  box.appendChild(list);
+  return box;
+}
+
+function checksSection(proposal) {
+  const box = section('Before you decide');
+  const list = document.createElement('ul');
+  list.className = 'check-list';
+  const checks = proposal.checks || [];
+  if (checks.length === 0) {
+    const item = document.createElement('li');
+    item.className = 'good';
+    item.appendChild(labelSpan('', '✓ Not in the catalogue yet, the name is written correctly and nothing is missing.'));
+    list.appendChild(item);
+  }
+  for (const check of checks) {
+    const item = document.createElement('li');
+    item.appendChild(labelSpan('', '⚠ ' + check.message));
+    if (check.fix) {
+      const fix = document.createElement('button');
+      fix.type = 'button';
+      fix.className = 'btn ghost small';
+      fix.textContent = check.fix.label;
+      fix.disabled = proposalBusy;
+      fix.onclick = () => void applyFix(proposal, check.fix).catch(showUnexpectedError);
+      item.appendChild(fix);
+    }
+    list.appendChild(item);
+  }
+  box.appendChild(list);
+  return box;
+}
+
+function addSection(proposal) {
+  const box = section('Add to catalogue');
+  box.className = 'decide-add';
+  const label = document.createElement('label');
+  label.textContent = 'Conservation status';
+  const select = document.createElement('select');
+  select.add(new Option(NOT_ASSESSED, ''));
+  for (const [code, words] of Object.entries(STATUS_LABELS)) select.add(new Option(words, code));
+  select.value = statusDrafts[proposal.id] || '';
+  select.onchange = function () { statusDrafts[proposal.id] = select.value; };
+  label.appendChild(select);
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'btn';
+  add.textContent = 'Add species';
+  add.disabled = proposalBusy;
+  add.onclick = () => void reviewProposal(proposal, 'approved').catch(showUnexpectedError);
+  box.append(label, add);
+  return box;
+}
+
+function rejectSection(proposal) {
+  const box = section("Don't add");
+  box.className = 'decide-reject';
+  const reason = document.createElement('textarea');
+  reason.id = 'reject-reason';
+  reason.required = true;
+  reason.value = reasonDrafts[proposal.id] || '';
+  reason.setAttribute('aria-describedby', 'reject-help');
+  reason.oninput = function () {
+    reasonDrafts[proposal.id] = reason.value;
+    reason.setCustomValidity('');
+  };
+  const chips = document.createElement('div');
+  chips.className = 'reason-chips';
+  chips.setAttribute('aria-label', 'Quick reasons');
+  for (const [chipLabel, sentence] of REASON_CHIPS) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.textContent = chipLabel;
+    chip.onclick = function () {
+      reason.value = sentence;
+      reasonDrafts[proposal.id] = sentence;
+      reason.setCustomValidity('');
+      reason.focus();
+    };
+    chips.appendChild(chip);
+  }
+  const label = document.createElement('label');
+  label.htmlFor = 'reject-reason';
+  label.textContent = 'Reason (required)';
+  const help = document.createElement('p');
+  help.id = 'reject-help';
+  help.className = 'muted';
+  help.textContent = botanistOf(proposal).charAt(0).toUpperCase() + botanistOf(proposal).slice(1) + ' will see this reason in the app.';
+  const send = document.createElement('button');
+  send.type = 'button';
+  send.className = 'btn red';
+  send.textContent = "Don't add and tell " + botanistOf(proposal);
+  send.title = send.textContent;
+  send.disabled = proposalBusy;
+  send.onclick = function () {
+    const text = reason.value.trim();
+    if (!text) {
+      reason.setCustomValidity('Enter a reason for not adding this species.');
+      reason.reportValidity();
+      return;
+    }
+    void reviewProposal(proposal, 'rejected', text).catch(showUnexpectedError);
+  };
+  box.append(chips, label, reason, help, send);
+  return box;
+}
+
+function renderOpenRequest(td, proposal) {
+  const detail = document.createElement('div');
+  detail.className = 'request-detail';
+  const decide = document.createElement('div');
+  decide.className = 'decide-row';
+  decide.append(addSection(proposal), rejectSection(proposal));
+  detail.append(sentSection(proposal), checksSection(proposal), decide);
+  td.appendChild(detail);
+}
+
+// ---- drawing ----
+
+function matchesSearch(proposal) {
+  if (!searchText) return true;
+  const needle = searchText.toLowerCase();
+  return [proposal.scientific_name, proposal.common_name, proposal.local_name, proposal.proposed_family, proposal.proposer_name]
+    .some(value => String(value || '').toLowerCase().includes(needle));
 }
 
 function drawProposals() {
@@ -71,21 +233,43 @@ function drawProposals() {
     proposalSort = order;
     drawProposals();
   });
-  const list = byId('proposals-list');
-  list.replaceChildren(...sortByDate(proposals, proposal => proposal.created_at, proposalSort).map(makeProposalCard));
-  byId('proposals-count').textContent =
-    `${proposals.length} species request${proposals.length === 1 ? '' : 's'} waiting for review.`;
+  const shown = sortByDate(proposals.filter(matchesSearch), proposal => proposal.created_at, proposalSort);
+  byId('proposals-card').hidden = proposals.length === 0;
   byId('proposals-empty').hidden = proposals.length > 0;
+  byId('proposals-count').textContent = searchText
+    ? `${shown.length} of ${proposals.length} species request${proposals.length === 1 ? '' : 's'}`
+    : `${proposals.length} species request${proposals.length === 1 ? '' : 's'} waiting for review`;
+  drawDataTable(byId('requests-table'), {
+    columns: REQUEST_COLUMNS,
+    rows: shown,
+    keyOf: proposal => proposal.id,
+    empty: 'No species requests match this search.',
+    expandedKey: openId,
+    renderExpanded: renderOpenRequest,
+  });
   updateSpeciesProposalMenuCount(proposals.length);
 }
 
-function openRejectDialog(proposal) {
-  rejectingProposal = proposal;
-  byId('reject-proposal-name').textContent = proposal.scientific_name || 'Unnamed species';
-  byId('reject-reason').value = '';
-  byId('reject-reason').setCustomValidity('');
-  byId('reject-dialog').showModal();
-  byId('reject-reason').focus();
+// ---- saving ----
+
+// "Fix name" / "Clear": saves the change to the request (officer species update), then reloads
+// so the checks are worked out again.
+async function applyFix(proposal, fix) {
+  if (proposalBusy) return;
+  proposalBusy = true;
+  drawProposals();
+  try {
+    await api('/knowledge/species/' + proposal.id, {
+      method: 'PATCH',
+      body: JSON.stringify({ [fix.field]: fix.value }),
+    });
+    showToast(fix.field === 'scientific_name' ? 'Name changed to ' + fix.value + '.' : 'Local name cleared.');
+  } catch (error) {
+    showToast('The request could not be changed. ' + error.message);
+  } finally {
+    proposalBusy = false;
+    await loadProposals();
+  }
 }
 
 async function reviewProposal(proposal, decision, comment) {
@@ -109,14 +293,35 @@ async function reviewProposal(proposal, decision, comment) {
       method: 'PATCH',
       body: JSON.stringify(body),
     });
-    showToast(decision === 'approved'
-      ? proposal.scientific_name + ' approved and added to the species catalogue.'
-      : 'Species request not added.');
+    openId = null;
+    delete reasonDrafts[proposal.id];
+    if (decision === 'approved') {
+      await saveConservationStatus(proposal);
+    } else {
+      showToast('Not added. ' + botanistOf(proposal) + ' will see your reason in the app.');
+    }
   } catch (error) {
-    showToast('Could not review the species request. ' + error.message);
+    showToast('Could not save the decision. ' + error.message);
   } finally {
     proposalBusy = false;
     await loadProposals();
+  }
+}
+
+// After "Add species": the conservation status chosen (nothing to save for Not assessed).
+async function saveConservationStatus(proposal) {
+  const code = statusDrafts[proposal.id] || '';
+  delete statusDrafts[proposal.id];
+  const name = proposal.scientific_name || 'The species';
+  if (!code) {
+    showToast(name + ' added to the species catalogue.');
+    return;
+  }
+  try {
+    await api('/knowledge/species/' + proposal.id, { method: 'PATCH', body: JSON.stringify({ conservation_status: code }) });
+    showToast(name + ' added to the species catalogue as ' + statusLabel(code) + '.');
+  } catch (error) {
+    showToast(name + ' was added, but its conservation status could not be saved. Set it in the species editor. ' + error.message);
   }
 }
 
@@ -127,11 +332,11 @@ async function loadProposals() {
   errorBox.hidden = true;
   try {
     proposals = await fetchAllPages('/knowledge/species/proposals/pending');
+    if (openId && !proposals.some(proposal => proposal.id === openId)) openId = null;
     drawProposals();
   } catch (error) {
     proposals = [];
-    byId('proposals-list').replaceChildren();
-    byId('proposals-count').textContent = 'Species requests could not be loaded.';
+    byId('proposals-card').hidden = true;
     byId('proposals-empty').hidden = true;
     errorBox.textContent = error.message === 'Could not load species proposals'
       ? 'Could not load species requests. Please try again.'
@@ -145,21 +350,9 @@ async function loadProposals() {
 if (pageAllowed === false) {
   // guardPages is redirecting the user; do not request officer data.
 } else {
-  byId('reject-cancel').addEventListener('click', () => byId('reject-dialog').close());
-  byId('reject-form').addEventListener('submit', event => {
-    event.preventDefault();
-    const reason = byId('reject-reason').value.trim();
-    if (!reason) {
-      byId('reject-reason').setCustomValidity('Enter a reason for not adding this species.');
-      byId('reject-reason').reportValidity();
-      return;
-    }
-    byId('reject-dialog').close();
-    if (rejectingProposal) {
-      void reviewProposal(rejectingProposal, 'rejected', reason).catch(showUnexpectedError);
-    }
-    rejectingProposal = null;
-  });
-  byId('reject-reason').addEventListener('input', () => byId('reject-reason').setCustomValidity(''));
+  byId('proposals-search').addEventListener('input', debounce(function () {
+    searchText = byId('proposals-search').value.trim().slice(0, 100);
+    drawProposals();
+  }, 200));
   loadProposals().catch(showUnexpectedError);
 }
