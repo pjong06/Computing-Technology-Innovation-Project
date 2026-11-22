@@ -1,4 +1,5 @@
 import { Directory, File, Paths } from 'expo-file-system';
+import { compressPhoto } from '../services/uploadablePhoto';
 
 // Picked and taken photos start in the image picker's cache, which iOS/Android may
 // clear at any time. Every photo is copied here (the app's document directory,
@@ -22,11 +23,23 @@ function ensurePhotoDir() {
   }
 }
 
-// Copies a photo into permanent storage and returns the new file URI.
+// Copies a photo into permanent storage and returns the new file URI. The copy kept is the
+// compressed JPEG (longest side 2000 px, quality 0.75, orientation applied: see
+// src/utils/photoCompression.ts), so it uploads within the server's limit. If compressing
+// fails here, the original is kept and upload compresses it then.
 export async function savePhotoPermanently(sourceUri: string): Promise<string> {
   ensurePhotoDir();
-  const source = new File(sourceUri);
-  const extension = source.extension || '.jpg';
+  let source = new File(sourceUri);
+  let extension = source.extension || '.jpg';
+  try {
+    const compressed = await compressPhoto(sourceUri);
+    if (compressed.ok) {
+      source = compressed.output;
+      extension = '.jpg';
+    }
+  } catch (error) {
+    console.warn('Photo could not be compressed when saved; it will be at upload:', error);
+  }
   const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}${extension}`;
   const destination = new File(PHOTO_DIR, fileName);
   await source.copy(destination);

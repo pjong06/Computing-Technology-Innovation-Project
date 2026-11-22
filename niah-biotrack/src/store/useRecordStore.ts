@@ -693,16 +693,12 @@ function photoFileFor(
     };
   }
 
-  if (
-    file.size >
-    MAX_PHOTO_BYTES
-  ) {
-    return {
-      problem:
-        'too_large',
-    };
-  }
-
+  /*
+   * No size check here: a large saved photo is
+   * compressed before upload (uploadablePhotoFile),
+   * and only one still too large after every step
+   * is marked too_large (its ApiError 413).
+   */
   return {
     file,
   };
