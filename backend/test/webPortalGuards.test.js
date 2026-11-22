@@ -37,10 +37,12 @@ test('the approval queue loads, shows photos for and decides on real reviews', (
   assert.doesNotMatch(queue, /getObservations\(|writeStorage\(OBSERVATIONS_KEY/);
 });
 
-test('the rejected list reads real rejected reviews', () => {
-  const rejected = read('frontend/js/rejected.js');
-  assert.match(rejected, /api\('\/officer\/reviews\/rejected'\)/);
-  assert.doesNotMatch(rejected, /getObservations\(|writeStorage\(OBSERVATIONS_KEY/);
+test('Review history reads real review decisions; rejected.html redirects there', () => {
+  const history = read('frontend/js/review-history.js');
+  assert.match(history, /return '\/officer\/reviews\/history\?' \+ params\.toString\(\);/);
+  assert.doesNotMatch(history, /getObservations\(|writeStorage\(OBSERVATIONS_KEY/);
+  assert.match(read('frontend/rejected.html'), /<meta http-equiv="refresh" content="0; url=review-history\.html">/);
+  assert.equal(fs.existsSync(path.join(repoRoot, 'frontend/js/rejected.js')), false);
 });
 
 test('the distribution map loads real plants from the officer map API', () => {
@@ -232,7 +234,7 @@ test('no page or app screen shows a photo credit, source or licence; there is no
 
   // No "Source: …", "Observer: …", "Licence: …" or "Imported from …" line, badge or filter.
   const sourceText = /Source:|Observer:|Licen[cs]e:|Imported from|Imported source|source-badge|source-filter|plant-source/;
-  for (const file of ['plant.js', 'plants.js', 'map.js', 'queue.js', 'rejected.js', 'proposals.js', 'species.js', 'editor.js']) {
+  for (const file of ['plant.js', 'plants.js', 'map.js', 'queue.js', 'review-history.js', 'proposals.js', 'species.js', 'editor.js']) {
     assert.doesNotMatch(read(`frontend/js/${file}`), sourceText, file);
   }
   for (const file of ['plant.html', 'plants.html', 'map.html', 'queue.html', 'species.html', 'reports.html']) {
@@ -307,9 +309,23 @@ test('species catalogue controls match the JavaScript selectors and redraw on ch
   for (const id of scriptIds) {
     assert.ok(htmlIds.has(id), `species.js reads #${id}, which is missing from species.html`);
   }
-  assert.match(html, /id="search-box"[^>]*aria-label="Search species by name"[^>]*oninput="drawSpeciesTable\(\)"/);
-  assert.match(html, /id="status-filter"[^>]*aria-label="Filter by conservation status"[^>]*onchange="drawSpeciesTable\(\)"/);
-  assert.match(script, /const searchInput = document\.getElementById\('search-box'\)/);
+  for (const id of Array.from(script.matchAll(/byId\(['"]([^'"]+)['"]\)/g), match => match[1])) {
+    assert.ok(htmlIds.has(id), `species.js reads #${id}, which is missing from species.html`);
+  }
+  // A data table: search (scientific, common or family name), Filters, Export, tabs, paging.
+  assert.match(html, /id="search-box"[^>]*aria-label="Search species by scientific, common or family name"/);
+  assert.match(html, /<h1>Species catalogue<\/h1>/);
+  assert.match(html, /for the conservation officer\./);
+  assert.match(html, /<table class="data-table" id="species-table">/);
+  assert.match(script, /byId\('search-box'\)\.addEventListener\('input', debounce\(/);
+  for (const tab of ["'All'", "'Threatened'", "'Not assessed'", "'Needs info'", "'Archived'"]) {
+    assert.ok(script.includes("label: " + tab), tab);
+  }
+  // Threatened = CR, EN, VU; Needs info = missing family, common name, description or habitat.
+  assert.match(read('frontend/js/shared.js'), /const THREATENED_CODES = \['CR', 'EN', 'VU'\];/);
+  assert.match(script, /return !familyOf\(species\) \|\| !species\.common_name \|\| !species\.description \|\| !species\.habitat;/);
+  // Bulk changes use the officer species update endpoint, one species at a time.
+  assert.match(script, /api\('\/knowledge\/species\/' \+ species\.id, \{ method: 'PATCH'/);
 });
 
 test('the distribution map is officer-only in the menu, the page list and on the page itself', () => {
@@ -348,19 +364,19 @@ test('the plant catalogue is officer-only, linked from the menu and its page con
 
   const catalogue = read('frontend/js/plants.js');
   const detail = read('frontend/js/plant.js');
-  assert.match(catalogue, /if \(pageAllowed === false\)/);
+  assert.match(catalogue, /if \(pageAllowed !== false\) startPlantsPage\(\);/);
   assert.match(detail, /if \(pageAllowed === false\)/);
-  assert.ok(catalogue.indexOf('if (pageAllowed === false)') < catalogue.indexOf('loadFilterOptions().then'));
+  assert.ok(catalogue.indexOf('function startPlantsPage') < catalogue.indexOf('if (pageAllowed !== false) startPlantsPage();'));
   assert.ok(detail.indexOf('if (pageAllowed === false)') < detail.indexOf('loadPlant().catch'));
-  assert.match(catalogue, /api\('\/officer\/plants\?/);
+  assert.match(catalogue, /return '\/officer\/plants\?' \+ params\.toString\(\);/);
   assert.match(detail, /api\('\/officer\/plants\//);
   assert.doesNotMatch(catalogue, /Imported from|Observer:|source-filter/);
   // A plant without its own photo shows the placeholder: no species photo, no credit.
   assert.match(catalogue, /image\.src = plant\.photo_thumbnail\?\.url \|\| PICTURE_BLANK;/);
   assert.doesNotMatch(catalogue, /species_photo|Species photo|makeSpeciesPhotoCredit|makePhotoCreditInfo|photoCreditText/);
   assert.doesNotMatch(detail, /Imported from|Observer:|plant-source/);
-  assert.match(detail, /renderPhotos\(plant\.photos \|\| \[\]\);/);
-  assert.match(detail, /byId\('plant-no-photos'\)\.hidden = photos\.length > 0;/);
+  assert.match(detail, /renderGallery\(plant\.photos \|\| \[\]\);/);
+  assert.match(detail, /image\.alt = 'No photos of this plant yet';/);
   assert.doesNotMatch(detail, /species_photo|speciesFallback|makePhotoCreditInfo|Species reference photo/);
 
   for (const [htmlPath, scriptPath] of [
@@ -378,8 +394,8 @@ test('the plant catalogue is officer-only, linked from the menu and its page con
     assert.match(html, new RegExp(`<script src="js/${scriptPath.split('/').pop()}"></script>`));
   }
 
-  assert.match(read('frontend/js/species.js'), /plants\.html\?species=/);
-  assert.match(read('frontend/js/species.js'), /View plants \(/);
+  // The Plants count of a species opens the Plants list filtered to it.
+  assert.match(read('frontend/js/species.js'), /link\.href = 'plants\.html\?species=' \+ encodeURIComponent\(species\.id\);/);
 });
 
 test('every element overview.js reads exists in overview.html, and the report table has a head and body', () => {
@@ -610,8 +626,10 @@ test('placeholder "plant:" tags show as "No physical tag yet" on every web page'
   assert.equal(displayTag('', 'No tag'), 'No tag');
   assert.equal(displayTag(null, 'No tag code'), 'No tag code');
 
-  assert.match(read('frontend/js/plants.js'), /'Tag: ' \+ displayTag\(plant\.tag_code, 'No tag'\)/);
-  assert.match(read('frontend/js/plant.js'), /byId\('plant-tag'\)\.textContent = displayTag\(plant\.tag_code, 'No tag code'\)/);
+  // Tables and the plant detail page: the tag, or the grey "No tag yet" chip.
+  assert.match(read('frontend/js/shared.js'), /const shown = displayTag\(tag, ''\);/);
+  assert.match(read('frontend/js/plants.js'), /tagCell\(td, plant\.tag_code\)/);
+  assert.match(read('frontend/js/plant.js'), /const tag = displayTag\(plant\.tag_code, ''\);/);
   assert.match(read('frontend/js/map.js'), /'<div>Tag: ' \+ escapePopupText\(displayTag\(plant\.tag, 'No tag'\)\)/);
   assert.match(read('frontend/js/shared.js'), /'Tag ' \+ displayTag\(plant\.tag_code\)/);
   // Reports (Overview's Report card and its exports): placeholder tags read "No physical tag yet".
@@ -628,7 +646,7 @@ test('plant detail shows coordinates rounded to 6 decimals', () => {
   assert.equal(displayCoordinates('3.8', '113.78'), '3.800000, 113.780000');
   assert.equal(displayCoordinates(null, 113.78), 'Not recorded');
   assert.equal(displayCoordinates('x', 'y'), 'Not recorded');
-  assert.match(read('frontend/js/plant.js'), /byId\('plant-coordinates'\)\.textContent = displayCoordinates\(plant\.latitude, plant\.longitude\)/);
+  assert.match(read('frontend/js/plant.js'), /\['Coordinates', located \? displayCoordinates\(plant\.latitude, plant\.longitude\) : ''\]/);
 });
 
 test('a request that never reaches the server says so plainly, not "Failed to fetch"', async () => {
@@ -751,9 +769,10 @@ test('tab bars per section for officers, with the current page marked', () => {
   const review = [
     { label: 'Field records', href: 'queue.html', countId: 'field-records-count' },
     { label: 'Species requests', href: 'proposals.html', countId: 'species-proposals-count' },
-    { label: 'Rejected history', href: 'rejected.html', countId: null },
+    { label: 'Review history', href: 'review-history.html', countId: null },
   ];
-  for (const [page, activeIndex] of [['queue.html', 0], ['proposals.html', 1], ['rejected.html', 2]]) {
+  // rejected.html (now a redirect) still marks Review history.
+  for (const [page, activeIndex] of [['queue.html', 0], ['proposals.html', 1], ['review-history.html', 2], ['rejected.html', 2]]) {
     assert.deepEqual(tabs(page), review.map((tab, i) => ({ ...tab, active: i === activeIndex })), page);
   }
   assert.deepEqual(tabs('plants.html').map(t => [t.label, t.href, t.active]), [['List', 'plants.html', true], ['Map', 'map.html', false]]);
@@ -779,7 +798,7 @@ test('switching Plants List <-> Map keeps ?species= (and only there)', () => {
   assert.deepEqual(mapTabs.map(t => t.href), ['plants.html?species=abc-123', 'map.html?species=abc-123']);
   assert.deepEqual(plain(nav.navFor(OFFICER, 'plants.html', '').tabs).map(t => t.href), ['plants.html', 'map.html']);
   assert.deepEqual(plain(nav.navFor(OFFICER, 'queue.html', '?species=abc-123').tabs).map(t => t.href),
-    ['queue.html', 'proposals.html', 'rejected.html']);
+    ['queue.html', 'proposals.html', 'review-history.html']);
 });
 
 test('landing page: officers open Overview and botanists the Species catalogue', async () => {
@@ -826,8 +845,8 @@ test('review page headings, and a one-sentence description under every page head
   // Review > Field records: the section name as the heading, then one plain line.
   assert.match(read('frontend/queue.html'), /<h1>Review<\/h1>\s*<p class="lead">Check field records before they become official, for the conservation officer\.<\/p>/);
   assert.match(read('frontend/proposals.html'), /<h1>Species <span>requests<\/span><\/h1>/);
-  assert.match(read('frontend/rejected.html'), /<h1>Rejected <span>history<\/span><\/h1>/);
-  for (const page of ['overview', 'species', 'editor', 'proposals', 'queue', 'rejected', 'plants', 'plant', 'map', 'users']) {
+  assert.match(read('frontend/review-history.html'), /<h1>Review <span>history<\/span><\/h1>\s*<p class="lead">Every decision on field records and species requests, for the conservation officer\.<\/p>/);
+  for (const page of ['overview', 'species', 'editor', 'proposals', 'queue', 'review-history', 'plants', 'plant', 'map', 'users']) {
     const html = read(`frontend/${page}.html`);
     const lead = html.match(/<p class="lead"[^>]*>([\s\S]*?)<\/p>/);
     assert.ok(lead && lead[1].replace(/<[^>]+>/g, '').trim().length > 20, `${page}.html has a description`);
@@ -849,8 +868,8 @@ test('one review status scheme: Waiting for review blue, Approved green, Needs c
   assert.deepEqual(show('rejected'), { label: 'Needs changes', css: 'rejected' });
   assert.deepEqual(show('draft'), { label: 'Draft', css: 'draft' });
   assert.deepEqual(show('in_review'), { label: 'In review', css: '' });
-  assert.match(read('frontend/js/plants.js'), /function formattedStatus\(value\) \{\s*return reviewStatusDisplay\(value\);/);
-  assert.match(read('frontend/js/plant.js'), /function plantStatus\(value\) \{\s*return reviewStatusDisplay\(value\);/);
+  assert.match(read('frontend/js/plants.js'), /const status = reviewStatusDisplay\(plant\.plant_status\);/);
+  assert.match(read('frontend/js/plant.js'), /const status = reviewStatusDisplay\(plant\.plant_status\);/);
 
   const css = read('frontend/css/style.css');
   assert.match(css, /\.plant-status\.pending,\s*\.status-badge\.pending \{\s*background: var\(--info\);\s*color: var\(--infot\);/);
@@ -918,29 +937,27 @@ test('every list has a Newest first / Oldest first sort, newest by default', () 
   assert.match(shared, /new Option\('Oldest first', SORT_OLDEST\)/);
   assert.match(read('frontend/js/queue.js'), /addListSortSelect\('queue-count', 'queue-sort'/);
   assert.match(read('frontend/js/queue.js'), /sortByDate\(pending, item => item\.observed_at/);
-  assert.match(read('frontend/js/rejected.js'), /addListSortSelect\('rejected-count', 'rejected-sort'/);
+  // Review history is sorted by the server (Newest / Oldest), newest by default.
+  assert.match(read('frontend/review-history.html'), /<select id="history-sort">\s*<option value="newest">Newest first<\/option>\s*<option value="oldest">Oldest first<\/option>/);
+  assert.match(read('backend/src/services/reviewHistory.js'), /sort === "oldest"/);
   assert.match(read('frontend/js/proposals.js'), /addListSortSelect\('proposals-count', 'proposals-sort'/);
   assert.match(read('frontend/js/plant.js'), /addListSortSelect\('observations-count', 'observations-sort'/);
   assert.match(read('frontend/js/users.js'), /addListSortSelect\('users-count', 'users-sort'/);
-  for (const [page, id] of [
-    ['frontend/plants.html', 'plant-sort'],
-  ]) {
-    const html = read(page);
-    const select = html.slice(html.indexOf('id="' + id + '"'));
-    const firstOption = select.slice(select.indexOf('<option'), select.indexOf('</option>'));
-    assert.match(firstOption, /Newest first/, page + ': Newest first is the default');
-  }
-  // The plant catalogue asks the server for the order (paged), which only accepts newest/oldest.
-  assert.match(read('frontend/js/plants.js'), /params\.set\('sort', 'oldest'\)/);
+  // The plant table is paged by the server, so its column sorting is done there too:
+  // newest registered first unless a column (tag, location, status) is chosen.
+  const plants = read('frontend/js/plants.js');
+  assert.match(plants, /sort: null,\s*\/\/ null = newest registered first/);
+  assert.match(plants, /params\.set\('sort', SERVER_SORT\[plantView\.sort\.key\]\);/);
   const plantsRoute = read('backend/src/routes/officerPlants.js');
-  assert.match(plantsRoute, /\["", "newest", "oldest"\]\.includes\(sort\)/);
+  assert.match(plantsRoute, /const sort = oneQueryValue\(req\.query, "sort"\) \|\| "newest";/);
+  assert.match(plantsRoute, /newest: \{ column: "registered_at", ascending: false \}/);
 });
 
 test('review lists show real thumbnails, lazily loaded', () => {
   const shared = read('frontend/js/shared.js');
   assert.match(shared, /img\.loading = 'lazy';/);
   assert.match(read('frontend/js/queue.js'), /observation\.thumbnail_url \|\| PICTURE_BLANK/);
-  assert.match(read('frontend/js/rejected.js'), /observation\.thumbnail_url \|\| PICTURE_BLANK/);
+  assert.match(read('frontend/js/review-history.js'), /image\.loading = 'lazy';\s*image\.src = row\.thumbnail_url \|\| PICTURE_BLANK;/);
   const reviews = read('backend/src/routes/officerReviews.js');
   assert.match(reviews, /async function withThumbnails\(/);
   assert.match(reviews, /createSignedUrls\(/);
@@ -949,7 +966,8 @@ test('review lists show real thumbnails, lazily loaded', () => {
 test('small usability fixes: clear empty states, reasons on rejected cards, success toasts, no sideways scroll', () => {
   assert.match(read('frontend/queue.html'), /id="queue-empty"[^>]*>Nothing waiting for review\./);
   assert.match(read('frontend/proposals.html'), /id="proposals-empty"[^>]*>Nothing waiting for review\./);
-  assert.match(read('frontend/js/rejected.js'), /reason\.className = 'list-note';/);
+  // Review history: the reason is clipped (full text as a tooltip), or "—" when there is none.
+  assert.match(read('frontend/js/review-history.js'), /if \(row\.reason\) td\.appendChild\(clippedText\(row\.reason, '', 2\)\);\s*else td\.textContent = '—';/);
   assert.match(read('frontend/users.html'), /id="users-count"/);
   assert.match(read('frontend/js/users.js'), /' is now active\.' : ' is now suspended\.'/);
   const css = read('frontend/css/style.css');
@@ -957,4 +975,11 @@ test('small usability fixes: clear empty states, reasons on rejected cards, succ
   assert.match(tail, /body \{\s*overflow-wrap: break-word;/);
   assert.match(tail, /\.app \{\s*grid-template-columns: 230px minmax\(0, 1fr\);/);
   assert.match(tail, /main \{\s*min-width: 0;/);
+});
+
+test('species catalogue table: Species, Family, Conservation status, Plants, Open; no Last observed column', () => {
+  const species = read('frontend/js/species.js');
+  const keys = Array.from(species.matchAll(/^\s+key: '(\w+)', label:/gm), match => match[1]);
+  assert.deepEqual(keys, ['species', 'family', 'status', 'plants', 'open']);
+  assert.doesNotMatch(read('frontend/species.html'), /col-last|col-info/);
 });

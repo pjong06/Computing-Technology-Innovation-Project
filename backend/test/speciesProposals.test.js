@@ -180,9 +180,12 @@ test('officer approves a pending proposal and can link taxonomy', async t => {
     decision: 'approved', taxonomy_id: TAXONOMY,
   });
   assert.equal(response.status, 200);
-  assert.deepEqual(updateOf(queries)[1], {
-    verification_status: 'approved', review_comment: null, taxonomy_id: TAXONOMY,
+  // Who decided and when are recorded too (for Review history).
+  const { reviewed_at: approvedAt, ...approved } = updateOf(queries)[1];
+  assert.deepEqual(approved, {
+    verification_status: 'approved', review_comment: null, taxonomy_id: TAXONOMY, reviewed_by: USER,
   });
+  assert.ok(Math.abs(Date.parse(approvedAt) - Date.now()) < 60000);
   // Only a row that is still pending can change.
   assert.ok(queries[0].some(c => c[0] === 'eq' && c[1] === 'verification_status' && c[2] === 'pending'));
 });
@@ -197,7 +200,9 @@ test('officer rejection needs a comment and stores it', async t => {
     decision: 'rejected', comment: '  Already listed as a synonym  ', taxonomy_id: TAXONOMY,
   })).status, 200);
   // A rejection never links taxonomy.
-  assert.deepEqual(updateOf(queries)[1], { verification_status: 'rejected', review_comment: 'Already listed as a synonym' });
+  const { reviewed_at: rejectedAt, ...rejected } = updateOf(queries)[1];
+  assert.deepEqual(rejected, { verification_status: 'rejected', review_comment: 'Already listed as a synonym', reviewed_by: USER });
+  assert.ok(Math.abs(Date.parse(rejectedAt) - Date.now()) < 60000);
 });
 
 test('invalid reviews never query the database', async t => {

@@ -8,38 +8,15 @@
 <link rel="icon" href="images/logo.png">
 <link rel="stylesheet" href="css/style.css">
 <style>
-.plant-filters { align-items: center; }
-.plant-filters select { min-width: 150px; }
-.plant-list { display: grid; gap: 12px; }
-.plant-row {
-  display: grid;
-  grid-template-columns: 112px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 16px;
-  padding: 14px;
-  color: var(--ink);
-  text-decoration: none;
-}
-.plant-row:hover { border-color: var(--sage); }
-.plant-photo-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; }
-.plant-thumb { width: 112px; height: 82px; object-fit: cover; border-radius: 10px; background: var(--mint); }
-.plant-title { margin: 0 0 4px; font-size: 17px; }
-.plant-sub, .plant-meta { color: var(--mute); font-size: 13px; overflow-wrap: anywhere; }
-.plant-meta { margin-top: 3px; }
-.pager { display: flex; justify-content: space-between; align-items: center; margin-top: 18px; }
-.pager-label { color: var(--mute); font-size: 13px; }
-.plant-state { padding: 18px; }
-.plant-state[hidden] { display: none; }
-@media (max-width: 760px) {
-  .plant-filters { align-items: stretch; }
-  .plant-filters select { flex: 1 1 40%; }
-}
-@media (max-width: 520px) {
-  main.wide { padding: 20px 16px; }
-  .plant-row { grid-template-columns: 76px minmax(0, 1fr); gap: 10px; }
-  .plant-thumb { width: 76px; height: 72px; }
-  .plant-status { grid-column: 2; justify-self: start; }
-}
+/* Column widths of the plant table (the shared .data-table keeps text inside its cell). */
+#plants-table { min-width: 940px; }
+#plants-table .col-plant { width: 24%; }
+#plants-table .col-tag { width: 14%; }
+#plants-table .col-location { width: 16%; }
+#plants-table .col-by { width: 12%; }
+#plants-table .col-last { width: 11%; }
+#plants-table .col-status { width: 13%; }
+#plants-table .col-view { width: 72px; }
 </style>
 </head>
 <body>
@@ -48,46 +25,53 @@
 <main class="wide">
 <section class="page on">
   <h1>Plants</h1>
-  <p class="lead">Every registered plant with its tag, location, status and observations, for conservation officers to search and check.</p>
-  <form class="bar plant-filters" id="plant-filters">
-    <input id="plant-search" class="grow" type="search" placeholder="Search tag, species or location"
-      aria-label="Search by tag code, species name or location">
-    <select id="plant-species" aria-label="Filter by species">
-      <option value="">All species</option>
-    </select>
-    <select id="plant-status-filter" aria-label="Filter by plant status">
-      <option value="">All plant statuses</option>
-    </select>
-    <select id="conservation-filter" aria-label="Filter by conservation status">
-      <option value="">All conservation statuses</option>
-      <option value="CR">Critically Endangered</option>
-      <option value="EN">Endangered</option>
-      <option value="VU">Vulnerable</option>
-      <option value="NT">Near Threatened</option>
-      <option value="LC">Least Concern</option>
-      <option value="DD">Data Deficient</option>
-      <option value="NA">Not assessed</option>
-    </select>
-    <select id="registered-by-filter" aria-label="Filter by registered by">
-      <option value="">All botanists</option>
-    </select>
-    <select id="plant-sort" aria-label="Sort order">
-      <option value="newest">Newest first</option>
-      <option value="oldest">Oldest first</option>
-    </select>
-    <button class="btn" type="submit">Search</button>
-  </form>
+  <p class="lead">Every tagged plant, its location and review status, for the conservation officer.</p>
 
-  <p class="muted" id="plants-count">Loading plants...</p>
-  <div class="card plant-state" id="plants-loading" role="status">Loading plants...</div>
-  <div class="card plant-state" id="plants-error" role="alert" hidden></div>
-  <div class="card plant-state" id="plants-empty" hidden>No plants match these filters. Try changing your search or filters.</div>
-  <div class="plant-list" id="plants-list"></div>
-  <div class="pager" id="plants-pager" hidden>
-    <button class="btn ghost" id="plants-previous" type="button">Previous</button>
-    <span class="pager-label" id="plants-page"></span>
-    <button class="btn ghost" id="plants-next" type="button">Next</button>
-  </div>
+  <article class="card table-card">
+    <div class="table-card-head">
+      <h2>Plant list</h2>
+    </div>
+    <div class="table-toolbar">
+      <input id="plant-search" type="search" placeholder="Search tag, species or location"
+        aria-label="Search by tag code, species name or location">
+      <div class="popover-wrap">
+        <button class="btn ghost" id="filters-button" type="button" aria-controls="filters-panel">Filters</button>
+        <div class="popover" id="filters-panel" role="dialog" aria-label="Plant filters" hidden>
+          <label>Species <select id="plant-species"><option value="">All species</option></select></label>
+          <label>Conservation status
+            <select id="conservation-filter">
+              <option value="">All conservation statuses</option>
+              <option value="CR">Critically Endangered</option>
+              <option value="EN">Endangered</option>
+              <option value="VU">Vulnerable</option>
+              <option value="NT">Near Threatened</option>
+              <option value="LC">Least Concern</option>
+              <option value="DD">Data Deficient</option>
+              <option value="NA">Not assessed</option>
+            </select>
+          </label>
+          <label>Registered by <select id="registered-by-filter"><option value="">All botanists</option></select></label>
+          <button class="btn ghost" id="filters-clear" type="button">Clear filters</button>
+        </div>
+      </div>
+      <div class="popover-wrap">
+        <button class="btn ghost" id="export-button" type="button" aria-controls="export-panel">Export</button>
+        <div class="popover" id="export-panel" role="dialog" aria-label="Export plant records" hidden>
+          <button class="btn ghost" id="export-csv" type="button">CSV (spreadsheet)</button>
+          <button class="btn ghost" id="export-pdf" type="button">PDF (Plant records)</button>
+          <p class="muted">Exports the plants shown with the current tab, search and filters.</p>
+        </div>
+      </div>
+      <div class="table-tabs" id="plant-tabs" aria-label="Plant review status"></div>
+    </div>
+    <div class="bulk-bar" id="plants-bulk" aria-label="Actions for the selected plants" hidden></div>
+    <p class="table-note" id="plants-count" role="status">Loading plants...</p>
+    <div class="card plant-state" id="plants-error" role="alert" hidden></div>
+    <div class="table-scroll">
+      <table class="data-table" id="plants-table"><thead></thead><tbody></tbody></table>
+    </div>
+    <div class="table-pager" id="plants-pager"></div>
+  </article>
 </section>
 </main>
 </div>

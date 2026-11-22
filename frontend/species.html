@@ -8,139 +8,12 @@
 <link rel="icon" href="images/logo.png">
 <link rel="stylesheet" href="css/style.css">
 <style>
-/* Species catalogue as a grid of plant cards: 4 in a row, big photos */
-
-.plant-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 20px;
-}
-
-.plant-card {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-
-  cursor: pointer;
-  transition: box-shadow 0.15s, transform 0.15s;
-}
-
-.plant-card:hover {
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
-  transform: translateY(-2px);
-}
-
-.plant-photo {
-  position: relative;
-  height: 220px;
-  background: var(--mint);
-}
-
-.plant-photo-area {
-  min-width: 0;
-}
-
-.plant-photo img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.plant-photo-caption {
-  padding: 6px 14px 0;
-  color: var(--mute);
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-.plant-photo .pill {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  padding: 3px 12px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
-}
-
-.plant-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 12px 14px 12px;
-}
-
-.plant-name {
-  color: var(--ink);
-  font-size: 17px;
-  font-weight: 600;
-  line-height: 1.25;
-  overflow-wrap: anywhere;
-}
-
-.plant-sci {
-  color: var(--mute);
-  font-size: 14px;
-  font-style: italic;
-  overflow-wrap: anywhere;
-}
-
-.plant-name.latin {
-  font-style: italic;
-}
-
-.plant-place {
-  display: -webkit-box;
-  line-clamp: 2;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-
-  margin-top: 6px;
-  color: var(--mute);
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-
-.plant-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: auto;
-  padding: 0 14px 14px;
-}
-
-.plant-actions .btn {
-  padding: 5px 14px;
-  font-size: 13px;
-}
-.plant-actions a {
-  display: inline-block;
-  text-decoration: none;
-}
-
-#species-count {
-  margin: 0 0 14px;
-}
-
-@media (max-width: 1000px) {
-  .plant-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-
-@media (max-width: 700px) {
-  .plant-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-}
-
-@media (max-width: 440px) {
-  .plant-grid { grid-template-columns: minmax(0, 1fr); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .plant-card { transition: none; }
-  .plant-card:hover { transform: none; }
-}
+/* Column widths of the species table (the shared .data-table keeps text inside its cell). */
+#species-table .col-species { width: 40%; }
+#species-table .col-family { width: 22%; }
+#species-table .col-status { width: 24%; }
+#species-table .col-plants { width: 10%; }
+#species-table .col-open { width: 72px; }
 </style>
 </head>
 <body>
@@ -150,26 +23,51 @@
 
 <main class="wide">
 <section class="page on">
-  <h1>Species <span>catalogue</span></h1>
-  <p class="lead">Every plant species in the park with its photos and conservation status: officers add and edit species here, botanists look them up and request new ones.</p>
-  <div class="bar">
-   <input id="search-box" class="grow" type="text" placeholder="Search by scientific or common name"
-     aria-label="Search species by name" oninput="drawSpeciesTable()">
-   <select id="status-filter" aria-label="Filter by conservation status" onchange="drawSpeciesTable()">
-      <option value="">All conservation statuses</option>
-      <option>Critically Endangered</option>
-      <option>Endangered</option>
-      <option>Vulnerable</option>
-      <option>Near Threatened</option>
-      <option>Least Concern</option>
-      <option>Data Deficient</option>
-      <option>Not assessed</option>
-    </select>
-    <button class="btn" id="add-species" onclick="openSpeciesEditor('')">Add species</button>
+  <div class="page-head">
+    <h1>Species catalogue</h1>
+    <button class="btn" id="add-species" type="button" onclick="openSpeciesEditor('')">+ Add species</button>
   </div>
-  <p class="muted" id="species-count">Loading species...</p>
-  <div class="plant-grid" id="species-grid"></div>
-  <p class="muted" id="no-species" hidden>No species match. Clear the search or add a new species.</p>
+  <p class="lead">Every plant species recorded in Niah National Park, for the conservation officer.</p>
+
+  <article class="card table-card">
+    <div class="table-card-head">
+      <h2>Species list</h2>
+    </div>
+    <div class="table-toolbar">
+      <input id="search-box" type="search" placeholder="Search scientific, common or family name"
+        aria-label="Search species by scientific, common or family name">
+      <div class="popover-wrap">
+        <button class="btn ghost" id="filters-button" type="button" aria-controls="filters-panel">Filters</button>
+        <div class="popover" id="filters-panel" role="dialog" aria-label="Species filters" hidden>
+          <label>Family <select id="family-filter"><option value="">All families</option></select></label>
+          <label>Identified to <select id="rank-filter"><option value="">Any rank</option></select></label>
+          <label id="plants-filter-label">Plants
+            <select id="plants-filter">
+              <option value="">Any</option>
+              <option value="with">Has plants</option>
+              <option value="none">No plants yet</option>
+            </select>
+          </label>
+          <button class="btn ghost" id="filters-clear" type="button">Clear filters</button>
+        </div>
+      </div>
+      <div class="popover-wrap" id="export-wrap">
+        <button class="btn ghost" id="export-button" type="button" aria-controls="export-panel">Export</button>
+        <div class="popover" id="export-panel" role="dialog" aria-label="Export species inventory" hidden>
+          <button class="btn ghost" id="export-csv" type="button">CSV (spreadsheet)</button>
+          <button class="btn ghost" id="export-pdf" type="button">PDF (Species inventory)</button>
+          <p class="muted" id="export-note">Exports the species shown with the current tab, search and filters.</p>
+        </div>
+      </div>
+      <div class="table-tabs" id="species-tabs" aria-label="Species groups"></div>
+    </div>
+    <div class="bulk-bar" id="species-bulk" aria-label="Actions for the selected species" hidden></div>
+    <p class="table-note" id="species-count">Loading species...</p>
+    <div class="table-scroll">
+      <table class="data-table" id="species-table"><thead></thead><tbody></tbody></table>
+    </div>
+    <div class="table-pager" id="species-pager"></div>
+  </article>
 </section>
 
 </main>

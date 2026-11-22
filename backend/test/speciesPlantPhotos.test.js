@@ -246,11 +246,10 @@ test('the editor is in sections, with no species photo upload and a separate Arc
   }
 });
 
-test('catalogue cards show a plant photo with "From plant <tag>", else the placeholder', () => {
+test('the species catalogue is a table without photos; the app shows plant photos with "From plant <tag>"', () => {
+  // The web catalogue is a data table: no images and no species reference photos.
   const js = read('frontend/js/species.js');
-  assert.match(js, /img\.src = plantPhoto \? plantPhoto\.url : PICTURE_BLANK;/);
-  assert.match(js, /caption\.textContent = 'From plant ' \+ displayTag\(plantPhoto\.tag/);
-  assert.doesNotMatch(js, /speciesPhoto\(|species_media/);
+  assert.doesNotMatch(js, /createElement\('img'\)|PICTURE_BLANK|plant_photo|speciesPhoto\(|species_media/);
   const app = read('niah-biotrack/src/store/useSpeciesStore.ts');
   assert.match(app, /list\.map\(\(item\) => \[item\.id, item\.plant_photo \?\? null\]\)/);
   assert.doesNotMatch(app, /cachePrimarySpeciesImage|imageUrisBySpeciesId/);
