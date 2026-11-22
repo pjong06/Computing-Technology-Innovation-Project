@@ -214,7 +214,20 @@ void (async()=>{
       if(action==='assign'||action==='resolve'){
         if(state.busy)return;const a=current();if(!a)return;
         const body=action==='assign'?{assigned_to:root.querySelector('#assignee').value,assignment_notes:root.querySelector('#assignment-note').value,expected_assigned_at:a.assigned_at}:{resolution_notes:root.querySelector('#resolution-note').value,expected_assigned_at:a.assigned_at};
-        if(action==='assign'&&!body.assigned_to)throw new Error('Select a botanist.');
+        if(action==='assign'&&!body.assigned_to){
+          const select=root.querySelector('#assignee');
+          let warning=root.querySelector('#assignee-warning');
+          if(!warning){
+            warning=document.createElement('span');warning.id='assignee-warning';
+            warning.className='workspace-error';warning.setAttribute('role','alert');
+            warning.textContent='Select a botanist.';select.after(warning);
+          }
+          select.setAttribute('aria-invalid','true');select.setAttribute('aria-describedby','assignee-warning');
+          select.onchange=()=>{
+            if(select.value){warning.remove();select.removeAttribute('aria-invalid');select.removeAttribute('aria-describedby');select.onchange=null;}
+          };
+          select.focus();return;
+        }
         if(action==='resolve'&&!body.resolution_notes.trim())throw new Error('Add a handling note.');
         state.busy=true;b.disabled=true;
         try{await api(`/alerts/${pathId(a.id)}/${action}`,{method:'PATCH',body:JSON.stringify(body)});state.status=action==='assign'?'acknowledged':'resolved';await loadAlerts();await counts();state.busy=false;render();}finally{state.busy=false;b.disabled=false;}
