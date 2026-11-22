@@ -1,5 +1,6 @@
 import { randomUUID } from 'expo-crypto';
 import * as SQLite from 'expo-sqlite';
+import { tagOnlyPayload } from '../utils/plantStatusLine';
 
 export type SyncEntityType = 'plant' | 'observation' | 'proposal';
 export type SyncOperationType = 'create' | 'update' | 'delete';
@@ -861,9 +862,83 @@ export async function clearLocalProposals(): Promise<void> {
 // Server codes for a plant tag it refused (backend/src/routes/sync.js). They come
 // back as 'conflict', which the outbox leaves alone: sending the same
 // tag again would fail the same way. Attaching another tag queues a new operation.
-export type TagRefusalCode = 'tag_in_use' | 'plant_locked';
+export type TagRefusalCode = 'tag_in_use' | 'tag_not_yours' | 'tag_already_set' | 'plant_locked';
 
-const TAG_REFUSAL_CODES = new Set<string>(['tag_in_use', 'plant_locked']);
+const TAG_REFUSAL_CODES = new Set<string>(['tag_in_use', 'tag_not_yours', 'tag_already_set', 'plant_locked']);
+
+/**
+ * Tags refused as "plant_locked" before the server accepted a tag attached after
+ * submission (20261122140000_attach_tag_after_submission.sql): sends each one again as a
+ * tag-only change (only the tag, which is all a submitted plant accepts). Run at the start
+ * of every outbox push; once the server accepts the tag the row is complete. If the server
+ * still says plant_locked (the migration not applied yet), the next push tries again.
+ * clientRecordId (optional): only that plant (the plant screen's Retry).
+ */
+export async function requeueLockedTagOperations(clientRecordId?: string): Promise<number> {
+  await initializeOfflineDatabase();
+
+  const db = await getDatabase();
+  const timestamp = nowIso();
+  let requeued = 0;
+
+  await db.withExclusiveTransactionAsync(async (transaction) => {
+    const rows = await transaction.getAllAsync<{
+      operation_id: string;
+      client_record_id: string;
+      payload_json: string;
+    }>(
+      `
+        SELECT operation_id, client_record_id, payload_json
+        FROM sync_outbox
+        WHERE entity_type = 'plant'
+          AND operation_type = 'update'
+          AND status = 'conflict'
+          AND last_error = 'plant_locked'
+          ${clientRecordId ? 'AND client_record_id = ?' : ''}
+      `,
+      ...(clientRecordId ? [clientRecordId] : [])
+    );
+
+    for (const row of rows) {
+      let payload: unknown = null;
+      try {
+        payload = parseJson<unknown>(row.payload_json);
+      } catch {
+        continue;
+      }
+      const tagOnly = tagOnlyPayload(payload);
+      if (!tagOnly) continue;
+
+      await transaction.runAsync(
+        `
+          UPDATE sync_outbox
+          SET payload_json = ?,
+              status = 'pending',
+              last_error = NULL,
+              retry_count = 0,
+              next_retry_at = NULL,
+              updated_at = ?
+          WHERE operation_id = ?
+        `,
+        JSON.stringify(tagOnly),
+        timestamp,
+        row.operation_id
+      );
+      await transaction.runAsync(
+        `
+          UPDATE local_entities
+          SET sync_status = 'pending', updated_at = ?
+          WHERE entity_type = 'plant' AND client_record_id = ?
+        `,
+        timestamp,
+        row.client_record_id
+      );
+      requeued += 1;
+    }
+  });
+
+  return requeued;
+}
 
 /**
  * Plants whose LATEST outbox operation was a refused tag, by client record ID.
