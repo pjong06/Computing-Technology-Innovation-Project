@@ -118,7 +118,7 @@ test('wiring: one list for Sync details and the sync counts; permanent items are
   assert.match(screen, /\{!row\.final \? \(\s*<TouchableOpacity onPress=\{\(\) => void retry\(row\)\}/);
   assert.match(screen, /await removeRefusedSubmit\(row\.target\.recordId, row\.target\.obsId, row\.code\);/);
   // Retry upload on Home and plant detail only for temporary failures.
-  assert.match(read('../components/RecentActivity.tsx'), /retry: plantRetryable \? 'record' : null,/);
+  assert.match(read('../components/RecentActivity.tsx'), /actions: rowActions\(\{ action: status\.action, retryable: plantRetryable, gone: plantGone \}\),/);
   assert.match(read('../../app/plant-detail.tsx'), /plantStatusLine\(matched, retryableRecord\(matched\) \? null : finalProblemText\(matched\)\)/);
   // Not sent again: plant photos refused for good, submits whose plant/observation is gone.
   assert.match(read('../services/plantPhotoSync.ts'), /photo\.syncStatus === FAILED && FINAL_PHOTO_CODES\.has\(plantPhotoCode\(photo\) \?\? ''\)/);

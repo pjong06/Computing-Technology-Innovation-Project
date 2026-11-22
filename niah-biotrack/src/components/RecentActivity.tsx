@@ -8,7 +8,12 @@ import { useProposalStore, type SpeciesProposal } from '../store/useProposalStor
 import { plantReviewBadge, recordRowBadge, statusReason, visitStatus } from '../utils/reviewStatus';
 import { firstVisitOf, isVisitSubmitted, newPlantReview, plantActivityEntries } from '../utils/submissionState';
 import { rowStatus } from '../utils/recordsList';
-import { finalProblemText, retryableRecord } from '../utils/syncDetails';
+import { finalProblemText, retryableRecord, explainAnswer } from '../utils/syncDetails';
+import { isGoneCode, rowActions, type RowActionKind } from '../utils/rowActions';
+import RowActions from './RowActions';
+
+// The explanation shown when the plant no longer exists on the server.
+const GONE_TEXT = explainAnswer('plant_deleted').explanation;
 import { resolveStoredPhotoUri } from '../utils/photoStorage';
 import { parseTagCode } from '../utils/tagCode';
 import {
@@ -51,7 +56,13 @@ type ActivityRow = ActivityItem & {
   photo: ThumbnailSource[];
   recordId: string | null; // plants and observations: opens Plant detail
   request: SpeciesProposal | null;
-  retry: 'record' | 'request' | null;
+  // Species requests only ("Retry upload" on the request); plants and observations use actions.
+  retry: 'request' | null;
+  // What can be done right on the row (src/utils/rowActions.ts): Send for review, Edit,
+  // Edit and resend, Retry, Remove from phone.
+  actions: RowActionKind[];
+  obsId: string | null;
+  isRegistration: boolean;
 };
 
 function timestampFor(value?: string | null): number {
@@ -91,6 +102,8 @@ function buildRows(
     // OBSERVATION row per later record: plantActivityEntries, the officer Review page's rule.
     const entries = plantActivityEntries(record);
     const plantRetryable = record.syncStatus !== SyncStatus.UPLOADED && retryableRecord(record);
+    // Its plant (or registration record) no longer exists on the server.
+    const plantGone = firstVisit ? isGoneCode(firstVisit.submitCode) : false;
 
     // The plant's first record (registering it): only for plants this botanist registered.
     if (entries[0]?.type === 'new_plant') {
@@ -110,7 +123,7 @@ function buildRows(
         when: record.createdAtIso || record.createdAt || null,
         badge: recordRowBadge(status, plantReviewBadge(record, 'Waiting for review').badge),
         // Something that can never upload says why (Sync details offers to remove it).
-        reason: (!plantRetryable && finalProblemText(record)) || statusReason(
+        reason: (plantGone && GONE_TEXT) || (!plantRetryable && finalProblemText(record)) || statusReason(
           status.action,
           firstVisit?.reviewComment ?? record.reviewComment,
           firstVisit && !isVisitSubmitted(firstVisit) ? firstVisit.submitError : null,
@@ -124,8 +137,11 @@ function buildRows(
         }),
         recordId: record.id,
         request: null,
-        // "Retry upload" only when trying again can help (not for permanent refusals).
-        retry: plantRetryable ? 'record' : null,
+        retry: null,
+        // "Retry" only when trying again can help (not for permanent refusals).
+        actions: rowActions({ action: status.action, retryable: plantRetryable, gone: plantGone }),
+        obsId: firstVisit?.id ?? null,
+        isRegistration: true,
       });
     }
 
@@ -133,6 +149,7 @@ function buildRows(
     for (const { type, visit } of entries) {
       if (type !== 'observation' || !visit) continue;
       const status = visitStatus(visit, record.syncError);
+      const visitGone = isGoneCode(visit.submitCode);
       const photo = Array.isArray(visit.photoUris) ? visit.photoUris[0] : undefined;
       push({
         key: `observation:${record.id}:${visit.id}`,
@@ -143,7 +160,7 @@ function buildRows(
         tag,
         when: visit.observedAt || visit.date || null,
         badge: status.badge,
-        reason: status.reason,
+        reason: visitGone ? GONE_TEXT : status.reason,
         // The observation's own photo, else the plant's picture (signed thumbnail or public copy).
         photo: thumbnailSources({
           localUri: photo ? resolveStoredPhotoUri(photo) : null,
@@ -153,7 +170,10 @@ function buildRows(
         }),
         recordId: record.id,
         request: null,
-        retry: visit.syncStatus !== SyncStatus.UPLOADED && retryableRecord(record, visit.id) ? 'record' : null,
+        retry: null,
+        actions: rowActions({ action: status.action, retryable: retryableRecord(record, visit.id), gone: visitGone }),
+        obsId: visit.id,
+        isRegistration: false,
       });
     }
   }
@@ -172,12 +192,15 @@ function buildRows(
       badge: status.badge,
       reason:
         status.action === 'not_added'
-          ? `Officer's reason: ${request.reviewComment?.trim() || 'No reason was given.'}`
+          ? (request.reviewComment?.trim() ? `Officer's reason: ${request.reviewComment.trim()}` : 'Not added by the officer (no reason given)')
           : null,
       photo: [],
       recordId: null,
       request,
       retry: request.syncStatus !== SyncStatus.UPLOADED ? 'request' : null,
+      actions: [],
+      obsId: null,
+      isRegistration: false,
     });
   }
   return rows;
@@ -321,16 +344,14 @@ export default function RecentActivity({
           </View>
         ) : null}
 
-        {item.retry === 'record' && item.recordId ? (
-          <View style={styles.actions}>
-            {retryingRecordIds.includes(item.recordId) ? (
-              <ActivityIndicator size="small" color="#213B2A" />
-            ) : (
-              <TouchableOpacity onPress={() => onRetryRecord(item.recordId as string)} disabled={syncing} accessibilityRole="button">
-                <Text style={styles.link}>Retry upload</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+        {item.recordId && item.actions.length > 0 ? (
+          <RowActions
+            actions={item.actions}
+            recordId={item.recordId}
+            obsId={item.obsId}
+            isRegistration={item.isRegistration}
+            disabled={syncing}
+          />
         ) : null}
 
         {item.retry === 'request' && request ? (

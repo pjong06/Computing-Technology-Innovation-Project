@@ -59,6 +59,8 @@ import KeyboardDoneBar from '../src/components/KeyboardDoneBar';
 import SpeciesPicker, { type SpeciesChoice } from '../src/components/SpeciesPicker';
 import { useProposalStore } from '../src/store/useProposalStore';
 import { catalogueMatch } from '../src/utils/speciesSearch';
+import { officerReasonText } from '../src/utils/rowActions';
+import { firstVisitOf } from '../src/utils/submissionState';
 import { checkDiameterCm, checkHeightMetres, metresToCm } from '../src/utils/units';
 
 const DONE_BAR_ID = 'new-record-done';
@@ -170,6 +172,14 @@ export default function NewRecordScreen() {
   const allSpecies = useSpeciesStore((state) => state.species);
 
   const isEditing = Boolean(existingRecord);
+  // A registration the officer sent back: their reason at the top; saving resends it.
+  const firstRecordOfPlant = existingRecord ? firstVisitOf(existingRecord) : null;
+  const sentBack =
+    existingRecord?.reviewStatus === ReviewStatus.REJECTED ||
+    firstRecordOfPlant?.reviewStatus === ReviewStatus.REJECTED;
+  const sentBackReason = sentBack
+    ? officerReasonText(firstRecordOfPlant?.reviewComment ?? existingRecord?.reviewComment)
+    : null;
   const [photos, setPhotos] = useState<ImagePicker.ImagePickerAsset[]>(() => initialPhotos(existingRecord));
   const [speciesChoice, setSpeciesChoice] = useState<SpeciesChoice>(null);
   const [speciesQuery, setSpeciesQuery] = useState(existingRecord?.scientificName ?? '');
@@ -640,6 +650,13 @@ export default function NewRecordScreen() {
       </View>
 
       <FormScrollView contentContainerStyle={styles.scrollContent}>
+        {/* Sent back: the officer's reason first, so the botanist knows what to fix. */}
+        {sentBackReason ? (
+          <View style={styles.reasonBanner}>
+            <Text style={styles.reasonBannerText}>{sentBackReason}</Text>
+          </View>
+        ) : null}
+
         {/* Section 1: Photos */}
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionLabel}>PHOTOS *</Text>
@@ -1009,7 +1026,7 @@ export default function NewRecordScreen() {
             accessibilityRole="button"
             accessibilityLabel="Save and submit plant record for officer review"
           >
-            <Text style={styles.saveSubmitBtnText}>Save and submit</Text>
+            <Text style={styles.saveSubmitBtnText} numberOfLines={1}>{sentBack ? 'Save and resend' : 'Save and submit'}</Text>
           </TouchableOpacity>
         </View>
       </FormScrollView>
@@ -1142,6 +1159,8 @@ const styles = StyleSheet.create({
   fieldLabel: { fontSize: 12.5, fontWeight: '700', color: '#213B2A', marginBottom: 6, marginTop: 6 },
   pickerHelp: { fontSize: 12, color: '#68776D', lineHeight: 17, marginBottom: 8 },
   speciesNotice: { fontSize: 12, color: '#46654F', lineHeight: 17, marginBottom: 10, paddingHorizontal: 4 },
+  reasonBanner: { backgroundColor: '#FDE2E2', borderRadius: 14, padding: 12, marginBottom: 12 },
+  reasonBannerText: { color: '#9B1C1C', fontSize: 13, fontWeight: '700', lineHeight: 18 },
   requestCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FDF4D8', borderRadius: 16, padding: 14, marginBottom: 8 },
   requestCardText: { flex: 1, minWidth: 0 },
   requestCardTitle: { fontSize: 12, fontWeight: '800', color: '#8C5E03' },
