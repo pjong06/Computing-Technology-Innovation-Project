@@ -1,12 +1,14 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Modal,
   Platform,
   SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -18,33 +20,41 @@ import { useAuthRole } from '../src/context/AuthRoleContext';
 import { useRecordStore } from '../src/store/useRecordStore';
 import {
   cachedMyTags,
-  downloadTagImage,
   fetchMyTags,
   printTagsPdf,
-  reserveTagsPdf,
-  saveFile,
-  shareFile,
+  reserveTags,
+  saveTagImages,
   shareTagsPdf,
 } from '../src/services/myTags';
 import { isSyncOffline } from '../src/services/syncRetry';
 import {
+  DEFAULT_TAG_COUNT,
   MAX_PRINT_TAGS,
-  NEW_TAG_COUNTS,
-  PDF_LAYOUTS,
+  PRINT_LAYOUTS,
+  batchCountsText,
+  batchLabel,
   groupBatches,
+  initiallyOpenBatches,
+  parseTagCount,
+  printPlan,
+  stepTagCount,
   tagCountsText,
-  tagImagePath,
   toggleSelected,
   type MyTag,
-  type PdfLayout,
+  type PrintLayout,
 } from '../src/utils/myTags';
 
-// "My QR tags" (botanists, from Profile): the QR tags reserved by this botanist, unused or
-// used (with the plant each is attached to), and "Get new tags": reserve 10 / 20 / 50 and get
-// the PDF of QR labels to print (a sheet of labels, or one label per page). Each tag can be
-// saved or shared as a PNG label, and several can be chosen and printed together. The
-// endpoints only let a botanist reserve, see and print their own tags. Needs the internet;
-// offline it shows the list saved on this phone.
+// "My QR tags" (botanists, from Profile): the QR tags reserved by this botanist.
+//   - Get new tags: how many (1–100, typed or − / +), then "Get N tags" (no layout yet).
+//   - Your tags: one collapsible section per reservation ("Today · 10 tags", newest open),
+//     "N used · M unused", and "Print" for that batch. Each tag: checkbox, tag, Unused/Used,
+//     and the plant a used tag is on (tap opens it).
+//   - Choosing tags shows "N selected · Clear · Print N": it prints exactly those tags, from
+//     any batches (POST /api/tag-reservations/print).
+//   - Every print opens "Print N tags": Sheet of labels (default), One label per page, or
+//     Images (one PNG per tag), then Print / Cancel.
+// The endpoints only let a botanist reserve, see and print their own tags. Needs the
+// internet; offline it shows the list saved on this phone.
 
 function dayText(value: string | null | undefined): string {
   const time = value ? Date.parse(value) : Number.NaN;
@@ -52,6 +62,8 @@ function dayText(value: string | null | undefined): string {
     ? ''
     : new Date(time).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
+
+type PrintRequest = { tags: string[]; title: string; clearSelection: boolean };
 
 export default function MyTagsScreen() {
   const router = useRouter();
@@ -61,18 +73,20 @@ export default function MyTagsScreen() {
   const [tags, setTags] = useState<MyTag[] | null>(null);
   const [offlineNote, setOfflineNote] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [count, setCount] = useState<number>(NEW_TAG_COUNTS[0]);
+  // "Get new tags": the typed number, and a failed request to retry with the same id.
+  const [countText, setCountText] = useState(String(DEFAULT_TAG_COUNT));
+  const [countError, setCountError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
-  // The last PDF made here (to share again), and a request to retry after a failure.
-  const [pdf, setPdf] = useState<File | null>(null);
   const [retry, setRetry] = useState<{ count: number; requestId: string } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
-  const [layout, setLayout] = useState<PdfLayout>('sheet');
-  // "Print selected": choosing tags, and the tags chosen.
-  const [selecting, setSelecting] = useState(false);
+  // The last PDF made here (to share again).
+  const [pdf, setPdf] = useState<File | null>(null);
+  // Batches open (newest open at first), and the tags chosen to print.
+  const [openBatches, setOpenBatches] = useState<string[] | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
-  // The tag whose image is being fetched.
-  const [busyTag, setBusyTag] = useState<string | null>(null);
+  // The "Print N tags" sheet.
+  const [printing, setPrinting] = useState<PrintRequest | null>(null);
+  const [layout, setLayout] = useState<PrintLayout>('sheet');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -105,11 +119,18 @@ export default function MyTagsScreen() {
     }, [load])
   );
 
+  const batches = groupBatches(tags ?? []);
+
+  // The newest batch starts open; the others collapsed (once, when the list first arrives).
+  useEffect(() => {
+    if (openBatches === null && tags !== null) setOpenBatches(initiallyOpenBatches(batches));
+  }, [tags]);
+
   // The plant a used tag is attached to, if it is on this phone.
   const plantFor = (serverId: string | null) =>
     serverId ? records.find((record) => record.serverId === serverId) ?? null : null;
 
-  const share = async (file: File) => {
+  const sharePdf = async (file: File) => {
     const result = await shareTagsPdf(file);
     Toast.show(
       result.ok
@@ -118,10 +139,17 @@ export default function MyTagsScreen() {
     );
   };
 
+  // Opens "Print N tags" for exactly these tags (a batch's, or the ones chosen).
+  const openPrint = (request: PrintRequest) => {
+    if (request.tags.length === 0) return;
+    setLayout('sheet');
+    setPrinting(request);
+  };
+
   const getTags = async (howMany: number, requestId?: string) => {
     setWorking(true);
     setProblem(null);
-    const result = await reserveTagsPdf(howMany, requestId, layout);
+    const result = await reserveTags(howMany, requestId);
     setWorking(false);
     if (!result.ok) {
       setProblem(result.reason);
@@ -130,42 +158,54 @@ export default function MyTagsScreen() {
       return;
     }
     setRetry(null);
-    setPdf(result.file);
-    Toast.show({ type: 'success', text1: `${howMany} tags reserved`, text2: 'Share or save the PDF to print the labels.', position: 'bottom' });
-    void load();
-    await share(result.file);
+    Toast.show({ type: 'success', text1: `${howMany} tags reserved`, text2: 'Choose how to print them.', position: 'bottom' });
+    await load();
+    setOpenBatches((current) => [result.requestId, ...(current ?? [])]);
+    const plan = printPlan({ kind: 'selection', selected: result.tags }, 'sheet');
+    openPrint({ tags: plan.tags, title: plan.title, clearSelection: false });
   };
 
-  // One tag as a PNG label: save it (Android: pick a folder; iOS: share sheet) or share it.
-  const exportImage = async (tag: MyTag, action: 'save' | 'share') => {
-    setBusyTag(tag.tag);
-    const image = await downloadTagImage(tag.tag, tagImagePath(tag));
-    setBusyTag(null);
-    if (!image.ok) {
-      Toast.show({ type: 'error', text1: 'No image', text2: image.reason, position: 'bottom' });
+  const submitCount = () => {
+    const parsed = parseTagCount(countText);
+    if (!parsed.ok) {
+      setCountError(parsed.message);
       return;
     }
-    const result = action === 'save' ? await saveFile(image.file, 'image/png') : await shareFile(image.file, tag.tag);
-    Toast.show(
-      result.ok
-        ? { type: 'success', text1: action === 'save' ? 'Tag image ready' : 'Tag shared', text2: result.message, position: 'bottom' }
-        : { type: 'error', text1: action === 'save' ? 'Not saved' : 'Not shared', text2: result.reason, position: 'bottom' }
-    );
+    setCountError(null);
+    void getTags(parsed.value);
   };
 
-  const printSelected = async () => {
-    if (selected.length === 0) return;
+  // Print: exactly the tags of the request, in the chosen layout.
+  const runPrint = async () => {
+    if (!printing) return;
+    const request = printing;
+    const plan = printPlan({ kind: 'selection', selected: request.tags }, layout);
     setWorking(true);
-    const result = await printTagsPdf(selected, layout);
-    setWorking(false);
-    if (!result.ok) {
-      Toast.show({ type: 'error', text1: 'Not printed', text2: result.reason, position: 'bottom' });
+    if (plan.layout === 'images') {
+      const byTag = new Map((tags ?? []).map((tag) => [tag.tag, tag]));
+      const result = await saveTagImages(plan.tags.map((tag) => byTag.get(tag) ?? { tag, boundPlantId: null }));
+      setWorking(false);
+      Toast.show(
+        result.ok
+          ? { type: 'success', text1: 'Tag images ready', text2: result.message, position: 'bottom' }
+          : { type: 'error', text1: 'Not saved', text2: result.reason, position: 'bottom' }
+      );
+      if (!result.ok) return;
+    } else {
+      const result = await printTagsPdf(plan.tags, plan.layout);
+      setWorking(false);
+      if (!result.ok) {
+        Toast.show({ type: 'error', text1: 'Not printed', text2: result.reason, position: 'bottom' });
+        return;
+      }
+      setPdf(result.file);
+      setPrinting(null);
+      if (request.clearSelection) setSelected([]);
+      await sharePdf(result.file);
       return;
     }
-    setPdf(result.file);
-    setSelecting(false);
-    setSelected([]);
-    await share(result.file);
+    setPrinting(null);
+    if (request.clearSelection) setSelected([]);
   };
 
   const choose = (tag: string) => {
@@ -175,6 +215,11 @@ export default function MyTagsScreen() {
     }
     setSelected((current) => toggleSelected(current, tag));
   };
+
+  const toggleBatch = (requestId: string) =>
+    setOpenBatches((current) =>
+      (current ?? []).includes(requestId) ? (current ?? []).filter((id) => id !== requestId) : [...(current ?? []), requestId]
+    );
 
   if (role !== 'botanist') {
     return (
@@ -186,7 +231,8 @@ export default function MyTagsScreen() {
     );
   }
 
-  const batches = groupBatches(tags ?? []);
+  const parsedCount = parseTagCount(countText);
+  const selectionPlan = printPlan({ kind: 'selection', selected }, 'sheet');
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -206,46 +252,59 @@ export default function MyTagsScreen() {
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Get new tags</Text>
-          <View style={styles.countRow}>
-            {NEW_TAG_COUNTS.map((option) => (
-              <TouchableOpacity
-                key={option}
-                style={[styles.countChip, count === option && styles.countChipOn]}
-                onPress={() => setCount(option)}
-                accessibilityRole="radio"
-                accessibilityState={{ selected: count === option }}
-              >
-                <Text style={[styles.countText, count === option && styles.countTextOn]}>{option}</Text>
-              </TouchableOpacity>
-            ))}
+          <Text style={styles.label}>How many (1–100)</Text>
+          <View style={styles.stepper}>
+            <TouchableOpacity
+              style={styles.stepBtn}
+              onPress={() => {
+                setCountText(stepTagCount(countText, -1));
+                setCountError(null);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="One tag fewer"
+            >
+              <Ionicons name="remove" size={20} color="#213B2A" />
+            </TouchableOpacity>
+            <TextInput
+              style={[styles.countInput, countError && styles.countInputError]}
+              value={countText}
+              onChangeText={(text) => {
+                setCountText(text.replace(/[^0-9]/g, '').slice(0, 3));
+                setCountError(null);
+              }}
+              keyboardType="number-pad"
+              maxLength={3}
+              accessibilityLabel="Number of tags"
+              selectTextOnFocus
+            />
+            <TouchableOpacity
+              style={styles.stepBtn}
+              onPress={() => {
+                setCountText(stepTagCount(countText, 1));
+                setCountError(null);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="One tag more"
+            >
+              <Ionicons name="add" size={20} color="#213B2A" />
+            </TouchableOpacity>
           </View>
-          <Text style={styles.label}>PDF layout</Text>
-          <View style={styles.countRow}>
-            {PDF_LAYOUTS.map((option) => (
-              <TouchableOpacity
-                key={option.value}
-                style={[styles.layoutChip, layout === option.value && styles.countChipOn]}
-                onPress={() => setLayout(option.value)}
-                accessibilityRole="radio"
-                accessibilityState={{ selected: layout === option.value }}
-              >
-                <Text style={[styles.layoutText, layout === option.value && styles.countTextOn]}>{option.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          {countError ? <Text style={styles.problem}>{countError}</Text> : null}
           <TouchableOpacity
-            style={[styles.primaryBtn, working && styles.disabled]}
-            onPress={() => void getTags(count)}
+            style={[styles.primaryBtn, (working || !parsedCount.ok) && styles.disabled]}
+            onPress={submitCount}
             disabled={working}
             accessibilityRole="button"
           >
-            {working ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.primaryText}>Get {count} new tags</Text>}
+            {working && !printing ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.primaryText} numberOfLines={1}>
+                {parsedCount.ok ? `Get ${parsedCount.value} ${parsedCount.value === 1 ? 'tag' : 'tags'}` : 'Get tags'}
+              </Text>
+            )}
           </TouchableOpacity>
-          <Text style={styles.hint}>
-            Needs the internet. You get a PDF of QR labels to{' '}
-            {Platform.OS === 'ios' ? 'print or send from the share sheet' : 'save, then open to print or send'}. The
-            layout is also used for "Print again" and "Print selected".
-          </Text>
+          <Text style={styles.hint}>Needs the internet. You choose how to print them next.</Text>
           {problem ? <Text style={styles.problem}>{problem}</Text> : null}
           {retry ? (
             <TouchableOpacity onPress={() => void getTags(retry.count, retry.requestId)} disabled={working} accessibilityRole="button">
@@ -253,7 +312,7 @@ export default function MyTagsScreen() {
             </TouchableOpacity>
           ) : null}
           {pdf ? (
-            <TouchableOpacity onPress={() => void share(pdf)} accessibilityRole="button">
+            <TouchableOpacity onPress={() => void sharePdf(pdf)} accessibilityRole="button">
               <Text style={styles.link}>Share PDF</Text>
             </TouchableOpacity>
           ) : null}
@@ -263,121 +322,160 @@ export default function MyTagsScreen() {
 
         <View style={styles.sectionRow}>
           <Text style={styles.sectionTitle}>Your tags</Text>
-          {tags && tags.length > 0 ? <Text style={styles.counts}>{tagCountsText(tags)}</Text> : null}
-          {tags && tags.length > 0 ? (
-            <TouchableOpacity
-              onPress={() => {
-                setSelecting(!selecting);
-                setSelected([]);
-              }}
-              accessibilityRole="button"
-            >
-              <Text style={styles.selectLink}>{selecting ? 'Cancel' : 'Select'}</Text>
-            </TouchableOpacity>
-          ) : null}
+          {tags && tags.length > 0 ? <Text style={styles.counts} numberOfLines={1}>{tagCountsText(tags)}</Text> : null}
         </View>
-        {selecting ? <Text style={styles.selectHint}>Tap the tags to print, then "Print selected".</Text> : null}
 
         {loading && tags === null ? <ActivityIndicator color="#213B2A" /> : null}
         {tags !== null && tags.length === 0 && !loading ? (
           <Text style={styles.body}>No tags yet. Use "Get new tags" to reserve and print some.</Text>
         ) : null}
 
-        {batches.map((batch) => (
-          <View key={batch.requestId} style={styles.card}>
-            <View style={styles.batchHeader}>
-              <Text style={styles.batchTitle}>
-                {batch.tags.length} {batch.tags.length === 1 ? 'tag' : 'tags'} · {dayText(batch.reservedAt)}
-              </Text>
-              {batch.unused > 0 ? (
+        {batches.map((batch) => {
+          const open = (openBatches ?? []).includes(batch.requestId);
+          return (
+            <View key={batch.requestId} style={styles.card}>
+              <View style={styles.batchHeader}>
                 <TouchableOpacity
-                  onPress={() => void getTags(batch.tags.length, batch.requestId)}
-                  disabled={working}
+                  style={styles.batchToggle}
+                  onPress={() => toggleBatch(batch.requestId)}
                   accessibilityRole="button"
-                  accessibilityLabel={`Print again: ${batch.tags.length} tags reserved on ${dayText(batch.reservedAt)}`}
+                  accessibilityState={{ expanded: open }}
+                  accessibilityLabel={`${batchLabel(batch)}, ${batchCountsText(batch)}`}
                 >
-                  <Text style={styles.link}>Print again</Text>
+                  <Ionicons name={open ? 'chevron-down' : 'chevron-forward'} size={16} color="#213B2A" />
+                  <View style={styles.batchText}>
+                    <Text style={styles.batchTitle} numberOfLines={1}>{batchLabel(batch)}</Text>
+                    <Text style={styles.batchCounts} numberOfLines={1}>{batchCountsText(batch)}</Text>
+                  </View>
                 </TouchableOpacity>
-              ) : null}
-            </View>
-            {batch.tags.map((tag) => {
-              const plant = plantFor(tag.boundPlantId);
-              const isChosen = selected.includes(tag.tag);
-              return (
-                <View key={tag.tag} style={styles.tagBlock}>
+                {/* While tags are chosen, the bar at the bottom is the one Print (only those tags). */}
+                {selected.length === 0 ? (
                   <TouchableOpacity
-                    style={styles.tagRow}
-                    disabled={!selecting && !plant}
+                    style={styles.batchPrint}
                     onPress={() => {
-                      if (selecting) choose(tag.tag);
-                      else if (plant) router.push({ pathname: '/plant-detail', params: { id: plant.id } });
+                      const plan = printPlan({ kind: 'batch', batch }, 'sheet');
+                      openPrint({ tags: plan.tags, title: plan.title, clearSelection: false });
                     }}
-                    accessibilityRole={selecting ? 'checkbox' : plant ? 'button' : undefined}
-                    accessibilityState={selecting ? { checked: isChosen } : undefined}
+                    disabled={working}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Print ${batchLabel(batch)}`}
                   >
-                    {selecting ? (
-                      <Ionicons name={isChosen ? 'checkbox' : 'square-outline'} size={20} color="#213B2A" />
-                    ) : null}
-                    <Text style={styles.tagCode}>{tag.tag}</Text>
-                    {tag.boundPlantId ? (
-                      <Text style={styles.tagUsed} numberOfLines={1}>
-                        Used{plant ? ` · ${plant.scientificName || 'Identification pending'}` : ' · on a plant'}
-                      </Text>
-                    ) : (
-                      <Text style={styles.tagUnused}>Unused</Text>
-                    )}
-                    {plant && !selecting ? <Ionicons name="chevron-forward" size={16} color="#76877B" /> : null}
+                    <Text style={styles.batchPrintText}>Print</Text>
                   </TouchableOpacity>
-                  {!selecting ? (
-                    <View style={styles.tagActions}>
-                      {busyTag === tag.tag ? <ActivityIndicator size="small" color="#213B2A" /> : null}
-                      <TouchableOpacity
-                        onPress={() => void exportImage(tag, 'save')}
-                        disabled={busyTag !== null}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Save image of ${tag.tag}`}
-                        style={styles.tagAction}
-                      >
-                        <Ionicons name="download-outline" size={15} color="#213B2A" />
-                        <Text style={styles.tagActionText}>Save image</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => void exportImage(tag, 'share')}
-                        disabled={busyTag !== null}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Share ${tag.tag}`}
-                        style={styles.tagAction}
-                      >
-                        <Ionicons name="share-outline" size={15} color="#213B2A" />
-                        <Text style={styles.tagActionText}>Share</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : null}
-                </View>
-              );
-            })}
-          </View>
-        ))}
+                ) : null}
+              </View>
+              {open
+                ? batch.tags.map((tag) => {
+                    const plant = plantFor(tag.boundPlantId);
+                    const isChosen = selected.includes(tag.tag);
+                    return (
+                      <View key={tag.tag} style={styles.tagRow}>
+                        <TouchableOpacity
+                          onPress={() => choose(tag.tag)}
+                          hitSlop={8}
+                          accessibilityRole="checkbox"
+                          accessibilityState={{ checked: isChosen }}
+                          accessibilityLabel={`Choose ${tag.tag}`}
+                        >
+                          <Ionicons name={isChosen ? 'checkbox' : 'square-outline'} size={22} color="#213B2A" />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.tagMain}
+                          disabled={!plant}
+                          onPress={() => plant && router.push({ pathname: '/plant-detail', params: { id: plant.id } })}
+                          accessibilityRole={plant ? 'button' : undefined}
+                        >
+                          <Text style={styles.tagCode} numberOfLines={1}>{tag.tag}</Text>
+                          <View style={[styles.badge, tag.boundPlantId ? styles.badgeUsed : styles.badgeUnused]}>
+                            <Text style={[styles.badgeText, tag.boundPlantId ? styles.badgeUsedText : styles.badgeUnusedText]}>
+                              {tag.boundPlantId ? 'Used' : 'Unused'}
+                            </Text>
+                          </View>
+                          {tag.boundPlantId ? (
+                            <Text style={styles.tagPlant} numberOfLines={1}>
+                              {plant ? plant.scientificName || 'Identification pending' : 'on a plant'}
+                            </Text>
+                          ) : (
+                            <View style={styles.flexFill} />
+                          )}
+                          {plant ? <Ionicons name="chevron-forward" size={16} color="#76877B" /> : null}
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  })
+                : null}
+            </View>
+          );
+        })}
       </ScrollView>
 
-      {selecting ? (
+      {/* Chosen tags: "N selected · Clear · Print N" prints exactly those tags. */}
+      {selected.length > 0 ? (
         <View style={styles.printBar}>
+          <Text style={styles.printBarText} numberOfLines={1}>{selected.length} selected</Text>
+          <TouchableOpacity onPress={() => setSelected([])} accessibilityRole="button" hitSlop={8}>
+            <Text style={styles.clearText}>Clear</Text>
+          </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.primaryBtn, (working || selected.length === 0) && styles.disabled]}
-            onPress={() => void printSelected()}
-            disabled={working || selected.length === 0}
+            style={[styles.printBarBtn, working && styles.disabled]}
+            onPress={() => openPrint({ tags: selectionPlan.tags, title: selectionPlan.title, clearSelection: true })}
+            disabled={working}
             accessibilityRole="button"
           >
-            {working ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <Text style={styles.primaryText}>
-                Print selected ({selected.length}) · {layout === 'sheet' ? 'sheet' : 'one per page'}
-              </Text>
-            )}
+            <Text style={styles.printBarBtnText} numberOfLines={1}>Print {selectionPlan.tags.length}</Text>
           </TouchableOpacity>
         </View>
       ) : null}
+
+      {/* "Print N tags": the layout, then Print / Cancel. */}
+      <Modal visible={printing !== null} transparent animationType="slide" onRequestClose={() => setPrinting(null)}>
+        <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={() => !working && setPrinting(null)}>
+          <TouchableOpacity activeOpacity={1} style={styles.sheet}>
+            <Text style={styles.sheetTitle} numberOfLines={1}>{printing?.title ?? ''}</Text>
+            {PRINT_LAYOUTS.map((option) => {
+              const on = layout === option.value;
+              return (
+                <TouchableOpacity
+                  key={option.value}
+                  style={[styles.layoutOption, on && styles.layoutOptionOn]}
+                  onPress={() => setLayout(option.value)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: on }}
+                >
+                  <Ionicons name={on ? 'radio-button-on' : 'radio-button-off'} size={20} color="#213B2A" />
+                  <View style={styles.layoutTextBox}>
+                    <Text style={styles.layoutLabel}>{option.label}</Text>
+                    <Text style={styles.layoutHint}>{option.hint}</Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+            <View style={styles.sheetActions}>
+              <TouchableOpacity
+                style={styles.sheetCancel}
+                onPress={() => setPrinting(null)}
+                disabled={working}
+                accessibilityRole="button"
+              >
+                <Text style={styles.sheetCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.sheetPrint, working && styles.disabled]}
+                onPress={() => void runPrint()}
+                disabled={working}
+                accessibilityRole="button"
+              >
+                {working ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.primaryText}>Print</Text>}
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.hint}>
+              {Platform.OS === 'ios'
+                ? 'Print or send it from the share sheet.'
+                : 'Saved into a folder you pick; open it from Files to print or send.'}
+            </Text>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -388,41 +486,60 @@ const styles = StyleSheet.create({
   navSide: { width: 32 },
   backChevron: { fontSize: 32, color: '#213B2A' },
   navTitle: { fontSize: 17, fontWeight: '800', color: '#1E2B22' },
-  content: { paddingHorizontal: 20, paddingBottom: 40 },
+  content: { paddingHorizontal: 20, paddingBottom: 100 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
   intro: { fontSize: 13, color: '#526158', lineHeight: 19, marginBottom: 14 },
   body: { fontSize: 13.5, color: '#526158', lineHeight: 19 },
   card: { backgroundColor: '#FFFFFF', borderRadius: 18, borderWidth: 1.2, borderColor: '#E6ECE8', padding: 14, marginBottom: 12 },
   cardTitle: { fontSize: 15, fontWeight: '800', color: '#1E2B22', marginBottom: 10 },
-  countRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
-  countChip: { flex: 1, minWidth: 0, minHeight: 42, paddingVertical: 6, borderRadius: 21, borderWidth: 1.2, borderColor: '#213B2A', justifyContent: 'center', alignItems: 'center' },
-  countChipOn: { backgroundColor: '#213B2A' },
-  countText: { fontSize: 15, fontWeight: '800', color: '#213B2A' },
-  countTextOn: { color: '#FFFFFF' },
-  primaryBtn: { height: 48, borderRadius: 24, backgroundColor: '#213B2A', justifyContent: 'center', alignItems: 'center' },
+  label: { fontSize: 12.5, fontWeight: '700', color: '#526158', marginBottom: 6 },
+  stepper: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
+  stepBtn: { width: 44, height: 44, borderRadius: 22, borderWidth: 1.2, borderColor: '#213B2A', justifyContent: 'center', alignItems: 'center' },
+  countInput: { flex: 1, minWidth: 0, height: 44, borderRadius: 22, borderWidth: 1.2, borderColor: '#E6ECE8', backgroundColor: '#FFFFFF', textAlign: 'center', fontSize: 17, fontWeight: '800', color: '#1E2B22' },
+  countInputError: { borderColor: '#9B1C1C' },
+  primaryBtn: { height: 48, borderRadius: 24, backgroundColor: '#213B2A', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 16 },
   primaryText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
   disabled: { opacity: 0.6 },
   hint: { fontSize: 12, color: '#68776D', marginTop: 8, lineHeight: 17 },
-  problem: { fontSize: 13, fontWeight: '700', color: '#9B1C1C', marginTop: 10 },
+  problem: { fontSize: 13, fontWeight: '700', color: '#9B1C1C', marginTop: 4, marginBottom: 8 },
   link: { fontSize: 13.5, fontWeight: '700', color: '#213B2A', textDecorationLine: 'underline', marginTop: 10 },
   note: { fontSize: 12.5, fontWeight: '600', color: '#8C5E03', marginBottom: 10 },
   sectionRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginTop: 6, marginBottom: 10, gap: 8 },
   sectionTitle: { fontSize: 15, fontWeight: '800', color: '#1E2B22' },
-  counts: { fontSize: 12.5, color: '#68776D' },
-  batchHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 },
-  batchTitle: { fontSize: 13.5, fontWeight: '700', color: '#1E2B22', flexShrink: 1 },
-  label: { fontSize: 12.5, fontWeight: '700', color: '#526158', marginBottom: 6 },
-  layoutChip: { flex: 1, minHeight: 42, borderRadius: 21, borderWidth: 1.2, borderColor: '#213B2A', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 8 },
-  layoutText: { fontSize: 13, fontWeight: '800', color: '#213B2A', textAlign: 'center' },
-  selectLink: { fontSize: 13.5, fontWeight: '800', color: '#213B2A', textDecorationLine: 'underline' },
-  selectHint: { fontSize: 12, color: '#68776D', marginBottom: 10 },
-  tagBlock: { borderTopWidth: 1, borderTopColor: '#EEF2EF', marginTop: 6, paddingTop: 2 },
-  tagRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
-  tagActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 16, paddingBottom: 6 },
-  tagAction: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4 },
-  tagActionText: { fontSize: 12.5, fontWeight: '700', color: '#213B2A' },
-  printBar: { paddingHorizontal: 20, paddingVertical: 12, borderTopWidth: 1, borderTopColor: '#E6ECE8', backgroundColor: '#FFFFFF' },
-  tagCode: { fontSize: 13.5, fontWeight: '700', color: '#1E2B22', fontVariant: ['tabular-nums'] },
-  tagUsed: { flex: 1, minWidth: 0, fontSize: 12.5, color: '#68776D' },
-  tagUnused: { flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: '700', color: '#215A36' },
+  counts: { flexShrink: 1, fontSize: 12.5, color: '#68776D' },
+  batchHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  batchToggle: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  batchText: { flex: 1, minWidth: 0 },
+  batchTitle: { fontSize: 14, fontWeight: '800', color: '#1E2B22' },
+  batchCounts: { fontSize: 12.5, color: '#68776D', marginTop: 2 },
+  batchPrint: { borderWidth: 1.2, borderColor: '#213B2A', borderRadius: 16, paddingVertical: 6, paddingHorizontal: 14 },
+  batchPrintText: { fontSize: 13, fontWeight: '800', color: '#213B2A' },
+  tagRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9, borderTopWidth: 1, borderTopColor: '#EEF2EF', marginTop: 4 },
+  tagMain: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  tagCode: { flexShrink: 0, fontSize: 13.5, fontWeight: '700', color: '#1E2B22', fontVariant: ['tabular-nums'] },
+  badge: { borderRadius: 10, paddingVertical: 2, paddingHorizontal: 8 },
+  badgeUnused: { backgroundColor: '#E4F2E7' },
+  badgeUsed: { backgroundColor: '#EEF1EF' },
+  badgeText: { fontSize: 11.5, fontWeight: '700' },
+  badgeUnusedText: { color: '#215A36' },
+  badgeUsedText: { color: '#4A5A50' },
+  tagPlant: { flex: 1, minWidth: 0, fontSize: 12.5, fontStyle: 'italic', color: '#526158' },
+  flexFill: { flex: 1 },
+  printBar: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 20, paddingVertical: 12, borderTopWidth: 1, borderTopColor: '#E6ECE8', backgroundColor: '#FFFFFF' },
+  printBarText: { flex: 1, minWidth: 0, fontSize: 14, fontWeight: '800', color: '#1E2B22' },
+  clearText: { fontSize: 13.5, fontWeight: '700', color: '#213B2A', textDecorationLine: 'underline' },
+  printBarBtn: { height: 42, borderRadius: 21, backgroundColor: '#213B2A', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 18 },
+  printBarBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 14 },
+  sheetBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(15, 25, 19, 0.45)' },
+  sheet: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 20, paddingBottom: 32 },
+  sheetTitle: { fontSize: 17, fontWeight: '800', color: '#1E2B22', marginBottom: 12 },
+  layoutOption: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 14, borderWidth: 1.2, borderColor: '#E6ECE8', marginBottom: 8 },
+  layoutOptionOn: { borderColor: '#213B2A', backgroundColor: '#F1F6F2' },
+  layoutTextBox: { flex: 1, minWidth: 0 },
+  layoutLabel: { fontSize: 14, fontWeight: '800', color: '#1E2B22' },
+  layoutHint: { fontSize: 12, color: '#68776D', marginTop: 2 },
+  sheetActions: { flexDirection: 'row', gap: 10, marginTop: 8 },
+  sheetCancel: { flex: 1, height: 48, borderRadius: 24, borderWidth: 1.2, borderColor: '#213B2A', justifyContent: 'center', alignItems: 'center' },
+  sheetCancelText: { fontSize: 15, fontWeight: '800', color: '#213B2A' },
+  sheetPrint: { flex: 1, height: 48, borderRadius: 24, backgroundColor: '#213B2A', justifyContent: 'center', alignItems: 'center' },
 });

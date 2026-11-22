@@ -44,6 +44,30 @@ function createTagReservationsRouter({ authenticate = requireAuth, authorize = r
                 total: count ?? 0, total_pages: Math.ceil((count ?? 0) / size) } });
         } catch { return res.status(503).json({ message: 'Tag reservation service unavailable' }); }
     });
+    // Reserves `count` new tags and returns them (no PDF): the app then lets the botanist
+    // choose how to print them. Retrying the same request_id and quantity returns the same
+    // tags, never new ones (reserve_plant_tags is idempotent per request).
+    router.post('/reserve', async (req, res) => {
+        const { count, request_id: requestId } = req.body || {};
+        if (!Number.isInteger(count) || count < 1 || count > 100 ||
+            typeof requestId !== 'string' || !UUID_PATTERN.test(requestId)) {
+            return res.status(400).json({ message: 'count must be 1-100 and request_id must be a UUID' });
+        }
+        try {
+            const { data, error } = await req.supabase.rpc('reserve_plant_tags', {
+                p_count: count, p_request_id: requestId,
+            });
+            if (error) return databaseError(res, error);
+            const tags = Array.isArray(data) ? data.map(row => row.qr_code_value) : [];
+            if (tags.length !== count || new Set(tags).size !== count ||
+                tags.some(tag => typeof tag !== 'string' || !TAG_PATTERN.test(tag))) {
+                return res.status(503).json({ message: 'Invalid reservation result; retry using the same request_id' });
+            }
+            return res.json({ request_id: requestId, tags: [...tags].sort() });
+        } catch {
+            return res.status(503).json({ message: 'Could not reserve the tags; retry using the same request_id' });
+        }
+    });
     // Retrying the same request_id and quantity returns the same tags, including after PDF failure.
     router.post('/reserve-and-print', async (req, res) => {
         const { count, request_id: requestId, layout = 'sheet' } = req.body || {};

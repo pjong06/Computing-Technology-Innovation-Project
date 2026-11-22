@@ -171,3 +171,61 @@ for (const options of [{ result: { error: { code: 'PGRST205', message: 'SECRET' 
         assert.equal(response.status, 503); assert.doesNotMatch(await response.text(), /SECRET/);
     });
 }
+
+// POST /reserve (My QR tags "Get N tags"): reserves and returns the tags, no PDF; the layout
+// is chosen afterwards when printing. Same request_id -> the same tags.
+test('reserve returns the reserved tags (no PDF) and keeps the retry identity', async t => {
+    const s = await setup(t, { pdf: async () => { throw new Error('no PDF on /reserve'); } });
+    for (let i = 0; i < 2; i++) {
+        const response = await s.send({ count: 1, request_id: ID }, '/reserve');
+        assert.equal(response.status, 200);
+        assert.deepEqual(await response.json(), { request_id: ID, tags: [TAG] });
+    }
+    const rpcCalls = s.calls.filter((call) => call[0] === 'reserve_plant_tags');
+    assert.deepEqual(rpcCalls.map((call) => call[1]), [{ p_count: 1, p_request_id: ID }, { p_count: 1, p_request_id: ID }]);
+});
+
+for (const body of [{ count: 0, request_id: ID }, { count: 101, request_id: ID }, { count: 'ten', request_id: ID }, { count: 2.5, request_id: ID }, { count: 3, request_id: 'bad' }]) {
+    test(`reserve refuses ${JSON.stringify(body)} before the database`, async t => {
+        const s = await setup(t);
+        assert.equal((await s.send(body, '/reserve')).status, 400);
+        assert.equal(s.calls.length, 0);
+    });
+}
+
+test('reserve is for botanists only, and a short reservation result is not accepted', async t => {
+    const officer = await setup(t, { role: 'officer' });
+    assert.equal((await officer.send({ count: 1, request_id: ID }, '/reserve')).status, 403);
+    assert.equal(officer.calls.length, 0);
+    const short = await setup(t, { result: { data: [{ qr_code_value: TAG }] } });
+    assert.equal((await short.send({ count: 2, request_id: ID }, '/reserve')).status, 503);
+});
+
+test('print sends exactly the chosen tags to the PDF (3 chosen -> 3 printed)', async t => {
+    const chosen = ['NIAH-PLT-00012', 'NIAH-PLT-00004', 'NIAH-PLT-00007'];
+    let printed = null;
+    let lookedUp = null;
+    const app = express(); app.use(express.json());
+    app.use(createTagReservationsRouter({
+        authenticate(req, _res, next) {
+            req.profile = { role: 'botanist' };
+            req.user = { id: ID };
+            // The ownership check finds the botanist's own copies of exactly the chosen tags.
+            const query = { select: () => query, eq: () => query, in: (_column, tags) => { lookedUp = tags; return query; },
+                then: (resolve) => resolve({ data: chosen.map((tag) => ({ qr_code_value: tag })), error: null }) };
+            req.supabase = { from: () => query };
+            next();
+        },
+        authorize: requireRole,
+        generatePDF: async (tags, options) => { printed = { tags, options }; return Buffer.from('%PDF-test'); },
+    }));
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise(resolve => server.once('listening', resolve));
+    t.after(() => { server.close(); server.closeAllConnections(); });
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/print`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tags: chosen, layout: 'single' }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(lookedUp, chosen);
+    assert.deepEqual(printed, { tags: [...chosen].sort(), options: { layout: 'single' } });
+});
