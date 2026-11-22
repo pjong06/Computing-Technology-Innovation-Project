@@ -40,6 +40,7 @@ import { explainAnswer } from '../src/utils/syncDetails';
 import { finalProblemText, retryableRecord } from '../src/utils/syncDetails';
 import { speciesRequestText } from '../src/utils/speciesSearch';
 import { useProposalStore } from '../src/store/useProposalStore';
+import { useSpeciesStore } from '../src/store/useSpeciesStore';
 import { requeueLockedTagOperations, resumePausedRecordRetries } from '../src/services/offlineDatabase';
 import PlantNotFound from '../src/components/PlantNotFound';
 import { resolveStoredPhotoUri } from '../src/utils/photoStorage';
@@ -255,6 +256,7 @@ export default function PlantDetailScreen() {
   const signedThumbnail = usePlantListStore((state) =>
     matched && !matched.otherBotanist && matched.serverId ? state.ownThumbnails[matched.serverId] ?? null : null
   );
+  const speciesList = useSpeciesStore((state) => state.species);
   const needsServerPhoto = Boolean(
     matched && !matched.otherBotanist && matched.serverId && (matched.photoUris ?? []).length === 0
   );
@@ -265,6 +267,14 @@ export default function PlantDetailScreen() {
   if (!matched) {
     return <PlantNotFound code={id} />;
   }
+
+  const matchedSpecies = speciesList.find(
+    (s) =>
+      (matched.speciesId && s.id === matched.speciesId) ||
+      (matched.scientificName &&
+        s.scientific_name.trim().toLowerCase() === matched.scientificName.trim().toLowerCase())
+  );
+  const plantFamily = (matched.family || matchedSpecies?.taxonomy?.family || '').trim();
 
   const photos = (matched.photoUris ?? []).map(resolveStoredPhotoUri);
 
@@ -564,6 +574,7 @@ export default function PlantDetailScreen() {
     const lines = [
       matched.scientificName || 'Plant',
       matched.commonName?.trim() || null,
+      plantFamily ? `Family: ${plantFamily}` : null,
       isPhysicalTag(matched.tagCode) ? `Tag ${matched.tagCode}` : null,
       shown.locationNote ? `Location: ${shown.locationNote}` : null,
     ].filter(Boolean);
@@ -672,16 +683,19 @@ export default function PlantDetailScreen() {
         </View>
 
         <View style={styles.sheet}>
-          {/* Title block: the plant first (its tag), then its species, then where it is. */}
+          {/* Title block: the plant first (its tag), then its species & family, then where it is. */}
           <Text style={[styles.title, !heading.hasTag && styles.titleMuted]} numberOfLines={1}>
             {heading.title}
           </Text>
           <Text style={styles.subtitle} numberOfLines={2}>
-            <Text style={!needsIdentification && styles.titleItalic}>
-              {heading.scientific || 'Identification pending'}
-            </Text>
+            {heading.scientific || 'Identification pending'}
             {heading.common ? ` · ${heading.common}` : null}
           </Text>
+          {plantFamily ? (
+            <Text style={styles.familyText} numberOfLines={1}>
+              Family: {plantFamily}
+            </Text>
+          ) : null}
           {shown.locationNote ? (
             <View style={styles.locationLine}>
               <Ionicons name="location-outline" size={13} color="#68776D" />
@@ -1177,10 +1191,10 @@ const styles = StyleSheet.create({
   sheet: { padding: 20, backgroundColor: '#F6F8F6' },
   title: { fontSize: 24, fontWeight: '800', color: '#1E2B22', flexShrink: 1, fontVariant: ['tabular-nums'] },
   titleMuted: { color: '#68776D' },
-  titleItalic: { fontStyle: 'italic' },
   locationLine: { flexDirection: 'row', alignItems: 'flex-start', gap: 4, marginTop: 4, minWidth: 0 },
   locationText: { flex: 1, minWidth: 0, fontSize: 13, color: '#68776D', lineHeight: 18 },
-  subtitle: { fontSize: 14, color: '#526659', marginTop: 4, flexShrink: 1 },
+  subtitle: { fontSize: 13, fontWeight: '600', color: '#526659', marginTop: 4, flexShrink: 1 },
+  familyText: { fontSize: 13, fontWeight: '600', color: '#526659', marginTop: 3, flexShrink: 1 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
   chip: {
     flexDirection: 'row',
@@ -1359,7 +1373,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   emptyObsBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14, textAlign: 'center' },
-
 
   menuBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   menuSheet: {

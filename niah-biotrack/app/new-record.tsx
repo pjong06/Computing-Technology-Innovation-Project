@@ -185,6 +185,9 @@ export default function NewRecordScreen() {
   const [speciesChoice, setSpeciesChoice] = useState<SpeciesChoice>(null);
   const [speciesQuery, setSpeciesQuery] = useState(existingRecord?.scientificName ?? '');
   const [speciesNotice, setSpeciesNotice] = useState('');
+  const [scientificName, setScientificName] = useState(existingRecord?.scientificName ?? '');
+  const [commonName, setCommonName] = useState(existingRecord?.commonName ?? '');
+  const [family, setFamily] = useState(existingRecord?.family ?? '');
   // A species that isn't in the catalogue yet: the request this plant waits for.
   const [linkedRequest, setLinkedRequest] = useState<{ id: string; scientificName: string } | null>(
     existingRecord?.speciesRequestId
@@ -276,6 +279,9 @@ export default function NewRecordScreen() {
       if (match) {
         setSpeciesChoice({ kind: 'species', species: match });
         setSpeciesQuery(match.scientific_name);
+        if (!existingRecord.scientificName) setScientificName(match.scientific_name ?? '');
+        if (!existingRecord.commonName) setCommonName(match.common_name ?? '');
+        if (!existingRecord.family) setFamily(match.taxonomy?.family ?? '');
       }
 
       speciesSelectionInitialized.current = true;
@@ -292,6 +298,9 @@ export default function NewRecordScreen() {
     if (match) {
       setSpeciesChoice({ kind: 'species', species: match });
       setSpeciesQuery(match.scientific_name);
+      setScientificName(match.scientific_name ?? '');
+      setCommonName(match.common_name ?? '');
+      setFamily(match.taxonomy?.family ?? '');
     }
 
     speciesSelectionInitialized.current = true;
@@ -301,6 +310,7 @@ export default function NewRecordScreen() {
   useEffect(() => {
     if (!takePendingPlantLink) return;
     setLinkedRequest(takePendingPlantLink);
+    setScientificName(takePendingPlantLink.scientificName);
     setPendingPlantLink(null);
     setSpeciesChoice(null);
     setRequestableSuggestion(null);
@@ -433,8 +443,8 @@ export default function NewRecordScreen() {
     }
   };
 
-  // Picking an AI suggestion selects that catalogue species; one that isn't in the
-  // catalogue can be requested ("Request this species").
+  // Picking an AI suggestion selects that catalogue species and fills in the plant
+  // detail fields; one that isn't in the catalogue can be requested ("Request this species").
   const selectSuggestion = (s: SpeciesSuggestion) => {
     setSelectedSpecies(s);
     const match = catalogueMatch(allSpecies, s.scientificName);
@@ -442,11 +452,17 @@ export default function NewRecordScreen() {
 
     if (match) {
       setSpeciesChoice({ kind: 'species', species: match });
+      setScientificName(match.scientific_name ?? s.scientificName);
+      setCommonName(match.common_name ?? s.commonName ?? '');
+      setFamily(match.taxonomy?.family ?? s.family ?? '');
       setLinkedRequest(null);
       setRequestableSuggestion(null);
       setSpeciesNotice('AI suggestion matched a species in the catalogue.');
     } else {
       setSpeciesChoice(null);
+      setScientificName(s.scientificName);
+      setCommonName(s.commonName ?? '');
+      setFamily(s.family ?? '');
       setRequestableSuggestion(s);
       setSpeciesNotice(`${s.scientificName} is not in the species catalogue yet. You can request it.`);
     }
@@ -463,9 +479,15 @@ export default function NewRecordScreen() {
 
     if (choice?.kind === 'species') {
       setSpeciesQuery(choice.species.scientific_name);
+      setScientificName(choice.species.scientific_name ?? '');
+      setCommonName(choice.species.common_name ?? '');
+      setFamily(choice.species.taxonomy?.family ?? '');
       setLinkedRequest(null);
     } else {
       setSpeciesQuery('');
+      setScientificName('');
+      setCommonName('');
+      setFamily('');
     }
   };
 
@@ -554,11 +576,11 @@ export default function NewRecordScreen() {
       : existingRecord?.walkingTime;
 
     const recordData = {
-      // From the catalogue species (read-only), or the requested species' name.
-      scientificName: approvedSpecies?.scientific_name ?? waitingRequest?.scientificName ?? '',
+      // Prefilled from the catalogue species or requested species, with any edits kept.
+      scientificName: scientificName.trim() || approvedSpecies?.scientific_name || waitingRequest?.scientificName || '',
       speciesId: approvedSpecies?.id ?? null,
-      commonName: approvedSpecies?.common_name ?? '',
-      family: approvedSpecies?.taxonomy?.family ?? '',
+      commonName: commonName.trim() || approvedSpecies?.common_name || '',
+      family: family.trim() || approvedSpecies?.taxonomy?.family || '',
       speciesRequestId: waitingRequest?.id ?? null,
       speciesRequestName: waitingRequest?.scientificName ?? null,
       speciesRequestLinked: waitingRequest && existingRecord?.speciesRequestId === waitingRequest.id
@@ -772,9 +794,8 @@ export default function NewRecordScreen() {
           </View>
         )}
 
-        {/* Section 2: Species. A plant belongs to a catalogue species, or waits for a
-            species request made for it ("Species not in the list?"). */}
-        <Text style={styles.sectionLabel}>SPECIES</Text>
+        {/* Section 2: Plant Details (Species picker above Scientific name, Common name, and Family) */}
+        <Text style={styles.sectionLabel}>PLANT DETAILS</Text>
         <Text style={styles.fieldLabel}>Species *</Text>
         <Text style={styles.pickerHelp}>
           Search the species catalogue on this phone by scientific, common or local name.
@@ -808,7 +829,13 @@ export default function NewRecordScreen() {
               setRequestableSuggestion(null);
             }}
             hasError={Boolean(errors.scientificName)}
-            onRequestNew={(typed) => requestNewSpecies({ scientificName: typed })}
+            onRequestNew={(typed) =>
+              requestNewSpecies({
+                scientificName: typed || scientificName,
+                commonName: commonName || undefined,
+                family: family || undefined,
+              })
+            }
           />
         )}
         {errors.scientificName && <Text style={styles.errorText}>{errors.scientificName}</Text>}
@@ -818,9 +845,9 @@ export default function NewRecordScreen() {
             style={styles.requestSuggestionBtn}
             onPress={() =>
               requestNewSpecies({
-                scientificName: requestableSuggestion.scientificName,
-                commonName: requestableSuggestion.commonName ?? undefined,
-                family: requestableSuggestion.family ?? undefined,
+                scientificName: scientificName || requestableSuggestion.scientificName,
+                commonName: commonName || requestableSuggestion.commonName || undefined,
+                family: family || requestableSuggestion.family || undefined,
               })
             }
             accessibilityRole="button"
@@ -830,6 +857,37 @@ export default function NewRecordScreen() {
             </Text>
           </TouchableOpacity>
         ) : null}
+
+        <Text style={styles.fieldLabel}>Scientific name</Text>
+        <TextInput
+          style={[styles.input, styles.italicInput]}
+          placeholder="e.g. Nepenthes rafflesiana"
+          placeholderTextColor="#8C9A91"
+          value={scientificName}
+          onChangeText={setScientificName}
+          autoCapitalize="sentences"
+          autoCorrect={false}
+        />
+
+        <Text style={styles.fieldLabel}>Common name</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="e.g. Raffles' pitcher plant"
+          placeholderTextColor="#8C9A91"
+          value={commonName}
+          onChangeText={setCommonName}
+          autoCapitalize="words"
+        />
+
+        <Text style={styles.fieldLabel}>Family</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="e.g. Nepenthaceae"
+          placeholderTextColor="#8C9A91"
+          value={family}
+          onChangeText={setFamily}
+          autoCapitalize="words"
+        />
 
         {/* Section 3: Measurements */}
         <View style={styles.measurementRow}>
@@ -1181,6 +1239,7 @@ const styles = StyleSheet.create({
     borderColor: '#E6ECE8',
     marginBottom: 8,
   },
+  italicInput: { fontStyle: 'italic' },
   inputError: { borderColor: '#E59A9A' },
   errorText: { fontSize: 12, color: '#9B1C1C', marginTop: -2, marginBottom: 10, paddingHorizontal: 4 },
   gpsErrorText: { marginTop: -16 },
