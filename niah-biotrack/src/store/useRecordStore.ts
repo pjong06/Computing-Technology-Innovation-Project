@@ -44,6 +44,7 @@ import {
   type SyncRunResult,
 } from '../services/syncEngine';
 import { requestSyncRetry } from '../services/syncRetry';
+import { reportBackgroundError, singleFlight } from '../utils/dbQueue';
 import type { ServerPlantDetails } from '../utils/plantDetails';
 import { TAG_PROBLEM_REASON, type TagProblemCode } from '../utils/plantStatusLine';
 import { speciesReady } from '../utils/speciesSearch';
@@ -2877,8 +2878,10 @@ export const useRecordStore =
          * SYNC ALL
          * ------------------------------------------------ */
 
+        // One sync at a time: Sync now while an automatic sync (or another Sync now) is
+        // running waits for that run and gets its result, instead of starting a second one.
         syncAll:
-          async () => {
+          singleFlight(async () => {
             /*
              * VERY IMPORTANT:
              *
@@ -3017,7 +3020,7 @@ export const useRecordStore =
 
               photoProblems,
             };
-          },
+          }),
 
         /* -------------------------------------------------
          * REVIEW RESULTS
@@ -3518,7 +3521,7 @@ export const useRecordStore =
               if (
                 deletion.queuedForServer
               ) {
-                void runOutboxSync();
+                void runOutboxSync().catch(reportBackgroundError('Sending the delete'));
               }
 
               return {
@@ -3695,7 +3698,7 @@ export const useRecordStore =
             ) {
               void get().syncRecord(
                 recordId
-              );
+              ).catch(reportBackgroundError('Uploading the plant'));
             }
 
             return {

@@ -62,6 +62,7 @@ import { catalogueMatch } from '../src/utils/speciesSearch';
 import { officerReasonText } from '../src/utils/rowActions';
 import { firstVisitOf } from '../src/utils/submissionState';
 import { checkDiameterCm, checkHeightMetres, metresToCm } from '../src/utils/units';
+import { reportBackgroundError } from '../src/utils/dbQueue';
 
 const DONE_BAR_ID = 'new-record-done';
 const GPS_TIMEOUT_MS = 20_000;
@@ -626,7 +627,7 @@ export default function NewRecordScreen() {
             text2: `Not uploaded yet: ${result.reason}`,
           });
         }
-      });
+      }).catch(reportBackgroundError('Uploading the plant'));
     }
   };
 
