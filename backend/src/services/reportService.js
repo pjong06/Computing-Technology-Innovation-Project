@@ -10,6 +10,8 @@
 // No report contains coordinates (except the older "locations" type, kept for the existing
 // endpoint; the PDF never prints coordinates).
 
+const { countLivePendingObservations } = require("./liveObservations");
+
 const MAX_REPORT_ROWS = 1000;
 const REPORT_PAGE_SIZE = 1000;
 const TIME_ZONE = "Asia/Kuching";
@@ -653,10 +655,11 @@ async function buildSummary(client) {
             .select("id", { count: "exact", head: true })
             .eq("verification_status", "approved")
             .in("conservation_status", ["CR", "EN"]), "endangered species"),
-        readCount(client.from("observations")
-            .select("id", { count: "exact", head: true })
-            .eq("review_status", "pending")
-            .is("deleted_at", null), "pending observation"),
+        // Waiting for review: the same rule as Review > Field records (not deleted, plant not
+        // deleted; services/liveObservations.js).
+        countLivePendingObservations(client).catch(() => {
+            throw new ReportError("Could not load report summary");
+        }),
         readCount(client.from("plants")
             .select("id", { count: "exact", head: true })
             .is("deleted_at", null), "plant"),

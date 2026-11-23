@@ -6,8 +6,14 @@ import Toast from 'react-native-toast-message';
 import { IdentificationStatus, SyncStatus, useRecordStore, type PlantRecord } from '../store/useRecordStore';
 import { useProposalStore, type SpeciesProposal } from '../store/useProposalStore';
 import { plantReviewBadge, recordRowBadge, statusReason, visitStatus } from '../utils/reviewStatus';
-import { firstVisitOf, isVisitSubmitted, newPlantReview } from '../utils/submissionState';
+import { firstVisitOf, isVisitSubmitted, newPlantReview, plantActivityEntries } from '../utils/submissionState';
 import { rowStatus } from '../utils/recordsList';
+import { finalProblemText, retryableRecord, explainAnswer } from '../utils/syncDetails';
+import { isGoneCode, rowActions, type RowActionKind } from '../utils/rowActions';
+import RowActions from './RowActions';
+
+// The explanation shown when the plant no longer exists on the server.
+const GONE_TEXT = explainAnswer('plant_deleted').explanation;
 import { resolveStoredPhotoUri } from '../utils/photoStorage';
 import { parseTagCode } from '../utils/tagCode';
 import {
@@ -50,7 +56,13 @@ type ActivityRow = ActivityItem & {
   photo: ThumbnailSource[];
   recordId: string | null; // plants and observations: opens Plant detail
   request: SpeciesProposal | null;
-  retry: 'record' | 'request' | null;
+  // Species requests only ("Retry upload" on the request); plants and observations use actions.
+  retry: 'request' | null;
+  // What can be done right on the row (src/utils/rowActions.ts): Send for review, Edit,
+  // Edit and resend, Retry, Remove from phone.
+  actions: RowActionKind[];
+  obsId: string | null;
+  isRegistration: boolean;
 };
 
 function timestampFor(value?: string | null): number {
@@ -86,8 +98,15 @@ function buildRows(
     const signed = !record.otherBotanist && record.serverId ? ownThumbnails[record.serverId] ?? null : null;
     const publicPath = record.otherBotanist ? record.publicPhotoUrl : null;
 
+    // One NEW PLANT row (the plant with its first record, its registration), then one
+    // OBSERVATION row per later record: plantActivityEntries, the officer Review page's rule.
+    const entries = plantActivityEntries(record);
+    const plantRetryable = record.syncStatus !== SyncStatus.UPLOADED && retryableRecord(record);
+    // Its plant (or registration record) no longer exists on the server.
+    const plantGone = firstVisit ? isGoneCode(firstVisit.submitCode) : false;
+
     // The plant's first record (registering it): only for plants this botanist registered.
-    if (!record.otherBotanist) {
+    if (entries[0]?.type === 'new_plant') {
       const status = rowStatus({
         syncStatus: firstVisit?.syncStatus ?? record.syncStatus,
         outcome: newPlantReview(record).outcome,
@@ -103,7 +122,8 @@ function buildRows(
         tag,
         when: record.createdAtIso || record.createdAt || null,
         badge: recordRowBadge(status, plantReviewBadge(record, 'Waiting for review').badge),
-        reason: statusReason(
+        // Something that can never upload says why (Sync details offers to remove it).
+        reason: (plantGone && GONE_TEXT) || (!plantRetryable && finalProblemText(record)) || statusReason(
           status.action,
           firstVisit?.reviewComment ?? record.reviewComment,
           firstVisit && !isVisitSubmitted(firstVisit) ? firstVisit.submitError : null,
@@ -117,14 +137,19 @@ function buildRows(
         }),
         recordId: record.id,
         request: null,
-        retry: record.syncStatus !== SyncStatus.UPLOADED ? 'record' : null,
+        retry: null,
+        // "Retry" only when trying again can help (not for permanent refusals).
+        actions: rowActions({ action: status.action, retryable: plantRetryable, gone: plantGone }),
+        obsId: firstVisit?.id ?? null,
+        isRegistration: true,
       });
     }
 
     // Every later record of the plant by this botanist is an observation.
-    for (const visit of visits) {
-      if (visit === firstVisit || !visit.id) continue;
+    for (const { type, visit } of entries) {
+      if (type !== 'observation' || !visit) continue;
       const status = visitStatus(visit, record.syncError);
+      const visitGone = isGoneCode(visit.submitCode);
       const photo = Array.isArray(visit.photoUris) ? visit.photoUris[0] : undefined;
       push({
         key: `observation:${record.id}:${visit.id}`,
@@ -135,7 +160,7 @@ function buildRows(
         tag,
         when: visit.observedAt || visit.date || null,
         badge: status.badge,
-        reason: status.reason,
+        reason: visitGone ? GONE_TEXT : status.reason,
         // The observation's own photo, else the plant's picture (signed thumbnail or public copy).
         photo: thumbnailSources({
           localUri: photo ? resolveStoredPhotoUri(photo) : null,
@@ -145,7 +170,10 @@ function buildRows(
         }),
         recordId: record.id,
         request: null,
-        retry: visit.syncStatus !== SyncStatus.UPLOADED ? 'record' : null,
+        retry: null,
+        actions: rowActions({ action: status.action, retryable: retryableRecord(record, visit.id), gone: visitGone }),
+        obsId: visit.id,
+        isRegistration: false,
       });
     }
   }
@@ -164,12 +192,15 @@ function buildRows(
       badge: status.badge,
       reason:
         status.action === 'not_added'
-          ? `Officer's reason: ${request.reviewComment?.trim() || 'No reason was given.'}`
+          ? (request.reviewComment?.trim() ? `Officer's reason: ${request.reviewComment.trim()}` : 'Not added by the officer (no reason given)')
           : null,
       photo: [],
       recordId: null,
       request,
       retry: request.syncStatus !== SyncStatus.UPLOADED ? 'request' : null,
+      actions: [],
+      obsId: null,
+      isRegistration: false,
     });
   }
   return rows;
@@ -280,9 +311,15 @@ export default function RecentActivity({
             <Text style={[styles.typeLabel, item.type === 'species_request' && styles.typeLabelRequest]}>
               {ACTIVITY_TYPE_LABELS[item.type]}
             </Text>
+            {/* Plant first (its tag), species second; a species request has no tag. */}
+            {item.type !== 'species_request' ? (
+              <Text style={[styles.tagTitle, !item.tag && styles.tagTitleMuted]} numberOfLines={1}>
+                {item.tag ?? 'No tag yet'}
+              </Text>
+            ) : null}
             <Text style={styles.name} numberOfLines={2}>{item.name}</Text>
             <Text style={styles.meta} numberOfLines={1}>
-              {[item.tag, activityTime(item.when, now)].filter(Boolean).join(' · ')}
+              {activityTime(item.when, now)}
             </Text>
             <View style={[styles.badge, { backgroundColor: item.badge.bg }]}>
               <Text style={[styles.badgeText, { color: item.badge.text }]} numberOfLines={1}>{item.badge.label}</Text>
@@ -307,16 +344,14 @@ export default function RecentActivity({
           </View>
         ) : null}
 
-        {item.retry === 'record' && item.recordId ? (
-          <View style={styles.actions}>
-            {retryingRecordIds.includes(item.recordId) ? (
-              <ActivityIndicator size="small" color="#213B2A" />
-            ) : (
-              <TouchableOpacity onPress={() => onRetryRecord(item.recordId as string)} disabled={syncing} accessibilityRole="button">
-                <Text style={styles.link}>Retry upload</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+        {item.recordId && item.actions.length > 0 ? (
+          <RowActions
+            actions={item.actions}
+            recordId={item.recordId}
+            obsId={item.obsId}
+            isRegistration={item.isRegistration}
+            disabled={syncing}
+          />
         ) : null}
 
         {item.retry === 'request' && request ? (
@@ -475,7 +510,9 @@ const styles = StyleSheet.create({
   rowText: { flex: 1, minWidth: 0 },
   typeLabel: { fontSize: 10.5, fontWeight: '800', letterSpacing: 0.6, color: '#68776D' },
   typeLabelRequest: { color: '#7A4E9C' },
-  name: { fontSize: 14.5, fontWeight: '700', fontStyle: 'italic', color: '#1E2B22', marginTop: 2 },
+  tagTitle: { fontSize: 14.5, fontWeight: '800', color: '#1E2B22', marginTop: 2, fontVariant: ['tabular-nums'] },
+  tagTitleMuted: { color: '#68776D' },
+  name: { fontSize: 13.5, fontWeight: '600', fontStyle: 'italic', color: '#33463A', marginTop: 2 },
   meta: { fontSize: 12, color: '#68776D', marginTop: 2 },
   badge: { alignSelf: 'flex-start', maxWidth: '100%', paddingVertical: 4, paddingHorizontal: 10, borderRadius: 14, marginTop: 6 },
   badgeText: { fontSize: 11, fontWeight: '700' },

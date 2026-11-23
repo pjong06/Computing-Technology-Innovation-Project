@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-nativ
 import { useSpeciesStore } from '../store/useSpeciesStore';
 import type { Species } from '../api/species';
 import { conservationStatusCode, conservationStatusColors } from '../utils/conservationStatus';
+import { searchSpecies } from '../utils/speciesSearch';
 
 // Small coloured status code (e.g. "EN") shown next to a species name.
 function StatusBadge({ status }: { status: string | null }) {
@@ -24,11 +25,13 @@ interface Props {
   query: string;
   onQueryChange: (text: string) => void;
   hasError?: boolean;
+  // "Species not in the list? Request a new species" (with what was typed).
+  onRequestNew?: (typed: string) => void;
 }
 
 const MAX_RESULTS = 6;
 
-export default function SpeciesPicker({ value, onChange, query, onQueryChange, hasError }: Props) {
+export default function SpeciesPicker({ value, onChange, query, onQueryChange, hasError, onRequestNew }: Props) {
   const species = useSpeciesStore((state) => state.species);
   const loadSpecies = useSpeciesStore((state) => state.loadSpecies);
 
@@ -37,26 +40,23 @@ export default function SpeciesPicker({ value, onChange, query, onQueryChange, h
     if (species.length === 0) void loadSpecies();
   }, []);
 
-  // Search scientific, common and local names; only recalculated when they change.
-  const matches = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
-    return species
-      .filter((s) =>
-        [s.scientific_name, s.common_name, s.local_name].some((name) => name?.toLowerCase().includes(q))
-      )
-      .slice(0, MAX_RESULTS);
-  }, [species, query]);
+  // Search scientific, common and local names (any letter case); only recalculated when
+  // they change (src/utils/speciesSearch.ts).
+  const matches = useMemo(() => searchSpecies(species, query, MAX_RESULTS), [species, query]);
 
-  // A choice has been made: show it with a "Change" button.
+  // A choice has been made: its names, read-only, with a "Change" button.
   if (value) {
+    const family = value.species.taxonomy?.family;
     return (
       <View style={styles.chosenCard}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.chosenName}>{value.species.scientific_name}</Text>
-          {value.species.common_name ? <Text style={styles.chosenSub}>{value.species.common_name}</Text> : null}
+        <View style={styles.chosenText}>
+          <Text style={styles.chosenName} numberOfLines={2}>{value.species.scientific_name}</Text>
+          {value.species.common_name ? (
+            <Text style={styles.chosenSub} numberOfLines={2}>{value.species.common_name}</Text>
+          ) : null}
+          {family ? <Text style={styles.chosenSub} numberOfLines={1}>Family: {family}</Text> : null}
         </View>
-        <TouchableOpacity onPress={() => onChange(null)} hitSlop={8}>
+        <TouchableOpacity onPress={() => onChange(null)} hitSlop={8} accessibilityRole="button" accessibilityLabel="Change species">
           <Text style={styles.changeText}>Change</Text>
         </TouchableOpacity>
       </View>
@@ -100,6 +100,14 @@ export default function SpeciesPicker({ value, onChange, query, onQueryChange, h
       {query.trim() !== '' && matches.length === 0 && species.length > 0 && (
         <Text style={styles.helpText}>No approved species match. Try another scientific, common or local name.</Text>
       )}
+
+      {onRequestNew ? (
+        <TouchableOpacity onPress={() => onRequestNew(query.trim())} hitSlop={6} accessibilityRole="button">
+          <Text style={styles.requestText}>
+            Species not in the list? <Text style={styles.requestLink}>Request a new species</Text>
+          </Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
@@ -115,7 +123,10 @@ const styles = StyleSheet.create({
   badgeText: { fontSize: 11, fontWeight: '700' },
   resultSub: { fontSize: 12, color: '#68776D', marginTop: 2 },
   chosenCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#E4F2E7', borderRadius: 16, padding: 14, marginBottom: 8 },
+  chosenText: { flex: 1, minWidth: 0 },
   chosenName: { fontSize: 15, fontWeight: '700', fontStyle: 'italic', color: '#1E2B22' },
   chosenSub: { fontSize: 12, color: '#4A5A50', marginTop: 2 },
   changeText: { fontSize: 13, fontWeight: '700', color: '#213B2A', marginLeft: 12 },
+  requestText: { fontSize: 12.5, color: '#68776D', marginTop: 4, marginBottom: 8, lineHeight: 18 },
+  requestLink: { fontWeight: '700', color: '#213B2A', textDecorationLine: 'underline' },
 });

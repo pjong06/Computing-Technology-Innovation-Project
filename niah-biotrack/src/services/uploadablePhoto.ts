@@ -1,32 +1,45 @@
 import * as ImageManipulator from 'expo-image-manipulator';
 import { File } from 'expo-file-system';
 
-import { needsJpegConversion } from '../utils/photoFormat';
+import { ApiError } from '../api/client';
+import {
+  TARGET_BYTES,
+  compressToFit,
+  needsCompression,
+  type CompressionResult,
+  type CompressionStep,
+} from '../utils/photoCompression';
 
-// A saved photo in a format the backend accepts (JPEG, PNG, WebP). HEIC and other
-// formats (e.g. an iPhone library photo) are converted to a JPEG copy in the cache;
-// the saved original on the phone is not changed. Same conversion as identifyPlant.ts.
+// Every photo is shrunk on the phone before it uploads (src/utils/photoCompression.ts): a
+// JPEG, longest side at most 2000 px, quality 0.75, EXIF orientation applied (the image
+// loader of expo-image-manipulator applies it on both platforms), tried again smaller and
+// at lower quality while it is above the target, well under the server's 5 MB limit.
+
+// One step: decode no larger than the step's size (aspect kept, never enlarged), save as JPEG.
+async function renderStep(uri: string, step: CompressionStep): Promise<{ output: File; size: number }> {
+  const rendered = await ImageManipulator.ImageManipulator
+    .manipulate(uri, { maxWidth: step.maxSide, maxHeight: step.maxSide })
+    .renderAsync();
+  const result = await rendered.saveAsync({ format: ImageManipulator.SaveFormat.JPEG, compress: step.quality });
+  const file = new File(result.uri);
+  if (!file.exists) throw new Error('The compressed photo was not saved.');
+  return { output: file, size: file.size };
+}
+
+/** A compressed JPEG copy of this photo (in the cache folder), or why it can't be made. */
+export async function compressPhoto(uri: string): Promise<CompressionResult<File>> {
+  const result = await compressToFit((step) => renderStep(uri, step), { targetBytes: TARGET_BYTES });
+  if (!result.ok) console.warn('Photo compression failed:', result.message);
+  return result;
+}
+
+// The file to upload for a saved photo: the photo as it is when it is already small (it was
+// compressed when it was saved), otherwise a compressed copy in the cache. The saved photo on
+// the phone is never changed, so it is kept until the upload has succeeded. When even the
+// smallest step is too large, an ApiError 413 says so (the same as the server's refusal).
 export async function uploadablePhotoFile(file: File): Promise<File> {
-  if (!needsJpegConversion(file.uri)) {
-    return file;
-  }
-  try {
-    const rendered = await ImageManipulator.ImageManipulator
-      .manipulate(file.uri, { maxWidth: 2048, maxHeight: 2048 })
-      .renderAsync();
-    const result = await rendered.saveAsync({
-      format: ImageManipulator.SaveFormat.JPEG,
-      compress: 0.8,
-    });
-    const converted = new File(result.uri);
-    if (!converted.exists) {
-      throw new Error('The converted photo was not saved.');
-    }
-    return converted;
-  } catch (error) {
-    console.warn('Photo conversion to JPEG failed:', error);
-    throw new Error(
-      'A photo could not be converted to JPEG for upload. Remove it on the plant page and add it again.'
-    );
-  }
+  if (!needsCompression(file.extension, file.size)) return file;
+  const result = await compressPhoto(file.uri);
+  if (!result.ok) throw new ApiError(result.message, 413, 'photo_refused');
+  return result.output;
 }

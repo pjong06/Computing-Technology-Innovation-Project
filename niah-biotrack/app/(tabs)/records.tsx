@@ -63,6 +63,13 @@ import { FilterButton, FilterPills, FilterSheet } from '../../src/components/Fil
 import PlantThumbnail from '../../src/components/PlantThumbnail';
 import { thumbnailSources, type SignedThumbnail, type ThumbnailSource } from '../../src/utils/thumbnailSources';
 import { BASE_URL } from '../../src/api/client';
+import RowActions from '../../src/components/RowActions';
+import { isGoneCode, rowActions, type RowActionKind } from '../../src/utils/rowActions';
+import { explainAnswer, retryableRecord } from '../../src/utils/syncDetails';
+import { reportBackgroundError } from '../../src/utils/dbQueue';
+
+// The explanation shown when the plant no longer exists on the server.
+const GONE_TEXT = explainAnswer('plant_deleted').explanation;
 
 // Plants (botanist tab, route "records"): one row per plant. Each row shows the most urgent
 // status of the plant and the botanist's own visits to it; the visits themselves are listed
@@ -81,6 +88,10 @@ type PlantItem = PlantRow & {
   badge: Badge;
   action: NeedsActionReason | null;
   reason: string | null;
+  // What can be done on the row (src/utils/rowActions.ts), and which record it is about.
+  actions: RowActionKind[];
+  obsId: string | null;
+  isRegistration: boolean;
 };
 
 function timestampFor(value?: string | null): number {
@@ -109,23 +120,49 @@ function localItem(key: string, stored: PlantRecord, signed: SignedThumbnail | n
     outcome: newPlantReview(record).outcome,
     needsSpecies: record.identificationStatus === IdentificationStatus.PENDING,
   });
-  const candidates: { group: RecordStatusGroup; action: NeedsActionReason | null; badge: Badge; reason: string | null }[] = [
+  type Candidate = {
+    group: RecordStatusGroup;
+    action: NeedsActionReason | null;
+    badge: Badge;
+    reason: string | null;
+    obsId: string | null;
+    isRegistration: boolean;
+    retryable: boolean;
+    gone: boolean;
+  };
+  const plantGone = firstVisit ? isGoneCode(firstVisit.submitCode) : false;
+  const candidates: Candidate[] = [
     {
       ...plantStatus,
+      obsId: firstVisit?.id ?? null,
+      isRegistration: true,
+      retryable: record.syncStatus !== SyncStatus.UPLOADED && retryableRecord(record),
+      gone: plantGone,
       badge: recordRowBadge(plantStatus, plantReviewBadge(record, 'Waiting for review').badge),
-      reason: statusReason(
-        plantStatus.action,
-        firstVisit?.reviewComment ?? record.reviewComment,
-        firstVisit && !isVisitSubmitted(firstVisit) ? firstVisit.submitError : null,
-        record.syncError
-      ),
+      reason: plantGone
+        ? GONE_TEXT
+        : statusReason(
+          plantStatus.action,
+          firstVisit?.reviewComment ?? record.reviewComment,
+          firstVisit && !isVisitSubmitted(firstVisit) ? firstVisit.submitError : null,
+          record.syncError
+        ),
     },
   ];
   // Then each later visit by this botanist.
   const revisits = visits.filter((visit) => visit !== firstVisit);
   for (const visit of revisits) {
     const status = visitStatus(visit, record.syncError);
-    candidates.push({ ...status, reason: status.reason ? `Observation on ${visit.date}: ${status.reason}` : null });
+    const gone = isGoneCode(visit.submitCode);
+    const reason = gone ? GONE_TEXT : status.reason;
+    candidates.push({
+      ...status,
+      reason: reason ? `Observation on ${visit.date}: ${reason}` : null,
+      obsId: visit.id,
+      isRegistration: false,
+      retryable: retryableRecord(record, visit.id),
+      gone,
+    });
   }
   const pick = mostUrgent(candidates)?.item ?? candidates[0];
 
@@ -150,6 +187,10 @@ function localItem(key: string, stored: PlantRecord, signed: SignedThumbnail | n
     action: pick.action,
     badge: pick.badge,
     reason: pick.reason,
+    // Someone else's plant: nothing to do on it here.
+    actions: record.otherBotanist ? [] : rowActions({ action: pick.action, retryable: pick.retryable, gone: pick.gone }),
+    obsId: pick.obsId,
+    isRegistration: pick.isRegistration,
     tag: record.tagCode ?? null,
     speciesId: record.speciesId,
     // Its own photo on this phone, else its signed server thumbnail; for a plant someone else
@@ -189,6 +230,9 @@ function otherItem(
     action: null,
     badge: REVIEW_BADGE[ReviewStatus.APPROVED],
     reason: null,
+    actions: [],
+    obsId: null,
+    isRegistration: false,
     tag: plant.tagCode,
     speciesId: plant.speciesId,
     // Its public stripped photo (small copy, served by the backend), or the placeholder.
@@ -237,8 +281,8 @@ export default function PlantsListScreen() {
   useFocusEffect(
     useCallback(() => {
       if (blocked) return undefined;
-      void refreshReviewStatuses();
-      void refreshProposalStatuses();
+      void refreshReviewStatuses().catch(reportBackgroundError('Checking review results'));
+      void refreshProposalStatuses().catch(reportBackgroundError('Checking species requests'));
       if (useSpeciesStore.getState().species.length === 0) void loadSpecies();
       void loadOtherPlants();
       return undefined;
@@ -475,6 +519,7 @@ export default function PlantsListScreen() {
             </View>
           }
           renderItem={({ item }) => (
+            <View style={styles.plantCardWrap}>
             <TouchableOpacity
               style={styles.plantCard}
               activeOpacity={0.75}
@@ -499,8 +544,11 @@ export default function PlantsListScreen() {
                 }
               />
               <View style={styles.plantText}>
+                {/* Plant first (its tag), species second, then where it is. */}
+                <Text style={[styles.plantTag, !isPhysicalTag(item.tag) && styles.plantTagMuted]} numberOfLines={1}>
+                  {isPhysicalTag(item.tag) ? item.tag : 'No tag yet'}
+                </Text>
                 <Text style={styles.plantName} numberOfLines={2}>{item.name}</Text>
-                {isPhysicalTag(item.tag) ? <Text style={styles.plantMeta} numberOfLines={1}>{item.tag}</Text> : null}
                 {item.place ? <Text style={styles.plantMeta} numberOfLines={1}>{item.place}</Text> : null}
                 <View style={styles.badgeRow}>
                   <View style={[styles.statusBadge, { backgroundColor: item.badge.bg }]}>
@@ -517,6 +565,17 @@ export default function PlantsListScreen() {
                 ) : null}
               </View>
             </TouchableOpacity>
+            {item.record && item.actions.length > 0 ? (
+              <View style={styles.rowActions}>
+                <RowActions
+                  actions={item.actions}
+                  recordId={item.record.id}
+                  obsId={item.obsId}
+                  isRegistration={item.isRegistration}
+                />
+              </View>
+            ) : null}
+            </View>
           )}
         />
       </View>
@@ -608,7 +667,11 @@ const styles = StyleSheet.create({
   thumb: { width: 56, height: 56, borderRadius: 12, backgroundColor: '#E7EFEA' },
   thumbPlaceholder: { justifyContent: 'center', alignItems: 'center' },
   plantText: { flex: 1, minWidth: 0, marginLeft: 12 },
-  plantName: { fontSize: 14.5, fontWeight: '700', fontStyle: 'italic', color: '#1E2B22' },
+  plantCardWrap: { marginBottom: 0 },
+  rowActions: { paddingHorizontal: 12, marginTop: -4, marginBottom: 10 },
+  plantTag: { fontSize: 14.5, fontWeight: '800', color: '#1E2B22', fontVariant: ['tabular-nums'] },
+  plantTagMuted: { color: '#68776D' },
+  plantName: { fontSize: 13.5, fontWeight: '600', fontStyle: 'italic', color: '#33463A', marginTop: 2 },
   plantMeta: { fontSize: 12, color: '#68776D', marginTop: 2 },
   badgeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
   statusBadge: { flexShrink: 1, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 14 },

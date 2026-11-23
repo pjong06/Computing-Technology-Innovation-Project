@@ -7,6 +7,13 @@
 .history-launch{padding:0 20px 20px}.history-dialog{width:min(1000px,94vw);max-width:94vw;max-height:88vh;padding:0;border:1px solid var(--line);border-radius:16px;background:var(--card);color:var(--ink);box-shadow:0 20px 80px #14251b26}.history-dialog::backdrop{background:#14251b99}.history-header{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:24px;border-bottom:1px solid var(--line)}.history-header h2{font-size:22px;margin:0 0 9px}.history-header p{font-size:13px;color:var(--mute);margin:3px 0}.history-table-scroll{max-height:calc(88vh - 245px);overflow:auto;min-height:120px}.history-table-scroll table{min-width:650px}.history-table-scroll th{position:sticky;top:0;background:var(--bg);z-index:1}.history-table-scroll td,.history-table-scroll th{padding:13px 18px;font-size:13px}.history-footer{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 24px;border-top:1px solid var(--line)}.history-pages{display:flex;align-items:center;gap:12px}.history-pages span{font-size:12px;color:var(--mute)}.history-dialog .button{border:1px solid var(--pri);border-radius:999px;background:transparent;color:var(--ink);padding:8px 16px}.history-dialog .button.primary{background:var(--pri);color:var(--card)}.history-dialog .workspace-error{margin:14px 24px 0}@media(max-width:650px){.history-dialog{width:calc(100vw - 20px);max-width:calc(100vw - 20px);max-height:94dvh}.history-header{padding:18px 16px;gap:10px}.history-header h2{font-size:19px}.history-header p{font-size:12px}.history-footer{padding:14px 16px;flex-wrap:wrap}.history-pages{gap:7px;flex-wrap:wrap}.history-table-scroll{max-height:calc(94dvh - 260px)}.history-dialog .button{font-size:12px;padding:8px 12px}}
 
 .review-panel > .workspace-note{padding-inline:18px}
+/* Natural card heights; compact pages are fitted against the details card. */
+@media(min-width:1001px){
+  .live-body .workspace.view-alerts{align-items:start}
+  .live-body .view-alerts .alerts-panel{min-width:0}
+  .live-body .view-alerts .alerts-panel .pagination{border-top:1px solid var(--line);flex-wrap:wrap}
+  .live-body .view-alerts .review-panel{min-height:560px}
+}
 
 .metric-label{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
 .metric-emoji{display:inline-flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;border-radius:8px;background:var(--bg);font-size:17px;line-height:1}

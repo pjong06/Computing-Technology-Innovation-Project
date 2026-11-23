@@ -1,6 +1,7 @@
 import { randomUUID } from 'expo-crypto';
 import * as SQLite from 'expo-sqlite';
-import { tagOnlyPayload } from '../utils/plantStatusLine';
+import { createSerialQueue, isDatabaseLocked, retryIfLocked } from '../utils/dbQueue';
+import { needsServerTag, tagOnlyPayload, tagRefusalProblem, withoutRefusedTag } from '../utils/plantStatusLine';
 
 export type SyncEntityType = 'plant' | 'observation' | 'proposal';
 export type SyncOperationType = 'create' | 'update' | 'delete';
@@ -91,12 +92,13 @@ interface OutboxRow {
   last_error: string | null;
   retry_count: number;
   next_retry_at: number | null;
+  last_code?: string | null;
   created_at: string;
   updated_at: string;
 }
 
 const DATABASE_NAME = 'niah-biotrack.db';
-const DATABASE_VERSION = 3;
+const DATABASE_VERSION = 4;
 const RETRY_DELAYS_MS = [30_000, 120_000, 300_000];
 
 const READY_DEPENDENCIES = `
@@ -124,12 +126,74 @@ function parseJson<T>(value: string): T {
   return JSON.parse(value) as T;
 }
 
+// ONE connection for the whole app, opened once (also across reloads and re-renders: the
+// promise lives in this module). Short contention waits (busy_timeout) instead of failing,
+// and WAL lets reads go on while a write runs. If opening fails, the next call tries again.
+export const BUSY_TIMEOUT_MS = 5000;
+
+async function openSharedDatabase(): Promise<SQLite.SQLiteDatabase> {
+  const db = await SQLite.openDatabaseAsync(DATABASE_NAME);
+  await db.execAsync(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;`);
+  return db;
+}
+
 async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (!databasePromise) {
-    databasePromise = SQLite.openDatabaseAsync(DATABASE_NAME);
+    const opening = openSharedDatabase();
+    databasePromise = opening;
+    opening.catch(() => {
+      if (databasePromise === opening) databasePromise = null;
+    });
   }
 
   return databasePromise;
+}
+
+// Every write goes through this one queue, on the shared connection: one write
+// transaction at a time (BEGIN IMMEDIATE ... COMMIT, ROLLBACK on error). Not
+// withExclusiveTransactionAsync: in expo-sqlite it opens a NEW connection for each call,
+// without the busy_timeout, so overlapping writes failed with "database is locked".
+// A write that still finds the database locked is rolled back and tried once more.
+// Never call writeTransaction from inside a writeTransaction task (it would wait on itself).
+const runWrite = createSerialQueue();
+
+export async function writeTransaction(
+  db: SQLite.SQLiteDatabase,
+  task: (transaction: SQLite.SQLiteDatabase) => Promise<void>
+): Promise<void> {
+  await runWrite(() =>
+    retryIfLocked(
+      async () => {
+        await db.execAsync('BEGIN IMMEDIATE');
+        try {
+          await task(db);
+          await db.execAsync('COMMIT');
+        } catch (error) {
+          try {
+            await db.execAsync('ROLLBACK');
+          } catch {
+            // Already rolled back by SQLite; keep the original error.
+          }
+          throw error;
+        }
+      },
+      {
+        onRetry: (error) =>
+          console.warn('The phone database was busy; trying the write once more.', isDatabaseLocked(error) ? 'database is locked' : error),
+      }
+    )
+  );
+}
+
+// One write statement, through the same queue.
+async function writeStatement(
+  db: SQLite.SQLiteDatabase,
+  sql: string,
+  ...params: SQLite.SQLiteBindValue[]
+): Promise<void> {
+  await writeTransaction(db, async (transaction) => {
+    await transaction.runAsync(sql, ...params);
+  });
 }
 
 export async function initializeOfflineDatabase(): Promise<void> {
@@ -205,8 +269,7 @@ export async function initializeOfflineDatabase(): Promise<void> {
       );
     `;
 
-    await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
-    await db.withExclusiveTransactionAsync(async (transaction) => {
+    await writeTransaction(db, async (transaction) => {
       const version = await transaction.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
       if (version?.user_version === 1) {
         await transaction.execAsync(`
@@ -231,13 +294,22 @@ export async function initializeOfflineDatabase(): Promise<void> {
         ON sync_outbox(entity_type, client_record_id, created_at);
 
       `);
-      if ((version?.user_version ?? 0) < DATABASE_VERSION) {
+      const currentVersion = version?.user_version ?? 0;
+      if (currentVersion < 3) {
         await transaction.execAsync(`
           ALTER TABLE sync_outbox ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
           ALTER TABLE sync_outbox ADD COLUMN next_retry_at INTEGER;
           UPDATE sync_outbox SET next_retry_at = 0 WHERE status = 'retry';
-          PRAGMA user_version = ${DATABASE_VERSION};
         `);
+      }
+      if (currentVersion < 4) {
+        // The server's last answer as a code (plant_locked, network, ...), for Sync details.
+        await transaction.execAsync(`
+          ALTER TABLE sync_outbox ADD COLUMN last_code TEXT;
+        `);
+      }
+      if (currentVersion < DATABASE_VERSION) {
+        await transaction.execAsync(`PRAGMA user_version = ${DATABASE_VERSION};`);
       }
       // The previous process may have stopped before storing a response.
       await transaction.execAsync(`
@@ -246,6 +318,10 @@ export async function initializeOfflineDatabase(): Promise<void> {
       `);
     });
   })();
+  const starting = initializationPromise;
+  starting.catch(() => {
+    if (initializationPromise === starting) initializationPromise = null;
+  });
 
   try {
     await initializationPromise;
@@ -269,7 +345,7 @@ export async function saveEntityAndQueue(
   const db = await getDatabase();
   const timestamp = nowIso();
 
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     const existing = await transaction.getFirstAsync<{
       created_at: string;
     }>(
@@ -323,7 +399,7 @@ export async function saveEntityAndQueue(
     if (!input.operationType || !input.payload) {
       if (input.entityType === 'proposal' && input.syncStatus === 'uploaded') {
         await transaction.runAsync(
-          `UPDATE sync_outbox SET status = 'complete', last_error = NULL, updated_at = ?
+          `UPDATE sync_outbox SET status = 'complete', last_error = NULL, last_code = NULL, updated_at = ?
             WHERE entity_type = 'proposal' AND client_record_id = ?`,
           timestamp,
           input.clientRecordId
@@ -380,7 +456,7 @@ export async function saveEntityAndQueue(
             UPDATE sync_outbox
             SET payload_json = ?,
                 status = 'pending',
-                last_error = NULL,
+                last_error = NULL, last_code = NULL,
                 updated_at = ?
             WHERE operation_id = ?
           `,
@@ -426,7 +502,7 @@ export async function saveEntityAndQueue(
             SET payload_json = ?,
                 base_version = ?,
                 status = 'pending',
-                last_error = NULL,
+                last_error = NULL, last_code = NULL,
                 updated_at = ?
             WHERE operation_id = ?
           `,
@@ -519,7 +595,7 @@ export async function removeUploadedLocalEntity(
   const db = await getDatabase();
   let removed = false;
 
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     const entity = await transaction.getFirstAsync<{ sync_status: LocalSyncStatus }>(
       `
         SELECT sync_status
@@ -548,6 +624,24 @@ export async function removeUploadedLocalEntity(
   return removed;
 }
 
+// An observation the server says was deleted: removes it and anything of it still waiting
+// to upload (its submit, its photos and queued changes can never upload now), whatever its
+// sync status.
+export async function removeServerDeletedObservation(observationId: string): Promise<void> {
+  await initializeOfflineDatabase();
+  const db = await getDatabase();
+  await writeTransaction(db, async (transaction) => {
+    await transaction.runAsync(
+      "DELETE FROM sync_outbox WHERE entity_type = 'observation' AND client_record_id = ?",
+      observationId
+    );
+    await transaction.runAsync(
+      "DELETE FROM local_entities WHERE entity_type = 'observation' AND client_record_id = ?",
+      observationId
+    );
+  });
+}
+
 // A plant the server says was deleted: removes it, its observations and anything of theirs
 // still waiting to upload (which can never upload now), whatever their sync status.
 export async function removeServerDeletedPlant(
@@ -557,7 +651,7 @@ export async function removeServerDeletedPlant(
   await initializeOfflineDatabase();
   const db = await getDatabase();
   const visits = JSON.stringify(observationIds);
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     await transaction.runAsync(
       `
         DELETE FROM sync_outbox
@@ -623,7 +717,7 @@ export async function getNextOutboxRetryAt(): Promise<number | null> {
 export async function resumePausedRecordRetries(plantId: string, observationIds: string[]): Promise<void> {
   await initializeOfflineDatabase();
   const db = await getDatabase();
-  await db.runAsync(`
+  await writeStatement(db, `
     UPDATE sync_outbox SET retry_count = 0, next_retry_at = 0
     WHERE status = 'retry' AND next_retry_at IS NULL AND (
       (entity_type = 'plant' AND client_record_id = ?) OR
@@ -637,12 +731,12 @@ export async function resumeAllPausedRecordRetries(): Promise<void> {
   const db = await getDatabase();
   const timestamp = nowIso();
 
-  await db.runAsync(
+  await writeStatement(db, 
     `
       UPDATE sync_outbox
       SET retry_count = 0,
           next_retry_at = 0,
-          last_error = NULL,
+          last_error = NULL, last_code = NULL,
           updated_at = ?
       WHERE entity_type IN ('plant', 'observation')
         AND status = 'retry'
@@ -679,7 +773,7 @@ export async function claimOutboxOperations(
   const timestamp = nowIso();
   const claimed: OutboxOperation[] = [];
 
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     for (const operationId of operationIds) {
       const row = await transaction.getFirstAsync<OutboxRow>(
         `
@@ -710,7 +804,7 @@ export async function applySyncOperationResult(
   const db = await getDatabase();
   const timestamp = nowIso();
 
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     const operation = await transaction.getFirstAsync<OutboxRow>(
       `
         SELECT *
@@ -729,7 +823,7 @@ export async function applySyncOperationResult(
         `
           UPDATE sync_outbox
           SET status = 'complete',
-              last_error = NULL,
+              last_error = NULL, last_code = NULL,
               updated_at = ?
           WHERE operation_id = ?
         `,
@@ -777,6 +871,80 @@ export async function applySyncOperationResult(
       return;
     }
 
+    // A tag the server refused (not one of the botanist's reserved tags, already used, or
+    // the plant already has one): the plant remembers it (its notice offers "Attach a
+    // different tag"), and the rest of the plant is sent again without the tag, so the plant,
+    // its observations and photos keep uploading. A tag-only change stays refused (below).
+    const tagProblem =
+      operation.entity_type === 'plant' && result.status === 'conflict'
+        ? tagRefusalProblem(result.code)
+        : null;
+    if (tagProblem) {
+      let payload: unknown = null;
+      try {
+        payload = parseJson<unknown>(operation.payload_json);
+      } catch {
+        payload = null;
+      }
+      const refusedTag =
+        payload && typeof payload === 'object'
+          ? (payload as Record<string, unknown>).qr_code_value
+          : null;
+      const entity = await transaction.getFirstAsync<{ snapshot_json: string }>(
+        'SELECT snapshot_json FROM local_entities WHERE entity_type = ? AND client_record_id = ?',
+        operation.entity_type,
+        operation.client_record_id
+      );
+      if (entity) {
+        try {
+          const snapshot = parseJson<Record<string, unknown>>(entity.snapshot_json);
+          await transaction.runAsync(
+            'UPDATE local_entities SET snapshot_json = ?, updated_at = ? WHERE entity_type = ? AND client_record_id = ?',
+            JSON.stringify({
+              ...snapshot,
+              tagCode: refusedTag && snapshot.tagCode === refusedTag ? null : snapshot.tagCode,
+              tagProblem,
+            }),
+            timestamp,
+            operation.entity_type,
+            operation.client_record_id
+          );
+        } catch {
+          // Leave the phone's copy as it is.
+        }
+      }
+
+      const resend = withoutRefusedTag(operation.operation_type, payload);
+      if (resend) {
+        await transaction.runAsync(
+          `
+            UPDATE sync_outbox
+            SET payload_json = ?,
+                status = 'pending',
+                last_error = NULL, last_code = NULL,
+                retry_count = 0,
+                next_retry_at = NULL,
+                updated_at = ?
+            WHERE operation_id = ?
+          `,
+          JSON.stringify(resend),
+          timestamp,
+          result.operation_id
+        );
+        await transaction.runAsync(
+          `
+            UPDATE local_entities
+            SET sync_status = 'pending', updated_at = ?
+            WHERE entity_type = ? AND client_record_id = ?
+          `,
+          timestamp,
+          operation.entity_type,
+          operation.client_record_id
+        );
+        return;
+      }
+    }
+
     const outboxStatus: OutboxStatus =
       result.status === 'retry'
         ? 'retry'
@@ -800,6 +968,7 @@ export async function applySyncOperationResult(
         UPDATE sync_outbox
         SET status = ?,
             last_error = ?,
+            last_code = ?,
             retry_count = ?,
             next_retry_at = ?,
             updated_at = ?
@@ -811,6 +980,8 @@ export async function applySyncOperationResult(
       result.code && TAG_REFUSAL_CODES.has(result.code)
         ? result.code
         : (result.message ?? result.code ?? 'Synchronization failed'),
+      // The answer's code for Sync details (also for messages above).
+      result.code ?? null,
       operation.retry_count + (result.status === 'retry' && nextRetryAt !== null ? 1 : 0),
       nextRetryAt,
       timestamp,
@@ -836,7 +1007,7 @@ export async function applySyncOperationResult(
 export async function removeLocalProposal(id: string): Promise<void> {
   await initializeOfflineDatabase();
   const db = await getDatabase();
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     await transaction.runAsync(
       "DELETE FROM sync_outbox WHERE entity_type = 'proposal' AND client_record_id = ?",
       id
@@ -851,7 +1022,7 @@ export async function removeLocalProposal(id: string): Promise<void> {
 export async function clearLocalProposals(): Promise<void> {
   await initializeOfflineDatabase();
   const db = await getDatabase();
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     await transaction.execAsync(`
       DELETE FROM sync_outbox WHERE entity_type = 'proposal';
       DELETE FROM local_entities WHERE entity_type = 'proposal';
@@ -881,7 +1052,7 @@ export async function requeueLockedTagOperations(clientRecordId?: string): Promi
   const timestamp = nowIso();
   let requeued = 0;
 
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     const rows = await transaction.getAllAsync<{
       operation_id: string;
       client_record_id: string;
@@ -914,7 +1085,7 @@ export async function requeueLockedTagOperations(clientRecordId?: string): Promi
           UPDATE sync_outbox
           SET payload_json = ?,
               status = 'pending',
-              last_error = NULL,
+              last_error = NULL, last_code = NULL,
               retry_count = 0,
               next_retry_at = NULL,
               updated_at = ?
@@ -938,6 +1109,211 @@ export async function requeueLockedTagOperations(clientRecordId?: string): Promi
   });
 
   return requeued;
+}
+
+// ---- Sync details (Profile > Sync details) ----
+
+export interface WaitingOutboxRow {
+  operationId: string;
+  entityType: SyncEntityType;
+  operationType: SyncOperationType;
+  clientRecordId: string;
+  status: OutboxStatus;
+  attempts: number;
+  lastError: string | null;
+  lastCode: string | null;
+  nextRetryAt: number | null;
+  payload: Record<string, unknown>;
+  serverId: string | null;
+  // The phone's copy of the record (plant, observation or species request), for its name.
+  snapshot: Record<string, unknown> | null;
+  updatedAt: string;
+}
+
+/** Every change still waiting in the outbox (not yet complete), oldest first. */
+export async function getWaitingOutboxRows(): Promise<WaitingOutboxRow[]> {
+  await initializeOfflineDatabase();
+
+  const db = await getDatabase();
+  const rows = await db.getAllAsync<OutboxRow & { server_id: string | null; snapshot_json: string | null }>(
+    `
+      SELECT o.*, e.server_id, e.snapshot_json
+      FROM sync_outbox o
+      LEFT JOIN local_entities e
+        ON e.entity_type = o.entity_type
+       AND e.client_record_id = o.client_record_id
+      WHERE o.status <> 'complete'
+      ORDER BY o.created_at ASC, o.rowid ASC
+    `
+  );
+
+  const parse = (value: string | null) => {
+    if (!value) return null;
+    try {
+      return parseJson<Record<string, unknown>>(value);
+    } catch {
+      return null;
+    }
+  };
+
+  return rows.map((row) => ({
+    operationId: row.operation_id,
+    entityType: row.entity_type,
+    operationType: row.operation_type,
+    clientRecordId: row.client_record_id,
+    status: row.status,
+    attempts: row.attempts,
+    lastError: row.last_error,
+    lastCode: row.last_code ?? null,
+    nextRetryAt: row.next_retry_at,
+    payload: parse(row.payload_json) ?? {},
+    serverId: row.server_id,
+    snapshot: parse(row.snapshot_json),
+    updatedAt: row.updated_at,
+  }));
+}
+
+/**
+ * "Retry" on one item: sends it on the next sync (now). A tag refused as plant_locked is
+ * sent as a tag-only change, which the server accepts after submission.
+ */
+export async function retryOutboxOperation(operationId: string): Promise<void> {
+  await initializeOfflineDatabase();
+
+  const db = await getDatabase();
+  const timestamp = nowIso();
+
+  await writeTransaction(db, async (transaction) => {
+    const row = await transaction.getFirstAsync<OutboxRow>(
+      'SELECT * FROM sync_outbox WHERE operation_id = ?',
+      operationId
+    );
+    if (!row || row.status === 'complete' || row.status === 'processing') return;
+
+    let payloadJson = row.payload_json;
+    if (row.entity_type === 'plant' && (row.last_error === 'plant_locked' || row.last_code === 'plant_locked')) {
+      try {
+        const tagOnly = tagOnlyPayload(parseJson<unknown>(row.payload_json));
+        if (tagOnly) payloadJson = JSON.stringify(tagOnly);
+      } catch {
+        // Keep the payload as it is.
+      }
+    }
+
+    await transaction.runAsync(
+      `
+        UPDATE sync_outbox
+        SET status = 'pending',
+            payload_json = ?,
+            last_error = NULL,
+            last_code = NULL,
+            retry_count = 0,
+            next_retry_at = NULL,
+            updated_at = ?
+        WHERE operation_id = ?
+      `,
+      payloadJson,
+      timestamp,
+      operationId
+    );
+    await transaction.runAsync(
+      `
+        UPDATE local_entities
+        SET sync_status = 'pending', updated_at = ?
+        WHERE entity_type = ? AND client_record_id = ?
+      `,
+      timestamp,
+      row.entity_type,
+      row.client_record_id
+    );
+  });
+}
+
+/**
+ * "Remove from phone" on an item that can never upload: the change is taken off the
+ * phone's upload list (marked complete as "Removed from phone"; nothing is sent). The
+ * record shows the server's copy again when the server has it, otherwise it stays on this
+ * phone as a draft. A refused tag is also taken off the plant on this phone (tagCode
+ * cleared), so the right tag can be attached. Returns the record's client id.
+ */
+export async function removeOutboxOperation(operationId: string): Promise<string | null> {
+  await initializeOfflineDatabase();
+
+  const db = await getDatabase();
+  const timestamp = nowIso();
+  let clientRecordId: string | null = null;
+
+  await writeTransaction(db, async (transaction) => {
+    const row = await transaction.getFirstAsync<OutboxRow>(
+      'SELECT * FROM sync_outbox WHERE operation_id = ?',
+      operationId
+    );
+    if (!row || row.status === 'complete' || row.status === 'processing') return;
+    clientRecordId = row.client_record_id;
+
+    await transaction.runAsync(
+      `
+        UPDATE sync_outbox
+        SET status = 'complete',
+            last_error = 'Removed from phone',
+            last_code = 'removed',
+            next_retry_at = NULL,
+            updated_at = ?
+        WHERE operation_id = ?
+      `,
+      timestamp,
+      operationId
+    );
+
+    const entity = await transaction.getFirstAsync<{ server_id: string | null; snapshot_json: string }>(
+      'SELECT server_id, snapshot_json FROM local_entities WHERE entity_type = ? AND client_record_id = ?',
+      row.entity_type,
+      row.client_record_id
+    );
+    if (!entity) return;
+
+    // Still something else waiting for this record? Then it stays "pending".
+    const other = await transaction.getFirstAsync<{ operation_id: string }>(
+      `
+        SELECT operation_id FROM sync_outbox
+        WHERE entity_type = ? AND client_record_id = ? AND operation_id <> ?
+          AND status IN ('pending', 'processing', 'retry')
+        LIMIT 1
+      `,
+      row.entity_type,
+      row.client_record_id,
+      operationId
+    );
+
+    let snapshotJson = entity.snapshot_json;
+    const code = row.last_code ?? row.last_error ?? '';
+    if (row.entity_type === 'plant' && ['plant_locked', 'tag_not_yours', 'tag_in_use'].includes(code)) {
+      try {
+        const snapshot = parseJson<Record<string, unknown>>(entity.snapshot_json);
+        const payload = parseJson<Record<string, unknown>>(row.payload_json);
+        if (payload.qr_code_value && snapshot.tagCode === payload.qr_code_value) {
+          snapshotJson = JSON.stringify({ ...snapshot, tagCode: null, tagProblem: null });
+        }
+      } catch {
+        // Leave the phone's copy as it is.
+      }
+    }
+
+    await transaction.runAsync(
+      `
+        UPDATE local_entities
+        SET sync_status = ?, snapshot_json = ?, updated_at = ?
+        WHERE entity_type = ? AND client_record_id = ?
+      `,
+      other ? 'pending' : entity.server_id ? 'uploaded' : 'local_only',
+      snapshotJson,
+      timestamp,
+      row.entity_type,
+      row.client_record_id
+    );
+  });
+
+  return clientRecordId;
 }
 
 /**
@@ -980,6 +1356,97 @@ export async function getPlantTagRefusals(): Promise<
     }
   }
   return refusals;
+}
+
+/**
+ * Plants refused as tag_already_set whose tag on the server the phone doesn't know yet:
+ * the sync refreshes each one from the server (syncEngine refreshPlantsWithServerTag).
+ */
+export async function getPlantsNeedingServerTag(): Promise<{ clientRecordId: string; serverId: string }[]> {
+  await initializeOfflineDatabase();
+  const db = await getDatabase();
+  const rows = await db.getAllAsync<{ client_record_id: string; server_id: string | null; snapshot_json: string }>(
+    `SELECT client_record_id, server_id, snapshot_json FROM local_entities WHERE entity_type = 'plant' AND server_id IS NOT NULL`
+  );
+  const plants: { clientRecordId: string; serverId: string }[] = [];
+  for (const row of rows) {
+    try {
+      const snapshot = parseJson<Record<string, unknown>>(row.snapshot_json);
+      const plant = {
+        tagProblem: typeof snapshot.tagProblem === 'string' ? snapshot.tagProblem : null,
+        tagCode: typeof snapshot.tagCode === 'string' ? snapshot.tagCode : null,
+        serverId: row.server_id,
+      };
+      if (needsServerTag(plant)) plants.push({ clientRecordId: row.client_record_id, serverId: row.server_id as string });
+    } catch {
+      // Skip a copy that can't be read.
+    }
+  }
+  return plants;
+}
+
+/**
+ * The plant's tag on the server, from the refreshed plant: the phone's copy takes it (and the
+ * server's row_version), keeping tagProblem 'already_set' so the plant says why ("This plant
+ * already has a tag on the server (<tag>)."). The refused tag change is settled (complete):
+ * the server's tag is the plant's tag now, so there is nothing left to send or retry.
+ */
+export async function adoptServerPlantTag(
+  clientRecordId: string,
+  serverTag: string,
+  rowVersion?: number | null
+): Promise<void> {
+  await initializeOfflineDatabase();
+  const db = await getDatabase();
+  const timestamp = nowIso();
+
+  await writeTransaction(db, async (transaction) => {
+    const entity = await transaction.getFirstAsync<{ snapshot_json: string; row_version: number | null }>(
+      `SELECT snapshot_json, row_version FROM local_entities WHERE entity_type = 'plant' AND client_record_id = ?`,
+      clientRecordId
+    );
+    if (!entity) return;
+
+    await transaction.runAsync(
+      `
+        UPDATE sync_outbox
+        SET status = 'complete', updated_at = ?
+        WHERE entity_type = 'plant' AND client_record_id = ?
+          AND status = 'conflict' AND last_error = 'tag_already_set'
+      `,
+      timestamp,
+      clientRecordId
+    );
+    const other = await transaction.getFirstAsync<{ operation_id: string }>(
+      `
+        SELECT operation_id FROM sync_outbox
+        WHERE entity_type = 'plant' AND client_record_id = ?
+          AND status IN ('pending', 'processing', 'retry')
+        LIMIT 1
+      `,
+      clientRecordId
+    );
+
+    let snapshot: Record<string, unknown>;
+    try {
+      snapshot = parseJson<Record<string, unknown>>(entity.snapshot_json);
+    } catch {
+      return;
+    }
+    const version = typeof rowVersion === 'number' && rowVersion > 0 ? rowVersion : entity.row_version;
+    await transaction.runAsync(
+      `
+        UPDATE local_entities
+        SET snapshot_json = ?, row_version = ?, sync_status = ?, updated_at = ?
+        WHERE entity_type = 'plant' AND client_record_id = ?
+      `,
+      JSON.stringify({ ...snapshot, tagCode: serverTag, tagProblem: 'already_set', ...(version ? { rowVersion: version } : {}) }),
+      version ?? null,
+      other ? 'pending' : 'uploaded',
+      timestamp,
+      clientRecordId
+    );
+  });
 }
 
 /**
@@ -1032,7 +1499,7 @@ export async function rebaseQueuedCreateAsUpdate(
   const db = await getDatabase();
   const timestamp = nowIso();
 
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     await transaction.runAsync(
       `
         UPDATE local_entities
@@ -1117,7 +1584,7 @@ export async function setSyncCursor(cursor: number): Promise<void> {
   const db = await getDatabase();
   const timestamp = nowIso();
 
-  await db.runAsync(
+  await writeStatement(db, 
     `
       INSERT INTO sync_state (
         state_key,
@@ -1142,7 +1609,7 @@ export async function setLastSuccessfulSync(
 
   const db = await getDatabase();
 
-  await db.runAsync(
+  await writeStatement(db, 
     `
       INSERT INTO sync_state (
         state_key,
@@ -1203,7 +1670,7 @@ export async function deletePlantLocallyAndQueueServerDelete(
 
   let queuedForServer = false;
 
-  await db.withExclusiveTransactionAsync(
+  await writeTransaction(db, 
     async (transaction) => {
       // Any unsent observation changes become irrelevant
       // when the whole plant is deleted.
@@ -1320,7 +1787,7 @@ export async function clearOfflineDatabase(): Promise<void> {
 
   const db = await getDatabase();
 
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await writeTransaction(db, async (transaction) => {
     await transaction.execAsync(`
       DELETE FROM sync_outbox;
       DELETE FROM sync_state;

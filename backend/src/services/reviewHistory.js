@@ -10,6 +10,8 @@
 // Loaded in batched queries (lists of ids in groups of 100), never one query per row, then
 // filtered, counted, sorted and paged here. Reads through the officer's own client.
 
+const { isLiveObservation } = require("./liveObservations");
+
 const MAX_DECISIONS = 5000;
 const PAGE = 1000;
 const ID_BATCH = 100;
@@ -85,10 +87,17 @@ async function loadDecisions(supabase, firstRecordsOf) {
         readSpeciesDecisions(supabase),
     ]);
 
-    const observations = await rowsByIds(supabase, "observations", "id, plant_id, observer_id", reviews.map(r => r.observation_id));
+    const observations = await rowsByIds(supabase, "observations", "id, plant_id, observer_id, deleted_at", reviews.map(r => r.observation_id));
     const observationById = byId(observations);
-    const plants = await rowsByIds(supabase, "plants", "id, species_id, qr_code_value", observations.map(o => o.plant_id));
+    const plants = await rowsByIds(supabase, "plants", "id, species_id, qr_code_value, deleted_at", observations.map(o => o.plant_id));
     const plantById = byId(plants);
+    // Decisions on a deleted observation, or on one whose plant was deleted, are left out
+    // (the same rule as Review > Field records: services/liveObservations.js).
+    const deletedPlants = new Set(plants.filter(p => p.deleted_at).map(p => p.id));
+    const liveReviews = reviews.filter(review => {
+        const observation = observationById.get(review.observation_id);
+        return !observation || isLiveObservation(observation, deletedPlants);
+    });
     const [species, firsts, people] = await Promise.all([
         rowsByIds(supabase, "species", "id, scientific_name", plants.map(p => p.species_id)),
         firstRecordsOf(supabase, [...new Set(observations.map(o => o.plant_id).filter(Boolean))]),
@@ -101,7 +110,7 @@ async function loadDecisions(supabase, firstRecordsOf) {
     const peopleById = byId(people);
     const name = (id) => (id ? peopleById.get(id)?.full_name || "Unknown" : null);
 
-    const fieldRows = reviews.map(review => {
+    const fieldRows = liveReviews.map(review => {
         const observation = observationById.get(review.observation_id);
         const plant = observation ? plantById.get(observation.plant_id) : null;
         const first = plant ? firsts.get(plant.id) : null;

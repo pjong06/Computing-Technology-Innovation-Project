@@ -212,7 +212,10 @@ async function applyOperation(req, operation) {
   // (20261122140000_attach_tag_after_submission.sql), which refuses a tag that isn't one
   // of the botanist's own reserved tags, or a plant that already has a physical tag.
   // Neither is fixed by sending again, so both are conflicts with their own code.
-  if (isPlantUpdate && error?.code === '42501' && /not reserved by this botanist/i.test(error.message ?? '')) {
+  // A new plant registered with such a tag gets the same answer (enforce_reserved_plant_tag
+  // refuses it on insert too), so the phone sends the plant again without the tag.
+  if (operation.entity_type === 'plant' && error?.code === '42501' &&
+      /not reserved by this botanist/i.test(error.message ?? '')) {
     return {
       operation_id: operation.operation_id,
       status: 'conflict',
@@ -270,6 +273,25 @@ async function applyOperation(req, operation) {
   return data;
 }
 
+// A refused operation is a normal answer (200), so nothing else would show it in the
+// server logs (Render). One info line per refused operation: what it was, the answer's
+// code and the record's IDs. No user ID, names, payload, message text or tokens.
+const LOG_TOKEN = /^[a-z0-9_]{1,40}$/;
+const LOG_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const logValue = (value, pattern) => (typeof value === 'string' && pattern.test(value) ? value : 'unknown');
+
+function logRefusedOperation(operation, result) {
+  if (!result || result.status === 'success') return;
+  console.info('Sync operation refused', {
+    entity_type: logValue(operation?.entity_type, LOG_TOKEN),
+    operation_type: logValue(operation?.operation_type, LOG_TOKEN),
+    status: logValue(result.status, LOG_TOKEN),
+    code: logValue(result.code, LOG_TOKEN),
+    operation_id: logValue(operation?.operation_id, LOG_UUID),
+    client_record_id: logValue(operation?.client_record_id, LOG_UUID),
+  });
+}
+
 router.post('/push', async (req, res) => {
   const operations = req.body?.operations;
 
@@ -288,7 +310,9 @@ router.post('/push', async (req, res) => {
   // observation create. A failed item does not hide the remaining results.
   const results = [];
   for (const operation of operations) {
-    results.push(await applyOperation(req, operation));
+    const result = await applyOperation(req, operation);
+    logRefusedOperation(operation, result);
+    results.push(result);
   }
 
   const summary = results.reduce(

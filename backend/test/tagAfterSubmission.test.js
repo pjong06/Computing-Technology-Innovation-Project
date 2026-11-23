@@ -66,7 +66,7 @@ test('migration: the lookup it replaces is exactly the plant update lookup of th
   assert.equal(original.split(oldText).length - 1, 1, 'found once in the sync function');
 });
 
-async function pushOne(rpcAnswer, payload = { qr_code_value: 'NIAH-PLT-00042' }) {
+async function pushOne(rpcAnswer, payload = { qr_code_value: 'NIAH-PLT-00042' }, operationType = 'update') {
   const app = express();
   app.use(express.json());
   app.use('/api/sync', (req, _res, next) => {
@@ -80,7 +80,7 @@ async function pushOne(rpcAnswer, payload = { qr_code_value: 'NIAH-PLT-00042' })
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ operations: [{
-        operation_id: OPERATION_ID, entity_type: 'plant', operation_type: 'update',
+        operation_id: OPERATION_ID, entity_type: 'plant', operation_type: operationType,
         client_record_id: CLIENT_ID, base_version: 3, payload,
       }] }),
     });
@@ -122,4 +122,15 @@ test('sync push: any other change to a locked plant is still plant_locked', asyn
   assert.equal(hidden.code, 'plant_locked');
   const refused = await pushOne({ data: null, error: { code: '42501', message: 'new row violates row-level security policy for table "plants"' } });
   assert.equal(refused.code, 'plant_locked');
+});
+
+test('sync push: a new plant registered with an unreserved tag is tag_not_yours too, not a failure', async () => {
+  // The phone then sends the plant again without the tag, so its observations still upload.
+  const created = await pushOne(
+    { data: null, error: { code: '42501', message: 'Tag is not reserved by this botanist' } },
+    { qr_code_value: 'NIAH-PLT-00042', species_id: null, latitude: 3.8, longitude: 113.7 },
+    'create'
+  );
+  assert.deepEqual(created, { operation_id: OPERATION_ID, status: 'conflict', code: 'tag_not_yours',
+    message: "This tag isn't one of your reserved tags" });
 });

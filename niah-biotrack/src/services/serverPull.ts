@@ -16,11 +16,11 @@ import { useIotTaskStore } from '../store/useIotTaskStore';
 import {
   getLocalEntities,
   getSyncCursor,
+  removeServerDeletedObservation,
   removeServerDeletedPlant,
-  removeUploadedLocalEntity,
   setSyncCursor,
 } from './offlineDatabase';
-import { serverDeletedPlants } from '../utils/serverDeletes';
+import { serverDeletedObservations, serverDeletedPlants } from '../utils/serverDeletes';
 import {
   loadOrMigrateRecords,
   persistRecordSnapshot,
@@ -231,6 +231,22 @@ async function runPull(): Promise<ServerPullResult> {
     plants += 1;
   }
 
+  // Observations deleted on the server leave the phone too, whatever their local state:
+  // a queued change, photo or "submit for review" for them can never upload. (Before, only
+  // fully uploaded ones were removed, so a stuck one stayed "Not submitted yet" for good.)
+  for (const { record, observationId } of serverDeletedObservations(changes, [...byClientId.values()])) {
+    await removeServerDeletedObservation(observationId);
+    const current = byClientId.get(record.id) ?? record;
+    const updatedRecord = {
+      ...current,
+      observations: current.observations.filter((visit) => visit.id !== observationId),
+    };
+    byClientId.set(updatedRecord.id, updatedRecord);
+    if (updatedRecord.serverId) byServerId.set(updatedRecord.serverId, updatedRecord);
+    changedRecordIds.add(updatedRecord.id);
+    observations += 1;
+  }
+
   const plantChanges = changes.filter((change) => change.entity_type === 'plants');
   for (const change of plantChanges) {
     // Deletions were handled above (a deleted plant not on the phone needs nothing).
@@ -289,6 +305,8 @@ async function runPull(): Promise<ServerPullResult> {
 
   const observationChanges = changes.filter((change) => change.entity_type === 'observations');
   for (const change of observationChanges) {
+    // Deletions were handled above (a deleted observation not on the phone needs nothing).
+    if (isDeleted(change)) continue;
     const id = clientId(change);
     const existingRecord = [...byClientId.values()].find((record) =>
       record.observations.some((visit) => visit.id === id || visit.serverId === change.entity_id)
@@ -298,20 +316,6 @@ async function runPull(): Promise<ServerPullResult> {
     );
     if (existingVisit && observationStatus.get(existingVisit.id) !== 'uploaded') {
       keptLocal += 1;
-      continue;
-    }
-
-    if (isDeleted(change)) {
-      if (!existingRecord || !existingVisit) continue;
-      await removeUploadedLocalEntity('observation', existingVisit.id);
-      const updatedRecord = {
-        ...existingRecord,
-        observations: existingRecord.observations.filter((visit) => visit.id !== existingVisit.id),
-      };
-      byClientId.set(updatedRecord.id, updatedRecord);
-      if (updatedRecord.serverId) byServerId.set(updatedRecord.serverId, updatedRecord);
-      changedRecordIds.add(updatedRecord.id);
-      observations += 1;
       continue;
     }
 

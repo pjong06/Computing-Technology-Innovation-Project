@@ -22,9 +22,14 @@ test('status line: one message from the real state', () => {
   // Something still to send (a new tag, an observation) on a submitted plant.
   assert.deepEqual(plantStatusLine({ syncStatus: 'Not uploaded', reviewStatus: 'pending' }), { kind: 'not_uploaded', text: NOT_UPLOADED_TEXT });
   assert.equal(NOT_UPLOADED_TEXT, "Not uploaded yet — it will send when you're online");
-  // Refused: the reason, and Retry.
+  // Only the tag refused: the plant's own tag notice says it (tagRefusal.test.mjs), so no
+  // "Upload failed" line as well.
   assert.deepEqual(plantStatusLine({ syncStatus: 'Upload failed', reviewStatus: 'pending', tagProblem: 'not_yours' }),
-    { kind: 'failed', text: "Upload failed: this tag isn't one of your reserved tags", retry: true });
+    { kind: 'waiting', text: WAITING_TEXT });
+  // A refused tag on a locked plant: the reason, and Retry.
+  assert.deepEqual(plantStatusLine({ syncStatus: 'Upload failed', reviewStatus: 'pending', tagProblem: 'locked' }),
+    { kind: 'failed', text: "Upload failed: this plant can't be changed after submission", retry: true });
+  // Refused: the reason, and Retry.
   assert.equal(plantStatusLine({ syncStatus: 'Upload failed', reviewStatus: 'pending', syncError: 'The server rejected part of this record. ' }).text,
     'Upload failed: the server rejected part of this record');
   assert.equal(plantStatusLine({ syncStatus: 'Upload failed' }).text, 'Upload failed: the server refused part of this record');
@@ -67,6 +72,23 @@ test('wiring: tag-only updates, the stuck-tag retry and one status line on plant
   assert.match(read('../services/syncEngine.ts'), /await requeueLockedTagOperations\(\);/);
   const detail = read('../../app/plant-detail.tsx');
   assert.doesNotMatch(detail, /Submitted\. It will go to an officer/);
-  assert.match(detail, /const statusLine = plantStatusLine\(matched\);/);
-  assert.match(detail, /const commonLine = speciesSubtitle\(matched\.scientificName, matched\.commonName, matched\.family\);/);
+  assert.match(detail, /const statusLine = plantStatusLine\(matched, retryableRecord\(matched\) \? null : finalProblemText\(matched\)\);/);
+  assert.match(detail, /const heading = plantHeading\(matched\.tagCode, matched\.scientificName, matched\.commonName\);/);
+});
+
+test('plant first, species second: the tag is the title; common name only when different', async () => {
+  const { plantHeading } = await import('./plantStatusLine.ts');
+  assert.deepEqual(plantHeading('NIAH-PLT-00042', 'Nepenthes ampullaria', 'Flask-shaped pitcher plant'),
+    { title: 'NIAH-PLT-00042', hasTag: true, scientific: 'Nepenthes ampullaria', common: 'Flask-shaped pitcher plant' });
+  // A placeholder or no tag: "No tag yet".
+  assert.equal(plantHeading('plant:1234', 'Nepenthes ampullaria', '').title, 'No tag yet');
+  assert.equal(plantHeading(null, 'Nepenthes ampullaria', null).hasTag, false);
+  // The common name is left out when missing or the same as the scientific name.
+  assert.equal(plantHeading('NIAH-PLT-00042', 'Begoniaceae', 'begoniaceae').common, null);
+  assert.equal(plantHeading('NIAH-PLT-00042', 'Begonia niahensis', '  ').common, null);
+  // Plants list and Recent activity: the tag line comes before the species line.
+  const records = read('../../app/(tabs)/records.tsx');
+  assert.ok(records.indexOf("{isPhysicalTag(item.tag) ? item.tag : 'No tag yet'}") < records.indexOf('{item.name}</Text>'));
+  const activity = read('../components/RecentActivity.tsx');
+  assert.ok(activity.indexOf("{item.tag ?? 'No tag yet'}") < activity.indexOf('<Text style={styles.name} numberOfLines={2}>{item.name}</Text>'));
 });

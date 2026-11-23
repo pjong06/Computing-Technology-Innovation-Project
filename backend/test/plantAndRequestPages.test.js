@@ -15,7 +15,7 @@ const idsOf = html => new Set(Array.from(html.matchAll(/\bid="([^"]+)"/g), match
 test('plant detail: breadcrumb, Print QR tag, Visitor page and the "⋯" menu; no Edit plant, no Copy coordinates', () => {
   const html = read('frontend/plant.html');
   const script = read('frontend/js/plant.js');
-  assert.match(html, /<nav class="breadcrumb" aria-label="Breadcrumb">\s*<a href="plants\.html">Plants<\/a>\s*<span aria-hidden="true">\/<\/span>\s*<span class="clip" id="plant-crumb"/);
+  assert.match(html, /<div class="breadcrumb" role="navigation" aria-label="Breadcrumb">\s*<a href="plants\.html">Plants<\/a>\s*<span aria-hidden="true">\/<\/span>\s*<span class="clip" id="plant-crumb"/);
   assert.match(html, /<button class="btn ghost" id="print-qr" type="button">Print QR tag<\/button>/);
   assert.match(html, /<a class="btn ghost" id="visitor-link" target="_blank" rel="noopener">Visitor page<\/a>/);
   assert.match(html, /id="plant-more"[^>]*>⋯<\/button>/);
@@ -56,9 +56,19 @@ test('plant detail header: photo caption, full size, View all N; tag, review and
   assert.match(html, /<dialog class="photo-dialog" id="photo-dialog"/);
   assert.match(script, /chips\.appendChild\(conservationChip\(species\.conservation_status\)\);/);
   assert.match(script, /open\.textContent = 'Open species';/);
-  const facts = script.slice(script.indexOf("['Registered by'"), script.indexOf("['Location note'") + 80);
-  assert.match(facts, /'Registered by'[\s\S]*'Registered'[\s\S]*'Last observation'[\s\S]*'Location note'/);
+  const facts = script.slice(script.indexOf("['Registered by'"), script.indexOf("['Last observation'") + 80);
+  assert.match(facts, /'Registered by'[\s\S]*'Registered'[\s\S]*'Last observation'/);
   assert.doesNotMatch(facts, /Coordinates|observation_count/);
+  // Plant first: the tag is the large title, then the species line, then the location note
+  // (its own line, so not in the facts), then the status and conservation chips.
+  assert.match(script, /byId\('plant-title'\)\.textContent = hasTag \? tag : 'No tag yet';/);
+  assert.match(script, /scientific\.className = 'sci';/);
+  assert.match(script, /if \(common\) sub\.append\(' · ' \+ common\);/);
+  assert.match(script, /byId\('plant-location'\)\.textContent = plant\.location_description \|\| '';/);
+  const header = html.slice(html.indexOf('id="plant-title"'), html.indexOf('id="plant-facts"'));
+  assert.ok(header.indexOf('id="plant-species"') < header.indexOf('id="plant-location"') &&
+    header.indexOf('id="plant-location"') < header.indexOf('id="plant-chips"'), 'title, species, location, chips');
+  assert.doesNotMatch(script, /labelSpan\('chip-muted', 'No tag yet'\)/);
   // Location: officers only, coordinates and accuracy as text, nearby stations on the map.
   assert.match(html, /<h2>Location<\/h2>\s*<span class="officer-only">Officers only<\/span>/);
   assert.match(script, /\['GPS accuracy', /);

@@ -10,8 +10,8 @@
     const low=/\b(low|below|dry|cold)\b|<=?/.test(name.toLowerCase());
     const level=(upper,lower,neutral)=>high&&!low?upper:low&&!high?lower:neutral;
     switch(metric){
-      case 'movement_nearby_cm':return 'Movement detected near station';
-      case 'movement_detected':return 'Motion detected';
+      case 'movement_nearby_cm':
+      case 'movement_detected':return 'Movement detected';
       case 'temperature_c':return level('High temperature','Low temperature','Temperature alert');
       case 'humidity_percent':return level('High humidity','Low humidity','Humidity alert');
       case 'soil_moisture_pct':return level('High soil moisture','Low soil moisture','Soil moisture alert');

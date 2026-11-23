@@ -8,6 +8,8 @@ import { isSyncOffline } from './syncRetry';
 import {
   base64FromBytes,
   fromServer,
+  refreshTagList,
+  tagImagePath,
   tagOwnershipProblem,
   type MyTag,
   type PdfLayout,
@@ -16,6 +18,7 @@ import {
 
 // The botanist's own QR tags, with the existing endpoints (botanist only, own tags only):
 //   GET  /api/tag-reservations                    -> the reserved tags, unused or bound
+//   POST /api/tag-reservations/reserve            -> reserves N new tags, returns them
 //   POST /api/tag-reservations/reserve-and-print  -> reserves N new tags, returns the PDF
 //   POST /api/tag-reservations/print              -> PDF of chosen own tags
 //   GET  /api/tag-reservations/:tag/image         -> PNG label of an own unused tag
@@ -63,6 +66,13 @@ export async function fetchMyTags(): Promise<MyTag[]> {
   const tags = fromServer(rows);
   await saveCache(tags).catch(() => {});
   return tags;
+}
+
+// The saved list, refreshed from the server whenever online: on opening the tag scanner
+// (Attach tag, also after Register plant) and on every sync (syncEngine). Offline it keeps
+// the saved list.
+export function refreshMyTags(): Promise<'refreshed' | 'offline' | 'failed'> {
+  return refreshTagList({ isOffline: isSyncOffline, fetchTags: fetchMyTags });
 }
 
 // Whether this botanist may attach this tag to this plant: one of their own reserved tags,
@@ -128,6 +138,27 @@ export async function reserveTagsPdf(
   }
 }
 
+// "Get N tags": reserves `count` new tags (POST /api/tag-reservations/reserve) and returns
+// them; printing comes after, with the layout chosen then. requestId makes a retry return
+// the same tags, never new ones.
+export async function reserveTags(
+  count: number,
+  requestId: string = randomUUID()
+): Promise<{ ok: true; tags: string[]; requestId: string } | { ok: false; reason: string; requestId: string }> {
+  if (await isSyncOffline()) return { ok: false, reason: OFFLINE_MESSAGE, requestId };
+  try {
+    const result = await apiFetch<{ request_id: string; tags: string[] }>('/api/tag-reservations/reserve', {
+      method: 'POST',
+      body: { count, request_id: requestId },
+    });
+    // The new tags now belong to this botanist: refresh the saved list.
+    void fetchMyTags().catch(() => {});
+    return { ok: true, tags: Array.isArray(result?.tags) ? result.tags : [], requestId };
+  } catch (error) {
+    return { ok: false, reason: reservationMessage(error), requestId };
+  }
+}
+
 function exportMessage(error: unknown, what: string): string {
   if (error instanceof ApiError) {
     if (error.status === 0) return `You are offline. ${what} needs the internet.`;
@@ -164,6 +195,51 @@ export async function downloadTagImage(
     return { ok: true, file: await writeCacheFile(`${tag}.png`, await apiDownload(path)) };
   } catch (error) {
     return { ok: false, reason: exportMessage(error, 'The tag image') };
+  }
+}
+
+// "Images" print layout: one PNG label per tag. On Android they are all saved into one folder
+// the botanist picks; on iOS each one opens the share sheet ("Save Image", AirDrop, ...).
+export async function saveTagImages(
+  tags: Pick<MyTag, 'tag' | 'boundPlantId'>[]
+): Promise<{ ok: true; message: string } | { ok: false; reason: string }> {
+  const downloaded = await downloadTagImages(tags);
+  if (!downloaded.ok) return downloaded;
+  return saveTagImageFiles(downloaded.files);
+}
+
+// The PNG labels of these tags, downloaded into the cache folder (step 1 of "Images").
+export async function downloadTagImages(
+  tags: Pick<MyTag, 'tag' | 'boundPlantId'>[]
+): Promise<{ ok: true; files: File[] } | { ok: false; reason: string }> {
+  if (tags.length === 0) return { ok: false, reason: 'Choose at least one tag.' };
+  if (await isSyncOffline()) return { ok: false, reason: 'You are offline. Tag images need the internet.' };
+  const files: File[] = [];
+  for (const tag of tags) {
+    const image = await downloadTagImage(tag.tag, tagImagePath(tag));
+    if (!image.ok) return { ok: false, reason: `${tag.tag}: ${image.reason}` };
+    files.push(image.file);
+  }
+  return { ok: true, files };
+}
+
+// Saves (Android: one folder) or shares (iOS) the downloaded PNG labels (step 2 of "Images").
+export async function saveTagImageFiles(
+  files: File[]
+): Promise<{ ok: true; message: string } | { ok: false; reason: string }> {
+  try {
+    if (Platform.OS === 'ios') {
+      for (const file of files) await Share.share({ url: file.uri, title: file.name });
+      return { ok: true, message: `${files.length} ${files.length === 1 ? 'image' : 'images'} shared.` };
+    }
+    const folder = await Directory.pickDirectoryAsync();
+    for (const file of files) {
+      const copy = folder.createFile(file.name, 'image/png');
+      copy.write(await file.base64(), { encoding: 'base64' });
+    }
+    return { ok: true, message: `Saved ${files.length} ${files.length === 1 ? 'image' : 'images'} in ${folder.name || 'the folder you chose'}.` };
+  } catch {
+    return { ok: false, reason: 'The images were not saved. Please try again.' };
   }
 }
 

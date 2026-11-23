@@ -8,7 +8,11 @@ import type {
   PlantRecord,
 } from '../store/useRecordStore';
 import { resolveStoredPhotoUri } from '../utils/photoStorage';
+import { plantPhotoCode } from '../utils/syncDetails';
 import { uploadablePhotoFile } from './uploadablePhoto';
+
+// Answers that can never change by sending the photo again.
+const FINAL_PHOTO_CODES = new Set(['photos_locked', 'plant_deleted']);
 
 const UPLOADED = 'Uploaded' as PlantPhotoEntry['syncStatus'];
 const NOT_UPLOADED = 'Not uploaded' as PlantPhotoEntry['syncStatus'];
@@ -18,6 +22,7 @@ const PHOTO_TIMEOUT_MS = 30_000;
 
 interface PlantPhotoResponse {
   message?: string;
+  code?: string;
   media?: {
     id: string;
     client_record_id?: string;
@@ -135,7 +140,8 @@ async function uploadPlantPhoto(
       throw new ApiError(
         body.message ??
           `Plant photo upload failed (${response.status})`,
-        response.status
+        response.status,
+        body.code
       );
     }
 
@@ -185,6 +191,12 @@ export async function syncPlantPhotos(
       continue;
     }
 
+    // Refused for good (the plant was already reviewed, or removed on the server): not
+    // sent again; Sync details explains it and offers "Remove from phone".
+    if (photo.syncStatus === FAILED && FINAL_PHOTO_CODES.has(plantPhotoCode(photo) ?? '')) {
+      continue;
+    }
+
     try {
       const serverId = await uploadPlantPhoto(
         record.serverId,
@@ -196,6 +208,7 @@ export async function syncPlantPhotos(
         serverId,
         syncStatus: UPLOADED,
         lastError: undefined,
+        lastCode: undefined,
       };
     } catch (error) {
       const message =
@@ -214,6 +227,10 @@ export async function syncPlantPhotos(
           ? NOT_UPLOADED
           : FAILED,
         lastError: message,
+        lastCode:
+          error instanceof ApiError
+            ? error.code ?? (error.status === 0 ? 'network' : `http_${error.status}`)
+            : undefined,
       };
 
       if (!firstError) {

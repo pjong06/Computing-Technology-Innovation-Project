@@ -172,10 +172,12 @@ test('Plant detail layout: title chips, actions, measurement tiles, location, fi
   assert.match(detail, /\{Math\.min\(photoIndex \+ 1, photoCount\)\} of \{photoCount\}/);
   assert.match(detail, /accessibilityLabel="More actions"/);
   assert.match(detail, /No photos yet/);
-  // Title: italic scientific name, "common name · family", status / tag / sync chips.
+  // Plant first: the tag as the title, then "<italic scientific name> · <common name>", then
+  // the location note with a pin; status and sync chips (no tag chip).
   assert.match(detail, /styles\.titleItalic/);
-  // "common name · family" without repeating a word (src/utils/plantStatusLine.ts speciesSubtitle).
-  assert.match(detail, /const commonLine = speciesSubtitle\(matched\.scientificName, matched\.commonName, matched\.family\);/);
+  assert.match(detail, /\{heading\.common \? ` · \$\{heading\.common\}` : null\}/);
+  assert.match(detail, /<Ionicons name="location-outline" size=\{13\} color="#68776D" \/>/);
+  assert.doesNotMatch(detail, /pricetag-outline" size=\{12\}/);
   assert.match(detail, /label: 'Synced'/);
   assert.match(detail, /label: 'Not uploaded'/);
   // Actions: Record observation (primary), Find plant, Show QR / Attach tag.

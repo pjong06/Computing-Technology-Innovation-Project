@@ -12,7 +12,12 @@ let proposals = [];
 let proposalSort = SORT_NEWEST; // newest request first; the select switches it
 let taxonomyRows = null;
 let proposalBusy = false;
-let openId = null;              // the request open under its row
+// The request open under its row: proposals.html?request=<id> (from Field records'
+// "Waiting for species request") opens that one.
+let openId = (function () {
+  const wanted = new URLSearchParams(location.search).get('request') || '';
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(wanted) ? wanted : null;
+})();
 let searchText = '';
 const reasonDrafts = {};        // a reason typed for a request, kept while the list redraws
 const statusDrafts = {};        // the conservation status chosen for a request
@@ -31,6 +36,11 @@ const botanistOf = proposal => proposal.proposer_name || 'the botanist';
 
 function speciesCell(td, proposal) {
   td.appendChild(clippedText(proposal.scientific_name || 'Unnamed species', 'sci'));
+  // Field records that can't be approved until this species is added.
+  const waiting = Number(proposal.waiting_plants) || 0;
+  if (waiting > 0) {
+    td.appendChild(clippedText(waiting + (waiting === 1 ? ' plant waiting' : ' plants waiting'), 'cell-sub waiting-plants'));
+  }
 }
 
 function textCell(value, fallback) {

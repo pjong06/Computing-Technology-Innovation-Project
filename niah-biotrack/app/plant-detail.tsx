@@ -32,7 +32,15 @@ import {
 } from '../src/store/useRecordStore';
 
 import { NOT_SUBMITTED_BADGE, REVIEW_BADGE, visitStatus } from '../src/utils/reviewStatus';
-import { plantStatusLine, speciesSubtitle, type TagProblemCode } from '../src/utils/plantStatusLine';
+import { alreadySetText, plantHeading, plantStatusLine, tagNotice, TAG_CANT_BE_USED_TEXT, type TagProblemCode } from '../src/utils/plantStatusLine';
+import { firstVisitOf } from '../src/utils/submissionState';
+import { NO_REASON_TEXT, isGoneCode, rowActions } from '../src/utils/rowActions';
+import RowActions from '../src/components/RowActions';
+import { explainAnswer } from '../src/utils/syncDetails';
+import { finalProblemText, retryableRecord } from '../src/utils/syncDetails';
+import { speciesRequestText } from '../src/utils/speciesSearch';
+import { useProposalStore } from '../src/store/useProposalStore';
+import { useSpeciesStore } from '../src/store/useSpeciesStore';
 import { requeueLockedTagOperations, resumePausedRecordRetries } from '../src/services/offlineDatabase';
 import PlantNotFound from '../src/components/PlantNotFound';
 import { resolveStoredPhotoUri } from '../src/utils/photoStorage';
@@ -50,12 +58,9 @@ import { formatDiameterCm, formatHeightFromCm, parseMeasurement } from '../src/u
 import { routeSyncLabel, routesUploadedText } from '../src/utils/routeSync';
 
 const TAG_PROBLEM_TEXT: Record<TagProblemCode, string> = {
-  in_use:
-    'This tag is already attached to another plant. Check the tag, then attach the right one.',
-  not_yours:
-    "This tag isn't one of your reserved tags. Attach one of your own tags from My QR tags.",
-  already_set:
-    'This plant already has a physical tag on the server.',
+  in_use: TAG_CANT_BE_USED_TEXT.in_use,
+  not_yours: TAG_CANT_BE_USED_TEXT.not_yours,
+  already_set: alreadySetText(null),
   locked:
     "This plant can't be changed after submission, so the change was not saved on the server. It stays on this phone.",
 };
@@ -183,6 +188,7 @@ export default function PlantDetailScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
 
   const records = useRecordStore((state) => state.records);
+  const proposals = useProposalStore((state) => state.proposals);
   const submitForReview = useRecordStore((state) => state.submitForReview);
   const removePhoto = useRecordStore((state) => state.removePhoto);
   const deleteRecord = useRecordStore((state) => state.deleteRecord);
@@ -250,6 +256,7 @@ export default function PlantDetailScreen() {
   const signedThumbnail = usePlantListStore((state) =>
     matched && !matched.otherBotanist && matched.serverId ? state.ownThumbnails[matched.serverId] ?? null : null
   );
+  const speciesList = useSpeciesStore((state) => state.species);
   const needsServerPhoto = Boolean(
     matched && !matched.otherBotanist && matched.serverId && (matched.photoUris ?? []).length === 0
   );
@@ -260,6 +267,14 @@ export default function PlantDetailScreen() {
   if (!matched) {
     return <PlantNotFound code={id} />;
   }
+
+  const matchedSpecies = speciesList.find(
+    (s) =>
+      (matched.speciesId && s.id === matched.speciesId) ||
+      (matched.scientificName &&
+        s.scientific_name.trim().toLowerCase() === matched.scientificName.trim().toLowerCase())
+  );
+  const plantFamily = (matched.family || matchedSpecies?.taxonomy?.family || '').trim();
 
   const photos = (matched.photoUris ?? []).map(resolveStoredPhotoUri);
 
@@ -312,7 +327,8 @@ export default function PlantDetailScreen() {
       return;
     }
 
-    if (matched.tagProblem) {
+    // already_set: the plant's tag is the server's (once refreshed), so its QR can be shown.
+    if (matched.tagProblem && matched.tagProblem !== 'already_set') {
       Alert.alert(
         'No QR code for this tag',
         TAG_PROBLEM_TEXT[matched.tagProblem]
@@ -514,10 +530,14 @@ export default function PlantDetailScreen() {
     );
   };
 
-  // Observations, newest first.
+  // Observations, newest first. The plant's first record (the same rule as the officer
+  // Review page: its earliest observation) is its registration, labelled "Registration";
+  // only the later ones count as observations.
   const observations = [...visitsHere].sort(
     (a, b) => (Date.parse(b.observedAt || '') || 0) - (Date.parse(a.observedAt || '') || 0)
   );
+  const registrationVisit = firstVisitOf({ ...matched, observations: visitsHere });
+  const laterCount = observations.length - (registrationVisit ? 1 : 0);
 
   const recordObservation = () =>
     router.push({
@@ -554,6 +574,7 @@ export default function PlantDetailScreen() {
     const lines = [
       matched.scientificName || 'Plant',
       matched.commonName?.trim() || null,
+      plantFamily ? `Family: ${plantFamily}` : null,
       isPhysicalTag(matched.tagCode) ? `Tag ${matched.tagCode}` : null,
       shown.locationNote ? `Location: ${shown.locationNote}` : null,
     ].filter(Boolean);
@@ -565,8 +586,17 @@ export default function PlantDetailScreen() {
   };
 
   const sync = syncChip(matched.syncStatus);
-  const commonLine = speciesSubtitle(matched.scientificName, matched.commonName, matched.family);
-  const statusLine = plantStatusLine(matched);
+  const heading = plantHeading(matched.tagCode, matched.scientificName, matched.commonName);
+  // The species request this plant waits for (on this phone), and what to say about it.
+  const waitingProposal = matched.speciesRequestId
+    ? proposals.find((proposal) => proposal.id === matched.speciesRequestId) ?? null
+    : null;
+  const requestLine = matched.speciesRequestId && !matched.speciesId
+    ? speciesRequestText(matched.speciesRequestName ?? matched.scientificName, waitingProposal)
+    : null;
+  // Retry only when trying again can help; a permanent refusal says why instead.
+  const statusLine = plantStatusLine(matched, retryableRecord(matched) ? null : finalProblemText(matched));
+  const notice = tagNotice(matched.tagProblem, matched.tagCode);
   const photoCount = photos.length;
 
   return (
@@ -653,21 +683,30 @@ export default function PlantDetailScreen() {
         </View>
 
         <View style={styles.sheet}>
-          {/* Title block */}
-          <Text style={[styles.title, !needsIdentification && styles.titleItalic]}>
-            {matched.scientificName || 'Identification pending'}
+          {/* Title block: the plant first (its tag), then its species & family, then where it is. */}
+          <Text style={[styles.title, !heading.hasTag && styles.titleMuted]} numberOfLines={1}>
+            {heading.title}
           </Text>
-          {commonLine ? <Text style={styles.subtitle}>{commonLine}</Text> : null}
+          <Text style={styles.subtitle} numberOfLines={2}>
+            {heading.scientific || 'Identification pending'}
+            {heading.common ? ` · ${heading.common}` : null}
+          </Text>
+          {plantFamily ? (
+            <Text style={styles.familyText} numberOfLines={1}>
+              Family: {plantFamily}
+            </Text>
+          ) : null}
+          {shown.locationNote ? (
+            <View style={styles.locationLine}>
+              <Ionicons name="location-outline" size={13} color="#68776D" />
+              <Text style={styles.locationText} numberOfLines={2}>{shown.locationNote}</Text>
+            </View>
+          ) : null}
 
+          {/* Review and upload status (the tag is the title now, so no tag chip). */}
           <View style={styles.chipRow}>
             <View style={[styles.chip, { backgroundColor: review.bg }]}>
               <Text style={[styles.chipText, { color: review.text }]}>{review.label}</Text>
-            </View>
-            <View style={[styles.chip, styles.chipNeutral]}>
-              <Ionicons name="pricetag-outline" size={12} color="#4A5A50" />
-              <Text style={[styles.chipText, styles.chipNeutralText]}>
-                {isPhysicalTag(matched.tagCode) ? matched.tagCode : 'No tag yet'}
-              </Text>
             </View>
             <View style={[styles.chip, { backgroundColor: sync.bg }]}>
               <Text style={[styles.chipText, { color: sync.text }]}>{sync.label}</Text>
@@ -681,19 +720,37 @@ export default function PlantDetailScreen() {
               <View style={[styles.card, styles.tagProblemBox]} accessibilityRole="alert">
                 <Text style={styles.tagProblemText}>{statusLine.text}</Text>
                 <View style={styles.statusActions}>
-                  <TouchableOpacity onPress={() => void retryUpload()} disabled={retryingUpload} hitSlop={8} accessibilityRole="button">
-                    <Text style={styles.tagProblemAction}>{retryingUpload ? 'Retrying…' : 'Retry'}</Text>
-                  </TouchableOpacity>
-                  {matched.tagProblem === 'in_use' || matched.tagProblem === 'not_yours' ? (
-                    <TouchableOpacity onPress={openAttachTag} hitSlop={8} accessibilityRole="button">
-                      <Text style={styles.tagProblemAction}>Attach a different tag</Text>
+                  {statusLine.retry ? (
+                    <TouchableOpacity onPress={() => void retryUpload()} disabled={retryingUpload} hitSlop={8} accessibilityRole="button">
+                      <Text style={styles.tagProblemAction}>{retryingUpload ? 'Retrying…' : 'Retry'}</Text>
                     </TouchableOpacity>
-                  ) : null}
+                  ) : (
+                    <TouchableOpacity onPress={() => router.push('/sync-details' as never)} hitSlop={8} accessibilityRole="button">
+                      <Text style={styles.tagProblemAction}>Sync details</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               </View>
             ) : (
               <Text style={styles.lockedNote}>{statusLine.text}</Text>
             )
+          ) : null}
+
+          {/* A tag the server refused: shown on the plant itself. The rest of the plant
+              keeps uploading without it. */}
+          {notice ? (
+            <View style={[styles.card, styles.tagProblemBox]} accessibilityRole="alert">
+              <Text style={styles.tagProblemText}>{notice.text}</Text>
+              {/* No button when the plant already has a tag on the server: another tag
+                  can't be attached. */}
+              {notice.action ? (
+                <View style={styles.statusActions}>
+                  <TouchableOpacity onPress={openAttachTag} hitSlop={8} accessibilityRole="button">
+                    <Text style={styles.tagProblemAction}>{notice.action}</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+            </View>
           ) : null}
 
           {/* Main actions */}
@@ -733,8 +790,31 @@ export default function PlantDetailScreen() {
             )}
           </View>
 
+          {/* Waiting for a species request (a species not in the catalogue yet): its name,
+              and the officer's reason if it was not added (the plant keeps waiting). */}
+          {needsIdentification && requestLine ? (
+            <View style={styles.identificationCard}>
+              <Text style={styles.identificationTitle} numberOfLines={2}>{requestLine.title}</Text>
+              {requestLine.reason ? (
+                <Text style={styles.identificationText}>{requestLine.reason}</Text>
+              ) : (
+                <Text style={styles.identificationText}>
+                  When an officer adds this species, the plant gets it and its records can be approved.
+                </Text>
+              )}
+              {waitingProposal?.review === 'rejected' ? (
+                <TouchableOpacity
+                  style={styles.continueBtn}
+                  onPress={() => router.push({ pathname: '/propose-species', params: { editId: waitingProposal.id } } as any)}
+                >
+                  <Text style={styles.continueBtnText}>Edit and send the request again</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ) : null}
+
           {/* Identification pending */}
-          {needsIdentification && (
+          {needsIdentification && !requestLine && (
             <View style={styles.identificationCard}>
               <Text style={styles.identificationTitle}>Identification pending</Text>
               <Text style={styles.identificationText}>
@@ -760,10 +840,14 @@ export default function PlantDetailScreen() {
           {/* Officer's reason */}
           {matched.reviewStatus === ReviewStatus.REJECTED && (
             <View style={styles.commentBox}>
-              <Text style={styles.commentTitle}>Officer's reason</Text>
-              <Text style={styles.commentBody}>
-                {matched.reviewComment?.trim() || 'No reason was given.'}
-              </Text>
+              {matched.reviewComment?.trim() ? (
+                <>
+                  <Text style={styles.commentTitle}>Officer's reason</Text>
+                  <Text style={styles.commentBody}>{matched.reviewComment.trim()}</Text>
+                </>
+              ) : (
+                <Text style={styles.commentTitle}>{NO_REASON_TEXT}</Text>
+              )}
             </View>
           )}
 
@@ -869,9 +953,9 @@ export default function PlantDetailScreen() {
           {/* OBSERVATIONS, newest first */}
           <View style={styles.obsHeaderRow}>
             <Text style={[styles.heading, styles.flexText]}>OBSERVATIONS</Text>
-            {observations.length > 0 ? (
+            {laterCount > 0 ? (
               <Text style={styles.obsCount}>
-                {observations.length} {observations.length === 1 ? 'observation' : 'observations'}
+                {laterCount} {laterCount === 1 ? 'observation' : 'observations'}
               </Text>
             ) : null}
           </View>
@@ -889,10 +973,18 @@ export default function PlantDetailScreen() {
               // Each observation's review status and the officer's reason if it was sent back.
               const status = visitStatus(observation, matched.syncError);
               const chips = observationChips(observation);
+              // What the botanist can do on it (src/utils/rowActions.ts); someone else's
+              // plant has no actions for its records.
+              const gone = isGoneCode(observation.submitCode);
+              const actions = matched.otherBotanist
+                ? []
+                : rowActions({ action: status.action, retryable: retryableRecord(matched, observation.id), gone });
               return (
                 <View key={observation.id} style={[styles.card, styles.obsCard]}>
                   <View style={styles.obsCardTop}>
-                    <Text style={[styles.obsDate, styles.flexText]}>{observation.date}</Text>
+                    <Text style={[styles.obsDate, styles.flexText]}>
+                      {observation === registrationVisit ? `Registration · ${observation.date}` : observation.date}
+                    </Text>
                     <View style={[styles.statusBadge, { backgroundColor: status.badge.bg }]}>
                       <Text style={[styles.statusBadgeText, { color: status.badge.text }]}>
                         {status.badge.label}
@@ -900,7 +992,17 @@ export default function PlantDetailScreen() {
                     </View>
                   </View>
                   {observation.recordedBy ? <Text style={styles.obsAuthor}>{observation.recordedBy}</Text> : null}
-                  {status.reason ? <Text style={styles.obsReason}>{status.reason}</Text> : null}
+                  {gone ? (
+                    <Text style={styles.obsReason}>{explainAnswer('plant_deleted').explanation}</Text>
+                  ) : status.reason ? (
+                    <Text style={styles.obsReason}>{status.reason}</Text>
+                  ) : null}
+                  <RowActions
+                    actions={actions}
+                    recordId={matched.id}
+                    obsId={observation.id}
+                    isRegistration={observation === registrationVisit}
+                  />
                   {chips.length > 0 ? (
                     <View style={styles.pillGroup}>
                       {chips.map((chip) => (
@@ -1087,9 +1189,12 @@ const styles = StyleSheet.create({
   photoCountText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
 
   sheet: { padding: 20, backgroundColor: '#F6F8F6' },
-  title: { fontSize: 24, fontWeight: '800', color: '#1E2B22', flexShrink: 1 },
-  titleItalic: { fontStyle: 'italic' },
-  subtitle: { fontSize: 14, color: '#526659', marginTop: 4, flexShrink: 1 },
+  title: { fontSize: 24, fontWeight: '800', color: '#1E2B22', flexShrink: 1, fontVariant: ['tabular-nums'] },
+  titleMuted: { color: '#68776D' },
+  locationLine: { flexDirection: 'row', alignItems: 'flex-start', gap: 4, marginTop: 4, minWidth: 0 },
+  locationText: { flex: 1, minWidth: 0, fontSize: 13, color: '#68776D', lineHeight: 18 },
+  subtitle: { fontSize: 13, fontWeight: '600', color: '#526659', marginTop: 4, flexShrink: 1 },
+  familyText: { fontSize: 13, fontWeight: '600', color: '#526659', marginTop: 3, flexShrink: 1 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
   chip: {
     flexDirection: 'row',
@@ -1268,7 +1373,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   emptyObsBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14, textAlign: 'center' },
-
 
   menuBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   menuSheet: {

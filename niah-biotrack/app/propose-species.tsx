@@ -46,7 +46,16 @@ function findSimilarSpecies(species: Species[], scientific: string, common: stri
 // prefilled, and sending it again sets it back to waiting for review.
 export default function ProposeSpeciesScreen() {
   const router = useRouter();
-  const { editId } = useLocalSearchParams<{ editId?: string }>();
+  // From Register plant: prefilled with what was typed (or an AI suggestion), and the new
+  // request is handed back so the plant is linked to it (forPlant=1).
+  const { editId, prefillScientific, prefillCommon, prefillFamily, forPlant } = useLocalSearchParams<{
+    editId?: string;
+    prefillScientific?: string;
+    prefillCommon?: string;
+    prefillFamily?: string;
+    forPlant?: string;
+  }>();
+  const setPendingPlantLink = useProposalStore((state) => state.setPendingPlantLink);
   const { role } = useAuthRole();
   const canPropose = role === 'botanist';
 
@@ -79,6 +88,15 @@ export default function ProposeSpeciesScreen() {
   const [saving, setSaving] = useState(false);
 
   const [prefilled, setPrefilled] = useState(false);
+  useEffect(() => {
+    if (prefilled || editId) return;
+    if (prefillScientific || prefillCommon || prefillFamily) {
+      setScientificName(prefillScientific ?? '');
+      setCommonName(prefillCommon ?? '');
+      setFamily(prefillFamily ?? '');
+    }
+    setPrefilled(true);
+  }, [prefilled, editId, prefillScientific, prefillCommon, prefillFamily]);
   useEffect(() => {
     if (!editing || prefilled) return;
     setScientificName(editing.scientificName);
@@ -155,6 +173,8 @@ export default function ProposeSpeciesScreen() {
       setError('Could not save the request on this phone. Try again.');
       return;
     }
+    // Opened from Register plant: the plant waits for this request.
+    if (forPlant === '1') setPendingPlantLink({ id: proposal.id, scientificName: proposal.scientificName });
     // Try to send it now; if there's no signal it stays saved and goes up later.
     const result = await syncProposal(proposal.id);
     setSaving(false);

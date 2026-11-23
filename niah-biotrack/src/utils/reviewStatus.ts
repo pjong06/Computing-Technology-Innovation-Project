@@ -9,6 +9,7 @@ import {
   type VisitSubmissionFields,
 } from './submissionState';
 import { rowStatus, type NeedsActionReason, type RecordStatusGroup } from './recordsList';
+import { officerReasonText } from './rowActions';
 
 // Label and colours for each review status, shared by every screen.
 export const REVIEW_BADGE: Record<ReviewStatus, { label: string; bg: string; text: string }> = {
@@ -88,7 +89,8 @@ export function statusReason(
   submitError: string | null | undefined,
   syncError: string | null | undefined
 ): string | null {
-  if (action === 'needs_changes') return `Officer's reason: ${officerReason?.trim() || 'No reason was given.'}`;
+  // "Officer's reason: …", or "Sent back by the officer (no reason given)".
+  if (action === 'needs_changes') return officerReasonText(officerReason);
   if (action === 'upload_failed') return `Upload failed: ${syncError?.trim() || 'Tap Sync now to try again.'}`;
   if (action === 'not_submitted' && submitError) return `Not sent for review: ${submitError}`;
   if (action === 'needs_species') return 'Choose the species to finish this record.';

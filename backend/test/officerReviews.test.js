@@ -44,7 +44,7 @@ function fakeDb(tables = {}) {
     from(table) {
       const chain = { table, filters: [] };
       const record = (name) => (...args) => { calls.push([table, name, ...args]); chain.filters.push([name, ...args]); return chain; };
-      for (const name of ['select', 'eq', 'is', 'in', 'order', 'limit']) chain[name] = record(name);
+      for (const name of ['select', 'eq', 'is', 'in', 'order', 'limit', 'range', 'not']) chain[name] = record(name);
       chain.insert = (row) => {
         calls.push([table, 'insert', row]);
         return { select: () => ({ single: async () => tables[`${table}:insert`] ?? { data: { id: 'review-1', ...row }, error: null } }) };
@@ -170,6 +170,8 @@ test('pending observations come with plant, species and botanist details', async
         plant_status: 'pending', scientific_name: 'Nepenthes ampullaria', common_name: 'Pitcher plant',
         // GPS, accuracy and morphology for the detail card (none recorded here).
         latitude: null, longitude: null, gps_accuracy_m: null, morphology: null,
+        // Not waiting for a species request (it has a species).
+        species_request: null,
       },
       previous_observation: null,
       is_first_record: true, // the plant's only record, so its registration
@@ -180,8 +182,9 @@ test('pending observations come with plant, species and botanist details', async
   assert.ok(db.calls.some(c => c[0] === 'observations' && c[1] === 'order' && c[2] === 'observed_at' && c[3].ascending === false));
   assert.ok(db.calls.some(c => c[0] === 'observations' && c[1] === 'eq' && c[2] === 'review_status' && c[3] === 'pending'));
   assert.ok(db.calls.some(c => c[0] === 'observations' && c[1] === 'is' && c[2] === 'deleted_at' && c[3] === null));
+  // With the species request link (plants.species_request_id) when the column exists.
   assert.ok(db.calls.some(c => c[0] === 'plants' && c[1] === 'select' &&
-    c[2] === 'id, qr_code_value, location_description, species_id, plant_status'));
+    c[2] === 'id, qr_code_value, location_description, species_id, plant_status, species_request_id'));
 });
 
 test('a missing plant or profile leaves those fields empty instead of failing', async () => {

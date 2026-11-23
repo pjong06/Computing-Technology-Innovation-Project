@@ -1,9 +1,12 @@
 import { ApiError, apiFetch } from '../api/client';
 import { isSyncOffline, requestSyncRetry } from './syncRetry';
+import { refreshMyTags } from './myTags';
 import {
+  adoptServerPlantTag,
   applySyncOperationResult,
   claimOutboxOperations,
   getReadyOutboxOperations,
+  getPlantsNeedingServerTag,
   getUploadedPlantsQueuedAsCreate,
   rebaseQueuedCreateAsUpdate,
   requeueLockedTagOperations,
@@ -71,6 +74,28 @@ async function adoptServerVersions(): Promise<void> {
   }
 }
 
+// A plant refused as tag_already_set already has a tag on the server: refresh the plant
+// from the server (GET /api/plants/:id), so the phone shows that tag ("This plant already
+// has a tag on the server (<tag>).") and the refused tag change is settled. If the lookup
+// fails (offline, plant gone), the next sync tries again.
+export async function refreshPlantsWithServerTag(): Promise<number> {
+  let refreshed = 0;
+  for (const plant of await getPlantsNeedingServerTag()) {
+    try {
+      const response = await apiFetch<{ qr_code_value?: string | null; row_version?: number | null }>(
+        `/api/plants/${encodeURIComponent(plant.serverId)}`
+      );
+      const tag = typeof response.qr_code_value === 'string' ? response.qr_code_value.trim() : '';
+      if (!/^NIAH-PLT-\d{5}$/.test(tag)) continue;
+      await adoptServerPlantTag(plant.clientRecordId, tag, response.row_version ?? null);
+      refreshed += 1;
+    } catch {
+      // Try again on the next sync.
+    }
+  }
+  return refreshed;
+}
+
 async function runPush(): Promise<SyncRunResult> {
   if (await isSyncOffline()) {
     return { processed: 0, succeeded: 0, failed: 0, conflicts: 0, remaining: false, error: 'Waiting for an internet connection.' };
@@ -78,6 +103,9 @@ async function runPush(): Promise<SyncRunResult> {
   await adoptServerVersions();
   // Tags attached after submission that were refused before the server allowed it.
   await requeueLockedTagOperations();
+  // Every sync also refreshes the saved tag list (deleted or used tags drop out of it), so
+  // scanning offline later checks against an up-to-date list. Doesn't hold up the upload.
+  void refreshMyTags();
 
   let processed = 0;
   let succeeded = 0;
@@ -111,6 +139,8 @@ async function runPush(): Promise<SyncRunResult> {
           operation_id: operation.operationId,
           status: retryable ? 'retry' : 'failed',
           message,
+          // For Sync details: no answer at all, or the HTTP status the server gave.
+          code: status === 0 ? 'network' : `http_${status}`,
           retryAfterMs: error instanceof ApiError ? error.retryAfterMs : undefined,
         });
       }
@@ -145,12 +175,16 @@ async function runPush(): Promise<SyncRunResult> {
         operation_id: operation.operationId,
         status: 'retry',
         message: 'The server did not return a result for this operation.',
+        code: 'no_result',
       });
       processed += 1;
       failed += 1;
       remaining = true;
     }
   }
+
+  // Plants whose tag was refused as already set: take the tag the server has.
+  await refreshPlantsWithServerTag();
 
   if (succeeded > 0 && failed === 0 && conflicts === 0) await setLastSuccessfulSync();
   return { processed, succeeded, failed, conflicts, remaining };

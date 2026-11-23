@@ -44,8 +44,11 @@ import {
   type SyncRunResult,
 } from '../services/syncEngine';
 import { requestSyncRetry } from '../services/syncRetry';
+import { reportBackgroundError, singleFlight } from '../utils/dbQueue';
 import type { ServerPlantDetails } from '../utils/plantDetails';
 import { TAG_PROBLEM_REASON, type TagProblemCode } from '../utils/plantStatusLine';
+import { speciesReady } from '../utils/speciesSearch';
+import { linkSpeciesRequest, needsSpeciesRequestLink } from '../services/speciesRequestLink';
 
 const upperFirst = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 import { uploadablePhotoFile } from '../services/uploadablePhoto';
@@ -144,7 +147,9 @@ export interface PhotoUpload {
   problem?:
     | 'too_large'
     | 'locked'
-    | 'missing';
+    | 'missing'
+    // The plant or observation was removed on the server: it can never upload.
+    | 'gone';
 }
 
 /*
@@ -167,6 +172,9 @@ export interface PlantPhotoEntry {
   serverId?: string;
 
   lastError?: string;
+
+  // The server's code for the last refusal (photos_locked, plant_deleted, ...).
+  lastCode?: string;
 }
 
 export const MAX_PHOTO_BYTES =
@@ -245,6 +253,12 @@ export interface ObservationVisit {
   submitError?:
     | string
     | null;
+
+  // The server's code for that refusal (plant_deleted, observation_deleted,
+  // submit_refused). plant_deleted / observation_deleted are never sent again.
+  submitCode?:
+    | string
+    | null;
 }
 
 /*
@@ -306,6 +320,18 @@ export interface PlantRecord {
   speciesId:
     | string
     | null;
+
+  /*
+   * A species that isn't in the catalogue yet: the species request (its client id on this
+   * phone) the plant waits for, and its name. Linked on the server after upload
+   * (POST /api/plants/:id/species-request); when the officer adds the species, the plant
+   * gets it (speciesId) on the next download.
+   */
+  speciesRequestId?: string | null;
+
+  speciesRequestName?: string | null;
+
+  speciesRequestLinked?: boolean;
 
   commonName: string;
 
@@ -576,10 +602,9 @@ function isUploadable(
       SyncStatus.LOCAL_ONLY &&
     record.recordStatus ===
       RecordStatus.COMPLETE &&
-    record.identificationStatus ===
-      IdentificationStatus.IDENTIFIED &&
-    Boolean(
-      record.speciesId
+    // A catalogue species, or a species request the plant waits for.
+    speciesReady(
+      record
     )
   );
 }
@@ -669,16 +694,12 @@ function photoFileFor(
     };
   }
 
-  if (
-    file.size >
-    MAX_PHOTO_BYTES
-  ) {
-    return {
-      problem:
-        'too_large',
-    };
-  }
-
+  /*
+   * No size check here: a large saved photo is
+   * compressed before upload (uploadablePhotoFile),
+   * and only one still too large after every step
+   * is marked too_large (its ApiError 413).
+   */
   return {
     file,
   };
@@ -948,6 +969,40 @@ interface RecordState {
       | ObservationVisit
       | null
     >;
+
+  /*
+   * "Edit and resend" / "Edit": saves changes to an observation that is a draft or was sent
+   * back, queues the update and sends it for review again (on the next sync, started here).
+   * Returns the saved observation, or null when it can't be edited.
+   */
+  editObservation: (
+    plantRecordId: string,
+    observationId: string,
+    changes: Partial<
+      Pick<
+        ObservationVisit,
+        | 'health'
+        | 'stage'
+        | 'measurement'
+        | 'heightCm'
+        | 'diameterCm'
+        | 'notes'
+        | 'photoUris'
+        | 'latitude'
+        | 'longitude'
+        | 'gpsAccuracyM'
+      >
+    >
+  ) => Promise<ObservationVisit | null>;
+
+  /*
+   * "Send for review" on a record the server has as a draft ("Not submitted yet"): marks
+   * it to be submitted and syncs.
+   */
+  requestSubmit: (
+    plantRecordId: string,
+    observationId: string
+  ) => Promise<SyncResult>;
 
   syncRecord: (
     id: string,
@@ -1418,6 +1473,78 @@ export const useRecordStore =
           },
 
         /* -------------------------------------------------
+         * EDIT AN OBSERVATION (draft or sent back) AND RESEND
+         * ------------------------------------------------ */
+
+        editObservation:
+          async (plantRecordId, observationId, changes) => {
+            const record = get().records.find((item) => item.id === plantRecordId);
+            const visit = record?.observations.find((item) => item.id === observationId);
+            if (!record || !visit) return null;
+            // Only a draft or one the officer sent back can be changed.
+            if (visit.reviewStatus === ReviewStatus.PENDING || visit.reviewStatus === ReviewStatus.APPROVED) {
+              return null;
+            }
+
+            // New photos get their own stable id; the ones already there keep theirs.
+            const photoMeta: Record<string, PhotoUpload> = { ...(visit.photoMeta ?? {}) };
+            for (const uri of changes.photoUris ?? visit.photoUris ?? []) {
+              if (!photoMeta[uri]) photoMeta[uri] = { id: randomUUID(), uploaded: false };
+            }
+
+            const updatedVisit: ObservationVisit = {
+              ...visit,
+              ...changes,
+              photoMeta,
+              syncStatus: SyncStatus.NOT_UPLOADED,
+              // Sent for review again once the change has uploaded.
+              submissionRequested: true,
+              submittedForReview: false,
+              submitError: null,
+              submitCode: null,
+            };
+            const updatedRecord: PlantRecord = {
+              ...record,
+              observations: record.observations.map((item) => (item.id === observationId ? updatedVisit : item)),
+              syncStatus: record.syncStatus === SyncStatus.UPLOADED ? SyncStatus.NOT_UPLOADED : record.syncStatus,
+            };
+
+            await persistObservation(updatedRecord, updatedVisit, isUploadable(updatedRecord));
+            await persistRecordSnapshot(updatedRecord);
+            set((state) => ({
+              records: state.records.map((item) => (item.id === plantRecordId ? updatedRecord : item)),
+            }));
+            return updatedVisit;
+          },
+
+        /* -------------------------------------------------
+         * SEND FOR REVIEW (a draft on the server)
+         * ------------------------------------------------ */
+
+        requestSubmit:
+          async (plantRecordId, observationId) => {
+            const record = get().records.find((item) => item.id === plantRecordId);
+            const visit = record?.observations.find((item) => item.id === observationId);
+            if (!record || !visit) {
+              return { ok: false, reason: 'Record not found' };
+            }
+            const updatedRecord: PlantRecord = {
+              ...record,
+              reviewStatus: record.reviewStatus === ReviewStatus.DRAFT ? ReviewStatus.PENDING : record.reviewStatus,
+              observations: record.observations.map((item) =>
+                item.id === observationId
+                  ? { ...item, submissionRequested: true, submittedForReview: false, submitError: null, submitCode: null }
+                  : item
+              ),
+            };
+            await persistRecordSnapshot(updatedRecord);
+            set((state) => ({
+              records: state.records.map((item) => (item.id === plantRecordId ? updatedRecord : item)),
+            }));
+            return get().syncRecord(plantRecordId);
+          },
+
+        /* -------------------------------------------------
          * SYNC ONE RECORD
          * ------------------------------------------------ */
 
@@ -1658,6 +1785,41 @@ export const useRecordStore =
               }
 
               /* =========================================
+               * 3b. SPECIES REQUEST LINK
+               *
+               * A plant waiting for a species request
+               * (not in the catalogue yet) is linked to
+               * it on the server, so the officer sees
+               * which species to add first.
+               * ======================================= */
+
+              const linkRun =
+                await linkSpeciesRequest(
+                  refreshed
+                );
+
+              if (!linkRun.ok) {
+                if (linkRun.retryable) requestSyncRetry();
+                return {
+                  ok: false,
+                  reason: linkRun.reason,
+                  retryable: linkRun.retryable,
+                  photosUploaded,
+                  photoProblems,
+                };
+              }
+
+              if (linkRun.linked) {
+                refreshed = {
+                  ...refreshed,
+                  speciesRequestLinked: true,
+                };
+                await persistRecordSnapshot(
+                  refreshed
+                );
+              }
+
+              /* =========================================
                * 4. PLANT PHOTOS
                *
                * Uses our already-tested
@@ -1888,6 +2050,8 @@ export const useRecordStore =
                    */
                   if (
                     meta.uploaded ||
+                    // The plant or observation was removed on the server.
+                    meta.problem === 'gone' ||
                     (meta.problem ===
                       'locked' &&
                       isPhotoLockFinal(
@@ -1976,6 +2140,29 @@ export const useRecordStore =
                     photosUploaded +=
                       1;
                   } catch (error) {
+                    /*
+                     * The plant or the observation was removed on the
+                     * server: this photo can never upload. Kept on the
+                     * phone, listed in Sync details with "Remove from phone".
+                     */
+                    if (
+                      error instanceof
+                        ApiError &&
+                      (error.code === 'plant_deleted' ||
+                        error.code === 'observation_deleted')
+                    ) {
+                      await saveObservationPhotoMeta(
+                        currentObservation.id,
+                        uri,
+                        {
+                          ...meta,
+                          uploaded: false,
+                          problem: 'gone',
+                        }
+                      );
+                      continue;
+                    }
+
                     if (
                       error instanceof
                         ApiError &&
@@ -2139,7 +2326,7 @@ export const useRecordStore =
                  * still fail the whole sync, as before.
                  */
                 const refusedById =
-                  new Map<string, string>();
+                  new Map<string, { message: string; code: string | null }>();
 
                 for (
                   const observation of [
@@ -2154,6 +2341,18 @@ export const useRecordStore =
 
                   if (
                     observation.submittedForReview
+                  ) {
+                    continue;
+                  }
+
+                  /*
+                   * The server already said the plant or the observation
+                   * was removed: that can never be submitted, so it is not
+                   * sent again (Sync details offers "Remove from phone").
+                   */
+                  if (
+                    observation.submitCode === 'plant_deleted' ||
+                    observation.submitCode === 'observation_deleted'
                   ) {
                     continue;
                   }
@@ -2184,7 +2383,7 @@ export const useRecordStore =
                     ) {
                       refusedById.set(
                         observation.id,
-                        error.message
+                        { message: error.message, code: error.code ?? null }
                       );
                       continue;
                     }
@@ -2226,6 +2425,9 @@ export const useRecordStore =
                                   submitError:
                                     null,
 
+                                  submitCode:
+                                    null,
+
                                   /*
                                    * The server has it as pending now
                                    * (a refresh may have said draft).
@@ -2251,7 +2453,12 @@ export const useRecordStore =
                                     submitError:
                                       refusedById.get(
                                         observation.id
-                                      ),
+                                      )?.message,
+
+                                    submitCode:
+                                      refusedById.get(
+                                        observation.id
+                                      )?.code ?? null,
                                   }
                                 : observation
                         ),
@@ -2671,8 +2878,10 @@ export const useRecordStore =
          * SYNC ALL
          * ------------------------------------------------ */
 
+        // One sync at a time: Sync now while an automatic sync (or another Sync now) is
+        // running waits for that run and gets its result, instead of starting a second one.
         syncAll:
-          async () => {
+          singleFlight(async () => {
             /*
              * VERY IMPORTANT:
              *
@@ -2707,6 +2916,10 @@ export const useRecordStore =
                     (
                       record.syncStatus !==
                         SyncStatus.UPLOADED ||
+                      // Uploaded, but not linked to its species request yet.
+                      needsSpeciesRequestLink(
+                        record
+                      ) ||
                       hasPendingPhotos(
                         record
                       ) ||
@@ -2807,7 +3020,7 @@ export const useRecordStore =
 
               photoProblems,
             };
-          },
+          }),
 
         /* -------------------------------------------------
          * REVIEW RESULTS
@@ -3308,7 +3521,7 @@ export const useRecordStore =
               if (
                 deletion.queuedForServer
               ) {
-                void runOutboxSync();
+                void runOutboxSync().catch(reportBackgroundError('Sending the delete'));
               }
 
               return {
@@ -3485,7 +3698,7 @@ export const useRecordStore =
             ) {
               void get().syncRecord(
                 recordId
-              );
+              ).catch(reportBackgroundError('Uploading the plant'));
             }
 
             return {
