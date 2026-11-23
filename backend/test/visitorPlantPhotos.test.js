@@ -26,7 +26,7 @@ function publicClient({ publicTags = [TAG], pendingTags = [], copies = {}, rpcEr
       calls.push(['rpc', name, args]);
       if (rpcError) return { data: null, error: rpcError };
       if (name === 'public_plant_by_qr_v2') {
-        return { data: publicTags.includes(args.p_qr) ? [{ plant_id: 'p1', qr_code_value: args.p_qr, scientific_name: 'Nepenthes a', conservation_status: 'EN' }] : [], error: null };
+        return { data: publicTags.includes(args.p_qr) ? [{ plant_id: 'p1', qr_code_value: args.p_qr, scientific_name: 'Nepenthes a', conservation_status: 'LC' }] : [], error: null };
       }
       if (name === 'public_plant_tag_is_pending') return { data: pendingTags.includes(args.p_qr), error: null };
       return { data: null, error: { code: 'PGRST202' } };

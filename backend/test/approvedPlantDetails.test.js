@@ -145,13 +145,15 @@ test('latest observation: newest value per field, height in metres', () => {
   ]), { observed_at: '2026-11-02', height_m: 1.2, diameter_cm: 8.5, health_status: 'healthy', life_stage: 'flowering' });
 });
 
-test('visitor page and QR API: no coordinates for any conservation status, Least Concern included', async (t) => {
+test('visitor page and QR API: no coordinates for allowed statuses, and 404 for endangered ones', async (t) => {
   // Even if the public function still sent coordinates (before the migration), no public
-  // response may contain them, whatever the species' status.
+  // response may contain them, and threatened statuses must be hidden from visitors.
   for (const status of ['LC', 'NT', 'VU', 'EN', 'CR', 'DD', null]) {
     await checkVisitorEndpoints(t, status);
   }
 });
+
+const RESTRICTED_STATUSES = new Set(['VU', 'EN', 'CR']);
 
 async function checkVisitorEndpoints(t, status) {
   const row = { scientific_name: 'Begonia niahensis', conservation_status: status, description: 'A begonia.',
@@ -170,9 +172,23 @@ async function checkVisitorEndpoints(t, status) {
   t.after(() => { server.close(); server.closeAllConnections(); });
   const url = `http://127.0.0.1:${server.address().port}`;
 
-  const page = await (await fetch(`${url}/p/NIAH-PLT-00001`)).text();
+  const pageRes = await fetch(`${url}/p/NIAH-PLT-00001`);
+  const page = await pageRes.text();
+  const apiRes = await fetch(`${url}/api/public/plants/by-qr?code=NIAH-PLT-00001`);
+  const api = await apiRes.json();
+
+  if (RESTRICTED_STATUSES.has(status)) {
+    assert.equal(pageRes.status, 404, String(status));
+    assert.doesNotMatch(page, /Begonia niahensis|3\.8147|113\.7793|Limestone slope/, String(status));
+    assert.equal(apiRes.status, 404, String(status));
+    assert.equal(api.data, undefined, String(status));
+    assert.doesNotMatch(JSON.stringify(api), /Begonia niahensis|3\.8147|113\.7793|4\.5/, String(status));
+    return;
+  }
+
+  assert.equal(pageRes.status, 200, String(status));
   assert.doesNotMatch(page, /3\.8147|113\.7793|latitude|longitude|Limestone slope/, String(status));
-  const api = await (await fetch(`${url}/api/public/plants/by-qr?code=NIAH-PLT-00001`)).json();
+  assert.equal(apiRes.status, 200, String(status));
   for (const key of ['latitude', 'longitude', 'gps_accuracy_m', 'location', 'details']) {
     assert.equal(key in api.data, false, `${status}: ${key}`);
   }
