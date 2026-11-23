@@ -15,7 +15,11 @@ import {
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSpeciesStore } from '../src/store/useSpeciesStore';
 import { lookupPublicTag, describePublicTagLookup, type PublicTagLookupResult } from '../src/services/tagLookup';
-import { conservationStatusColors, plainConservationStatus } from '../src/utils/conservationStatus';
+import {
+  conservationStatusColors,
+  isRestrictedForVisitors,
+  plainConservationStatus,
+} from '../src/utils/conservationStatus';
 import { plantPhotoCaption } from '../src/utils/plantPhotoCaption';
 import { publicPhotoUri } from '../src/utils/publicPhoto';
 import { BASE_URL } from '../src/api/client';
@@ -122,7 +126,19 @@ export default function PlantInfoScreen() {
     culturalSignificance: scanned?.culturalSignificance ?? detail?.cultural_significance ?? null,
   };
 
-  const notFound = scan && scan.status !== 'found' ? describePublicTagLookup(scan) : null;
+  const isRestricted = isRestrictedForVisitors(
+    facts.status,
+    (detail ?? listItem) as { is_high_risk?: boolean; is_sensitive?: boolean } | undefined
+  );
+
+  const notFound = isRestricted
+    ? {
+        title: 'Plant not available',
+        message: "Information for endangered or high-risk plants isn't available to visitors.",
+      }
+    : scan && scan.status !== 'found'
+      ? describePublicTagLookup(scan)
+      : null;
   const nothingToShow = !tag && !speciesParam;
   const stillLoading = scanLoading || (!!speciesParam && !detail && !listItem);
   const status = plainConservationStatus(facts.status);

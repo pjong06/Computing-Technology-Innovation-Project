@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetchPublicPlants, type PublicPlantSummary } from '../services/tagLookup';
+import { isRestrictedForVisitors } from '../utils/conservationStatus';
 
 interface LoadPublicPlantsOptions {
   silent?: boolean;
@@ -14,6 +15,10 @@ interface PublicPlantsState {
   refreshing: boolean;
   error: string | null;
   loadPublicPlants: (options?: LoadPublicPlantsOptions) => Promise<void>;
+}
+
+function filterVisitorPlants(list: PublicPlantSummary[]): PublicPlantSummary[] {
+  return list.filter((plant) => !isRestrictedForVisitors(plant.conservationStatus));
 }
 
 export const usePublicPlantsStore = create<PublicPlantsState>()(
@@ -37,7 +42,7 @@ export const usePublicPlantsStore = create<PublicPlantsState>()(
         try {
           const list = await fetchPublicPlants();
           set({
-            plants: list,
+            plants: filterVisitorPlants(list),
             lastUpdated: new Date().toISOString(),
             loading: false,
             refreshing: false,
@@ -59,6 +64,11 @@ export const usePublicPlantsStore = create<PublicPlantsState>()(
         plants: state.plants,
         lastUpdated: state.lastUpdated,
       }),
+      onRehydrateStorage: () => (state) => {
+        if (state && Array.isArray(state.plants)) {
+          state.plants = filterVisitorPlants(state.plants);
+        }
+      },
     }
   )
 );

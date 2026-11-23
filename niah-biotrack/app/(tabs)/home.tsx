@@ -28,7 +28,11 @@ import { pullServerRecords, serverPullError } from '../../src/services/serverPul
 import { countSyncDetailItems } from '../../src/services/syncDetailsList';
 import { useProposalStore } from '../../src/store/useProposalStore';
 import { usePublicPlantsStore } from '../../src/store/usePublicPlantsStore';
-import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
+import {
+  conservationStatusColors,
+  isRestrictedForVisitors,
+  plainConservationStatus,
+} from '../../src/utils/conservationStatus';
 import { routesUploadedText } from '../../src/utils/routeSync';
 import { BASE_URL } from '../../src/api/client';
 import PlantThumbnail from '../../src/components/PlantThumbnail';
@@ -50,7 +54,11 @@ export default function HomeScreen() {
   const { isVisitor, userName, logout } = useAuthRole();
   const refreshReviewStatuses = useRecordStore((state) => state.refreshReviewStatuses);
 
-  const publicPlants = usePublicPlantsStore((state) => state.plants);
+  const rawPublicPlants = usePublicPlantsStore((state) => state.plants);
+  const publicPlants = React.useMemo(
+    () => rawPublicPlants.filter((item) => !isRestrictedForVisitors(item.conservationStatus)),
+    [rawPublicPlants]
+  );
   const loadPublicPlants = usePublicPlantsStore((state) => state.loadPublicPlants);
   const featured = publicPlants.slice(0, FEATURED_COUNT);
 

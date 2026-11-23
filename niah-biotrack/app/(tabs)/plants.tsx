@@ -16,7 +16,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { usePublicPlantsStore } from '../../src/store/usePublicPlantsStore';
-import { conservationStatusColors, plainConservationStatus } from '../../src/utils/conservationStatus';
+import {
+  conservationStatusColors,
+  isRestrictedForVisitors,
+  plainConservationStatus,
+} from '../../src/utils/conservationStatus';
 import { BASE_URL } from '../../src/api/client';
 import PlantThumbnail from '../../src/components/PlantThumbnail';
 import { thumbnailSources } from '../../src/utils/thumbnailSources';
@@ -35,7 +39,11 @@ export default function VisitorPlantsScreen() {
   const insets = useSafeAreaInsets();
   const topInset = Math.max(insets.top, Platform.OS === 'android' ? (StatusBar.currentHeight ?? 28) : 0);
 
-  const plants = usePublicPlantsStore((state) => state.plants);
+  const rawPlants = usePublicPlantsStore((state) => state.plants);
+  const plants = useMemo(
+    () => rawPlants.filter((p) => !isRestrictedForVisitors(p.conservationStatus)),
+    [rawPlants]
+  );
   const loading = usePublicPlantsStore((state) => state.loading);
   const error = usePublicPlantsStore((state) => state.error);
   const loadPublicPlants = usePublicPlantsStore((state) => state.loadPublicPlants);

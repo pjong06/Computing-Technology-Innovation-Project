@@ -145,7 +145,7 @@ test('public copy for lists: ?size=thumb is at most 300 px; anything else is the
   const photo = await photoWithMetadata({ width: 1600, height: 1200 });
   const client = {
     async rpc(name, args) {
-      if (name === 'public_plant_by_qr_v2') return { data: [{ plant_id: 'p1', qr_code_value: args.p_qr, scientific_name: 'X', conservation_status: 'EN' }], error: null };
+      if (name === 'public_plant_by_qr_v2') return { data: [{ plant_id: 'p1', qr_code_value: args.p_qr, scientific_name: 'X', conservation_status: 'LC' }], error: null };
       return { data: false, error: null };
     },
     from() { throw new Error('no table reads'); },
