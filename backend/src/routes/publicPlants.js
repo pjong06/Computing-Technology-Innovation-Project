@@ -11,6 +11,50 @@ const {
 } = require('../services/publicPlantPhotos');
 const { cleanSpeciesText, SPECIES_TEXT_FIELDS } = require('../utils/speciesDescription');
 
+const RESTRICTED_STATUS_CODES = new Set(['CR', 'EN', 'VU', 'EW', 'EX']);
+const RESTRICTED_STATUS_TERMS = [
+    'critically endangered',
+    'endangered',
+    'vulnerable',
+    'extinct',
+    'high risk',
+    'high-risk',
+    'totally protected',
+    'sensitive',
+    'restricted',
+];
+
+function isEndangeredOrHighRisk(row) {
+    if (!row || typeof row !== 'object') return false;
+    const species = row.species && typeof row.species === 'object' ? row.species : null;
+
+    if (
+        row.is_high_risk === true ||
+        row.isHighRisk === true ||
+        row.is_sensitive === true ||
+        row.isSensitive === true ||
+        species?.is_high_risk === true ||
+        species?.isHighRisk === true ||
+        species?.is_sensitive === true ||
+        species?.isSensitive === true
+    ) {
+        return true;
+    }
+
+    const raw = String(
+        species?.conservation_status ??
+        row.conservation_status ??
+        row.conservationStatus ??
+        ''
+    ).trim();
+
+    if (!raw) return false;
+    if (RESTRICTED_STATUS_CODES.has(raw.toUpperCase())) return true;
+
+    const lower = raw.toLowerCase();
+    return RESTRICTED_STATUS_TERMS.some((term) => lower.includes(term));
+}
+
 const STYLES = `
 :root{color-scheme:light;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#20392d;background:#f3f4ec}
 *{box-sizing:border-box}body{margin:0}header,main,footer{max-width:820px;margin:auto;padding:24px 28px}
@@ -86,7 +130,11 @@ const PENDING_MESSAGE = 'This plant is being verified by Sarawak Forestry. Check
 async function lookupPublicPlant(database, tag) {
     const { data, error } = await database.rpc('public_plant_by_qr_v2', { p_qr: tag });
     if (error) throw error;
-    if (Array.isArray(data) && data.length) return { status: 'found', plant: data[0] };
+    if (Array.isArray(data) && data.length) {
+        const plant = data[0];
+        if (isEndangeredOrHighRisk(plant)) return { status: 'not-found' };
+        return { status: 'found', plant };
+    }
     if (!TAG_PATTERN.test(tag)) return { status: 'not-found' };
 
     const result = await database.rpc('public_plant_tag_is_pending', { p_qr: tag });
@@ -126,6 +174,7 @@ function normalizePublicTag(raw) {
 }
 
 function toPublicPlantSummary(row, tagCode, hasPhoto) {
+    if (isEndangeredOrHighRisk(row)) return null;
     const species = row?.species && typeof row.species === 'object' ? row.species : row;
     const id = row?.id || tagCode;
     if (!id) return null;
@@ -151,6 +200,7 @@ async function listPublicApprovedPlants(database) {
         const copies = await listPublicPhotoFiles(database);
         const items = [];
         for (const row of rpcResult.data) {
+            if (isEndangeredOrHighRisk(row)) continue;
             const tagCode = normalizePublicTag(row?.qr_code_value);
             const file = tagCode ? publicPhotoPath(tagCode) : null;
             const summary = toPublicPlantSummary(row, tagCode, Boolean(file && copies.has(file)));
@@ -191,6 +241,7 @@ async function listPublicApprovedPlants(database) {
             if (row.species && row.species.verification_status && row.species.verification_status !== 'approved') {
                 continue;
             }
+            if (isEndangeredOrHighRisk(row)) continue;
             const tagCode = normalizePublicTag(row?.qr_code_value);
             const file = tagCode ? publicPhotoPath(tagCode) : null;
             const summary = toPublicPlantSummary(row, tagCode, Boolean(file && copies.has(file)));
@@ -214,6 +265,7 @@ async function listPublicApprovedPlants(database) {
                 try {
                     const { data, error } = await database.rpc('public_plant_by_qr_v2', { p_qr: tagCode });
                     if (error || !Array.isArray(data) || data.length === 0) return null;
+                    if (isEndangeredOrHighRisk(data[0])) return null;
                     return toPublicPlantSummary(data[0], tagCode, true);
                 } catch {
                     return null;
@@ -252,7 +304,7 @@ function createPublicQrHandler(database) {
             if (result.status === 'pending') {
                 return res.status(404).json({ code: 'plant_pending_verification', message: PENDING_MESSAGE });
             }
-            if (result.status === 'not-found') {
+            if (result.status === 'not-found' || isEndangeredOrHighRisk(result.plant)) {
                 return res.status(404).json({ message: 'Approved plant not found' });
             }
             const data = publicQrData(result.plant);
@@ -352,3 +404,4 @@ module.exports = createPublicPlantsRouter();
 module.exports.createPublicPlantsRouter = createPublicPlantsRouter;
 module.exports.createPublicQrHandler = createPublicQrHandler;
 module.exports.createPublicPlantsListHandler = createPublicPlantsListHandler;
+module.exports.isEndangeredOrHighRisk = isEndangeredOrHighRisk;

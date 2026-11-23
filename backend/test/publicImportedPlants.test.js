@@ -12,7 +12,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://example.supabase.co';
 process.env.SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || 'test-key';
-const { createPublicPlantsRouter } = require('../src/routes/publicPlants');
+const {
+  createPublicPlantsRouter,
+  createPublicQrHandler,
+  createPublicPlantsListHandler,
+} = require('../src/routes/publicPlants');
 const { refreshPublicPlantPhoto } = require('../src/services/publicPlantPhotos');
 const { photoWithMetadata } = require('./helpers/testImages');
 
@@ -45,25 +49,33 @@ function isPublic(plant, observations) {
 }
 
 const PLANTS = [
-  { id: 'imported', qr_code_value: 'NIAH-PLT-00101', plant_status: 'approved', deleted_at: null, data_source: 'inaturalist', species_status: 'approved' },
-  { id: 'imported-pending', qr_code_value: 'NIAH-PLT-00102', plant_status: 'pending', deleted_at: null, data_source: 'inaturalist', species_status: 'approved' },
-  { id: 'imported-deleted', qr_code_value: 'NIAH-PLT-00103', plant_status: 'approved', deleted_at: '2026-11-20T00:00:00Z', data_source: 'inaturalist', species_status: 'approved' },
-  { id: 'field-pending', qr_code_value: 'NIAH-PLT-00104', plant_status: 'pending', deleted_at: null, data_source: 'field', species_status: 'approved' },
-  { id: 'field-approved', qr_code_value: 'NIAH-PLT-00105', plant_status: 'approved', deleted_at: null, data_source: 'field', species_status: 'approved' },
-  { id: 'field-no-record', qr_code_value: 'NIAH-PLT-00106', plant_status: 'approved', deleted_at: null, data_source: 'field', species_status: 'approved' },
-  { id: 'field-deleted', qr_code_value: 'NIAH-PLT-00107', plant_status: 'approved', deleted_at: '2026-11-20T00:00:00Z', data_source: 'field', species_status: 'approved' },
-  { id: 'imported-rejected', qr_code_value: 'NIAH-PLT-00108', plant_status: 'rejected', deleted_at: null, data_source: 'inaturalist', species_status: 'approved' },
+  { id: 'imported', qr_code_value: 'NIAH-PLT-00101', plant_status: 'approved', deleted_at: null, data_source: 'inaturalist', species_status: 'approved', conservation_status: 'LC' },
+  { id: 'imported-pending', qr_code_value: 'NIAH-PLT-00102', plant_status: 'pending', deleted_at: null, data_source: 'inaturalist', species_status: 'approved', conservation_status: 'LC' },
+  { id: 'imported-deleted', qr_code_value: 'NIAH-PLT-00103', plant_status: 'approved', deleted_at: '2026-11-20T00:00:00Z', data_source: 'inaturalist', species_status: 'approved', conservation_status: 'LC' },
+  { id: 'field-pending', qr_code_value: 'NIAH-PLT-00104', plant_status: 'pending', deleted_at: null, data_source: 'field', species_status: 'approved', conservation_status: 'LC' },
+  { id: 'field-approved', qr_code_value: 'NIAH-PLT-00105', plant_status: 'approved', deleted_at: null, data_source: 'field', species_status: 'approved', conservation_status: 'LC' },
+  { id: 'field-no-record', qr_code_value: 'NIAH-PLT-00106', plant_status: 'approved', deleted_at: null, data_source: 'field', species_status: 'approved', conservation_status: 'LC' },
+  { id: 'field-deleted', qr_code_value: 'NIAH-PLT-00107', plant_status: 'approved', deleted_at: '2026-11-20T00:00:00Z', data_source: 'field', species_status: 'approved', conservation_status: 'LC' },
+  { id: 'imported-rejected', qr_code_value: 'NIAH-PLT-00108', plant_status: 'rejected', deleted_at: null, data_source: 'inaturalist', species_status: 'approved', conservation_status: 'LC' },
+  { id: 'field-endangered', qr_code_value: 'NIAH-PLT-00109', plant_status: 'approved', deleted_at: null, data_source: 'field', species_status: 'approved', conservation_status: 'EN' },
+  { id: 'imported-critical', qr_code_value: 'NIAH-PLT-00110', plant_status: 'approved', deleted_at: null, data_source: 'inaturalist', species_status: 'approved', conservation_status: 'CR' },
 ];
 const OBSERVATIONS = [
   { plant_id: 'field-pending', review_status: 'pending', deleted_at: null },
   { plant_id: 'field-approved', review_status: 'approved', deleted_at: null },
   { plant_id: 'field-no-record', review_status: 'rejected', deleted_at: null },
   { plant_id: 'field-deleted', review_status: 'approved', deleted_at: null },
+  { plant_id: 'field-endangered', review_status: 'approved', deleted_at: null },
 ];
 
 function publicRows(tag) {
   return PLANTS.filter((plant) => plant.qr_code_value === tag && isPublic(plant, OBSERVATIONS))
-    .map((plant) => ({ plant_id: plant.id, qr_code_value: tag, scientific_name: 'Nepenthes a', conservation_status: 'EN' }));
+    .map((plant) => ({
+      plant_id: plant.id,
+      qr_code_value: tag,
+      scientific_name: 'Nepenthes a',
+      conservation_status: plant.conservation_status,
+    }));
 }
 
 // The officer's client during the refresh: reads the plant and its main photo, asks the
@@ -146,10 +158,16 @@ test('refresh: an imported approved plant gets a public copy; pending, rejected 
   }
 });
 
-test('the visitor page uses the same rule: imported approved plant shown, pending field or deleted plant not', async (t) => {
+test('the visitor page uses the same rule: imported approved plant shown, pending field, deleted, or endangered plant not', async (t) => {
   const client = {
     async rpc(name, args) {
       if (name === 'public_plant_by_qr_v2') return { data: publicRows(args.p_qr), error: null };
+      if (name === 'public_approved_plants') {
+        return {
+          data: PLANTS.filter((p) => isPublic(p, OBSERVATIONS)),
+          error: null,
+        };
+      }
       if (name === 'public_plant_tag_is_pending') return { data: false, error: null };
       return { data: null, error: { code: 'PGRST202' } };
     },
@@ -158,6 +176,8 @@ test('the visitor page uses the same rule: imported approved plant shown, pendin
   };
   const app = express();
   app.use(createPublicPlantsRouter({ client }));
+  app.get('/api/public/plants/by-qr', createPublicQrHandler(client));
+  app.get('/api/public/plants', createPublicPlantsListHandler(client));
   const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
   t.after(() => new Promise((resolve) => { server.close(resolve); server.closeAllConnections(); }));
   const url = `http://127.0.0.1:${server.address().port}`;
@@ -167,8 +187,24 @@ test('the visitor page uses the same rule: imported approved plant shown, pendin
   const html = await page.text();
   assert.match(html, /<h2>About this species<\/h2>/);
   assert.doesNotMatch(html, /latitude|longitude|113\.|Source|naturalist/i);
-  for (const [tag, why] of [['NIAH-PLT-00104', 'pending field plant'], ['NIAH-PLT-00103', 'deleted imported plant'],
-    ['NIAH-PLT-00107', 'deleted field plant'], ['NIAH-PLT-00106', 'field plant without an approved record']]) {
+  for (const [tag, why] of [
+    ['NIAH-PLT-00104', 'pending field plant'],
+    ['NIAH-PLT-00103', 'deleted imported plant'],
+    ['NIAH-PLT-00107', 'deleted field plant'],
+    ['NIAH-PLT-00106', 'field plant without an approved record'],
+    ['NIAH-PLT-00109', 'endangered field plant'],
+    ['NIAH-PLT-00110', 'critically endangered imported plant'],
+  ]) {
     assert.equal((await fetch(`${url}/p/${tag}`)).status, 404, why);
+    assert.equal((await fetch(`${url}/api/public/plants/by-qr?code=${tag}`)).status, 404, `QR API: ${why}`);
   }
+
+  const listRes = await fetch(`${url}/api/public/plants`);
+  assert.equal(listRes.status, 200);
+  const { data: listed } = await listRes.json();
+  const listedTags = listed.map((item) => item.tag_code);
+  assert.ok(listedTags.includes('NIAH-PLT-00101'));
+  assert.ok(listedTags.includes('NIAH-PLT-00105'));
+  assert.equal(listedTags.includes('NIAH-PLT-00109'), false, 'endangered omitted from public list');
+  assert.equal(listedTags.includes('NIAH-PLT-00110'), false, 'critically endangered omitted from public list');
 });
