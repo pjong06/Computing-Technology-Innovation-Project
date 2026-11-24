@@ -10,6 +10,45 @@ const STATUS_LABELS: Record<string, string> = {
   NA: 'Not assessed',
 };
 
+const RESTRICTED_VISITOR_CODES = new Set(['CR', 'EN', 'VU', 'EW', 'EX']);
+const RESTRICTED_VISITOR_TERMS = [
+  'critically endangered',
+  'endangered',
+  'vulnerable',
+  'extinct',
+  'high risk',
+  'high-risk',
+  'totally protected',
+  'sensitive',
+  'restricted',
+];
+
+export function isRestrictedForVisitors(
+  status: string | null | undefined,
+  extra?: {
+    is_high_risk?: boolean;
+    isHighRisk?: boolean;
+    is_sensitive?: boolean;
+    isSensitive?: boolean;
+  } | null
+): boolean {
+  if (
+    extra?.is_high_risk === true ||
+    extra?.isHighRisk === true ||
+    extra?.is_sensitive === true ||
+    extra?.isSensitive === true
+  ) {
+    return true;
+  }
+
+  const raw = (status ?? '').trim();
+  if (!raw) return false;
+  if (RESTRICTED_VISITOR_CODES.has(raw.toUpperCase())) return true;
+
+  const lower = raw.toLowerCase();
+  return RESTRICTED_VISITOR_TERMS.some((term) => lower.includes(term));
+}
+
 // A missing status is shown as "NA" (Not assessed), never guessed.
 export function conservationStatusCode(status: string | null | undefined): string {
   return status?.trim() || 'NA';

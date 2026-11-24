@@ -1,7 +1,7 @@
 import { apiFetch, ApiError } from '../api/client';
-import { fetchSpecies } from '../api/species';
 import { parseTagCode } from '../utils/tagCode';
 import { detailsFromServer } from '../utils/plantDetails';
+import { isRestrictedForVisitors } from '../utils/conservationStatus';
 import {
   IdentificationStatus,
   RecordStatus,
@@ -171,7 +171,7 @@ export function describeTagLookup(result: Exclude<TagLookupResult, { status: 'on
 
 // ---- Visitors (not signed in) ----
 
-// Public lookup returns plant details only after approval.
+// Public lookup returns plant details only after approval (and never endangered/high-risk plants).
 export type PublicTagLookupResult =
   | {
     status: 'found';
@@ -203,6 +203,8 @@ interface PublicPlantResponse {
     conservation_status: string | null;
     cultural_significance: string | null;
     photo_url?: string | null;
+    is_high_risk?: boolean;
+    is_sensitive?: boolean;
   };
 }
 
@@ -217,6 +219,10 @@ export async function lookupPublicTag(rawTag: string): Promise<PublicTagLookupRe
       `/api/public/plants/by-qr?code=${encodeURIComponent(tagCode)}`,
       { auth: false }
     );
+    const conservationStatus = response.data?.conservation_status || null;
+    if (isRestrictedForVisitors(conservationStatus, response.data)) {
+      return { status: 'not-found', tagCode };
+    }
     return {
       status: 'found',
       tagCode,
@@ -225,7 +231,7 @@ export async function lookupPublicTag(rawTag: string): Promise<PublicTagLookupRe
       localName: response.data?.local_name || null,
       description: response.data?.description || null,
       habitat: response.data?.habitat || null,
-      conservationStatus: response.data?.conservation_status || null,
+      conservationStatus,
       culturalSignificance: response.data?.cultural_significance || null,
       photoUrl: typeof response.data?.photo_url === 'string' ? response.data.photo_url : null,
     };
@@ -277,7 +283,7 @@ export interface PublicPlantSummary {
 }
 
 interface PublicPlantsListResponse {
-  data: {
+  data: Array<{
     id?: string;
     tag_code?: string | null;
     species_id?: string | null;
@@ -289,63 +295,37 @@ interface PublicPlantsListResponse {
     description?: string | null;
     registered_at?: string | null;
     photo_url?: string | null;
-  }[];
-}
-
-// Fallback when the running backend does not yet have GET /api/public/plants deployed:
-// extracts the approved plant tags attached to /api/knowledge/species (public_photo.tag).
-async function fetchPublicPlantsFromSpeciesFallback(): Promise<PublicPlantSummary[]> {
-  const speciesList = await fetchSpecies();
-  const plants: PublicPlantSummary[] = [];
-  const seenTags = new Set<string>();
-
-  for (const sp of speciesList) {
-    const tagCode = sp.public_photo?.tag?.trim().toUpperCase();
-    if (!tagCode || seenTags.has(tagCode)) continue;
-    seenTags.add(tagCode);
-    plants.push({
-      id: tagCode,
-      tagCode,
-      speciesId: sp.id,
-      scientificName: sp.scientific_name || null,
-      commonName: sp.common_name || null,
-      localName: sp.local_name || null,
-      speciesCategory: sp.species_category || null,
-      conservationStatus: sp.conservation_status || null,
-      description: sp.description || null,
-      registeredAt: null,
-      photoUrl: sp.public_photo?.url ?? null,
-    });
-  }
-
-  return plants.sort((a, b) => (b.tagCode ?? '').localeCompare(a.tagCode ?? ''));
+    is_high_risk?: boolean;
+    is_sensitive?: boolean;
+  }>;
 }
 
 export async function fetchPublicPlants(): Promise<PublicPlantSummary[]> {
-  try {
-    const response = await apiFetch<PublicPlantsListResponse>('/api/public/plants', {
-      auth: false,
+  const response = await apiFetch<PublicPlantsListResponse>('/api/public/plants', { auth: false });
+  const rows = Array.isArray(response?.data) ? response.data : [];
+  const items: PublicPlantSummary[] = [];
+
+  for (const row of rows) {
+    const conservationStatus = row.conservation_status ?? null;
+    if (isRestrictedForVisitors(conservationStatus, row)) continue;
+
+    const id = String(row.id ?? row.tag_code ?? '').trim();
+    if (!id) continue;
+
+    items.push({
+      id,
+      tagCode: row.tag_code ?? null,
+      speciesId: row.species_id ?? null,
+      scientificName: row.scientific_name ?? null,
+      commonName: row.common_name ?? null,
+      localName: row.local_name ?? null,
+      speciesCategory: row.species_category ?? null,
+      conservationStatus,
+      description: row.description ?? null,
+      registeredAt: row.registered_at ?? null,
+      photoUrl: typeof row.photo_url === 'string' ? row.photo_url : null,
     });
-    const rows = Array.isArray(response?.data) ? response.data : [];
-    return rows
-      .filter((row) => Boolean(row?.id || row?.tag_code))
-      .map((row) => ({
-        id: (row.id || row.tag_code)!,
-        tagCode: typeof row.tag_code === 'string' && row.tag_code.length > 0 ? row.tag_code : null,
-        speciesId: row.species_id ?? null,
-        scientificName: row.scientific_name ?? null,
-        commonName: row.common_name ?? null,
-        localName: row.local_name ?? null,
-        speciesCategory: row.species_category ?? null,
-        conservationStatus: row.conservation_status ?? null,
-        description: row.description ?? null,
-        registeredAt: row.registered_at ?? null,
-        photoUrl: typeof row.photo_url === 'string' ? row.photo_url : null,
-      }));
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 404) {
-      return fetchPublicPlantsFromSpeciesFallback();
-    }
-    throw error;
   }
+
+  return items;
 }
