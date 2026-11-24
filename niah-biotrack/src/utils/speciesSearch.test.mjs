@@ -48,24 +48,29 @@ test('a plant uploads with a catalogue species, or while it waits for its specie
     { title: 'Species request not added: Begonia niahensis', reason: 'Already in the catalogue.' });
 });
 
-test('wiring: no hand-typed species fields; one Species field; request link handed back to the plant', () => {
+test('wiring: catalogue choice prefills editable plant details; request link is handed back to the plant', () => {
   const form = read('../../app/new-record.tsx');
-  // The hand-typed fields are gone.
-  assert.doesNotMatch(form, />Scientific name \*</);
-  assert.doesNotMatch(form, />Common name</);
-  assert.doesNotMatch(form, />Family</);
-  assert.doesNotMatch(form, /setScientificName|setCommonName|setFamily/);
+  // The catalogue picker remains required and prefills editable plant details.
   assert.match(form, /<Text style=\{styles\.fieldLabel\}>Species \*<\/Text>/);
-  assert.match(form, /onRequestNew=\{\(typed\) => requestNewSpecies\(\{ scientificName: typed \}\)\}/);
+  assert.match(form, />Scientific name</);
+  assert.match(form, />Common name</);
+  assert.match(form, />Family</);
+  assert.match(form, /setScientificName\(choice\.species\.scientific_name \?\? ''\)/);
+  assert.match(form, /setCommonName\(choice\.species\.common_name \?\? ''\)/);
+  assert.match(form, /setFamily\(choice\.species\.taxonomy\?\.family \?\? ''\)/);
+  assert.match(form, /requestNewSpecies\(\{\s*scientificName: typed \|\| scientificName,\s*commonName: commonName \|\| undefined,\s*family: family \|\| undefined,/);
   // An AI suggestion not in the catalogue: "Request this species".
   assert.match(form, /Request this species: \{requestableSuggestion\.scientificName\}/);
-  // Saved: the catalogue species (species_id), or the request the plant waits for.
+  // Saved: edited details plus the catalogue species id, or the request the plant waits for.
+  assert.match(form, /scientificName: scientificName\.trim\(\) \|\| approvedSpecies\?\.scientific_name/);
+  assert.match(form, /commonName: commonName\.trim\(\) \|\| approvedSpecies\?\.common_name/);
+  assert.match(form, /family: family\.trim\(\) \|\| approvedSpecies\?\.taxonomy\?\.family/);
   assert.match(form, /speciesId: approvedSpecies\?\.id \?\? null,/);
   assert.match(form, /speciesRequestId: waitingRequest\?\.id \?\? null,/);
   assert.match(form, /identificationStatus: approvedSpecies\s*\? IdentificationStatus\.IDENTIFIED\s*: IdentificationStatus\.PENDING,/);
   // The request form, opened from the plant, hands the new request back.
   assert.match(read('../../app/propose-species.tsx'), /if \(forPlant === '1'\) setPendingPlantLink\(\{ id: proposal\.id, scientificName: proposal\.scientificName \}\);/);
-  assert.match(form, /setLinkedRequest\(takePendingPlantLink\);\s*setPendingPlantLink\(null\);/);
+  assert.match(form, /setLinkedRequest\(takePendingPlantLink\);\s*setScientificName\(takePendingPlantLink\.scientificName\);\s*setPendingPlantLink\(null\);/);
   // The picker shows the chosen species read-only (scientific, common, family) with Change.
   const picker = read('../components/SpeciesPicker.tsx');
   assert.match(picker, /searchSpecies\(species, query, MAX_RESULTS\)/);

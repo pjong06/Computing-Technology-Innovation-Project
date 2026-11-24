@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isAuthRetryableFetchError } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { signOutOnThisPhone } from '../lib/auth';
 import { useRecordStore } from '../store/useRecordStore';
@@ -16,6 +17,13 @@ export type UserRole = 'botanist' | 'officer' | 'researcher' | 'visitor' | 'pend
 
 // Roles the server accepts (backend STAFF_ROLES, minus admin which the app doesn't use).
 const STAFF_ROLES = new Set(['botanist', 'officer', 'researcher']);
+const AUTH_IDENTITY_CACHE_KEY = 'niah-verified-auth-identity';
+
+interface CachedAuthIdentity {
+  userId: string;
+  role: UserRole;
+  userName: string;
+}
 
 interface AuthRoleContextType {
   role: UserRole;
@@ -49,7 +57,56 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
   const [userName, setUserName] = useState<string>('Visitor');
   const [isGuest, setIsGuest] = useState<boolean>(false);
 
-  // Verify Supabase authenticated user role or fall back to stored guest status
+  const restoreCachedIdentity = async (expectedUserId?: string): Promise<UserRole | null> => {
+    try {
+      const raw = await AsyncStorage.getItem(AUTH_IDENTITY_CACHE_KEY);
+      if (!raw) return null;
+
+      const cached = JSON.parse(raw) as CachedAuthIdentity;
+      if (
+        !cached.userId ||
+        !cached.userName ||
+        !['botanist', 'officer', 'researcher', 'visitor', 'pending'].includes(cached.role) ||
+        (expectedUserId && cached.userId !== expectedUserId)
+      ) {
+        return null;
+      }
+
+      setRole(cached.role);
+      setUserName(cached.userName);
+      setIsGuest(false);
+      return cached.role;
+    } catch {
+      return null;
+    }
+  };
+
+  const saveVerifiedIdentity = async (identity: CachedAuthIdentity) => {
+    try {
+      await AsyncStorage.setItem(AUTH_IDENTITY_CACHE_KEY, JSON.stringify(identity));
+    } catch {
+      console.error('Unable to save the verified account for offline use.');
+    }
+  };
+
+  const clearCachedIdentity = async () => {
+    try {
+      await AsyncStorage.removeItem(AUTH_IDENTITY_CACHE_KEY);
+    } catch {
+      console.error('Unable to clear the saved offline account.');
+    }
+  };
+
+  const useVisitorIdentity = async () => {
+    setRole('visitor');
+    setUserName('Park Visitor');
+    setIsGuest(false);
+    await clearCachedIdentity();
+    return 'visitor' as const;
+  };
+
+  // Verify the role online. When the network is unavailable, restore only the
+  // last identity that this phone previously verified successfully.
   const checkUserRole = async () => {
     try {
       const storedGuest = await AsyncStorage.getItem('niah_is_guest_visitor');
@@ -61,7 +118,26 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
       }
       setIsGuest(false);
 
-      const { data: authData } = await supabase.auth.getUser();
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      const sessionUserId = sessionData.session?.user.id;
+
+      if (sessionError) {
+        if (isAuthRetryableFetchError(sessionError)) {
+          return (await restoreCachedIdentity(sessionUserId)) ?? useVisitorIdentity();
+        }
+        return useVisitorIdentity();
+      }
+
+      if (!sessionData.session) return useVisitorIdentity();
+
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError) {
+        if (isAuthRetryableFetchError(authError)) {
+          return (await restoreCachedIdentity(sessionUserId)) ?? useVisitorIdentity();
+        }
+        return useVisitorIdentity();
+      }
+
       if (authData?.user) {
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
@@ -69,36 +145,52 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
           .eq('id', authData.user.id)
           .maybeSingle();
 
-        // Couldn't read the profile (e.g. no signal): keep the role we already have
-        // rather than guessing, so offline staff aren't locked out or promoted.
-        if (profileError) return role;
+        // A failed profile request while offline must not turn a verified botanist
+        // into a visitor. The cached identity is written only after online verification.
+        if (profileError) {
+          return (await restoreCachedIdentity(authData.user.id)) ?? useVisitorIdentity();
+        }
 
         if (profile && profile.account_status === 'active' && STAFF_ROLES.has(profile.role)) {
           const activeRole = profile.role as UserRole;
+          const verifiedName = profile.full_name || authData.user.email || '';
           setRole(activeRole);
-          setUserName(profile.full_name || authData.user.email || '');
+          setUserName(verifiedName);
+          await saveVerifiedIdentity({
+            userId: authData.user.id,
+            role: activeRole,
+            userName: verifiedName,
+          });
           return activeRole;
         } else if (profile && profile.account_status === 'active' && profile.role === 'visitor') {
           // A visitor account ("Create a free account"): the visitor experience, signed in.
+          const verifiedName = profile.full_name || authData.user.email || '';
           setRole('visitor');
-          setUserName(profile.full_name || authData.user.email || '');
+          setUserName(verifiedName);
+          await saveVerifiedIdentity({
+            userId: authData.user.id,
+            role: 'visitor',
+            userName: verifiedName,
+          });
           return 'visitor';
         } else {
           // Never default to botanist: a pending, suspended or role-less account gets
           // the "Account awaiting approval" screen (the server refuses it anyway).
+          const verifiedName = profile?.full_name || authData.user.email || '';
           setRole('pending');
-          setUserName(profile?.full_name || authData.user.email || '');
+          setUserName(verifiedName);
+          await saveVerifiedIdentity({
+            userId: authData.user.id,
+            role: 'pending',
+            userName: verifiedName,
+          });
           return 'pending';
         }
       } else {
-        setRole('visitor');
-        setUserName('Park Visitor');
-        return 'visitor';
+        return useVisitorIdentity();
       }
     } catch {
-      setRole('visitor');
-      setUserName('Park Visitor');
-      return 'visitor';
+      return (await restoreCachedIdentity()) ?? useVisitorIdentity();
     }
   };
 
@@ -114,6 +206,7 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
   // sends a token: every server call is either public or refused before it's sent.
   const setVisitorMode = async () => {
     await signOutOnThisPhone();
+    await clearCachedIdentity();
     await AsyncStorage.setItem('niah_is_guest_visitor', 'true');
     setRole('visitor');
     setUserName('Park Visitor');
@@ -132,6 +225,7 @@ export function AuthRoleProvider({ children }: { children: React.ReactNode }) {
       await clearSavedPlantList(); // other plants' coordinates kept for offline "Find plant"
       await deleteAllStoredPhotos();
       await AsyncStorage.removeItem('niah_is_guest_visitor');
+      await clearCachedIdentity();
     } catch {
       console.error('Unable to clear local data while signing out.');
     }

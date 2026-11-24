@@ -172,10 +172,11 @@ test('Plant detail layout: title chips, actions, measurement tiles, location, fi
   assert.match(detail, /\{Math\.min\(photoIndex \+ 1, photoCount\)\} of \{photoCount\}/);
   assert.match(detail, /accessibilityLabel="More actions"/);
   assert.match(detail, /No photos yet/);
-  // Plant first: the tag as the title, then "<italic scientific name> · <common name>", then
-  // the location note with a pin; status and sync chips (no tag chip).
-  assert.match(detail, /styles\.titleItalic/);
+  // Plant first: the tag as the title, then scientific/common names and family,
+  // then the location note with a pin; status and sync chips (no tag chip).
   assert.match(detail, /\{heading\.common \? ` · \$\{heading\.common\}` : null\}/);
+  assert.match(detail, /<Text style=\{styles\.familyText\} numberOfLines=\{1\}>/);
+  assert.match(detail, /Family: \{plantFamily\}/);
   assert.match(detail, /<Ionicons name="location-outline" size=\{13\} color="#68776D" \/>/);
   assert.doesNotMatch(detail, /pricetag-outline" size=\{12\}/);
   assert.match(detail, /label: 'Synced'/);

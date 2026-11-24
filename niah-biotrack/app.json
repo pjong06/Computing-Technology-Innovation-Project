@@ -2,7 +2,7 @@
   "expo": {
     "name": "Niah BioTrack",
     "slug": "niah-biotrack",
-    "version": "1.0.1",
+    "version": "1.0.4",
     "scheme": "niahbiotrack",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -17,7 +17,7 @@
     },
     "android": {
       "package": "com.niahbiotrack.app",
-      "versionCode": 2,
+      "versionCode": 5,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
