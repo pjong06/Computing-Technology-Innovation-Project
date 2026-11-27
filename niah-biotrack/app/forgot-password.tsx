@@ -17,6 +17,16 @@ import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import LeafLogo from '../src/components/LeafLogo';
 import { supabase } from '../src/lib/supabase';
+import {
+  afterSend,
+  cleanResetCode,
+  EMAIL_NEEDED_TEXT,
+  RESET_CODE_MAX_DIGITS,
+  resetCodeProblem,
+  resetEmail,
+  verifyErrorMessage,
+  type ResetRequest,
+} from '../src/utils/passwordReset';
 
 export default function ForgotPasswordScreen() {
   const router = useRouter();
@@ -30,74 +40,58 @@ export default function ForgotPasswordScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  // The latest "send code" request: which email, when, and how many codes were sent. Only
+  // the code in the newest email works (a new request cancels the earlier codes).
+  const [request, setRequest] = useState<ResetRequest | null>(null);
 
-  // STEP 1: Request 6-digit OTP code directly from Supabase to Gmail
+  // STEP 1 (and "Resend code"): Supabase emails a recovery code (Supabase recovery OTP).
   const handleSendCode = async () => {
-    const cleanId = identifier.trim().toLowerCase();
-    if (!cleanId) {
-      Toast.show({
-        type: 'error',
-        text1: 'Input Required',
-        text2: 'Enter your registered staff email address.',
-      });
+    const targetEmail = resetEmail(identifier);
+    if (!targetEmail) {
+      Toast.show({ type: 'error', text1: 'Email needed', text2: EMAIL_NEEDED_TEXT });
       return;
     }
 
     setIsLoading(true);
 
     try {
-      let targetEmail = cleanId;
-
-      // If user typed a Staff ID instead of an email, look up the email in profiles
-      if (!cleanId.includes('@')) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('id, staff_id')
-          .eq('staff_id', cleanId.toUpperCase())
-          .maybeSingle();
-
-        if (!profile) {
-          throw new Error('Staff ID not found. Please enter your registered email address directly.');
-        }
-      }
-
-      // Trigger Supabase OTP password recovery email
       const { error } = await supabase.auth.resetPasswordForEmail(targetEmail);
-
-      if (error) {
-        throw error;
+      const next = afterSend(request, targetEmail, error ? { ok: false, error } : { ok: true }, Date.now());
+      setRequest(next.request);
+      if (next.ok) {
+        setResolvedEmail(targetEmail);
+        // An older code in the box would no longer work.
+        setVerificationCode('');
+        setStep(2);
+      } else if (next.request?.email === targetEmail) {
+        // Too soon after the last request: its code still works.
+        setResolvedEmail(targetEmail);
+        setStep(2);
       }
-
-      setResolvedEmail(targetEmail);
-      setStep(2);
-
       Toast.show({
-        type: 'success',
-        text1: 'Verification Code Sent',
-        text2: `A 6-digit recovery code was sent to ${targetEmail}.`,
+        type: next.ok ? 'success' : 'info',
+        text1: next.ok ? 'Code sent' : 'No new code sent',
+        text2: next.message,
       });
-    } catch (error: any) {
+    } catch {
       Toast.show({
         type: 'error',
-        text1: 'Request Failed',
-        text2: error.message || 'Could not deliver recovery email.',
+        text1: 'No new code sent',
+        text2: 'The code could not be sent. Check your connection and try again.',
       });
     } finally {
       setIsLoading(false);
     }
   };
 
-  // STEP 2: Verify 6-digit OTP token and update password in Supabase
+  // STEP 2: Check the code with Supabase, then set the new password.
   const handleVerifyAndChangePassword = async () => {
-    const cleanCode = verificationCode.trim();
+    const cleanCode = cleanResetCode(verificationCode);
     const cleanPass = newPassword.trim();
 
-    if (!cleanCode || cleanCode.length < 6) {
-      Toast.show({
-        type: 'error',
-        text1: 'Invalid Code',
-        text2: 'Enter the full 6-digit code sent to your email.',
-      });
+    const codeProblem = resetCodeProblem(cleanCode);
+    if (codeProblem) {
+      Toast.show({ type: 'error', text1: 'Check the code', text2: codeProblem });
       return;
     }
 
@@ -152,11 +146,13 @@ export default function ForgotPasswordScreen() {
         text1: 'Password Updated',
         text2: 'Your account password has been reset successfully.',
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      // "This code has expired, request a new one" only when it really has (Supabase gives
+      // the same answer for a wrong code).
       Toast.show({
         type: 'error',
-        text1: 'Reset Failed',
-        text2: error.message || 'Verification code failed or expired.',
+        text1: 'Password not changed',
+        text2: verifyErrorMessage(error, request, Date.now()),
       });
     } finally {
       setIsLoading(false);
@@ -230,12 +226,13 @@ export default function ForgotPasswordScreen() {
 
               <Text style={styles.cardHeading}>Enter Verification Code</Text>
               <Text style={styles.cardSub}>
-                We sent a 6-digit code to:{'\n'}
+                We sent a code to:{'\n'}
                 <Text style={styles.highlightText}>{resolvedEmail}</Text>
+                {'\n'}Use the code in the newest email. Requesting a new code cancels the earlier ones.
               </Text>
 
-              {/* 6-Digit OTP Input */}
-              <Text style={styles.label}>6-Digit Verification Code</Text>
+              {/* The code from the email (6 digits by default). */}
+              <Text style={styles.label}>Verification code</Text>
               <TextInput
                 style={styles.otpInput}
                 placeholder="123456"
@@ -243,7 +240,7 @@ export default function ForgotPasswordScreen() {
                 value={verificationCode}
                 onChangeText={setVerificationCode}
                 keyboardType="number-pad"
-                maxLength={6}
+                maxLength={RESET_CODE_MAX_DIGITS}
                 autoFocus
               />
 

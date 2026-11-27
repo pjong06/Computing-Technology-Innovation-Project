@@ -8,6 +8,7 @@ import {
   getReadyOutboxOperations,
   getPlantsNeedingServerTag,
   getUploadedPlantsQueuedAsCreate,
+  linkQueuedObservationsToServerPlants,
   rebaseQueuedCreateAsUpdate,
   requeueLockedTagOperations,
   setLastSuccessfulSync,
@@ -103,6 +104,8 @@ async function runPush(): Promise<SyncRunResult> {
   await adoptServerVersions();
   // Tags attached after submission that were refused before the server allowed it.
   await requeueLockedTagOperations();
+  // Observations on plants the server has: sent with the plant's server id.
+  await linkQueuedObservationsToServerPlants();
   // Every sync also refreshes the saved tag list (deleted or used tags drop out of it), so
   // scanning offline later checks against an up-to-date list. Doesn't hold up the upload.
   void refreshMyTags();

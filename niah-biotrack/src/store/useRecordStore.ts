@@ -54,6 +54,7 @@ const upperFirst = (text: string) => text.charAt(0).toUpperCase() + text.slice(1
 import { uploadablePhotoFile } from '../services/uploadablePhoto';
 import {
   applyServerReview,
+  canEditRegistration,
   isPhotoLockFinal,
   oversizedPhotoMessage,
 } from '../utils/submissionState';
@@ -1241,12 +1242,9 @@ export const useRecordStore =
               return null;
             }
 
-            if (
-              current.reviewStatus !==
-                ReviewStatus.DRAFT &&
-              current.reviewStatus !==
-                ReviewStatus.REJECTED
-            ) {
+            // A draft, or a record the officer sent back ("Needs changes": the plant or its
+            // registration record rejected). Not while waiting for review, not once approved.
+            if (!canEditRegistration(current)) {
               return null;
             }
 

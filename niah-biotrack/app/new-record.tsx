@@ -60,7 +60,7 @@ import SpeciesPicker, { type SpeciesChoice } from '../src/components/SpeciesPick
 import { useProposalStore } from '../src/store/useProposalStore';
 import { catalogueMatch } from '../src/utils/speciesSearch';
 import { officerReasonText } from '../src/utils/rowActions';
-import { firstVisitOf } from '../src/utils/submissionState';
+import { canEditRegistration, firstVisitOf, withRegistration } from '../src/utils/submissionState';
 import { checkDiameterCm, checkHeightMetres, metresToCm } from '../src/utils/units';
 import { reportBackgroundError } from '../src/utils/dbQueue';
 
@@ -200,8 +200,8 @@ export default function NewRecordScreen() {
   const setPendingPlantLink = useProposalStore((state) => state.setPendingPlantLink);
   const [height, setHeight] = useState(existingRecord?.height ?? '');
   const [diameter, setDiameter] = useState((existingRecord as PlantRecordWithOfflinePhotos)?.diameter ?? '');
-  const [lifeStage, setLifeStage] = useState<LifeStage>(existingRecord?.observations?.[0]?.stage ?? 'Mature');
-  const [healthStatus, setHealthStatus] = useState<HealthStatus>(existingRecord?.observations?.[0]?.health ?? 'Healthy');
+  const [lifeStage, setLifeStage] = useState<LifeStage>(firstRecordOfPlant?.stage ?? 'Mature');
+  const [healthStatus, setHealthStatus] = useState<HealthStatus>(firstRecordOfPlant?.health ?? 'Healthy');
   const [morphology, setMorphology] = useState(existingRecord?.morphology ?? '');
   const [locationName, setLocationName] = useState(existingRecord?.locationName ?? '');
 
@@ -546,7 +546,8 @@ export default function NewRecordScreen() {
     const formattedDate = now.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
     const formattedTime = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 
-    const previousInitialVisit = existingRecord?.observations?.[0];
+    // The registration record (the plant's first), not simply the newest visit.
+    const previousInitialVisit = existingRecord ? firstVisitOf(existingRecord) ?? undefined : undefined;
     const initialVisit: ObservationVisit = {
       ...previousInitialVisit,
       id: previousInitialVisit?.id || randomUUID(),
@@ -600,7 +601,7 @@ export default function NewRecordScreen() {
       photoMeta,
       photoEntries,
       observations: existingRecord?.observations?.length
-        ? [initialVisit, ...existingRecord.observations.slice(1)]
+        ? withRegistration(existingRecord, initialVisit)
         : [initialVisit],
       recordStatus: submitForReview ? RecordStatus.COMPLETE : RecordStatus.DRAFT,
       // "Needs species" until it has a catalogue species (a plant waiting for a request
@@ -612,12 +613,16 @@ export default function NewRecordScreen() {
       reviewStatus: submitForReview ? ReviewStatus.PENDING : ReviewStatus.DRAFT,
     };
 
+    // Drafts and records sent back ("Needs changes") can be edited and sent again; records
+    // waiting for review or approved can't (the store refuses them too).
     const saved = existingRecord
-      ? await updateRecord(existingRecord.id, recordData)
+      ? canEditRegistration(existingRecord)
+        ? await updateRecord(existingRecord.id, recordData)
+        : null
       : await addRecord(recordData);
 
     if (!saved) {
-      Toast.show({ type: 'error', text1: 'Record not updated', text2: 'Only local drafts can be edited.' });
+      Toast.show({ type: 'error', text1: 'Record not updated', text2: 'Only drafts and records sent back for changes can be edited. This one is waiting for review or approved.' });
       return;
     }
 

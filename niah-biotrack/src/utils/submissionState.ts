@@ -84,6 +84,44 @@ export function firstVisitOf<T extends DatedVisit>(record: {
   return oldest;
 }
 
+/**
+ * Whether the botanist may edit (and send again) this plant's registration ("Edit" /
+ * "Edit and resend"): their own plant that is a draft, or that the officer sent back
+ * ("Needs changes": the plant, or its registration record, is 'rejected'). Never while it is
+ * waiting for review or once approved, and never someone else's plant.
+ */
+export function canEditRegistration<T extends DatedVisit & { reviewStatus?: string | null }>(record: {
+  reviewStatus?: string | null;
+  createdAtIso?: string;
+  otherBotanist?: boolean;
+  observations: T[];
+}): boolean {
+  if (record.otherBotanist) return false;
+  const plant = String(record.reviewStatus ?? '');
+  if (plant === 'approved' || plant === 'archived') return false;
+  const first = firstVisitOf(record);
+  const registration = String(first?.reviewStatus ?? '');
+  // Its registration is waiting for review or approved: locked, whatever the plant says.
+  if (registration === 'pending' || registration === 'approved') return false;
+  if (plant === 'draft' || plant === 'rejected' || plant === '') return true;
+  // The plant is still 'pending' on the server while the officer sent its registration back.
+  return registration === 'rejected';
+}
+
+/**
+ * The plant's observations with its registration record replaced by `visit` (the same id),
+ * leaving every later observation as it is. Without a registration record on the phone,
+ * `visit` becomes it (added after the others: the oldest).
+ */
+export function withRegistration<T extends DatedVisit & { id: string }>(
+  record: { createdAtIso?: string; otherBotanist?: boolean; observations: T[] },
+  visit: T
+): T[] {
+  const first = firstVisitOf(record);
+  if (!first) return [...record.observations, visit];
+  return record.observations.map((item) => (item.id === first.id ? visit : item));
+}
+
 // A plant's rows in Recent activity: ONE "NEW PLANT" row for registering it (the plant
 // together with its first record, which is its registration), then an "OBSERVATION" row for
 // each later record. Someone else's plant has no NEW PLANT row: all of this botanist's

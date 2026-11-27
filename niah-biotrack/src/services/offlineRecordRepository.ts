@@ -1,3 +1,4 @@
+import { observationParent } from '../utils/observationParent';
 import { randomUUID } from 'expo-crypto';
 
 import type {
@@ -197,9 +198,9 @@ function observationPayload(
   observation: ObservationVisit
 ): Record<string, unknown> {
   return {
-    ...(record.serverId
-      ? { plant_id: record.serverId }
-      : { plant_client_record_id: record.id }),
+    // The plant's server id whenever the phone knows it (also for plants from the
+    // server: scanned or from the Plants list); its phone id only for a plant not uploaded yet.
+    ...observationParent(record),
     observed_at:
       observation.observedAt ??
       new Date().toISOString(),

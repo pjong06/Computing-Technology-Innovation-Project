@@ -1,6 +1,7 @@
 import { randomUUID } from 'expo-crypto';
 import * as SQLite from 'expo-sqlite';
 import { createSerialQueue, isDatabaseLocked, retryIfLocked } from '../utils/dbQueue';
+import { linkObservationPayload, PLANT_NOT_FOUND } from '../utils/observationParent';
 import { needsServerTag, tagOnlyPayload, tagRefusalProblem, withoutRefusedTag } from '../utils/plantStatusLine';
 
 export type SyncEntityType = 'plant' | 'observation' | 'proposal';
@@ -1109,6 +1110,72 @@ export async function requeueLockedTagOperations(clientRecordId?: string): Promi
   });
 
   return requeued;
+}
+
+/**
+ * Queued observation creates that name their plant by its phone id, for a plant the phone
+ * now knows on the server (uploaded since, or a plant that came from the server): send them
+ * with the plant's server id (plant_id) instead. Also sends again the ones refused earlier
+ * as "Parent plant has not been synced" (plant_not_found) once the plant's server id is
+ * known. Run at the start of every outbox push. Returns how many changed.
+ */
+export async function linkQueuedObservationsToServerPlants(): Promise<number> {
+  await initializeOfflineDatabase();
+  const db = await getDatabase();
+  const timestamp = nowIso();
+  let linked = 0;
+
+  await writeTransaction(db, async (transaction) => {
+    const rows = await transaction.getAllAsync<{
+      operation_id: string;
+      payload_json: string;
+      status: OutboxStatus;
+      plant_server_id: string | null;
+    }>(`
+      SELECT o.operation_id, o.payload_json, o.status, plant.server_id AS plant_server_id
+      FROM sync_outbox o
+      JOIN local_entities plant
+        ON plant.entity_type = 'plant'
+       AND plant.client_record_id = json_extract(o.payload_json, '$.plant_client_record_id')
+      WHERE o.entity_type = 'observation'
+        AND o.operation_type = 'create'
+        AND plant.server_id IS NOT NULL
+        AND (
+          o.status IN ('pending', 'retry')
+          OR (o.status = 'failed' AND COALESCE(o.last_code, o.last_error) IN ('${PLANT_NOT_FOUND}', 'Parent plant has not been synced'))
+        )
+    `);
+
+    for (const row of rows) {
+      let payload: unknown = null;
+      try {
+        payload = parseJson<unknown>(row.payload_json);
+      } catch {
+        continue;
+      }
+      const relinked = linkObservationPayload(payload, row.plant_server_id);
+      if (!relinked) continue;
+      await transaction.runAsync(
+        `
+          UPDATE sync_outbox
+          SET payload_json = ?,
+              status = CASE WHEN status = 'failed' THEN 'pending' ELSE status END,
+              last_error = CASE WHEN status = 'failed' THEN NULL ELSE last_error END,
+              last_code = CASE WHEN status = 'failed' THEN NULL ELSE last_code END,
+              retry_count = CASE WHEN status = 'failed' THEN 0 ELSE retry_count END,
+              next_retry_at = CASE WHEN status = 'failed' THEN NULL ELSE next_retry_at END,
+              updated_at = ?
+          WHERE operation_id = ?
+        `,
+        JSON.stringify(relinked),
+        timestamp,
+        row.operation_id
+      );
+      linked += 1;
+    }
+  });
+
+  return linked;
 }
 
 // ---- Sync details (Profile > Sync details) ----
